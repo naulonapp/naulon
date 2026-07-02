@@ -1,0 +1,24 @@
+# secrets — NEVER commit. See .env.example for the template.
+.env
+.env.*
+!.env.example
+
+# deps / build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# logs / local data
+*.log
+data/
+*.db
+
+# transient QA artifacts
+/*.png
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+
+**/__pycache__/

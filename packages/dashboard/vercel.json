@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "functions": {
+    "api/index.ts": { "includeFiles": "src/public/**" }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/api" }]
+}

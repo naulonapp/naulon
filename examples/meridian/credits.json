@@ -1,0 +1,30 @@
+{
+  "on-stillness": {
+    "slug": "on-stillness",
+    "title": "On Stillness",
+    "contributors": [
+      { "authorId": "ava", "wallet": "0x1111111111111111111111111111111111111111" }
+    ]
+  },
+  "the-naulon": {
+    "slug": "the-naulon",
+    "title": "The Naulon",
+    "contributors": [
+      { "authorId": "ava", "weight": 2, "wallet": "0x1111111111111111111111111111111111111111" },
+      { "authorId": "guest", "weight": 1, "wallet": "0x2222222222222222222222222222222222222222" }
+    ]
+  },
+  "the-river-and-the-name": {
+    "slug": "the-river-and-the-name",
+    "title": "The River and the Name",
+    "contributors": [
+      {
+        "authorId": "the-meridian-desk",
+        "members": [
+          { "authorId": "ava", "wallet": "0x1111111111111111111111111111111111111111" },
+          { "authorId": "guest", "wallet": "0x2222222222222222222222222222222222222222" }
+        ]
+      }
+    ]
+  }
+}

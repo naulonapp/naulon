@@ -1,0 +1,27 @@
+# naulon stack: the tollgate in front of your site, plus the live
+# earnings dashboard. Both read/write the same ledger via a shared volume.
+services:
+  tollgate:
+    build: .
+    command: npm run tollgate
+    ports:
+      - "8402:8402"
+    env_file: .env
+    environment:
+      EVENTS_PATH: /data/events.jsonl
+    volumes:
+      - ledger:/data
+
+  dashboard:
+    build: .
+    command: npm run dashboard
+    ports:
+      - "8403:8403"
+    env_file: .env
+    environment:
+      EVENTS_PATH: /data/events.jsonl
+    volumes:
+      - ledger:/data
+
+volumes:
+  ledger:

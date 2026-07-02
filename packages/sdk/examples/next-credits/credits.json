@@ -1,0 +1,22 @@
+{
+  "on-stillness": {
+    "slug": "on-stillness",
+    "title": "On Stillness",
+    "contributors": [
+      { "authorId": "mira", "wallet": "0x1111111111111111111111111111111111111111" }
+    ]
+  },
+  "the-commons": {
+    "slug": "the-commons",
+    "title": "The Commons",
+    "contributors": [
+      {
+        "authorId": "collective",
+        "members": [
+          { "authorId": "okonkwo", "wallet": "0x2222222222222222222222222222222222222222" },
+          { "authorId": "petrova", "wallet": "0x3333333333333333333333333333333333333333" }
+        ]
+      }
+    ]
+  }
+}

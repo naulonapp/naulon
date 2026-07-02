@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>axiom · naulon — the ledger</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b0b0d'/%3E%3Ctext x='16' y='23' font-size='22' text-anchor='middle' fill='%23c9a24b'%3E%F0%9F%9C%89%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400&family=Spectral:wght@300;400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --ink:#0b0b0d; --ink-2:#101013; --ink-3:#15151a;
+    --bone:#ece5d4; --bone-dim:#938c7c; --bone-faint:#5d584e;
+    --gold:#c9a24b; --gold-bright:#e8c878; --patina:#7c9b86;
+    --line:rgba(236,229,212,.085); --line-2:rgba(236,229,212,.045);
+    --shadow:0 24px 60px -20px rgba(0,0,0,.7);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  body{
+    background:var(--ink); color:var(--bone);
+    font-family:"Spectral",Georgia,serif; font-weight:300;
+    min-height:100vh; line-height:1.5; overflow-x:hidden;
+    background-image:
+      radial-gradient(120% 80% at 50% -10%, rgba(201,162,75,.10), transparent 60%),
+      radial-gradient(100% 60% at 50% 120%, rgba(124,155,134,.06), transparent 60%);
+  }
+  /* grain overlay */
+  body::after{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:9; opacity:.04;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+
+  /* ── river line ── */
+  .river{height:1px;width:100%;
+    background:linear-gradient(90deg,transparent,var(--gold) 20%,var(--gold-bright) 50%,var(--gold) 80%,transparent);
+    background-size:200% 100%; animation:flow 9s linear infinite; opacity:.55}
+  @keyframes flow{to{background-position:200% 0}}
+
+  /* ── masthead ── */
+  header{padding:30px 0 22px;display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid var(--line)}
+  .mark{display:flex;align-items:baseline;gap:14px}
+  .glyph{font-family:"Fraunces";font-size:34px;color:var(--gold);line-height:1;filter:drop-shadow(0 0 14px rgba(201,162,75,.35))}
+  .word{font-family:"Fraunces";font-weight:400;font-size:25px;letter-spacing:.16em;text-transform:lowercase}
+  .word b{color:var(--gold);font-weight:500}
+  .kicker{font-size:12.5px;letter-spacing:.32em;text-transform:uppercase;color:var(--bone-dim);margin-top:7px}
+  .status{font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--bone-dim);display:flex;align-items:center;gap:9px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--patina);box-shadow:0 0 0 0 rgba(124,155,134,.6);animation:pulse 2.4s infinite}
+  .dot.off{background:var(--bone-faint);animation:none}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(124,155,134,.5)}70%{box-shadow:0 0 0 7px rgba(124,155,134,0)}100%{box-shadow:0 0 0 0 rgba(124,155,134,0)}}
+
+  /* ── hero ── */
+  .hero{padding:64px 0 56px;text-align:center;position:relative}
+  .hero .label{font-size:12.5px;letter-spacing:.42em;text-transform:uppercase;color:var(--bone-dim);margin-bottom:22px}
+  .total{font-family:"IBM Plex Mono";font-weight:500;font-variant-numeric:tabular-nums;
+    font-size:clamp(52px,11vw,118px);line-height:.92;color:var(--bone);letter-spacing:-.01em}
+  .total .cur{color:var(--gold);font-size:.5em;vertical-align:.42em;margin-right:.08em}
+  .total .frac{color:var(--bone-dim)}
+  .hero .sub{margin-top:26px;font-size:16px;color:var(--bone-dim);font-style:italic}
+  .hero .sub b{color:var(--bone);font-style:normal;font-family:"IBM Plex Mono";font-weight:400;font-size:.92em}
+  .creed{margin-top:18px;font-family:"Fraunces";font-size:18px;color:var(--bone-faint);letter-spacing:.01em}
+  .creed em{color:var(--gold);font-style:italic}
+
+  /* ── columns ── */
+  main{display:grid;grid-template-columns:1.35fr 1fr;gap:54px;padding:8px 0 70px;align-items:start}
+  .col-head{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:14px;margin-bottom:6px;border-bottom:1px solid var(--line)}
+  .col-head h2{font-family:"Fraunces";font-weight:400;font-size:21px;letter-spacing:.02em}
+  .col-head .n{font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--bone-dim)}
+
+  /* ── ledger rows ── */
+  .row{display:grid;grid-template-columns:26px 1fr auto;gap:16px;align-items:center;
+    padding:17px 0;border-bottom:1px solid var(--line-2);opacity:0;transform:translateY(8px);
+    animation:rise .6s cubic-bezier(.2,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+  .rank{font-family:"IBM Plex Mono";font-size:13px;color:var(--bone-faint);text-align:right}
+  .who .name{font-family:"Fraunces";font-size:18.5px;font-weight:400;text-transform:capitalize}
+  .who .addr{font-family:"IBM Plex Mono";font-size:11px;color:var(--bone-faint);letter-spacing:.03em;margin-top:3px}
+  .who .meta{font-size:12.5px;color:var(--bone-dim);margin-top:5px;font-style:italic}
+  .earned{text-align:right;min-width:150px}
+  .earned .amt{font-family:"IBM Plex Mono";font-weight:500;font-variant-numeric:tabular-nums;font-size:19px;color:var(--gold)}
+  .earned .amt .frac{color:rgba(201,162,75,.5)}
+  .bar{height:2px;margin-top:9px;background:linear-gradient(90deg,var(--gold),var(--gold-bright));border-radius:2px;
+    transform-origin:right;animation:grow 1s cubic-bezier(.2,.7,.2,1) forwards;transform:scaleX(0)}
+  @keyframes grow{to{transform:scaleX(1)}}
+
+  /* ── crossings feed ── */
+  .feed{display:flex;flex-direction:column}
+  .cross{padding:15px 0;border-bottom:1px solid var(--line-2);opacity:0;animation:rise .55s ease forwards}
+  .cross.fresh{animation:flash 2.2s ease forwards}
+  @keyframes flash{0%{opacity:0;transform:translateX(-10px);background:rgba(201,162,75,.14)}
+    18%{opacity:1;transform:none}100%{background:transparent}}
+  .cross .when{font-family:"IBM Plex Mono";font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--bone-faint)}
+  .cross .line{margin-top:5px;font-size:15px}
+  .cross .line .agent{font-family:"IBM Plex Mono";font-size:12.5px;color:var(--bone-dim)}
+  .cross .line .verb{color:var(--bone-dim);font-style:italic}
+  .cross .line .amt{font-family:"IBM Plex Mono";color:var(--gold);font-weight:500}
+  .cross .line .slug{font-family:"Fraunces";color:var(--bone);font-style:italic}
+  .cross .tag{font-family:"IBM Plex Mono";font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;
+    padding:1px 6px;border:1px solid var(--line);border-radius:2px;color:var(--bone-dim);margin-left:6px}
+  .cross .tag.citation{color:var(--gold);border-color:rgba(201,162,75,.4)}
+  .cross .split{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px 16px}
+  .cross .split span{font-family:"IBM Plex Mono";font-size:11.5px;color:var(--bone-dim)}
+  .cross .split span b{color:var(--patina);font-weight:500}
+  .cross .prov{margin-top:7px;font-family:"IBM Plex Mono";font-size:10.5px;letter-spacing:.04em;
+    color:var(--bone-faint)}
+  .cross .prov b{color:var(--bone-dim);font-weight:500}
+
+  .empty{padding:50px 0;text-align:center;color:var(--bone-faint)}
+  .empty .big{font-family:"Fraunces";font-style:italic;font-size:21px;color:var(--bone-dim)}
+  .empty code{font-family:"IBM Plex Mono";font-size:13px;color:var(--gold);background:var(--ink-3);padding:2px 8px;border-radius:3px}
+
+  footer{border-top:1px solid var(--line);padding:26px 0 40px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+  footer .thesis{font-family:"Fraunces";font-size:15px;color:var(--bone-dim)}
+  footer .note{font-size:12.5px;color:var(--bone-faint);font-style:italic;max-width:440px}
+
+  @media(max-width:860px){main{grid-template-columns:1fr;gap:40px}header{flex-direction:column;gap:14px}.earned{min-width:0}}
+</style>
+</head>
+<body>
+  <div class="river"></div>
+  <div class="wrap">
+    <header>
+      <div>
+        <div class="mark"><span class="glyph">🜉</span><span class="word">axiom·<b>naulon</b></span></div>
+        <div class="kicker">the ledger — fares paid to cross</div>
+      </div>
+      <div class="status"><span class="dot off" id="dot"></span><span id="conn">connecting</span></div>
+    </header>
+
+    <section class="hero">
+      <div class="label">settled to authors</div>
+      <div class="total" id="total"><span class="cur">$</span>0<span class="frac">.000000</span></div>
+      <div class="sub"><b id="nCross">0</b> crossings paid · <b id="nAuthors">0</b> authors earning</div>
+      <div class="creed">Humans read free, forever. <em>Machines pay.</em></div>
+    </section>
+
+    <main>
+      <section>
+        <div class="col-head"><h2>The Ledger</h2><span class="n" id="ledgerN">by earnings</span></div>
+        <div id="ledger"></div>
+      </section>
+      <section>
+        <div class="col-head"><h2>Recent crossings</h2><span class="n">live</span></div>
+        <div class="feed" id="feed"></div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="thesis">Attribution is the payout rule.</div>
+      <div class="note">Every read or citation by a machine settles in USDC on Arc, split across an essay's authors by the credits graph — recursively, down to the coin.</div>
+    </footer>
+  </div>
+
+<script>
+const $ = (s)=>document.querySelector(s);
+const fmt6 = (n)=> n.toFixed(6);
+const usd = (n)=>{ const [w,f]=fmt6(n).split("."); return {w,f}; };
+const trunc = (a)=> a.length>12 ? a.slice(0,6)+"…"+a.slice(-4) : a;
+const rel = (ms)=>{ const s=Math.max(0,(Date.now()-ms)/1000);
+  if(s<60)return Math.floor(s)+"s ago"; if(s<3600)return Math.floor(s/60)+"m ago";
+  if(s<86400)return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago"; };
+
+let displayedTotal = 0, maxEarned = 0, seen = new Set(), firstPaint = true;
+
+function animateTotal(to){
+  const from = displayedTotal, t0 = performance.now(), dur = 700;
+  function step(t){ const k = Math.min(1,(t-t0)/dur); const e = 1-Math.pow(1-k,3);
+    const v = from + (to-from)*e; const {w,f}=usd(v);
+    $("#total").innerHTML = `<span class="cur">$</span>${w}<span class="frac">.${f}</span>`;
+    if(k<1) requestAnimationFrame(step); else displayedTotal=to; }
+  requestAnimationFrame(step);
+}
+
+function renderLedger(authors){
+  maxEarned = authors.reduce((m,a)=>Math.max(m,a.earned),0)||1;
+  $("#ledgerN").textContent = authors.length ? "by earnings" : "—";
+  if(!authors.length){ $("#ledger").innerHTML =
+    `<div class="empty"><div class="big">The ledger is quiet.</div><p>No machine has paid yet — run <code>npm run -w @naulon/dashboard seed</code> or the wayfarer.</p></div>`; return; }
+  $("#ledger").innerHTML = authors.map((a,i)=>{
+    const {w,f}=usd(a.earned); const pct=(a.earned/maxEarned*100).toFixed(1);
+    const delay = firstPaint ? (i*70)+"ms" : "0ms";
+    return `<div class="row" style="animation-delay:${delay}">
+      <div class="rank">${String(i+1).padStart(2,"0")}</div>
+      <div class="who"><div class="name">${a.authorId}</div>
+        <div class="addr">${trunc(a.wallet)}</div>
+        <div class="meta">${a.events} crossing${a.events!==1?"s":""} · last ${rel(a.lastAt)}</div></div>
+      <div class="earned"><div class="amt">$${w}<span class="frac">.${f}</span></div>
+        <div class="bar" style="width:${pct}%;animation-delay:${delay}"></div></div>
+    </div>`;
+  }).join("");
+}
+
+function renderFeed(recent){
+  if(!recent.length){ $("#feed").innerHTML = `<div class="empty"><div class="big">Still waiting for the first fare.</div></div>`; return; }
+  $("#feed").innerHTML = recent.map((c,i)=>{
+    const fresh = !firstPaint && !seen.has(c.id);
+    const delay = firstPaint ? (i*55)+"ms":"0ms";
+    const split = c.split.map(s=>`<span>${s.authorId} <b>$${fmt6(s.amount)}</b></span>`).join("");
+    return `<div class="cross ${fresh?"fresh":""}" style="animation-delay:${delay}">
+      <div class="when">${rel(c.at)}</div>
+      <div class="line"><span class="agent">${trunc(c.payer)}</span>
+        <span class="verb"> paid </span><span class="amt">$${fmt6(c.amount)}</span>
+        <span class="verb"> for </span><span class="slug">${c.slug}</span>
+        <span class="tag ${c.kind}">${c.kind}</span></div>
+      <div class="split">${split}</div>
+      <div class="prov">🎫 licensed · <b>${trunc(c.id)}</b> · verifiable receipt</div>
+    </div>`;
+  }).join("");
+  recent.forEach(c=>seen.add(c.id));
+}
+
+function render(L){
+  animateTotal(L.totalSettled);
+  $("#nCross").textContent = L.eventCount;
+  $("#nAuthors").textContent = L.authorCount;
+  renderLedger(L.authors);
+  renderFeed(L.recent);
+  firstPaint = false;
+}
+
+function setConn(ok){ $("#dot").classList.toggle("off",!ok); $("#conn").textContent = ok?"settling live":"offline"; }
+
+const es = new EventSource("/api/stream");
+es.addEventListener("ledger", (e)=>{ setConn(true); render(JSON.parse(e.data)); });
+es.onerror = ()=> setConn(false);
+es.onopen = ()=> setConn(true);
+</script>
+</body>
+</html>

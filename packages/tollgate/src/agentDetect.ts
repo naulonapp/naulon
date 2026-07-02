@@ -1,0 +1,132 @@
+/**
+ * Human vs. machine classification — the hinge of the whole thesis.
+ *
+ * "Humans read free, forever. Machines pay." Everything downstream trusts this
+ * call. The asymmetry that matters:
+ *
+ *   - False positive (human flagged as agent) -> a human hits a 402 paywall.
+ *     This BREAKS the "open to all" promise. Worst outcome. Bias away from it.
+ *   - False negative (agent flagged as human) -> a crawler reads free. We lose a
+ *     micro-toll. Cheap. Tolerable.
+ *
+ * So the classifier should be conservative: only charge when we're confident the
+ * caller is a machine. Signed intent (an agent that *declares* itself via the
+ * x402 handshake) is the strongest, cleanest signal — it sidesteps the UA
+ * arms race entirely.
+ */
+
+export type Verdict = { kind: "human" | "agent"; reason: string; confidence: number };
+
+/** Request facts the classifier reasons over (framework-agnostic). */
+export interface RequestSignals {
+  userAgent: string;
+  /** Present when the caller already speaks x402 (declared intent to pay). */
+  hasPaymentHeader: boolean;
+  /** Explicit opt-in header an agent may send: `X-Naulon-Agent: <id>`. */
+  declaredAgentId: string | null;
+  /** Accept header — browsers ask for text/html; many bots don't. */
+  accept: string;
+  headers: Record<string, string>;
+}
+
+/** Per-publisher classification policy the gate supplies from `PublisherConfig`. */
+export interface ClassifyPolicy {
+  /**
+   * Verified search / discovery crawler UA fragments that read FREE for this
+   * publisher (their SEO allowlist). Honored ahead of the known-agent list, so an
+   * allowlisted crawler is freed even if its UA also looks like a bot — the point
+   * is to never toll the crawlers a publisher needs for indexing. Matched
+   * case-insensitively against the user-agent. UA is spoofable; verifying crawler
+   * identity (reverse DNS / Web Bot Auth) is a later hardening — for now a
+   * publisher's own allowlist is the stored intent we honor.
+   */
+  seoAllowlist?: string[];
+}
+
+/**
+ * Obvious crawler/agent UA fragments. Extend freely — this is a weak signal.
+ *
+ * Note: pure search-indexer UAs (googlebot, bingbot, …) are deliberately NOT here.
+ * Tolling a search crawler silently deindexes the publisher — the opposite of what
+ * they want — so indexing reads free by default. A publisher frees additional
+ * crawlers (or re-affirms search ones) via `ClassifyPolicy.seoAllowlist`.
+ */
+const KNOWN_AGENT_UA = [
+  "gptbot",
+  "claudebot",
+  "claude-web",
+  "anthropic-ai",
+  "perplexitybot",
+  "ccbot",
+  "google-extended",
+  "bytespider",
+  "amazonbot",
+  "applebot-extended",
+  "python-requests",
+  "node-fetch",
+  "axios",
+  "curl",
+  "wget",
+  "langchain",
+];
+
+/**
+ * Classify a request as human or agent.
+ *
+ * TODO(you): implement the core heuristic. A starter is provided so the gate
+ * runs today, but this decision shapes the product — own it. Consider:
+ *
+ *   1. Declared intent first. `signals.hasPaymentHeader` or
+ *      `signals.declaredAgentId` => almost certainly an agent that WANTS to pay.
+ *      Treat as high-confidence agent. (Already wired below — keep it first.)
+ *   2. Known-bot UA match => agent, but lower confidence (UAs are spoofable and
+ *      churn). Decide how much weight to give a raw UA match.
+ *   3. Browser-shaped requests (Accept: text/html, sec-fetch-* headers,
+ *      Accept-Language present) => lean human. Decide your "looks like a real
+ *      browser" bar.
+ *   4. The ambiguous middle (empty UA, generic Accept, no browser headers).
+ *      THIS is the real design call: default-allow (favor humans, lose tolls) or
+ *      default-charge (capture tolls, risk paywalling a human)? Given the
+ *      asymmetry above, the starter defaults to HUMAN. Change it if you disagree
+ *      — and write down why.
+ *
+ * Return a Verdict with a `reason` (it surfaces in logs + the demo) and a
+ * `confidence` in [0,1].
+ *
+ * `policy` carries per-publisher overrides (the SEO allowlist); the single-tenant
+ * default passes none and behaves exactly as before.
+ */
+export function classify(signals: RequestSignals, policy?: ClassifyPolicy): Verdict {
+  // 1) Declared intent — strongest, spoof-proof-in-spirit signal. Leave first.
+  if (signals.hasPaymentHeader) {
+    return { kind: "agent", reason: "presented x402 payment header", confidence: 0.99 };
+  }
+  if (signals.declaredAgentId) {
+    return { kind: "agent", reason: `declared agent id ${signals.declaredAgentId}`, confidence: 0.95 };
+  }
+
+  const ua = signals.userAgent.toLowerCase();
+
+  // 2) SEO allowlist — verified discovery crawlers this publisher wants indexed
+  //    read FREE. Before the known-bot check so an allowlisted crawler is freed
+  //    even when its UA also matches a known-bot fragment.
+  const allowed = policy?.seoAllowlist?.find((frag) => ua.includes(frag.toLowerCase()));
+  if (allowed) {
+    return { kind: "human", reason: `seo allowlist matched "${allowed}"`, confidence: 0.9 };
+  }
+
+  // 3) Known-bot UA — weak, spoofable signal.
+  const hit = KNOWN_AGENT_UA.find((frag) => ua.includes(frag));
+  if (hit) {
+    return { kind: "agent", reason: `user-agent matched "${hit}"`, confidence: 0.8 };
+  }
+
+  // 4) Browser-shaped => human.
+  const looksBrowser = signals.accept.includes("text/html") || "sec-fetch-mode" in signals.headers;
+  if (looksBrowser) {
+    return { kind: "human", reason: "browser-shaped request", confidence: 0.85 };
+  }
+
+  // 5) Ambiguous middle. Starter favors humans (see asymmetry note).
+  return { kind: "human", reason: "ambiguous; defaulting to human (free)", confidence: 0.4 };
+}

@@ -1,0 +1,32 @@
+{
+  "name": "naulon",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Permissionless nanopayment citation toll. Humans read free; machines pay USDC on Arc to the author.",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "demo": "node scripts/demo.mjs",
+    "tollgate": "npm run start -w @naulon/tollgate",
+    "wayfarer": "npm run start -w @naulon/wayfarer",
+    "attribution": "npm run start -w @naulon/attribution",
+    "dashboard": "npm run start -w @naulon/dashboard",
+    "seed": "npm run seed -w @naulon/dashboard",
+    "generate-wallets": "tsx scripts/generate-wallets.mjs",
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json",
+    "test": "NODE_ENV=test node --import tsx --test \"packages/**/src/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

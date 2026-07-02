@@ -1,0 +1,40 @@
+{
+  "why-the-sky-goes-dark": {
+    "slug": "why-the-sky-goes-dark",
+    "title": "Why the Sky Goes Dark",
+    "contributors": [
+      { "authorId": "mira", "wallet": "0x3333333333333333333333333333333333333333" }
+    ]
+  },
+  "the-half-life-of-facts": {
+    "slug": "the-half-life-of-facts",
+    "title": "The Half-Life of Facts",
+    "contributors": [
+      { "authorId": "mira", "weight": 5, "wallet": "0x3333333333333333333333333333333333333333" },
+      { "authorId": "okonkwo", "weight": 3, "wallet": "0x4444444444444444444444444444444444444444" },
+      { "authorId": "petrova", "weight": 2, "wallet": "0x5555555555555555555555555555555555555555" }
+    ]
+  },
+  "how-vaccines-teach": {
+    "slug": "how-vaccines-teach",
+    "title": "How Vaccines Teach",
+    "contributors": [
+      {
+        "authorId": "the-immunology-desk",
+        "weight": 3,
+        "members": [
+          { "authorId": "okonkwo", "wallet": "0x4444444444444444444444444444444444444444" },
+          {
+            "authorId": "the-bench-team",
+            "weight": 2,
+            "members": [
+              { "authorId": "petrova", "wallet": "0x5555555555555555555555555555555555555555" },
+              { "authorId": "haddad", "wallet": "0x6666666666666666666666666666666666666666" }
+            ]
+          }
+        ]
+      },
+      { "authorId": "mira", "weight": 1, "wallet": "0x3333333333333333333333333333333333333333" }
+    ]
+  }
+}

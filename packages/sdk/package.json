@@ -1,0 +1,62 @@
+{
+  "name": "@naulon/sdk",
+  "version": "0.1.0",
+  "description": "The naulon publisher contract: credits + settlement wire types, validators, HMAC sign/verify, and credits resolvers. One source of truth for the money-routing trust boundary.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./next": {
+      "types": "./dist/next/index.d.ts",
+      "import": "./dist/next/index.js"
+    },
+    "./express": {
+      "types": "./dist/express/index.d.ts",
+      "import": "./dist/express/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/check.d.ts",
+      "import": "./dist/cli/check.js"
+    }
+  },
+  "bin": {
+    "naulon": "./dist/cli/naulon.js",
+    "naulon-kit": "./dist/cli/naulon.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.6",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "express": ">=4",
+    "next": ">=15"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    },
+    "express": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "express": "^5.2.1"
+  }
+}
