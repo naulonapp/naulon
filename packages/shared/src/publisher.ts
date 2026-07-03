@@ -50,6 +50,14 @@ export interface CrawlerPolicy {
    * never buy past a block. Wins over `allow` on overlap (fail-safe).
    */
   block: string[];
+  /**
+   * Fragments the publisher explicitly CHARGES. The classifier already tolls
+   * agents it recognizes (known-agent UA or declared intent); this list extends
+   * that recognition to crawlers the conservative default would let read free
+   * (browser-shaped or ambiguous UAs). Precedence: block > allow > charge.
+   * Absent → recognition is the classifier's default set, unchanged.
+   */
+  charge?: string[];
 }
 
 export interface PublisherConfig {

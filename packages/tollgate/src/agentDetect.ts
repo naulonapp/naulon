@@ -41,6 +41,13 @@ export interface ClassifyPolicy {
    * publisher's own allowlist is the stored intent we honor.
    */
   seoAllowlist?: string[];
+  /**
+   * Publisher-charged UA fragments. Honored between the allowlist and the built-in
+   * known-agent list: fragments a publisher explicitly charges are classified as
+   * agents even when the conservative default would read the UA as browser-shaped or
+   * ambiguous (and thus free). Allow wins over charge on overlap.
+   */
+  chargeList?: string[];
 }
 
 /**
@@ -124,6 +131,14 @@ export function classify(signals: RequestSignals, policy?: ClassifyPolicy): Verd
   const allowed = policy?.seoAllowlist?.find((frag) => ua.includes(frag.toLowerCase()));
   if (allowed) {
     return { kind: "human", reason: `seo allowlist matched "${allowed}"`, confidence: 0.9 };
+  }
+
+  // 2b) Publisher-charged crawlers — fragments the publisher explicitly tolls.
+  //     After allow (allow wins) and before the built-in list, so a publisher
+  //     can charge a crawler the conservative default would read as human.
+  const charged = matchUaFragment(signals.userAgent, policy?.chargeList);
+  if (charged) {
+    return { kind: "agent", reason: `publisher charge policy matched "${charged}"`, confidence: 0.8 };
   }
 
   // 3) Known-bot UA — weak, spoofable signal.

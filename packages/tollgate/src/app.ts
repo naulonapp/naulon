@@ -390,6 +390,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
 
     const verdict = classify(signalsFrom(c.req.raw), {
       seoAllowlist: [...(publisher.seoAllowlist ?? []), ...(publisher.crawlerPolicy?.allow ?? [])],
+      chargeList: publisher.crawlerPolicy?.charge,
     });
 
     // Audit plane: emit one observation per gated-route decision (telemetry only,

@@ -38,10 +38,12 @@ const PUB: PublisherConfig = {
   credits: stubCredits,
   licenseIdentity: "naulon:policied.example",
   seoAllowlist: ["legacybot"],
-  crawlerPolicy: { allow: ["friendlybot"], block: ["nastybot", "bothways"] },
+  crawlerPolicy: { allow: ["friendlybot"], block: ["nastybot", "bothways"], charge: ["stealthbot", "chargedsearch"] },
 };
 // Deliberate overlap fixture: "bothways" also in allow — block must win.
 PUB.crawlerPolicy!.allow.push("bothways");
+// "friendlybot" in both allow AND charge — allow must win over charge.
+PUB.crawlerPolicy!.charge!.push("friendlybot");
 
 const resolver: PublisherResolver = {
   async resolve(host) { return host === "policied.example" ? PUB : undefined; },
@@ -106,4 +108,40 @@ test("a publisher WITHOUT crawlerPolicy behaves exactly as before (regression)",
   const app2 = createApp({ async resolve() { return bare; } });
   const r402 = await app2.request("/essays/piece", { headers: { host: "x", "user-agent": "GPTBot/1.0" } });
   assert.equal(r402.status, 402);
+});
+
+test("charge-listed crawler is tolled even when browser-shaped", async () => {
+  const res = await app.request("/essays/piece", {
+    headers: { host: "policied.example", "user-agent": "Mozilla/5.0 (compatible; StealthBot/1.0)", accept: "text/html" },
+  });
+  assert.equal(res.status, 402, "an explicitly-charged crawler must hit the toll, not the browser-shaped free path");
+});
+
+test("charge-listed crawler with ambiguous shape is tolled", async () => {
+  const res = await app.request("/essays/piece", {
+    headers: { host: "policied.example", "user-agent": "ChargedSearch/2.0" },
+  });
+  assert.equal(res.status, 402);
+});
+
+test("allow beats charge on overlap (allow checked first)", async () => {
+  // "friendlybot" is in both allow AND charge — allow wins.
+  const res = await app.request("/essays/piece", {
+    headers: { host: "policied.example", "user-agent": "FriendlyBot/1.0" },
+  });
+  assert.equal(res.status, 200, "allow wins over charge");
+});
+
+test("absent charge list changes nothing (regression)", async () => {
+  // A publisher with no charge list: known-agent UA still 402, browser UA still 200.
+  const noCharge: PublisherConfig = { ...PUB, id: "nocharge", crawlerPolicy: { allow: [], block: [] } };
+  const app3 = createApp({ async resolve() { return noCharge; } });
+  const r402 = await app3.request("/essays/piece", {
+    headers: { host: "x", "user-agent": "GPTBot/1.0" },
+  });
+  assert.equal(r402.status, 402, "known-agent UA must still be tolled without a charge list");
+  const r200 = await app3.request("/essays/piece", {
+    headers: { host: "x", "user-agent": "Mozilla/5.0 Firefox/128.0", accept: "text/html" },
+  });
+  assert.equal(r200.status, 200, "browser UA must still read free without a charge list");
 });
