@@ -33,6 +33,7 @@ import {
   type PayGuard,
   type Quoted,
 } from "./buyer.ts";
+import { agentFetch } from "./sign.ts";
 
 /**
  * The signer seam (BUY-2). By default the memo buyer signs each EIP-3009 leg with the local
@@ -150,7 +151,7 @@ export function memoBuyer(signer?: MemoSigner): Buyer {
       // a stock single-author quote stays the bare object, byte-identical to before.
       const nowMs = Date.now();
       const paymentSignature = await assemblePayment(quoted, (req) => memoLegPayload(req, nowMs, signer));
-      const res = await fetch(url, {
+      const res = await agentFetch(url, {
         headers: {
           "user-agent": AGENT_UA,
           "x-naulon-agent": address,
