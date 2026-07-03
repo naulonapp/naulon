@@ -16,6 +16,24 @@
 import type { CreditsResolver, TollKind, Usdc, WalletAddress } from "./types.ts";
 
 /**
+ * A settlement leg beyond the primary author payment — a secondary, direct
+ * buyer→recipient transfer attached to a toll. Each leg settles as its OWN x402
+ * authorization (its own `payTo`, `amount`, nonce): never pooled, never routed
+ * through a gate-held wallet, and **additive** — attaching a leg never reduces the
+ * author's amount. The protocol assigns `role` no meaning; it is an opaque label
+ * the ledger and dashboards group by (e.g. a co-author split, or a downstream
+ * resolver's own secondary payee). The single-tenant core attaches none.
+ */
+export interface PayoutLeg {
+  /** Opaque grouping label for the ledger/dashboard. No protocol meaning. */
+  role: string;
+  /** Direct recipient of this leg — a distinct buyer→payTo transfer. */
+  payTo: WalletAddress;
+  /** Atomic micro-USDC, integer string. Added on top of the author price. */
+  amount: string;
+}
+
+/**
  * Per-publisher crawler policy — the tri-state surface a control plane stores.
  * UA fragments, matched case-insensitively as substrings (same mechanics as
  * `seoAllowlist`). Everything unlisted is CHARGED (the stock toll — absence of
@@ -32,24 +50,6 @@ export interface CrawlerPolicy {
    * never buy past a block. Wins over `allow` on overlap (fail-safe).
    */
   block: string[];
-}
-
-/**
- * A settlement leg beyond the primary author payment — a secondary, direct
- * buyer→recipient transfer attached to a toll. Each leg settles as its OWN x402
- * authorization (its own `payTo`, `amount`, nonce): never pooled, never routed
- * through a gate-held wallet, and **additive** — attaching a leg never reduces the
- * author's amount. The protocol assigns `role` no meaning; it is an opaque label
- * the ledger and dashboards group by (e.g. a co-author split, or a downstream
- * resolver's own secondary payee). The single-tenant core attaches none.
- */
-export interface PayoutLeg {
-  /** Opaque grouping label for the ledger/dashboard. No protocol meaning. */
-  role: string;
-  /** Direct recipient of this leg — a distinct buyer→payTo transfer. */
-  payTo: WalletAddress;
-  /** Atomic micro-USDC, integer string. Added on top of the author price. */
-  amount: string;
 }
 
 export interface PublisherConfig {
