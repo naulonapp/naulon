@@ -40,6 +40,7 @@ import {
   type Usdc,
 } from "@naulon/shared";
 import { classify, matchUaFragment, type RequestSignals } from "./agentDetect.ts";
+import { verifyBotAuth, type RequestFacts } from "./botAuth.ts";
 import {
   buildX402Manifest,
   PAYMENT_LINK_HEADER,
@@ -168,6 +169,22 @@ function signalsFrom(req: Request): RequestSignals {
     declaredAgentId: headers["x-naulon-agent"] ?? null,
     accept: headers["accept"] ?? "",
     headers,
+  };
+}
+
+/**
+ * The request facts the Web Bot Auth verifier serializes signed components
+ * from. `authority` is the resolved tenant Host — the same identity the gate
+ * routes by — so a signature over `@authority` binds to the host being tolled.
+ */
+function requestFactsFrom(req: Request, host: string): RequestFacts {
+  const url = new URL(req.url);
+  return {
+    authority: host,
+    method: req.method,
+    path: url.pathname,
+    targetUri: `${url.protocol}//${host}${url.pathname}${url.search}`,
+    headers: Object.fromEntries(req.headers.entries()),
   };
 }
 
@@ -442,13 +459,29 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     // Non-article routes: pure passthrough (assets, home, RSS...).
     if (!slug) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
 
+    // Web Bot Auth: verify cryptographic identity once per gateable request.
+    // Requests without the three signature headers short-circuit to "absent"
+    // before any async work — zero cost for the entire unsigned world. Fail-open
+    // discipline lives in the verifier: "invalid" (a PRESENTED signature that is
+    // wrong) still serves via the UA path but is stamped `sigInvalid` on the
+    // observation — masquerade telemetry no proxy-side product can give an
+    // origin-level publisher.
+    const botAuth = await verifyBotAuth(requestFactsFrom(c.req.raw, host), {
+      allowInsecureHttp: cfg.BOT_AUTH_ALLOW_HTTP,
+    });
+    const verifiedAgent = botAuth.status === "verified" ? botAuth.agent : null;
+    const sigInvalid = botAuth.status === "invalid" ? true : undefined;
+
     // Publisher-refused crawlers: 403 BEFORE classification, so payment intent
     // (classify's first check) can never buy past a block, and before the allow
     // merge, so block wins an overlap. Gateable routes only — the passthrough
     // above is untouched. Fragments name bots; a real browser UA never carries
-    // one, so humans-read-free holds.
+    // one, so humans-read-free holds. The same fragments match the VERIFIED
+    // identity too — a blocked operator cannot dodge the block by UA rotation.
     const uaRaw = c.req.header("user-agent") ?? "";
-    const blockedFrag = matchUaFragment(uaRaw, publisher.crawlerPolicy?.block);
+    const blockedFrag =
+      matchUaFragment(uaRaw, publisher.crawlerPolicy?.block) ??
+      (verifiedAgent ? matchUaFragment(verifiedAgent.agent, publisher.crawlerPolicy?.block) : undefined);
     if (blockedFrag) {
       observe({
         id: randomUUID(),
@@ -459,6 +492,9 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
         classifiedAs: "agent",
         classifyReason: `crawler blocked by publisher ("${blockedFrag}")`,
         agentUa: uaRaw,
+        verified: verifiedAgent ? true : undefined,
+        verifiedAgent: verifiedAgent?.agent,
+        sigInvalid,
         at: Date.now(),
       });
       const res = c.text("This crawler is refused by the publisher.", 403);
@@ -466,10 +502,13 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
       return stampGateCacheHeaders(res, { noStore: true });
     }
 
-    const verdict = classify(signalsFrom(c.req.raw), {
-      seoAllowlist: [...(publisher.seoAllowlist ?? []), ...(publisher.crawlerPolicy?.allow ?? [])],
-      chargeList: publisher.crawlerPolicy?.charge,
-    });
+    const verdict = classify(
+      { ...signalsFrom(c.req.raw), verifiedAgent },
+      {
+        seoAllowlist: [...(publisher.seoAllowlist ?? []), ...(publisher.crawlerPolicy?.allow ?? [])],
+        chargeList: publisher.crawlerPolicy?.charge,
+      },
+    );
 
     // Audit plane: emit one observation per gated-route decision (telemetry only,
     // never gates the request). Default sink is off → a no-op, zero cost. A
@@ -488,6 +527,9 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
         classifiedAs: verdict.kind,
         classifyReason: verdict.reason,
         agentUa,
+        verified: verifiedAgent ? true : undefined,
+        verifiedAgent: verifiedAgent?.agent,
+        sigInvalid,
         price: extra?.price,
         at: Date.now(),
       });

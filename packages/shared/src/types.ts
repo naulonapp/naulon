@@ -140,8 +140,17 @@ export interface ObservationEvent {
   classifiedAs: "human" | "agent";
   /** Why the classifier ruled that way (e.g. which UA pattern matched). */
   classifyReason?: string;
-  /** Raw User-Agent — the MVP identity basis (spoofable; Web Bot Auth supersedes it later). */
+  /** Raw User-Agent — the MVP identity basis (spoofable; Web Bot Auth supersedes it). */
   agentUa?: string;
+  /** True when the caller's Web Bot Auth signature (RFC 9421/Ed25519) verified. */
+  verified?: boolean;
+  /** The verified operator's directory host (e.g. "chatgpt.com"), when verified. */
+  verifiedAgent?: string;
+  /**
+   * True when a signature was PRESENTED and failed verification — a masquerade
+   * attempt (or a badly broken signer), distinct from plain unsigned traffic.
+   */
+  sigInvalid?: boolean;
   /** The quoted price (paid → settled; denied/payment-failed → what they'd have paid = "earnings missed"). */
   price?: Usdc;
   /** epoch ms — passed in by the caller (no ambient clock in shared code). */

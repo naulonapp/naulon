@@ -85,3 +85,59 @@ test("dropped stale fragments no longer classify — claude-web / anthropic-ai a
     assert.equal(classify(signals({ userAgent: ua, accept: "text/html" })).kind, "human", ua);
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Web Bot Auth verified identity in classify() — precedence:
+ * payment intent → verified allow → verified agent → (unsigned) UA path.
+ * ------------------------------------------------------------------ */
+
+const VERIFIED = { agent: "chatgpt.com", keyid: "thumb" };
+
+test("verified agent is charged even with a browser-shaped request (dodge hole closed)", () => {
+  const v = classify(
+    signals({
+      userAgent: "Mozilla/5.0 Firefox/128.0",
+      accept: "text/html",
+      verifiedAgent: VERIFIED,
+    }),
+  );
+  assert.equal(v.kind, "agent");
+  assert.match(v.reason, /verified web-bot-auth \(chatgpt\.com\)/);
+  assert.ok(v.confidence >= 0.98);
+});
+
+test("verified agent matching the allowlist reads free — the spoof-proof allow", () => {
+  const v = classify(signals({ verifiedAgent: VERIFIED }), { seoAllowlist: ["chatgpt.com"] });
+  assert.equal(v.kind, "human");
+  assert.match(v.reason, /verified/);
+});
+
+test("UA-allowlist fragment does NOT free a verified agent whose identity mismatches (free-ride hole closed)", () => {
+  // UA claims googlebot (allow-listed); the cryptographic identity is not.
+  const v = classify(
+    signals({ userAgent: "Googlebot/2.1", verifiedAgent: VERIFIED }),
+    { seoAllowlist: ["googlebot"] },
+  );
+  assert.equal(v.kind, "agent", "verified identity outranks the spoofable UA allowlist");
+});
+
+test("payment intent still wins over verified identity", () => {
+  const v = classify(signals({ hasPaymentHeader: true, verifiedAgent: VERIFIED }));
+  assert.equal(v.kind, "agent");
+  assert.match(v.reason, /payment header/);
+});
+
+test("absent verifiedAgent: verdicts are byte-identical to the pre-WBA classifier (regression)", () => {
+  const cases: Array<[Partial<RequestSignals>, Parameters<typeof classify>[1]]> = [
+    [{ userAgent: "GPTBot/1.0" }, undefined],
+    [{ userAgent: "Mozilla/5.0", accept: "text/html" }, undefined],
+    [{ userAgent: "Googlebot/2.1" }, { seoAllowlist: ["googlebot"] }],
+    [{ userAgent: "StealthBot/1.0" }, { chargeList: ["stealthbot"] }],
+    [{ userAgent: "" }, undefined],
+  ];
+  for (const [over, policy] of cases) {
+    const without = classify(signals(over), policy);
+    const withNull = classify(signals({ ...over, verifiedAgent: null }), policy);
+    assert.deepEqual(withNull, without);
+  }
+});

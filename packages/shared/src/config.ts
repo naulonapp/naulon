@@ -124,6 +124,13 @@ export const configSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  // Web Bot Auth: allow http:// + loopback key directories so a LOCAL signer
+  // fixture can serve its directory from a loopback port. Test walks only —
+  // never enable in production (the directory URL is attacker-supplied).
+  BOT_AUTH_ALLOW_HTTP: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 
   // Credits resolution — how the gate maps an article to its author(s).
   // If CREDITS_API_URL is set, the gate fetches `${url}/credits/:slug`.
