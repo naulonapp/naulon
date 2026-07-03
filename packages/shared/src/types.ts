@@ -112,6 +112,8 @@ export type ObservationVerdict =
   | "agent-reread"
   /** An agent got a 402 and presented no payment — the "scrape attempt, blocked". */
   | "denied"
+  /** An agent the publisher explicitly blocked — refused 403, payment or not. */
+  | "blocked"
   /** An agent presented payment that failed verify/settle — never served. */
   | "payment-failed"
   /** An agent paid; content served + license minted. Mirrors an `AttributedEvent`. */
