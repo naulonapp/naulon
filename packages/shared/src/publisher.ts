@@ -121,6 +121,15 @@ export interface PublisherConfig {
    */
   crawlerPolicy?: CrawlerPolicy;
   /**
+   * What the toll covers. Absent / {mode:"prefixes"} → the stock articlePrefixes
+   * matcher (byte-identical). {mode:"site"} → every path tolls, slug = the full
+   * decoded pathname; discovery surfaces (robots/sitemap/feeds/favicon), static
+   * assets, and gate control routes are hard-excluded regardless — tolling
+   * discovery would starve the catalog agents buy from. excludePrefixes adds
+   * publisher-chosen free sections on top (no leading slash, like articlePrefixes).
+   */
+  gateScope?: { mode: "prefixes" } | { mode: "site"; excludePrefixes: string[] };
+  /**
    * Optional hook: additional settlement legs for a priced toll, beyond the author
    * payment. Given the resolved `price` (whole USDC) and `kind`, return any extra
    * direct buyer→recipient legs to settle alongside the author. Each is additive

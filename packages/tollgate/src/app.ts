@@ -244,6 +244,25 @@ function slugFromPath(path: string, prefixes: string[]): string | null {
   return m ? decodeURIComponent(m[1]!) : null;
 }
 
+const STATIC_EXT_RE = /\.(css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|mp4|webm|mp3|pdf|txt|xml|json)$/i;
+const DISCOVERY_RE = /^\/(robots\.txt|sitemap[^/]*|rss[^/]*|atom[^/]*|feed[^/]*|favicon\.ico)$/i;
+
+/**
+ * Site-mode slug: the full decoded pathname, or null for the surfaces that must
+ * stay free — gate control routes, discovery (robots/sitemaps/feeds/favicon),
+ * static assets by extension (deliberately including .txt/.xml/.json: machine-
+ * readable surfaces never toll — the conservative humans/discovery-free bias),
+ * and the publisher's own excludePrefixes.
+ */
+function slugFromSitePath(path: string, excludePrefixes: string[]): string | null {
+  const pathname = path.split(/[?#]/, 1)[0]!;
+  if (pathname.startsWith("/.well-known/") || pathname.startsWith("/licenses/")) return null;
+  if (DISCOVERY_RE.test(pathname) || STATIC_EXT_RE.test(pathname)) return null;
+  const clean = excludePrefixes.filter(Boolean);
+  if (clean.some((p) => pathname === `/${p}` || pathname.startsWith(`/${p}/`))) return null;
+  return decodeURIComponent(pathname);
+}
+
 /**
  * No publisher answers this Host. The reference resolver never gets here (it
  * answers every host); an injected resolver returns undefined for a host it
@@ -359,7 +378,10 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
       return res;
     }
 
-    const slug = slugFromPath(path, publisher.articlePrefixes);
+    const slug =
+      publisher.gateScope?.mode === "site"
+        ? slugFromSitePath(path, publisher.gateScope.excludePrefixes)
+        : slugFromPath(path, publisher.articlePrefixes);
 
     // Non-article routes: pure passthrough (assets, home, RSS...).
     if (!slug) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
