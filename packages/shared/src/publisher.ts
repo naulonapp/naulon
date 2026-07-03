@@ -33,6 +33,33 @@ export interface PayoutLeg {
   amount: string;
 }
 
+/**
+ * Per-publisher crawler policy — the tri-state surface a control plane stores.
+ * UA fragments, matched case-insensitively as substrings (same mechanics as
+ * `seoAllowlist`). Everything unlisted is CHARGED (the stock toll — absence of
+ * this field is byte-identical to today). Fragments are spoofable; verified
+ * crawler identity (Web Bot Auth) is a later hardening that swaps the matcher,
+ * not this shape.
+ */
+export interface CrawlerPolicy {
+  /** Fragments that read FREE. Merged with the deprecated `seoAllowlist`. */
+  allow: string[];
+  /**
+   * Fragments REFUSED outright on gateable routes — 403 even if the caller
+   * presents payment. Checked before classification, so payment intent can
+   * never buy past a block. Wins over `allow` on overlap (fail-safe).
+   */
+  block: string[];
+  /**
+   * Fragments the publisher explicitly CHARGES. The classifier already tolls
+   * agents it recognizes (known-agent UA or declared intent); this list extends
+   * that recognition to crawlers the conservative default would let read free
+   * (browser-shaped or ambiguous UAs). Precedence: block > allow > charge.
+   * Absent → recognition is the classifier's default set, unchanged.
+   */
+  charge?: string[];
+}
+
 export interface PublisherConfig {
   /**
    * Stable identifier for this publisher; tags attributed events and logs. The
@@ -87,6 +114,12 @@ export interface PublisherConfig {
    * global defaults in effect; the single-tenant resolver leaves it unset.
    */
   seoAllowlist?: string[];
+  /**
+   * Tri-state crawler policy (allow / charge-by-default / block). Unset — the
+   * single-tenant default — leaves only `seoAllowlist` + classifier defaults in
+   * effect, byte-identical to before this field existed.
+   */
+  crawlerPolicy?: CrawlerPolicy;
   /**
    * Optional hook: additional settlement legs for a priced toll, beyond the author
    * payment. Given the resolved `price` (whole USDC) and `kind`, return any extra

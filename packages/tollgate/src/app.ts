@@ -39,7 +39,7 @@ import {
   type TollKind,
   type Usdc,
 } from "@naulon/shared";
-import { classify, type RequestSignals } from "./agentDetect.ts";
+import { classify, matchUaFragment, type RequestSignals } from "./agentDetect.ts";
 import {
   buildX402Manifest,
   PAYMENT_LINK_HEADER,
@@ -364,7 +364,34 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     // Non-article routes: pure passthrough (assets, home, RSS...).
     if (!slug) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
 
-    const verdict = classify(signalsFrom(c.req.raw), { seoAllowlist: publisher.seoAllowlist });
+    // Publisher-refused crawlers: 403 BEFORE classification, so payment intent
+    // (classify's first check) can never buy past a block, and before the allow
+    // merge, so block wins an overlap. Gateable routes only — the passthrough
+    // above is untouched. Fragments name bots; a real browser UA never carries
+    // one, so humans-read-free holds.
+    const uaRaw = c.req.header("user-agent") ?? "";
+    const blockedFrag = matchUaFragment(uaRaw, publisher.crawlerPolicy?.block);
+    if (blockedFrag) {
+      observe({
+        id: randomUUID(),
+        publisherId: publisher.id,
+        host,
+        slug,
+        verdict: "blocked",
+        classifiedAs: "agent",
+        classifyReason: `crawler blocked by publisher ("${blockedFrag}")`,
+        agentUa: uaRaw,
+        at: Date.now(),
+      });
+      const res = c.text("This crawler is refused by the publisher.", 403);
+      res.headers.set("X-Naulon-Verdict", `blocked ("${blockedFrag}")`);
+      return res;
+    }
+
+    const verdict = classify(signalsFrom(c.req.raw), {
+      seoAllowlist: [...(publisher.seoAllowlist ?? []), ...(publisher.crawlerPolicy?.allow ?? [])],
+      chargeList: publisher.crawlerPolicy?.charge,
+    });
 
     // Audit plane: emit one observation per gated-route decision (telemetry only,
     // never gates the request). Default sink is off → a no-op, zero cost. A
