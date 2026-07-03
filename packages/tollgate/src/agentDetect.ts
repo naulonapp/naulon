@@ -71,6 +71,17 @@ const KNOWN_AGENT_UA = [
 ];
 
 /**
+ * First fragment (case-insensitive substring) of `fragments` found in `ua`,
+ * else undefined. The one matching primitive the tri-state policy shares with
+ * the allowlist path — swap THIS for verified identity (Web Bot Auth) later.
+ */
+export function matchUaFragment(ua: string, fragments: string[] | undefined): string | undefined {
+  if (!fragments?.length) return undefined;
+  const lower = ua.toLowerCase();
+  return fragments.find((f) => f.length > 0 && lower.includes(f.toLowerCase()));
+}
+
+/**
  * Classify a request as human or agent.
  *
  * TODO(you): implement the core heuristic. A starter is provided so the gate
