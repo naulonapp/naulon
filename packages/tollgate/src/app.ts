@@ -195,7 +195,18 @@ async function proxyToOrigin(
   clientIp: string,
   originUrl: string,
 ): Promise<Response> {
+  const origin = new URL(originUrl);
   const target = new URL(path, originUrl);
+  // `path` is the raw request target (pathname+search). A request line beginning
+  // `//host`, `/\host`, or `///host` is parsed protocol-relative by `new URL()`
+  // and SWAPS the authority — turning the gate into an unauthenticated open proxy
+  // / SSRF (e.g. `//169.254.169.254/…` reaches cloud metadata, `//evil.com/…` is
+  // laundered through the gate). Pin the resolved target to the publisher's own
+  // origin; anything else is a hostile/malformed target, not a real route → 400,
+  // fetch nothing. This is the one choke point every proxied path flows through.
+  if (target.origin !== origin.origin) {
+    return new Response("Bad request.", { status: 400 });
+  }
   const upstream = await fetch(target, {
     method: req.method,
     headers: forwardHeaders(req, clientIp, new URL(originUrl).host),
