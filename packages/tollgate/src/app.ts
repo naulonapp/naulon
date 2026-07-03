@@ -188,6 +188,51 @@ function forwardHeaders(req: Request, clientIp: string, originHost: string): Hea
   return out;
 }
 
+/**
+ * X-Naulon-Verdict values can embed config-derived text (block/charge/allow
+ * fragments, classifier reasons that quote them). Fleet-written configs are
+ * control-char-rejected at the write path, but a self-hosted, hand-written config
+ * is not — and a CR/LF smuggled into a header value is a response-splitting
+ * primitive (or, in runtimes that validate header values, an exception that turns
+ * a served request into a 500). Strip C0 controls + DEL at the one place the text
+ * meets the wire. Exported for direct testing — a live request can't smuggle
+ * CR/LF through header parsing, so the guard is only observable as a unit.
+ */
+export function headerSafe(text: string): string {
+  let out = "";
+  for (const ch of text) {
+    const c = ch.charCodeAt(0);
+    out += c < 32 || c === 127 ? " " : ch;
+  }
+  return out;
+}
+
+/**
+ * Cache discipline for gateable-route decisions. Every response on a gateable
+ * route is User-Agent-dependent — the same URL yields a human 200, an agent 402,
+ * or a blocked 403 — so a shared cache keying on URL alone could serve a human's
+ * 200 to an agent (a free read) or an agent's 402/403 to a human (a paywall on
+ * the open web, the exact failure the classifier is biased against).
+ * `Vary: User-Agent` partitions any compliant cache; it is MERGED into an
+ * origin-set Vary, never clobbering one. Money-bearing states (402 quotes carry
+ * a fresh validity window, 403 blocks, licensed rereads, paid content) also get
+ * `Cache-Control: no-store` — they are per-request artifacts, not documents. The
+ * human free read keeps the origin's own Cache-Control: page cacheability
+ * belongs to the publisher, and Vary alone keeps agents out of that cache entry.
+ * Passthrough routes (suspended, non-article, unknown-article) are untouched —
+ * they serve the same bytes to every caller.
+ */
+function stampGateCacheHeaders(res: Response, opts: { noStore: boolean }): Response {
+  const vary = res.headers.get("vary");
+  const hasUa =
+    vary
+      ?.split(",")
+      .some((v) => v.trim() === "*" || v.trim().toLowerCase() === "user-agent") ?? false;
+  if (!hasUa) res.headers.set("Vary", vary ? `${vary}, User-Agent` : "User-Agent");
+  if (opts.noStore) res.headers.set("Cache-Control", "no-store");
+  return res;
+}
+
 /** Proxy a request to the publisher's origin and return its response verbatim. */
 async function proxyToOrigin(
   req: Request,
@@ -417,8 +462,8 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
         at: Date.now(),
       });
       const res = c.text("This crawler is refused by the publisher.", 403);
-      res.headers.set("X-Naulon-Verdict", `blocked ("${blockedFrag}")`);
-      return res;
+      res.headers.set("X-Naulon-Verdict", headerSafe(`blocked ("${blockedFrag}")`));
+      return stampGateCacheHeaders(res, { noStore: true });
     }
 
     const verdict = classify(signalsFrom(c.req.raw), {
@@ -453,8 +498,8 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     if (verdict.kind === "human") {
       recordObs("served-free");
       const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
-      res.headers.set("X-Naulon-Verdict", `human (${verdict.reason})`);
-      return res;
+      res.headers.set("X-Naulon-Verdict", headerSafe(`human (${verdict.reason})`));
+      return stampGateCacheHeaders(res, { noStore: false });
     }
 
     // Machine. What's it asking for?
@@ -471,7 +516,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
       recordObs("agent-reread", { kind });
       const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
       res.headers.set("X-Naulon-Verdict", "agent reread (license)");
-      return res;
+      return stampGateCacheHeaders(res, { noStore: true });
     }
 
     // Price it.
@@ -488,20 +533,26 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
       // Link header points an agent at the toll manifest (discoverability).
       // The "scrape attempt, blocked" datum: an agent priced out at the 402.
       recordObs("denied", { kind, price: usdc(q.price) });
-      return c.body(null, 402, {
-        [PAYMENT_REQUIRED_HEADER]: header,
-        Link: PAYMENT_LINK_HEADER,
-        "X-Naulon-Verdict": `agent (${verdict.reason})`,
-      });
+      return stampGateCacheHeaders(
+        c.body(null, 402, {
+          [PAYMENT_REQUIRED_HEADER]: header,
+          Link: PAYMENT_LINK_HEADER,
+          "X-Naulon-Verdict": headerSafe(`agent (${verdict.reason})`),
+        }),
+        { noStore: true },
+      );
     }
 
     const result = await verifyAndSettle(payment, legs, now, publisher.id);
     if (!result.ok) {
       recordObs("payment-failed", { kind, price: usdc(q.price) });
-      return c.json({ error: result.error }, 402, {
-        [PAYMENT_REQUIRED_HEADER]: header,
-        Link: PAYMENT_LINK_HEADER,
-      });
+      return stampGateCacheHeaders(
+        c.json({ error: result.error }, 402, {
+          [PAYMENT_REQUIRED_HEADER]: header,
+          Link: PAYMENT_LINK_HEADER,
+        }),
+        { noStore: true },
+      );
     }
 
     // Paid. Build the attributed event (full recursive split).
@@ -568,8 +619,8 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
     if (result.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, result.responseHeader);
     if (licenseJws) res.headers.set(LICENSE_HEADER, licenseJws);
-    res.headers.set("X-Naulon-Verdict", `agent paid (${verdict.reason})`);
-    return res;
+    res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${verdict.reason})`));
+    return stampGateCacheHeaders(res, { noStore: true });
   });
 
   return app;
