@@ -27,8 +27,13 @@ import type { Context } from "hono";
 import { logger } from "hono/logger";
 import {
   activeNetwork,
+  botAuthDirectoryBody,
+  botAuthKeyFromSeed,
+  BOT_AUTH_DIRECTORY_CONTENT_TYPE,
+  BOT_AUTH_DIRECTORY_PATH,
   getConfig,
   mintLicense,
+  signBotAuthDirectory,
   popBoundAddress,
   usdc,
   verifyLicense,
@@ -381,6 +386,30 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
   // Public key set for offline CLT verification. Registered BEFORE the catch-all
   // so it's served by the gate, never proxied. Empty when disabled.
   app.get("/.well-known/naulon-jwks.json", (c) => c.json(licensing ? licensing.jwks : { keys: [] }));
+
+  // Web Bot Auth key directory — OUR signing identity (WBA slice 3). When the
+  // operator configures a signing key, any Web-Bot-Auth verifier (including
+  // this gate's own botAuth.ts — the dogfood loop) can resolve the wayfarer's
+  // Signature-Agent to these keys. The response is itself signed
+  // (tag="http-message-signatures-directory"), the spec's binding of the keys
+  // to the serving host. Gate-level, not per-publisher: this is the OPERATOR's
+  // identity, so no Host resolution — an unknown host still serves it.
+  // Key materialized at boot: a malformed seed fails loud here, never at
+  // request time (config discipline). /.well-known/* is never tolled/proxied.
+  const botAuthKey = cfg.BOT_AUTH_SIGNING_KEY ? botAuthKeyFromSeed(cfg.BOT_AUTH_SIGNING_KEY) : null;
+  app.get(BOT_AUTH_DIRECTORY_PATH, (c) => {
+    if (!botAuthKey) return c.json({ error: "this gate publishes no key directory" }, 404);
+    const host = c.req.header("host") ?? new URL(c.req.url).host;
+    const sig = signBotAuthDirectory(botAuthKey, host);
+    return c.body(botAuthDirectoryBody(botAuthKey), 200, {
+      "content-type": BOT_AUTH_DIRECTORY_CONTENT_TYPE,
+      "signature-input": sig["signature-input"],
+      signature: sig.signature,
+      // Verifiers cache directories themselves (this gate: 6h positive TTL);
+      // mirror that so intermediary caches agree with verifier behavior.
+      "cache-control": "public, max-age=21600",
+    });
+  });
 
   // Self-describing toll: a machine-readable manifest of this publisher's terms
   // (prefixes, price, Arc/USDC, license). Lets an agent discover the gate instead

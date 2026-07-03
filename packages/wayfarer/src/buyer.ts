@@ -7,6 +7,7 @@
  *   - gateway: Circle's GatewayClient does the full deposit-backed 402 flow.
  */
 import { activeNetwork, getConfig, supportsMemo } from "@naulon/shared";
+import { agentFetch } from "./sign.ts";
 
 const AGENT_UA = "naulon-wayfarer/0.1";
 
@@ -141,7 +142,7 @@ export async function probePrice(
   kind: "read" | "citation",
   agentId: string,
 ): Promise<Quoted | null> {
-  const res = await fetch(url, {
+  const res = await agentFetch(url, {
     headers: { "user-agent": AGENT_UA, "x-naulon-agent": agentId, "x-naulon-kind": kind },
   });
   if (res.status !== 402) return null;
@@ -218,7 +219,7 @@ export async function rereadWithLicense(
     "x-naulon-license": license,
   };
   if (proof) headers["x-naulon-proof"] = proof;
-  const res = await fetch(url, { headers });
+  const res = await agentFetch(url, { headers });
   if (!res.ok) return { ok: false, error: `re-read returned ${res.status}` };
   return { ok: true, content: await res.text(), paidUsdc: 0, license };
 }

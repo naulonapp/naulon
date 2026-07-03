@@ -10,8 +10,9 @@
  * Precedence (selectSource): RSS_URL > PUBLISHER_URL > CATALOG_URL > demo.
  */
 import { getConfig } from "@naulon/shared";
-import type { Candidate } from "./types.ts";
 import { rssToCandidates } from "./rss.ts";
+import { agentFetch } from "./sign.ts";
+import type { Candidate } from "./types.ts";
 
 export interface DiscoverySource {
   /** Free teasers for a topic. `topic` may filter (catalog) or be ignored (rss). */
@@ -49,7 +50,7 @@ export function catalogSource(url: string): DiscoverySource {
   const base = url.replace(/\/$/, "");
   return {
     async discover(topic: string): Promise<Candidate[]> {
-      const res = await fetch(`${base}?q=${encodeURIComponent(topic)}`, {
+      const res = await agentFetch(`${base}?q=${encodeURIComponent(topic)}`, {
         headers: { "user-agent": AGENT_UA },
       });
       if (!res.ok) return DEMO_CATALOG;
@@ -66,7 +67,7 @@ export function catalogSource(url: string): DiscoverySource {
 export function rssSource(rssUrl: string): DiscoverySource {
   return {
     async discover(): Promise<Candidate[]> {
-      const res = await fetch(rssUrl, {
+      const res = await agentFetch(rssUrl, {
         headers: { "user-agent": AGENT_UA, accept: "application/rss+xml, application/xml" },
       });
       if (!res.ok) return DEMO_CATALOG;

@@ -131,6 +131,16 @@ export const configSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  // Web Bot Auth SIGNING identity (slice 3 — the toll's own species marker).
+  // A base64url 32-byte Ed25519 seed (generate: scripts/wba-keygen.mjs). When
+  // set, the gate serves + self-signs the key directory at
+  // /.well-known/http-message-signatures-directory, and the wayfarer signs its
+  // outbound requests. Unset ⇒ both surfaces are dark (byte-identical traffic).
+  BOT_AUTH_SIGNING_KEY: z.string().optional(),
+  // The directory host the wayfarer advertises in Signature-Agent — it must
+  // actually serve OUR directory (e.g. "naulon.app"). An http://127.0.0.1:port
+  // form is a local-walk fixture (needs the verifying gate's BOT_AUTH_ALLOW_HTTP).
+  BOT_AUTH_SIGNATURE_AGENT: z.string().optional(),
 
   // Credits resolution — how the gate maps an article to its author(s).
   // If CREDITS_API_URL is set, the gate fetches `${url}/credits/:slug`.

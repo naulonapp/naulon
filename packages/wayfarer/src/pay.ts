@@ -4,6 +4,7 @@
  * → PAYMENT-RESPONSE), but signs a simple offline signature the mock tollgate
  * accepts, so the whole loop runs with no chain, wallet, or Circle access.
  */
+import { agentFetch } from "./sign.ts";
 import { getWallet } from "./wallet.ts";
 import {
   AGENT_UA,
@@ -40,7 +41,7 @@ export function mockBuyer(): Buyer {
         amount: req.amount,
         nonce,
       }));
-      const res = await fetch(url, {
+      const res = await agentFetch(url, {
         headers: {
           "user-agent": AGENT_UA,
           "x-naulon-agent": wallet.address,

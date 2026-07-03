@@ -15,6 +15,7 @@ import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
 import { decodeHeld, isLive, loadHeld, saveHeld } from "./licenseStore.ts";
 import { buildPopProof } from "./pop.ts";
+import { agentFetch } from "./sign.ts";
 import type { AppraisedCandidate, PricedCandidate, RunResult, Source } from "./types.ts";
 import { getWallet } from "./wallet.ts";
 
@@ -32,7 +33,7 @@ export function articleUrl(base: string, slug: string): string {
 /** Fetch the gate's public key set so the agent can verify the receipts it holds. */
 export async function fetchJwks(base: string): Promise<JwkSet | null> {
   try {
-    const res = await fetch(`${base.replace(/\/$/, "")}/.well-known/naulon-jwks.json`);
+    const res = await agentFetch(`${base.replace(/\/$/, "")}/.well-known/naulon-jwks.json`);
     if (!res.ok) return null;
     const set = (await res.json()) as JwkSet;
     return set.keys?.length ? set : null;

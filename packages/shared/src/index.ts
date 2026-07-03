@@ -10,3 +10,4 @@ export * from "./networks.ts";
 export * from "./eip3009.ts";
 export * from "./credits.ts";
 export * from "./settlementEmit.ts";
+export * from "./botAuthSign.ts";
