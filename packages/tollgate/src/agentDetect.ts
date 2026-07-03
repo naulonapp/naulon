@@ -15,6 +15,8 @@
  * arms race entirely.
  */
 
+import type { VerifiedAgent } from "./botAuth.ts";
+
 export type Verdict = { kind: "human" | "agent"; reason: string; confidence: number };
 
 /** Request facts the classifier reasons over (framework-agnostic). */
@@ -27,6 +29,13 @@ export interface RequestSignals {
   /** Accept header — browsers ask for text/html; many bots don't. */
   accept: string;
   headers: Record<string, string>;
+  /**
+   * Cryptographically verified Web Bot Auth identity (RFC 9421/Ed25519), when
+   * the request carried a valid signature. Computed once in app.ts — only for
+   * requests that present the three signature headers; everyone else pays zero
+   * cost and classifies exactly as before.
+   */
+  verifiedAgent?: VerifiedAgent | null;
 }
 
 /** Per-publisher classification policy the gate supplies from `PublisherConfig`. */
@@ -137,6 +146,24 @@ export function classify(signals: RequestSignals, policy?: ClassifyPolicy): Verd
   }
   if (signals.declaredAgentId) {
     return { kind: "agent", reason: `declared agent id ${signals.declaredAgentId}`, confidence: 0.95 };
+  }
+
+  // 1b) Verified identity (Web Bot Auth). A valid Ed25519 signature proves WHO
+  //     is calling, keyed to the operator's own directory — it outranks every
+  //     UA-derived signal in BOTH directions: a verified allow is the only
+  //     spoof-proof allowlist (UA rotation can't fake a signature), and a
+  //     verified agent is charged even behind a browser-shaped UA (rotation
+  //     can't dodge it). Same fragment vocabulary as the UA lists, matched
+  //     against the verified directory host — `allow: ["chatgpt.com"]` just
+  //     works, no new config shape. Publisher block runs in app.ts BEFORE
+  //     classification (block beats payment) and covers the verified id there.
+  if (signals.verifiedAgent) {
+    const va = signals.verifiedAgent.agent;
+    const allowed = matchUaFragment(va, policy?.seoAllowlist);
+    if (allowed) {
+      return { kind: "human", reason: `seo allowlist matched verified agent "${allowed}"`, confidence: 0.98 };
+    }
+    return { kind: "agent", reason: `verified web-bot-auth (${va})`, confidence: 0.98 };
   }
 
   const ua = signals.userAgent.toLowerCase();
