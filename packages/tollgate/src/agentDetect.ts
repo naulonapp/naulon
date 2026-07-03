@@ -52,23 +52,39 @@ export interface ClassifyPolicy {
 
 /**
  * Obvious crawler/agent UA fragments. Extend freely — this is a weak signal.
+ * Verified against the operators' own published UA docs 2026-07-03 (Anthropic:
+ * ClaudeBot/Claude-User/Claude-SearchBot; OpenAI: GPTBot/ChatGPT-User/
+ * OAI-SearchBot/OAI-AdsBot). Dropped as undocumented: claude-web, anthropic-ai.
+ * Dropped as unmatchable: google-extended (a robots.txt-only token — Google
+ * documents NO UA string for it, so a UA fragment could never fire).
  *
- * Note: pure search-indexer UAs (googlebot, bingbot, …) are deliberately NOT here.
- * Tolling a search crawler silently deindexes the publisher — the opposite of what
- * they want — so indexing reads free by default. A publisher frees additional
- * crawlers (or re-affirms search ones) via `ClassifyPolicy.seoAllowlist`.
+ * Two kinds of machine read are charged here:
+ *   - training/bulk crawlers (gptbot, claudebot, ccbot, bytespider, amazonbot,
+ *     applebot-extended, meta-externalagent);
+ *   - user-triggered assistant fetches (chatgpt-user, claude-user,
+ *     perplexity-user, perplexitybot) — the citation moment itself. These UAs are
+ *     machine-only (no human browser carries them), so charging them cannot toll
+ *     a human; an x402-capable agent answers the 402 by paying, which is the
+ *     product working, not a wall.
+ *
+ * Note: pure search-indexer UAs (googlebot, bingbot, claude-searchbot,
+ * oai-searchbot, …) are deliberately NOT here. Tolling a search crawler silently
+ * deindexes the publisher — the opposite of what they want — so indexing reads
+ * free by default. A publisher frees additional crawlers (or re-affirms search
+ * ones) via `ClassifyPolicy.seoAllowlist`, or charges one via `chargeList`.
  */
 const KNOWN_AGENT_UA = [
   "gptbot",
+  "chatgpt-user",
   "claudebot",
-  "claude-web",
-  "anthropic-ai",
+  "claude-user",
   "perplexitybot",
+  "perplexity-user",
   "ccbot",
-  "google-extended",
   "bytespider",
   "amazonbot",
   "applebot-extended",
+  "meta-externalagent",
   "python-requests",
   "node-fetch",
   "axios",

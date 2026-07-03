@@ -55,3 +55,33 @@ test("an empty/undefined allowlist changes nothing (single-tenant default path)"
   assert.equal(classify(signals({ userAgent: "curl/8.0" })).kind, "agent");
   assert.equal(classify(signals({ userAgent: "curl/8.0" }), {}).kind, "agent");
 });
+
+test("user-triggered assistant fetches are agents — the citation moment is charged", () => {
+  // Live-verified UA tokens (operator docs, 2026-07-03): these are machine-only
+  // UAs; no human browser carries them, so charging cannot toll a human.
+  for (const ua of [
+    "Mozilla/5.0 AppleWebKit/537.36; compatible; ChatGPT-User/1.0; +https://openai.com/bot",
+    "Mozilla/5.0 (compatible; Claude-User/1.0; +Claude-User@anthropic.com)",
+    "Mozilla/5.0 (compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user)",
+    "meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+  ]) {
+    assert.equal(classify(signals({ userAgent: ua })).kind, "agent", ua);
+  }
+});
+
+test("AI search indexers read free like classic search — tolling them deindexes", () => {
+  for (const ua of [
+    "Mozilla/5.0 (compatible; Claude-SearchBot/1.0; +Claude-SearchBot@anthropic.com)",
+    "Mozilla/5.0 AppleWebKit/537.36; compatible; OAI-SearchBot/1.3; +https://openai.com/searchbot",
+  ]) {
+    assert.equal(classify(signals({ userAgent: ua, accept: "text/html" })).kind, "human", ua);
+  }
+});
+
+test("dropped stale fragments no longer classify — claude-web / anthropic-ai are undocumented", () => {
+  // These tokens left Anthropic's published UA list; keeping them would be a
+  // registry that lies. A browser-shaped request carrying one reads free.
+  for (const ua of ["claude-web/1.0", "anthropic-ai/1.0"]) {
+    assert.equal(classify(signals({ userAgent: ua, accept: "text/html" })).kind, "human", ua);
+  }
+});
