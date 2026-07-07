@@ -387,6 +387,20 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
   // so it's served by the gate, never proxied. Empty when disabled.
   app.get("/.well-known/naulon-jwks.json", (c) => c.json(licensing ? licensing.jwks : { keys: [] }));
 
+  // Edge-identity probe: a host-independent 200 that ONLY a naulon gate serves. It lets a
+  // caller confirm a custom domain actually ROUTES through the gate — not merely that its
+  // owner proved control. This matters because routing can't be verified by DNS inspection
+  // when the gate is fronted by a SaaS edge (e.g. Cloudflare for SaaS): an apex points via a
+  // flattened CNAME onto the edge's SHARED anycast IPs, indistinguishable from the customer
+  // proxying through their own account. Only an actual request that returns this naulon marker
+  // is definitive. Resolver-free and registered BEFORE the catch-all (like /healthz): reaching
+  // this route means traffic reached THIS gate. `host` echoes the Host the gate saw, so the
+  // caller can confirm it probed the intended domain (and not, say, the bare gate).
+  app.get("/.well-known/naulon-edge", (c) => {
+    const host = c.req.header("host") ?? new URL(c.req.url).host;
+    return c.json({ gate: "naulon", host });
+  });
+
   // Web Bot Auth key directory — OUR signing identity (WBA slice 3). When the
   // operator configures a signing key, any Web-Bot-Auth verifier (including
   // this gate's own botAuth.ts — the dogfood loop) can resolve the wayfarer's
