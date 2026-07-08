@@ -106,6 +106,15 @@ export interface PublisherConfig {
    */
   settlementSecret?: string;
   /**
+   * Static per-tenant credential the gate presents to the origin on every proxied
+   * fetch, as `X-Naulon-Origin-Auth: <value>`, so an origin behind its own bot/rate
+   * edge can recognize fleet traffic and skip challenging it. Undefined = origin
+   * requests unauthenticated (default; fine for origins with no edge, or that
+   * allowlist the fleet by IP instead). Sent ONLY when originUrl is https — never
+   * leak a bearer over cleartext.
+   */
+  originAuthSecret?: string;
+  /**
    * Verified search / discovery crawler UA fragments that read FREE for this
    * publisher — the SEO allowlist. A request whose user-agent contains one of
    * these is classified human (a discovery read), so a publisher's indexing is

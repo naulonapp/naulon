@@ -157,6 +157,8 @@ const STRIP_HEADERS = new Set([
   "x-naulon-verdict",
   "x-naulon-license",
   "x-naulon-proof",
+  // fleet→origin auth: gate-injected only (see proxyToOrigin), never smuggled inbound
+  "x-naulon-origin-auth",
   // gate-controlled forwarding facts (set below, never trusted from the client)
   "forwarded",
   "x-forwarded-for",
@@ -261,6 +263,7 @@ async function proxyToOrigin(
   path: string,
   clientIp: string,
   originUrl: string,
+  originAuthSecret?: string,
 ): Promise<Response> {
   const origin = new URL(originUrl);
   const target = new URL(path, originUrl);
@@ -274,9 +277,15 @@ async function proxyToOrigin(
   if (target.origin !== origin.origin) {
     return new Response("Bad request.", { status: 400 });
   }
+  const outHeaders = forwardHeaders(req, clientIp, new URL(originUrl).host);
+  // Authenticated origin pull: present the per-tenant secret so an origin behind its
+  // own bot/rate edge recognizes fleet traffic. https only — never leak a bearer over
+  // cleartext. The header was stripped from the inbound request (STRIP_HEADERS), so
+  // this is the only place it can be set: a client can't spoof it.
+  if (originAuthSecret && origin.protocol === "https:") outHeaders.set("x-naulon-origin-auth", originAuthSecret);
   const upstream = await fetch(target, {
     method: req.method,
-    headers: forwardHeaders(req, clientIp, new URL(originUrl).host),
+    headers: outHeaders,
     body: ["GET", "HEAD"].includes(req.method) ? undefined : await req.arrayBuffer(),
     redirect: "manual",
   });
@@ -489,7 +498,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     // live site or turn its readers away. The gate just stops earning until it's
     // lifted. (Unknown host already failed closed above; this is a KNOWN host.)
     if (publisher.suspended) {
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
+      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
       res.headers.set("X-Naulon-Verdict", "suspended (degraded passthrough)");
       return res;
     }
@@ -500,7 +509,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
         : slugFromPath(path, publisher.articlePrefixes);
 
     // Non-article routes: pure passthrough (assets, home, RSS...).
-    if (!slug) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
+    if (!slug) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
 
     // Web Bot Auth: verify cryptographic identity once per gateable request.
     // Requests without the three signature headers short-circuit to "absent"
@@ -582,7 +591,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     // the paid/reread paths so the verdict is observable on every gated route.
     if (verdict.kind === "human") {
       recordObs("served-free");
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
+      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
       res.headers.set("X-Naulon-Verdict", headerSafe(`human (${verdict.reason})`));
       return stampGateCacheHeaders(res, { noStore: false });
     }
@@ -599,14 +608,14 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
       (await licenseEntitlesRead(presentedLicense, slug, kind, c.req.raw, publisher.licenseIdentity))
     ) {
       recordObs("agent-reread", { kind });
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
+      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
       res.headers.set("X-Naulon-Verdict", "agent reread (license)");
       return stampGateCacheHeaders(res, { noStore: true });
     }
 
     // Price it.
     const q = await quote(publisher, slug, kind);
-    if (!q) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl); // unknown article — don't gate.
+    if (!q) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret); // unknown article — don't gate.
 
     const now = Date.now();
     const resourceUrl = new URL(c.req.url).toString();
@@ -701,7 +710,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     // Audit plane: the paid outcome on the same timeline as denials/free reads.
     recordObs("paid", { kind: q.kind, price: usdc(q.price) });
 
-    const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl);
+    const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
     if (result.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, result.responseHeader);
     if (licenseJws) res.headers.set(LICENSE_HEADER, licenseJws);
     res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${verdict.reason})`));
