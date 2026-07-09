@@ -257,13 +257,34 @@ function stampGateCacheHeaders(res: Response, opts: { noStore: boolean }): Respo
   return res;
 }
 
+/**
+ * The outcome of one upstream proxy fetch — status + an optional mitigation
+ * marker (the first present of `x-vercel-mitigated` / `cf-mitigated`). Purely
+ * advisory telemetry: the gate itself does nothing with it beyond firing
+ * `onUpstreamOutcome`. See `createApp`'s options.
+ */
+export interface UpstreamOutcome {
+  status: number;
+  marker?: string;
+}
+
+/**
+ * Response headers a fronting edge (Vercel, Cloudflare) sets when it mitigated
+ * a request (rate-limited, challenged) rather than passing it through cleanly.
+ * Checked in order; the first present header's NAME (not value) is the marker —
+ * a downstream host cares that mitigation happened, not the edge-specific detail.
+ */
+const MITIGATION_MARKERS = ["x-vercel-mitigated", "cf-mitigated"] as const;
+
 /** Proxy a request to the publisher's origin and return its response verbatim. */
 async function proxyToOrigin(
   req: Request,
   path: string,
   clientIp: string,
   originUrl: string,
-  originAuthSecret?: string,
+  originAuthSecret: string | undefined,
+  publisherId: string,
+  onUpstreamOutcome: ((publisherId: string, outcome: UpstreamOutcome) => void) | undefined,
 ): Promise<Response> {
   const origin = new URL(originUrl);
   const target = new URL(path, originUrl);
@@ -289,6 +310,17 @@ async function proxyToOrigin(
     body: ["GET", "HEAD"].includes(req.method) ? undefined : await req.arrayBuffer(),
     redirect: "manual",
   });
+  if (onUpstreamOutcome) {
+    const marker = MITIGATION_MARKERS.find((h) => upstream.headers.has(h));
+    // Never let a telemetry callback throw into the proxy path — it's advisory
+    // only, and a bug in a downstream host's handler must not turn a served
+    // response into a 500.
+    try {
+      onUpstreamOutcome(publisherId, { status: upstream.status, marker });
+    } catch {
+      /* advisory only */
+    }
+  }
   // Clone into a fresh, mutable Headers (fetch's are immutable once attached to
   // a Response) and drop encoding/length — fetch already decoded the body.
   const headers = new Headers(upstream.headers);
@@ -371,7 +403,23 @@ function handleUnknownHost(c: Context, _host: string): Response {
  * injecting its own resolver, without forking this core. Operating many publishers
  * from one gate (onboarding, isolation, per-publisher drains) is out of scope here.
  */
-export function createApp(resolver: PublisherResolver = envPublisherResolver()): Hono {
+export interface CreateAppOptions {
+  /**
+   * Optional telemetry seam: fired after every upstream proxy fetch with the
+   * resolved publisher id + `UpstreamOutcome`. The gate does nothing with this
+   * itself — it's for a downstream host (e.g. a multi-tenant control plane) to
+   * observe throttle/mitigation signals per publisher. Never throws into the
+   * proxy path (wrapped in try/catch at the call site). Omitting it is
+   * byte-identical to before this option existed.
+   */
+  onUpstreamOutcome?: (publisherId: string, outcome: UpstreamOutcome) => void;
+}
+
+export function createApp(
+  resolver: PublisherResolver = envPublisherResolver(),
+  opts?: CreateAppOptions,
+): Hono {
+  const onUpstreamOutcome = opts?.onUpstreamOutcome;
   const app = new Hono();
   app.use("*", logger());
   app.use("*", rateLimit());
@@ -498,7 +546,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     // live site or turn its readers away. The gate just stops earning until it's
     // lifted. (Unknown host already failed closed above; this is a KNOWN host.)
     if (publisher.suspended) {
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
+      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
       res.headers.set("X-Naulon-Verdict", "suspended (degraded passthrough)");
       return res;
     }
@@ -509,7 +557,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
         : slugFromPath(path, publisher.articlePrefixes);
 
     // Non-article routes: pure passthrough (assets, home, RSS...).
-    if (!slug) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
+    if (!slug) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
 
     // Web Bot Auth: verify cryptographic identity once per gateable request.
     // Requests without the three signature headers short-circuit to "absent"
@@ -591,7 +639,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     // the paid/reread paths so the verdict is observable on every gated route.
     if (verdict.kind === "human") {
       recordObs("served-free");
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
+      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
       res.headers.set("X-Naulon-Verdict", headerSafe(`human (${verdict.reason})`));
       return stampGateCacheHeaders(res, { noStore: false });
     }
@@ -608,14 +656,14 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
       (await licenseEntitlesRead(presentedLicense, slug, kind, c.req.raw, publisher.licenseIdentity))
     ) {
       recordObs("agent-reread", { kind });
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
+      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
       res.headers.set("X-Naulon-Verdict", "agent reread (license)");
       return stampGateCacheHeaders(res, { noStore: true });
     }
 
     // Price it.
     const q = await quote(publisher, slug, kind);
-    if (!q) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret); // unknown article — don't gate.
+    if (!q) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome); // unknown article — don't gate.
 
     const now = Date.now();
     const resourceUrl = new URL(c.req.url).toString();
@@ -710,7 +758,7 @@ export function createApp(resolver: PublisherResolver = envPublisherResolver()):
     // Audit plane: the paid outcome on the same timeline as denials/free reads.
     recordObs("paid", { kind: q.kind, price: usdc(q.price) });
 
-    const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret);
+    const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
     if (result.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, result.responseHeader);
     if (licenseJws) res.headers.set(LICENSE_HEADER, licenseJws);
     res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${verdict.reason})`));
