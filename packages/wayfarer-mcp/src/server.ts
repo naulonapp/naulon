@@ -194,6 +194,11 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // wallet), mirroring the budget envelope.
   // Per-session override wins; else the env default (stdio funnel unchanged).
   const cloudSigner = opts.signer ?? cloudSignerFromEnv();
+  // The buyer identity a 402 quote / license is bound to. On the hosted path this MUST be the
+  // cloud session EOA that actually pays (`cloudSigner.address`) — NOT `getWallet()`, which on a
+  // custody-free deploy (no BUYER_PRIVATE_KEY) is a throwaway dev key, so the quote would bind to
+  // an identity the buyer never pays from. BYO-key path: fall back to the env wallet, unchanged.
+  const payerAddress = (): string => cloudSigner?.address ?? getWallet().address;
   // This session's gate: the injected fleet tenant (BUY-4.2) wins over env TOLLGATE_URL.
   // A function so the env default stays fresh per call when no override is supplied.
   // Resolved server-side, never from a tool arg — the model can't aim a payment off it.
@@ -357,7 +362,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ slug }) => {
-      const quoted = await probePrice(slugUrl(slug), KIND, getWallet().address);
+      const quoted = await probePrice(slugUrl(slug), KIND, payerAddress());
       if (!quoted) {
         return structured({
           gated: false,
@@ -430,7 +435,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // Quote first and gate on the SESSION BUDGET before any spend. The price is the
       // buyer's true total across legs; refusing here is the budget ceiling (the
       // on-chain insufficient-funds + toll-moved-at-pay tolerance are BUY-1.4).
-      const quoted = await probePrice(slugUrl(slug), KIND, getWallet().address);
+      const quoted = await probePrice(slugUrl(slug), KIND, payerAddress());
       if (!quoted) {
         return structured({
           ok: false,

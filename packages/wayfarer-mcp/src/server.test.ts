@@ -577,6 +577,37 @@ test("BUY-4.0: an injected signer is used to pay (no env private key involved)",
   });
 });
 
+test("BUY-4.0: the hosted probe binds the quote to the injected signer's address, not getWallet()'s dev key", async () => {
+  // Regression: on the custody-free path (no BUYER_PRIVATE_KEY), getWallet() returns a THROWAWAY dev
+  // key, so probing the 402 with getWallet().address bound the quote/license to an identity the buyer
+  // never pays from. The probe must carry the injected session EOA (`x-naulon-agent`) instead.
+  let probedAgent: string | undefined;
+  const gate = await standGate((req, res) => {
+    probedAgent = req.headers["x-naulon-agent"] as string | undefined;
+    res.writeHead(402, { "payment-required": paymentRequired("5000"), "content-type": "application/json" });
+    res.end("{}");
+  });
+  try {
+    await withEnv({ BUYER_PRIVATE_KEY: undefined }, async () => {
+      const spy: MemoSigner = {
+        address: "0x000000000000000000000000000000000000bEEF",
+        async signTypedData() {
+          return `0x${"11".repeat(65)}` as `0x${string}`;
+        },
+      };
+      const client = await connectedClientWith({ signer: spy, tollgateUrl: gate.url });
+      await client.callTool({ name: "naulon_quote", arguments: { slug: "priced" } });
+      assert.equal(
+        probedAgent?.toLowerCase(),
+        "0x000000000000000000000000000000000000beef",
+        "the hosted probe binds to the session EOA (cloudSigner.address), not the dev BYO key",
+      );
+    });
+  } finally {
+    await gate.close();
+  }
+});
+
 // ── BUY-4.2 — per-session tollgateUrl targets a specific fleet gate ────────────
 // The hosted cloud serves ONE process for MANY buyer sessions, and each session
 // settles into a specific fleet tenant's gate (the moat: own both ends of the
