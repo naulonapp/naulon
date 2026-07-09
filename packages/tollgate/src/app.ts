@@ -42,17 +42,10 @@ import {
   type TollKind,
   type Usdc,
 } from "@naulon/shared";
-import { classify, matchUaFragment } from "./agentDetect.ts";
-import { verifyBotAuth } from "./botAuth.ts";
 import {
   decide,
-  licenseEntitlesRead,
-  requestFactsFrom,
-  signalsFrom,
-  slugFromPath,
-  slugFromSitePath,
   LICENSE_HEADER,
-  type Decision,
+  type DecideObs,
 } from "./decide.ts";
 import {
   buildX402Manifest,
@@ -93,10 +86,8 @@ export {
 } from "./x402.ts";
 export type { TollKind } from "@naulon/shared";
 import {
-  build402,
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
-  PAYMENT_SIGNATURE_HEADER,
   verifyAndSettle,
 } from "./x402.ts";
 
@@ -454,218 +445,171 @@ export function createApp(
       return res;
     }
 
-    const slug =
-      publisher.gateScope?.mode === "site"
-        ? slugFromSitePath(path, publisher.gateScope.excludePrefixes)
-        : slugFromPath(path, publisher.articlePrefixes);
-
-    // Non-article routes: pure passthrough (assets, home, RSS...).
-    if (!slug) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
-
-    // Web Bot Auth: verify cryptographic identity once per gateable request.
-    // Requests without the three signature headers short-circuit to "absent"
-    // before any async work — zero cost for the entire unsigned world. Fail-open
-    // discipline lives in the verifier: "invalid" (a PRESENTED signature that is
-    // wrong) still serves via the UA path but is stamped `sigInvalid` on the
-    // observation — masquerade telemetry no proxy-side product can give an
-    // origin-level publisher.
-    const botAuth = await verifyBotAuth(requestFactsFrom(c.req.raw, host), {
-      allowInsecureHttp: cfg.BOT_AUTH_ALLOW_HTTP,
+    // One decision path — the SAME verdict the `@naulon/sdk` in-app middleware
+    // reaches from a web Request. `decide()` is side-effect-free: it classifies,
+    // checks Bot-Auth + a presented license, prices, and (for a machine) builds the
+    // 402 legs/header — but never observes, proxies, or settles. The gate owns
+    // those effects here. `now` is computed ONCE and threaded through decide()'s
+    // build402 AND the settle/event/mint tail, so the advertised validity window
+    // and the settled payment share one timestamp.
+    const now = Date.now();
+    const d = await decide({
+      raw: c.req.raw,
+      host,
+      path,
+      publisher,
+      now,
+      quote,
+      botAuthOpts: { allowInsecureHttp: cfg.BOT_AUTH_ALLOW_HTTP },
     });
-    const verifiedAgent = botAuth.status === "verified" ? botAuth.agent : null;
-    const sigInvalid = botAuth.status === "invalid" ? true : undefined;
 
-    // Publisher-refused crawlers: 403 BEFORE classification, so payment intent
-    // (classify's first check) can never buy past a block, and before the allow
-    // merge, so block wins an overlap. Gateable routes only — the passthrough
-    // above is untouched. Fragments name bots; a real browser UA never carries
-    // one, so humans-read-free holds. The same fragments match the VERIFIED
-    // identity too — a blocked operator cannot dodge the block by UA rotation.
-    const uaRaw = c.req.header("user-agent") ?? "";
-    const blockedFrag =
-      matchUaFragment(uaRaw, publisher.crawlerPolicy?.block) ??
-      (verifiedAgent ? matchUaFragment(verifiedAgent.agent, publisher.crawlerPolicy?.block) : undefined);
-    if (blockedFrag) {
+    // Audit plane: one observation per gated-route decision, built from the facts
+    // decide() carried back (telemetry only, never gates). Default sink off → no-op.
+    // `at` is stamped per emit, exactly as before the extraction.
+    const emitObs = (obs: DecideObs, v: ObservationVerdict, extra?: { kind?: TollKind; price?: Usdc }): void =>
       observe({
         id: randomUUID(),
         publisherId: publisher.id,
         host,
-        slug,
-        verdict: "blocked",
-        classifiedAs: "agent",
-        classifyReason: `crawler blocked by publisher ("${blockedFrag}")`,
-        agentUa: uaRaw,
-        verified: verifiedAgent ? true : undefined,
-        verifiedAgent: verifiedAgent?.agent,
-        sigInvalid,
-        at: Date.now(),
-      });
-      const res = c.text("This crawler is refused by the publisher.", 403);
-      res.headers.set("X-Naulon-Verdict", headerSafe(`blocked ("${blockedFrag}")`));
-      return stampGateCacheHeaders(res, { noStore: true });
-    }
-
-    const verdict = classify(
-      { ...signalsFrom(c.req.raw), verifiedAgent },
-      {
-        seoAllowlist: [...(publisher.seoAllowlist ?? []), ...(publisher.crawlerPolicy?.allow ?? [])],
-        chargeList: publisher.crawlerPolicy?.charge,
-      },
-    );
-
-    // Audit plane: emit one observation per gated-route decision (telemetry only,
-    // never gates the request). Default sink is off → a no-op, zero cost. A
-    // multi-tenant deploy turns it on to see who was served free / denied / paid —
-    // the negative space the settlement ledger can't record. publisher.id and the
-    // classifier verdict are known here; price/kind are added once priced.
-    const agentUa = c.req.header("user-agent");
-    const recordObs = (v: ObservationVerdict, extra?: { kind?: TollKind; price?: Usdc }): void =>
-      observe({
-        id: randomUUID(),
-        publisherId: publisher.id,
-        host,
-        slug,
+        slug: obs.slug,
         kind: extra?.kind,
         verdict: v,
-        classifiedAs: verdict.kind,
-        classifyReason: verdict.reason,
-        agentUa,
-        verified: verifiedAgent ? true : undefined,
-        verifiedAgent: verifiedAgent?.agent,
-        sigInvalid,
+        classifiedAs: obs.classifiedAs,
+        classifyReason: obs.classifyReason,
+        agentUa: obs.agentUa,
+        verified: obs.verified,
+        verifiedAgent: obs.verifiedAgent,
+        sigInvalid: obs.sigInvalid,
         price: extra?.price,
         at: Date.now(),
       });
 
-    // Humans read free, forever. Set the verdict on the proxied Response itself
-    // (a fresh Response from proxyToOrigin doesn't inherit c.header()), matching
-    // the paid/reread paths so the verdict is observable on every gated route.
-    if (verdict.kind === "human") {
-      recordObs("served-free");
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
-      res.headers.set("X-Naulon-Verdict", headerSafe(`human (${verdict.reason})`));
-      return stampGateCacheHeaders(res, { noStore: false });
+    switch (d.kind) {
+      // Non-article OR unknown-article: pure passthrough, no observation.
+      case "passthrough":
+        return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
+
+      // Publisher-refused crawler: 403 before any content leaves.
+      case "blocked": {
+        emitObs(d.obs, "blocked");
+        const res = c.text("This crawler is refused by the publisher.", 403);
+        res.headers.set("X-Naulon-Verdict", headerSafe(`blocked ("${d.frag}")`));
+        return stampGateCacheHeaders(res, { noStore: true });
+      }
+
+      // Humans read free, forever. Set the verdict on the proxied Response itself
+      // (a fresh Response from proxyToOrigin doesn't inherit c.header()).
+      case "free": {
+        emitObs(d.obs, "served-free");
+        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
+        res.headers.set("X-Naulon-Verdict", headerSafe(d.verdict));
+        return stampGateCacheHeaders(res, { noStore: false });
+      }
+
+      // A valid license scoped to this slug+kind re-reads free.
+      case "reread": {
+        emitObs(d.obs, "agent-reread", { kind: d.tollKind });
+        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
+        res.headers.set("X-Naulon-Verdict", "agent reread (license)");
+        return stampGateCacheHeaders(res, { noStore: true });
+      }
+
+      // Machine, no payment: 402 with the requirement in the PAYMENT-REQUIRED
+      // header. Link points an agent at the toll manifest (discoverability).
+      case "payment-required":
+        emitObs(d.obs, "denied", { kind: d.tollKind, price: usdc(d.quote.price) });
+        return stampGateCacheHeaders(
+          c.body(null, 402, {
+            [PAYMENT_REQUIRED_HEADER]: d.header,
+            Link: PAYMENT_LINK_HEADER,
+            "X-Naulon-Verdict": headerSafe(`agent (${d.obs.classifyReason})`),
+          }),
+          { noStore: true },
+        );
+
+      // Machine WITH a payment: verify + settle (custody-free), then serve.
+      case "payment-presented": {
+        const q = d.quote;
+        const result = await verifyAndSettle(d.payment, d.legs, now, publisher.id);
+        if (!result.ok) {
+          emitObs(d.obs, "payment-failed", { kind: d.tollKind, price: usdc(q.price) });
+          return stampGateCacheHeaders(
+            c.json({ error: result.error }, 402, {
+              [PAYMENT_REQUIRED_HEADER]: d.header,
+              Link: PAYMENT_LINK_HEADER,
+            }),
+            { noStore: true },
+          );
+        }
+
+        // Paid. Build the attributed event (full recursive split).
+        const payerResolved = /^0x[0-9a-fA-F]{40}$/.test(result.payer ?? "") ? result.payer! : ZERO_ADDRESS;
+        const event: AttributedEvent = {
+          // Full UUID — this is also the license `jti`. A sliced/derived id risks a
+          // collision that would make the supabase ignore-duplicates path silently
+          // drop a second paid event and make /licenses/:jti return the wrong one.
+          id: randomUUID(),
+          // Attribute the event to the resolved publisher (the default resolver's id
+          // is "default"). A single optional tag; the single-tenant drain never reads it.
+          publisherId: publisher.id,
+          slug: q.slug,
+          kind: q.kind,
+          amount: usdc(q.price),
+          payees: q.payees,
+          payerAddress: walletAddress(payerResolved),
+          settlementRef: result.settlementRef ?? "unknown",
+          at: now,
+        };
+
+        // Mint the receipt from the IN-MEMORY event, before persisting — money has
+        // already moved, so a ledger hiccup must never cost the agent its license or
+        // turn a paid request into a 402. Skip minting only when we couldn't resolve a
+        // real payer (a zero-address bearer token would be unscoped).
+        let licenseJws: string | undefined;
+        if (licensing && payerResolved !== ZERO_ADDRESS) {
+          licenseJws = mintLicense(
+            {
+              event,
+              issuer: publisher.licenseIdentity,
+              audience: publisher.licenseIdentity,
+              ttlSeconds: cfg.LICENSE_TTL_SECONDS,
+              payeesMode: cfg.LICENSE_PAYEES_MODE,
+              tieBreak: cfg.PRIMARY_PAYEE_TIEBREAK,
+              title: q.title,
+              network: LICENSE_NETWORK,
+              // Holder-of-key: bind to the (already non-zero) payer wallet so re-reads
+              // need a proof-of-possession. Off → a v1 bearer license, demo unchanged.
+              popBindAddress: cfg.LICENSE_POP ? payerResolved : undefined,
+            },
+            licensing.key,
+            now,
+          );
+        }
+
+        // Persist best-effort. A failure here is logged, never surfaced to the agent
+        // (it already paid and holds a valid receipt).
+        await record(event).catch((err: unknown) => {
+          console.error("[tollgate] ledger write failed (payment already settled on-chain):", err);
+        });
+
+        // Report the settlement to the publisher's earnings ledger (wire #3). Fire and
+        // forget — never delay the agent's content on the publisher's RTT; the
+        // background drain guarantees eventual delivery if this attempt misses. Dark
+        // without the publisher's settlement secret; idempotent on event.id; never throws.
+        void emitSettlement(event, publisher.settlementSecret, publisher.originUrl).catch((err: unknown) => {
+          console.error("[tollgate] settlement emit threw (payment already settled):", err);
+        });
+
+        // Audit plane: the paid outcome on the same timeline as denials/free reads.
+        emitObs(d.obs, "paid", { kind: q.kind, price: usdc(q.price) });
+
+        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
+        if (result.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, result.responseHeader);
+        if (licenseJws) res.headers.set(LICENSE_HEADER, licenseJws);
+        res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${d.obs.classifyReason})`));
+        return stampGateCacheHeaders(res, { noStore: true });
+      }
     }
-
-    // Machine. What's it asking for?
-    const kind: TollKind = c.req.header("x-naulon-kind") === "citation" ? "citation" : "read";
-
-    // Already paid? A valid, unexpired license scoped to this slug+kind re-reads
-    // free — the entitlement that makes the receipt worth keeping. Fails closed:
-    // an invalid/expired/mismatched license falls through to the normal 402.
-    const presentedLicense = c.req.header(LICENSE_HEADER);
-    if (
-      presentedLicense &&
-      (await licenseEntitlesRead(presentedLicense, slug, kind, c.req.raw, publisher.licenseIdentity))
-    ) {
-      recordObs("agent-reread", { kind });
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
-      res.headers.set("X-Naulon-Verdict", "agent reread (license)");
-      return stampGateCacheHeaders(res, { noStore: true });
-    }
-
-    // Price it.
-    const q = await quote(publisher, slug, kind);
-    if (!q) return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome); // unknown article — don't gate.
-
-    const now = Date.now();
-    const resourceUrl = new URL(c.req.url).toString();
-    const { legs, header } = build402(q, resourceUrl, now);
-
-    const payment = c.req.header(PAYMENT_SIGNATURE_HEADER);
-    if (!payment) {
-      // x402 contract: 402 with the requirement in the PAYMENT-REQUIRED header.
-      // Link header points an agent at the toll manifest (discoverability).
-      // The "scrape attempt, blocked" datum: an agent priced out at the 402.
-      recordObs("denied", { kind, price: usdc(q.price) });
-      return stampGateCacheHeaders(
-        c.body(null, 402, {
-          [PAYMENT_REQUIRED_HEADER]: header,
-          Link: PAYMENT_LINK_HEADER,
-          "X-Naulon-Verdict": headerSafe(`agent (${verdict.reason})`),
-        }),
-        { noStore: true },
-      );
-    }
-
-    const result = await verifyAndSettle(payment, legs, now, publisher.id);
-    if (!result.ok) {
-      recordObs("payment-failed", { kind, price: usdc(q.price) });
-      return stampGateCacheHeaders(
-        c.json({ error: result.error }, 402, {
-          [PAYMENT_REQUIRED_HEADER]: header,
-          Link: PAYMENT_LINK_HEADER,
-        }),
-        { noStore: true },
-      );
-    }
-
-    // Paid. Build the attributed event (full recursive split).
-    const payerResolved = /^0x[0-9a-fA-F]{40}$/.test(result.payer ?? "") ? result.payer! : ZERO_ADDRESS;
-    const event: AttributedEvent = {
-      // Full UUID — this is also the license `jti`. A sliced/derived id risks a
-      // collision that would make the supabase ignore-duplicates path silently
-      // drop a second paid event and make /licenses/:jti return the wrong one.
-      id: randomUUID(),
-      // Attribute the event to the resolved publisher (the default resolver's id is
-      // "default"). A single optional tag; the single-tenant drain never reads it.
-      publisherId: publisher.id,
-      slug: q.slug,
-      kind: q.kind,
-      amount: usdc(q.price),
-      payees: q.payees,
-      payerAddress: walletAddress(payerResolved),
-      settlementRef: result.settlementRef ?? "unknown",
-      at: now,
-    };
-
-    // Mint the receipt from the IN-MEMORY event, before persisting — money has
-    // already moved, so a ledger hiccup must never cost the agent its license or
-    // turn a paid request into a 402. Skip minting only when we couldn't resolve a
-    // real payer (a zero-address bearer token would be unscoped).
-    let licenseJws: string | undefined;
-    if (licensing && payerResolved !== ZERO_ADDRESS) {
-      licenseJws = mintLicense(
-        {
-          event,
-          issuer: publisher.licenseIdentity,
-          audience: publisher.licenseIdentity,
-          ttlSeconds: cfg.LICENSE_TTL_SECONDS,
-          payeesMode: cfg.LICENSE_PAYEES_MODE,
-          tieBreak: cfg.PRIMARY_PAYEE_TIEBREAK,
-          title: q.title,
-          network: LICENSE_NETWORK,
-          // Holder-of-key: bind to the (already non-zero) payer wallet so re-reads
-          // need a proof-of-possession. Off → a v1 bearer license, demo unchanged.
-          popBindAddress: cfg.LICENSE_POP ? payerResolved : undefined,
-        },
-        licensing.key,
-        now,
-      );
-    }
-
-    // Persist best-effort. A failure here is logged, never surfaced to the agent
-    // (it already paid and holds a valid receipt).
-    await record(event).catch((err: unknown) => {
-      console.error("[tollgate] ledger write failed (payment already settled on-chain):", err);
-    });
-
-    // Report the settlement to the publisher's earnings ledger (wire #3). Fire and
-    // forget — never delay the agent's content on the publisher's RTT; the
-    // background drain guarantees eventual delivery if this attempt misses. Dark
-    // without the publisher's settlement secret; idempotent on event.id; never throws.
-    void emitSettlement(event, publisher.settlementSecret, publisher.originUrl).catch((err: unknown) => {
-      console.error("[tollgate] settlement emit threw (payment already settled):", err);
-    });
-
-    // Audit plane: the paid outcome on the same timeline as denials/free reads.
-    recordObs("paid", { kind: q.kind, price: usdc(q.price) });
-
-    const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
-    if (result.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, result.responseHeader);
-    if (licenseJws) res.headers.set(LICENSE_HEADER, licenseJws);
-    res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${verdict.reason})`));
-    return stampGateCacheHeaders(res, { noStore: true });
   });
 
   return app;

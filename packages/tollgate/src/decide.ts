@@ -161,6 +161,8 @@ export function slugFromSitePath(path: string, excludePrefixes: string[]): strin
  * byte-identical `observe(...)` — the classifier verdict + Web-Bot-Auth signals.
  */
 export interface DecideObs {
+  /** The gated slug — carried so the caller's `observe(...)` needs nothing decide computed. */
+  slug: string;
   classifiedAs: Verdict["kind"];
   classifyReason: string;
   agentUa?: string;
@@ -227,6 +229,7 @@ export async function decide(input: DecideInput): Promise<Decision> {
       kind: "blocked",
       frag: blockedFrag,
       obs: {
+        slug,
         classifiedAs: "agent",
         classifyReason: `crawler blocked by publisher ("${blockedFrag}")`,
         agentUa: uaRaw,
@@ -246,6 +249,7 @@ export async function decide(input: DecideInput): Promise<Decision> {
   );
 
   const obs: DecideObs = {
+    slug,
     classifiedAs: verdict.kind,
     classifyReason: verdict.reason,
     agentUa: raw.headers.get("user-agent") ?? undefined,
