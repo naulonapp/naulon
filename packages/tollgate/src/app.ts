@@ -34,9 +34,7 @@ import {
   getConfig,
   mintLicense,
   signBotAuthDirectory,
-  popBoundAddress,
   usdc,
-  verifyLicense,
   walletAddress,
   type AttributedEvent,
   type ObservationVerdict,
@@ -44,8 +42,18 @@ import {
   type TollKind,
   type Usdc,
 } from "@naulon/shared";
-import { classify, matchUaFragment, type RequestSignals } from "./agentDetect.ts";
-import { verifyBotAuth, type RequestFacts } from "./botAuth.ts";
+import { classify, matchUaFragment } from "./agentDetect.ts";
+import { verifyBotAuth } from "./botAuth.ts";
+import {
+  decide,
+  licenseEntitlesRead,
+  requestFactsFrom,
+  signalsFrom,
+  slugFromPath,
+  slugFromSitePath,
+  LICENSE_HEADER,
+  type Decision,
+} from "./decide.ts";
 import {
   buildX402Manifest,
   PAYMENT_LINK_HEADER,
@@ -54,7 +62,6 @@ import {
 import { get as getEvent, record } from "./eventLog.ts";
 import { licensing } from "./license.ts";
 import { observe } from "./observationLog.ts";
-import { verifyPopProof } from "./pop.ts";
 import { quote } from "./pricing.ts";
 import { rateLimit } from "./rateLimit.ts";
 import { revocations } from "./revocation.ts";
@@ -69,6 +76,22 @@ export { drainSettlements, type DrainScope } from "./settlementSink.ts";
 // settle the buyer-authorized extra legs the gate verified-but-deferred on the request
 // path. Scoped by `publisherId` for multi-tenant isolation. See pendingLegs / x402.
 export { drainPendingLegs, type DrainLegScope, type DrainLegResult } from "./x402.ts";
+// The runtime-agnostic decision surface (app.ts is the package's public entry).
+// `@naulon/sdk`'s in-app middleware reaches the SAME verdict from a web Request;
+// the private control plane consumes the settle primitives for its hosted /verify.
+export { decide, LICENSE_HEADER } from "./decide.ts";
+export type { Decision, DecideInput, DecideObs } from "./decide.ts";
+export {
+  verifyAndSettle,
+  build402,
+  PAYMENT_SIGNATURE_HEADER,
+  PAYMENT_REQUIRED_HEADER,
+  PAYMENT_RESPONSE_HEADER,
+  type PaymentRequirements,
+  type SettlementLegReq,
+  type VerifyResult,
+} from "./x402.ts";
+export type { TollKind } from "@naulon/shared";
 import {
   build402,
   PAYMENT_REQUIRED_HEADER,
@@ -83,10 +106,6 @@ import {
 // license issuer, settlement secret) live on the resolved PublisherConfig.
 const cfg = getConfig();
 
-/** The header that carries a Citation License Token, both ways. */
-const LICENSE_HEADER = "X-Naulon-License";
-/** The header that carries a holder-of-key proof-of-possession on a re-read. */
-const PROOF_HEADER = "X-Naulon-Proof";
 /** Network coordinates embedded in a minted license — the active settlement chain. */
 const settlementNetwork = activeNetwork();
 const LICENSE_NETWORK = {
@@ -95,42 +114,6 @@ const LICENSE_NETWORK = {
   gateway: settlementNetwork.gatewayWallet,
 };
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-
-/**
- * A presented license entitles a free re-read iff it verifies AND is scoped to
- * this exact slug, this publisher (aud === the publisher's licenseIdentity), and covers
- * the requested kind (a citation license entitles a read, never the reverse).
- * Fails closed — any defect drops the caller to the normal 402 path. Revocation
- * is consulted only when the online check is enabled (it needs shared state).
- */
-async function licenseEntitlesRead(
-  jws: string,
-  slug: string,
-  requestedKind: TollKind,
-  req: Request,
-  identity: string,
-): Promise<boolean> {
-  if (!licensing) return false;
-  const r = verifyLicense(jws, {
-    now: Date.now(),
-    expectedIssuer: identity,
-    expectedAudience: identity,
-    jwks: licensing.jwks,
-  });
-  if (!r.ok) return false;
-  const n = r.claims.naulon;
-  if (n.slug !== slug) return false;
-  if (requestedKind === "citation" && n.kind !== "citation") return false; // no read→citation upgrade
-  if (cfg.LICENSE_ONLINE_CHECK && (await revocations.isRevoked(r.claims.jti))) return false;
-  // Holder-of-key: a cnf-bound license is NOT a bearer right — require a fresh
-  // wallet proof-of-possession. Fail closed (drop to 402) if it's missing or bad.
-  if (popBoundAddress(r.claims)) {
-    const proof = req.headers.get(PROOF_HEADER);
-    if (!proof) return false;
-    if (!(await verifyPopProof(proof, { claims: r.claims, slug, identity, now: Date.now() }))) return false;
-  }
-  return true;
-}
 
 /**
  * Headers we never forward upstream. Hop-by-hop headers are connection-scoped
@@ -166,34 +149,6 @@ const STRIP_HEADERS = new Set([
   "x-forwarded-host",
   "x-real-ip",
 ]);
-
-/** Pull the classifier's inputs out of the raw request. */
-function signalsFrom(req: Request): RequestSignals {
-  const headers = Object.fromEntries(req.headers.entries());
-  return {
-    userAgent: headers["user-agent"] ?? "",
-    hasPaymentHeader: PAYMENT_SIGNATURE_HEADER in headers,
-    declaredAgentId: headers["x-naulon-agent"] ?? null,
-    accept: headers["accept"] ?? "",
-    headers,
-  };
-}
-
-/**
- * The request facts the Web Bot Auth verifier serializes signed components
- * from. `authority` is the resolved tenant Host — the same identity the gate
- * routes by — so a signature over `@authority` binds to the host being tolled.
- */
-function requestFactsFrom(req: Request, host: string): RequestFacts {
-  const url = new URL(req.url);
-  return {
-    authority: host,
-    method: req.method,
-    path: url.pathname,
-    targetUri: `${url.protocol}//${host}${url.pathname}${url.search}`,
-    headers: Object.fromEntries(req.headers.entries()),
-  };
-}
 
 /**
  * Build the header set to send upstream: the client's headers minus everything
@@ -329,58 +284,6 @@ async function proxyToOrigin(
   return new Response(upstream.body, { status: upstream.status, headers });
 }
 
-/** Escape regex metacharacters so a prefix is matched literally. */
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Compiled article-path matchers, memoized per prefix set — a gate sees a handful
-// of distinct prefix configs, not one per request, so we compile each regex once
-// and reuse it rather than rebuilding it on every call. Prefixes are escaped
-// before interpolation: an injected resolver may feed untrusted publisher prefixes
-// here, so a literal `new RegExp(prefix)` would be a regex injection / ReDoS hole.
-const articleReCache = new Map<string, RegExp>();
-function articleRe(prefixes: string[]): RegExp {
-  const key = prefixes.join("|");
-  let re = articleReCache.get(key);
-  if (!re) {
-    re = new RegExp(`^/(?:${prefixes.map(escapeRe).join("|")})/([^/?#]+)`);
-    articleReCache.set(key, re);
-  }
-  return re;
-}
-
-/** Article slug from a path like /essays/on-stillness, using the publisher's prefixes. */
-function slugFromPath(path: string, prefixes: string[]): string | null {
-  // Never treat the gate's own control routes as articles, whatever the
-  // configured prefixes are.
-  if (path.startsWith("/.well-known/") || path.startsWith("/licenses/")) return null;
-  // Drop empty prefixes — an empty alternative would make the regex match `//x`
-  // or any leading slash and gate routes the publisher never opted in.
-  const clean = prefixes.filter(Boolean);
-  if (clean.length === 0) return null;
-  const m = path.match(articleRe(clean));
-  return m ? decodeURIComponent(m[1]!) : null;
-}
-
-const STATIC_EXT_RE = /\.(css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|mp4|webm|mp3|pdf|txt|xml|json)$/i;
-const DISCOVERY_RE = /^\/(robots\.txt|sitemap[^/]*|rss[^/]*|atom[^/]*|feed[^/]*|favicon\.ico)$/i;
-
-/**
- * Site-mode slug: the full decoded pathname, or null for the surfaces that must
- * stay free — gate control routes, discovery (robots/sitemaps/feeds/favicon),
- * static assets by extension (deliberately including .txt/.xml/.json: machine-
- * readable surfaces never toll — the conservative humans/discovery-free bias),
- * and the publisher's own excludePrefixes.
- */
-function slugFromSitePath(path: string, excludePrefixes: string[]): string | null {
-  const pathname = path.split(/[?#]/, 1)[0]!;
-  if (pathname.startsWith("/.well-known/") || pathname.startsWith("/licenses/")) return null;
-  if (DISCOVERY_RE.test(pathname) || STATIC_EXT_RE.test(pathname)) return null;
-  const clean = excludePrefixes.filter(Boolean);
-  if (clean.some((p) => pathname === `/${p}` || pathname.startsWith(`/${p}/`))) return null;
-  return decodeURIComponent(pathname);
-}
 
 /**
  * No publisher answers this Host. The reference resolver never gets here (it
