@@ -7,3 +7,4 @@
  */
 export * from "./quote-source.ts";
 export * from "./middleware.ts";
+export * from "./fetch-handler.ts";
