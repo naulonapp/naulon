@@ -76,10 +76,14 @@ signed payment to `verifyUrl`, which settles buyer → author directly.
 @naulon/shared
       ▲
 @naulon/enforce        ← this package (decision kernel + middleware)
-      ├──────────────┐
-      ▲              ▲
-@naulon/tollgate   @naulon/sdk   (re-exports it as @naulon/sdk/enforce[/next])
+      ▲
+@naulon/tollgate       (the gate shell runs decide() inside its reverse proxy)
 ```
 
-Publishers usually consume it through `@naulon/sdk/enforce`, which re-exports this
-package so a site vendoring the SDK gets enforcement without a second dependency.
+A publisher vendors `@naulon/enforce` directly (it builds to its own `dist/`
+tarball) and wires the middleware; the gate consumes the very same package, which
+is what guarantees both reach an identical verdict. `@naulon/enforce` is
+deliberately NOT re-exported through `@naulon/sdk` — the SDK imports `@naulon/shared`,
+which re-exports the SDK, so an `sdk → enforce` edge would form a declaration-build
+cycle. Keeping enforce standalone (a second, small dependency alongside the SDK)
+avoids that and keeps the package graph a clean chain.

@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-down
+.PHONY: help install build-enforce build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-down
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[33m%-18s\033[0m %s\n", $$1, $$2}'
@@ -9,9 +9,17 @@ install: ## Install dependencies (+ build the SDK so consumers resolve dist/)
 	$(MAKE) build-sdk
 
 # The gate and any downstream consumer resolve @naulon/sdk's package exports against
-# dist/, so the SDK must be built before lint/test pick up any source change.
-build-sdk: ## Build @naulon/sdk (tsc → dist/) — consumers resolve against it
+# dist/, so the SDK must be built before lint/test pick up any source change. And
+# @naulon/enforce (the toll-decision kernel + in-app middleware, which the gate and a
+# publisher's app consume) resolves against enforce/dist too — it imports @naulon/shared,
+# which re-exports @naulon/sdk, so enforce must build AFTER the SDK. The SDK does NOT
+# depend on enforce, so the order is a plain linear chain (sdk → enforce), no cycle.
+build-enforce: ## Build @naulon/enforce (tsc → dist/) — builds after the SDK
+	npm run build -w @naulon/enforce
+
+build-sdk: ## Build @naulon/sdk then @naulon/enforce (tsc → dist/), in dependency order
 	npm run build -w @naulon/sdk
+	npm run build -w @naulon/enforce
 
 dev: ## Run the live stack (stub origin :3000 + tollgate :8402 + dashboard :8403)
 	node scripts/dev.mjs

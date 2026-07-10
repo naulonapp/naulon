@@ -15,14 +15,6 @@
       "types": "./dist/next/index.d.ts",
       "import": "./dist/next/index.js"
     },
-    "./enforce": {
-      "types": "./dist/enforce/index.d.ts",
-      "import": "./dist/enforce/index.js"
-    },
-    "./enforce/next": {
-      "types": "./dist/enforce/next.d.ts",
-      "import": "./dist/enforce/next.js"
-    },
     "./express": {
       "types": "./dist/express/index.d.ts",
       "import": "./dist/express/index.js"
@@ -45,7 +37,6 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@naulon/enforce": "*",
     "fast-xml-parser": "^4.5.6",
     "zod": "^4.4.3"
   },
