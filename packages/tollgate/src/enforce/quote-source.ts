@@ -45,9 +45,11 @@ export function httpQuoteSource(
   fetchImpl: typeof fetch = fetch,
 ): QuoteSource {
   return {
-    async quote(_publisher, _slug, _kind, ctx) {
-      const url = `${quoteUrl}?resource=${encodeURIComponent(ctx.resource)}`;
-      const res = await fetchImpl(url, { headers: { authorization: `Bearer ${apiKey}` } });
+    async quote(_publisher, slug, kind, ctx) {
+      // slug+kind let the cloud price directly (decide() already derived the slug);
+      // resource is carried for catalog lookups keyed on the full URL.
+      const q = new URLSearchParams({ resource: ctx.resource, slug, kind });
+      const res = await fetchImpl(`${quoteUrl}?${q}`, { headers: { authorization: `Bearer ${apiKey}` } });
       if (res.status === 204) return null; // no toll → free read
       if (!res.ok) return null; // fail-open: a quote lookup miss must never gate a reader
       return (await res.json()) as Quote;

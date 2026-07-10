@@ -72,6 +72,10 @@ export { drainPendingLegs, type DrainLegScope, type DrainLegResult } from "./x40
 export { decide, LICENSE_HEADER } from "./decide.ts";
 export type { Decision, DecideInput, DecideObs } from "./decide.ts";
 export { settleAndAttribute, type SettleResult, type SettleArgs } from "./settle.ts";
+// The gate's pricing — the hosted /quote prices a resource with the SAME resolver
+// the gate uses (custody-free: a Quote carries payTo addresses, never a key).
+export { quote as resolveQuote } from "./pricing.ts";
+export type { Quote } from "./pricing.ts";
 export {
   verifyAndSettle,
   build402,

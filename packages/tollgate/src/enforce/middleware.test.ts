@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { naulonMiddleware } from "./middleware.ts";
-import { localQuoteSource } from "./quote-source.ts";
+import { localQuoteSource, httpQuoteSource } from "./quote-source.ts";
 
 const quote = localQuoteSource(async () =>
   ({
@@ -53,6 +53,33 @@ test("agent + payment, cloud verify ok → pass + PAYMENT-RESPONSE/license on se
   assert.equal(out.response, null);
   assert.equal(out.setHeaders?.["PAYMENT-RESPONSE"], "rh");
   assert.equal(out.setHeaders?.["X-Naulon-License"], "jws");
+});
+
+test("cloud QuoteSource: agent no-pay → 402 built from the fetched /quote", async () => {
+  const quoteFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        slug: "essays/x",
+        kind: "read",
+        title: "X",
+        price: 5000,
+        payees: [{ address: `0x${"a".repeat(40)}`, shareBps: 10000 }],
+        extraLegs: [],
+        coauthorSplit: false,
+      }),
+      { status: 200 },
+    )) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, quote: httpQuoteSource("http://cloud/_naulon/quote", "nln_live_test", quoteFetch) });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(out.response?.status, 402);
+  assert.ok(out.response?.headers.get("PAYMENT-REQUIRED"));
+});
+
+test("cloud QuoteSource: 204 (no toll) → pass (free)", async () => {
+  const quoteFetch = (async () => new Response(null, { status: 204 })) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, quote: httpQuoteSource("http://cloud/_naulon/quote", "nln_live_test", quoteFetch) });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(out.response, null);
 });
 
 test("agent + payment, cloud verify 402 → 402 passthrough of the error", async () => {
