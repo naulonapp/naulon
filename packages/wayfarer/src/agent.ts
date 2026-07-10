@@ -13,11 +13,13 @@ import { memoBuyer, type MemoSigner } from "./memo.ts";
 import { decide, DEFAULT_POLICY } from "./decide.ts";
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
-import { decodeHeld, isLive, loadHeld, saveHeld } from "./licenseStore.ts";
+import { decodeHeld, fileHeldStore, isLive } from "./licenseStore.ts";
+import type { HeldStore } from "./licenseStore.ts";
 import { buildPopProof } from "./pop.ts";
 import { agentFetch } from "./sign.ts";
 import type { AppraisedCandidate, PricedCandidate, RunResult, Source } from "./types.ts";
 import { getWallet } from "./wallet.ts";
+import type { AgentWallet } from "./wallet.ts";
 
 export type Logger = (line: string) => void;
 
@@ -91,6 +93,18 @@ export interface RunOptions {
    * self-host path). Server/config-supplied, never LLM-controlled.
    */
   signer?: MemoSigner;
+  /**
+   * This run's held-license backend (BUY-4 hosted path). The cloud injects a
+   * per-session store so the composite loop's free re-reads never cross buyer
+   * boundaries in a shared process. Omitted ⇒ the process-global file (OSS path).
+   */
+  heldStore?: HeldStore;
+  /**
+   * The wallet that signs proof-of-possession for this run's cnf-bound held
+   * re-reads. Hosted path injects a signer over the session key (`/sign-pop`);
+   * omitted ⇒ `getWallet()` (the env/dev wallet, unchanged OSS path).
+   */
+  popWallet?: AgentWallet;
 }
 
 export async function run(
@@ -105,6 +119,10 @@ export async function run(
   // env BUYER_PRIVATE_KEY is never read. Default: the BYO-key buyer selectBuyer() picks.
   // Mirrors naulon_pay_and_read's selection so hosted research pays from the same wallet.
   const buyer = opts.signer ? memoBuyer(opts.signer) : await selectBuyer();
+  // Per-session held store + PoP signer (BUY-4): the injected pair keeps the composite loop's
+  // free re-reads isolated per buyer and signed by the paying session EOA. Omitted ⇒ OSS defaults.
+  const heldStore: HeldStore = opts.heldStore ?? fileHeldStore;
+  const popWallet: AgentWallet = opts.popWallet ?? getWallet();
 
   log(`topic: "${topic}"`);
   log(`budget: $${budget} · mode ${cfg.PAYMENT_MODE} · wallet ${buyer.address} · gate ${base}`);
@@ -130,7 +148,7 @@ export async function run(
 
   // 4. decide (the agency). A live license already held for an essay makes it a
   // zero-cost "cache" — pay once, re-read free.
-  const held = await loadHeld();
+  const held = await heldStore.load();
   const nowSec = Math.floor(Date.now() / 1000);
   const licensed = new Set([...held.values()].filter((h) => isLive(h, nowSec)).map((h) => h.slug));
   if (licensed.size) log(`\nholding ${licensed.size} live license(s) — those re-read free`);
@@ -154,7 +172,7 @@ export async function run(
       // we still hold the payer wallet, not just a captured token.
       let proof: string | undefined;
       if (h.pop) {
-        proof = (await buildPopProof(h, getWallet(), Date.now())) ?? undefined;
+        proof = (await buildPopProof(h, popWallet, Date.now())) ?? undefined;
         if (!proof) {
           log(`  ✗ re-read ${d.slug}: license is holder-of-key but wallet can't sign — paying instead`);
           continue;
@@ -202,7 +220,7 @@ export async function run(
       licenseId,
     });
   }
-  await saveHeld(held);
+  await heldStore.save(held);
 
   // 6. ground
   const answer = await ground(topic, sources);

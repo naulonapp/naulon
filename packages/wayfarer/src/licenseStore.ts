@@ -77,3 +77,38 @@ export async function saveHeld(held: Map<string, HeldLicense>): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify([...held.values()], null, 2), "utf8");
 }
+
+/**
+ * The held-license backend as a seam. The stdio funnel uses the process-global
+ * file (`fileHeldStore`); the hosted path (many buyer sessions in one process)
+ * MUST inject a store scoped to the caller — else session B could re-read the
+ * license session A paid for, since the file store is keyed by slug alone and
+ * shared across every session in the process (a cross-buyer isolation leak).
+ * The interface is deliberately the shape `loadHeld`/`saveHeld` already have, so
+ * the file default and an injected store are interchangeable at every call site.
+ */
+export interface HeldStore {
+  load(): Promise<Map<string, HeldLicense>>;
+  save(held: Map<string, HeldLicense>): Promise<void>;
+}
+
+/** The OSS default: the process-global JSON file at `WAYFARER_LICENSE_PATH`. */
+export const fileHeldStore: HeldStore = { load: loadHeld, save: saveHeld };
+
+/**
+ * An in-process, isolated held store — the hosted-path default. Each instance
+ * owns a private Map; two instances never share state, so building one per MCP
+ * session gives per-session isolation for free (session B's `load()` cannot see
+ * what session A `save()`d). Ephemeral by design: a held license lives with the
+ * session, not across process restarts — the right trade for a capped hot session.
+ */
+export function memoryHeldStore(seed?: Iterable<readonly [string, HeldLicense]>): HeldStore {
+  const store = new Map<string, HeldLicense>(seed);
+  return {
+    load: async () => new Map(store),
+    save: async (held) => {
+      store.clear();
+      for (const [k, v] of held) store.set(k, v);
+    },
+  };
+}

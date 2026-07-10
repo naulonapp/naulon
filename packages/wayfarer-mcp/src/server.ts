@@ -45,20 +45,19 @@ import {
   DEFAULT_POLICY,
   discover,
   fetchJwks,
+  fileHeldStore,
   getWallet,
   isLive,
-  loadHeld,
   memoBuyer,
   probePrice,
   quotedTotalAtomic,
   rereadWithLicense,
   run,
-  saveHeld,
   selectBuyer,
   tollgateBase,
   verifyAgainst,
 } from "@naulon/wayfarer";
-import type { DecisionPolicy, MemoSigner } from "@naulon/wayfarer";
+import type { AgentWallet, DecisionPolicy, HeldStore, MemoSigner } from "@naulon/wayfarer";
 import { getConfig, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
@@ -169,6 +168,25 @@ export interface BuildServerOptions {
    * prompt-injected model can no more redirect the gate than raise the budget.
    */
   tollgateUrl?: string;
+  /**
+   * This session's held-license backend. The stdio funnel leaves it unset (the
+   * process-global file `fileHeldStore`). The cloud host MUST inject a per-session
+   * store (e.g. `memoryHeldStore()`) so one process serving many buyers can never
+   * let session B re-read the license session A paid for — the file store is keyed
+   * by slug alone and shared, so without this the hosted path leaks licenses across
+   * buyers. Server-config, never a tool arg.
+   */
+  heldStore?: HeldStore;
+  /**
+   * The wallet that signs proof-of-possession for a cnf-bound held re-read. On a
+   * custody-free hosted deploy the paying identity is the cloud session EOA, but
+   * `getWallet()` (the fallback) returns a throwaway dev key when no
+   * `BUYER_PRIVATE_KEY` is set — so a PoP signed by it can never satisfy a license
+   * cnf-bound to the session address. The cloud injects a signer backed by its
+   * `/sign-pop` BFF (the session key). Absent ⇒ `getWallet()` (unchanged OSS path).
+   * Server-config, never a tool arg — the model cannot point the signer elsewhere.
+   */
+  popWallet?: AgentWallet;
 }
 
 /**
@@ -199,6 +217,22 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // custody-free deploy (no BUYER_PRIVATE_KEY) is a throwaway dev key, so the quote would bind to
   // an identity the buyer never pays from. BYO-key path: fall back to the env wallet, unchanged.
   const payerAddress = (): string => cloudSigner?.address ?? getWallet().address;
+  // Per-session held-license store: the injected store (hosted, isolated) wins over the
+  // process-global file, so many buyers in one process never cross-read each other's licenses.
+  const heldStore: HeldStore = opts.heldStore ?? fileHeldStore;
+  // The PoP signer for a cnf-bound held re-read: the injected session-key wallet (hosted) wins
+  // over the env wallet. A function so the env default stays fresh when no override is supplied.
+  const popWallet = (): AgentWallet => opts.popWallet ?? getWallet();
+  // C3 — loud warn when the hosted pay path is armed (a cloud signer is present) but no PoP
+  // wallet was injected: held re-reads of cnf-bound licenses will fall back to the mock dev key
+  // and fail, silently degrading to re-pay. Surface it instead of letting it look like a toll bug.
+  if (cloudSigner && !opts.popWallet && getWallet().mock) {
+    console.warn(
+      "[wayfarer-mcp] hosted session active (cloud signer present) but no popWallet injected — " +
+        "proof-of-possession re-reads will use the mock dev key and cannot satisfy a cnf-bound license. " +
+        "Inject BuildServerOptions.popWallet (the /sign-pop session signer) to enable free held re-reads.",
+    );
+  }
   // This session's gate: the injected fleet tenant (BUY-4.2) wins over env TOLLGATE_URL.
   // A function so the env default stays fresh per call when no override is supplied.
   // Resolved server-side, never from a tool arg — the model can't aim a payment off it.
@@ -497,9 +531,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         const decoded = decodeHeld(result.license);
         if (decoded) {
           licenseId = decoded.jti;
-          const held = await loadHeld();
+          const held = await heldStore.load();
           held.set(decoded.slug, { ...decoded, jws: result.license });
-          await saveHeld(held);
+          await heldStore.save(held);
         }
         const jwks = await fetchJwks(gateBase());
         if (jwks) licenseVerified = verifyAgainst(result.license, jwks);
@@ -552,7 +586,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ slug }) => {
-      const held = await loadHeld();
+      const held = await heldStore.load();
       const license = held.get(slug);
       if (!license) {
         return structured({
@@ -566,7 +600,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
 
       let proof: string | undefined;
       if (license.pop) {
-        proof = (await buildPopProof(license, getWallet(), Date.now())) ?? undefined;
+        proof = (await buildPopProof(license, popWallet(), Date.now())) ?? undefined;
         if (!proof) {
           return structured({
             ok: false,
@@ -575,7 +609,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         }
       }
 
-      const reread = await rereadWithLicense(slugUrl(slug), KIND, license.jws, getWallet().address, proof);
+      const reread = await rereadWithLicense(slugUrl(slug), KIND, license.jws, popWallet().address, proof);
       if (!reread.ok) {
         return structured({ ok: false, error: reread.error ?? "re-read failed" });
       }
@@ -649,6 +683,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         // Hosted path: pay from the buyer's custody-free session wallet, not the env key
         // (mirrors naulon_pay_and_read). Absent ⇒ run() falls back to selectBuyer().
         ...(cloudSigner ? { signer: cloudSigner } : {}),
+        // Same per-session isolation + PoP identity for the composite loop's held re-reads.
+        ...(opts.heldStore ? { heldStore: opts.heldStore } : {}),
+        ...(opts.popWallet ? { popWallet: opts.popWallet } : {}),
       });
       spentUsdc = round6(spentUsdc + result.spent);
       // BUY-4.4: audit each decision the run made. run() owns the decide()/pay loop

@@ -20,7 +20,7 @@ import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { resetConfig } from "@naulon/shared";
-import { DEFAULT_POLICY, type MemoSigner } from "@naulon/wayfarer";
+import { DEFAULT_POLICY, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
 import { buildServer, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
 
@@ -751,4 +751,84 @@ test("BUY-4.2: naulon_research probes the injected tollgateUrl, not the env gate
   } finally {
     await Promise.all([envGate.close(), fleetGate.close()]);
   }
+});
+
+// ── C1/C2/C3 — hosted held-store isolation, PoP wallet seam, dev-key warn ─────
+
+/** A minimal mock cloud signer (never actually signs a real tx in these tests). */
+const mockSigner: MemoSigner = {
+  address: "0x1111111111111111111111111111111111111111",
+  async signTypedData() {
+    return `0x${"11".repeat(65)}` as `0x${string}`;
+  },
+};
+
+function heldLicense(slug: string, exp: number): HeldLicense {
+  return { slug, title: slug, jti: `jti-${slug}`, exp, aud: "gate://naulon", pop: false, jws: "h.p.s" };
+}
+
+test("C1 — read_held consults the INJECTED per-session store, not the process file", async () => {
+  // An expired license in the injected store hits the 'expired' branch WITHOUT any gate call.
+  // The file store would be empty → 'No held license'. The distinct error proves which store was read.
+  const store = memoryHeldStore([["x", heldLicense("x", 1)]]); // exp=1 → long expired
+  const client = await connectedClientWith({ heldStore: store });
+  const res = await client.callTool({ name: "naulon_read_held", arguments: { slug: "x" } });
+  const r = res.structuredContent as { ok: boolean; error?: string };
+  assert.equal(r.ok, false);
+  assert.match(r.error ?? "", /expired/i, "read the injected store's expired license, not the empty file");
+});
+
+test("C1 — two sessions with separate stores do not cross-read (the hosted leak, closed)", async () => {
+  const storeA = memoryHeldStore([["secret", heldLicense("secret", 1)]]);
+  const storeB = memoryHeldStore();
+  const a = await connectedClientWith({ heldStore: storeA });
+  const b = await connectedClientWith({ heldStore: storeB });
+  const ra = (await a.callTool({ name: "naulon_read_held", arguments: { slug: "secret" } }))
+    .structuredContent as { ok: boolean; error?: string };
+  const rb = (await b.callTool({ name: "naulon_read_held", arguments: { slug: "secret" } }))
+    .structuredContent as { ok: boolean; error?: string };
+  assert.match(ra.error ?? "", /expired/i, "A sees its own held license");
+  assert.match(rb.error ?? "", /No held license/i, "B never sees A's license — isolation holds");
+});
+
+test("C3 — hosted signer present but no popWallet + mock dev key ⇒ loud warn", async () => {
+  const warnings: string[] = [];
+  const orig = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.join(" "));
+  };
+  try {
+    await withEnv({ BUYER_PRIVATE_KEY: undefined }, async () => {
+      buildServer({ signer: mockSigner });
+    });
+  } finally {
+    console.warn = orig;
+  }
+  assert.ok(
+    warnings.some((w) => /popWallet/.test(w) && /proof-of-possession/.test(w)),
+    "warns that PoP re-reads will use the mock dev key",
+  );
+});
+
+test("C3 — hosted signer WITH popWallet injected ⇒ no warn", async () => {
+  const warnings: string[] = [];
+  const orig = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.join(" "));
+  };
+  try {
+    await withEnv({ BUYER_PRIVATE_KEY: undefined }, async () => {
+      buildServer({
+        signer: mockSigner,
+        popWallet: { address: mockSigner.address, mock: false, signMessage: async () => "0xsig" },
+      });
+    });
+  } finally {
+    console.warn = orig;
+  }
+  assert.equal(
+    warnings.some((w) => /popWallet/.test(w)),
+    false,
+    "no warn when a PoP signer is supplied",
+  );
 });

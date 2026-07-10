@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cloudMemoSigner, cloudSignerFromEnv, GrantExceededError, SignerError } from "./cloud-signer.ts";
+import { cloudMemoSigner, cloudPopSigner, cloudSignerFromEnv, GrantExceededError, SignerError } from "./cloud-signer.ts";
 import type { MemoSigner } from "@naulon/wayfarer";
 
 const SESSION = ("0x" + "2".repeat(40)) as `0x${string}`;
@@ -98,4 +98,32 @@ test("any missing var → undefined (fall back to the BYO-key path)", () => {
 
 test("a malformed session address → undefined (never build a signer for a bad address)", () => {
   assert.equal(cloudSignerFromEnv({ ...FULL_ENV, NAULON_BUYER_SESSION_ADDRESS: "not-an-address" }), undefined);
+});
+
+// ── C2 — cloudPopSigner (holder-of-key proof via /sign-pop, grant-free) ────────
+
+test("cloudPopSigner: POSTs the message to /sign-pop with the bearer + address, returns the signature", async () => {
+  const { fetchImpl, seen } = stub(200, { signature: "0xpop" });
+  const w = cloudPopSigner({ endpoint: "https://cloud.test", token: "sess-tok", address: SESSION, fetchImpl });
+  assert.equal(w.address, SESSION);
+  assert.equal(w.mock, false);
+  const sig = await w.signMessage!("naulon-pop\nv=1\naud=gate://naulon\njti=j\nslug=s\nts=1\nnonce=n");
+  assert.equal(sig, "0xpop");
+  assert.equal(seen.url, "https://cloud.test/_naulon/buyer-wallet/sign-pop");
+  assert.equal(seen.init?.headers?.authorization, "Bearer sess-tok");
+  const sent = JSON.parse(seen.init!.body!);
+  assert.equal(sent.address, SESSION);
+  assert.match(sent.message, /^naulon-pop\n/);
+});
+
+test("cloudPopSigner: a non-ok response throws a typed SignerError", async () => {
+  const { fetchImpl } = stub(403, { error: "bad_from" });
+  const w = cloudPopSigner({ endpoint: "https://cloud.test", token: "t", address: SESSION, fetchImpl });
+  await assert.rejects(() => w.signMessage!("naulon-pop\nv=1\n"), (e: unknown) => e instanceof SignerError && (e as SignerError).status === 403);
+});
+
+test("cloudPopSigner: an ok response with no signature throws no_signature", async () => {
+  const { fetchImpl } = stub(200, {});
+  const w = cloudPopSigner({ endpoint: "https://cloud.test", token: "t", address: SESSION, fetchImpl });
+  await assert.rejects(() => w.signMessage!("naulon-pop\nv=1\n"), (e: unknown) => e instanceof SignerError && (e as SignerError).code === "no_signature");
 });

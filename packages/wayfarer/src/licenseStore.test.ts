@@ -9,7 +9,9 @@ import { join } from "node:path";
 
 process.env.WAYFARER_LICENSE_PATH = join(tmpdir(), `naulon-held-${process.pid}.json`);
 
-const { loadHeld, saveHeld, decodeHeld, isLive } = await import("./licenseStore.ts");
+const { loadHeld, saveHeld, decodeHeld, isLive, memoryHeldStore, fileHeldStore } = await import(
+  "./licenseStore.ts"
+);
 const { mintLicense, loadSigningKey } = await import("@naulon/shared");
 type HeldLicense = import("./licenseStore.ts").HeldLicense;
 
@@ -69,4 +71,43 @@ test("save then load round-trips the held licenses by slug", async () => {
   const loaded = await loadHeld();
   assert.equal(loaded.size, 1);
   assert.equal(loaded.get("the-naulon")?.jti, "id-the-naulon");
+});
+
+test("memoryHeldStore round-trips within one instance", async () => {
+  const decoded = decodeHeld(token("the-naulon"))!;
+  const store = memoryHeldStore();
+  await store.save(new Map([["the-naulon", { ...decoded, jws: token("the-naulon") }]]));
+  const loaded = await store.load();
+  assert.equal(loaded.get("the-naulon")?.jti, "id-the-naulon");
+});
+
+test("memoryHeldStore isolates sessions — B cannot read what A saved (the hosted leak)", async () => {
+  const decoded = decodeHeld(token("secret-essay"))!;
+  const sessionA = memoryHeldStore();
+  const sessionB = memoryHeldStore();
+  // A pays and holds a license.
+  await sessionA.save(new Map([["secret-essay", { ...decoded, jws: token("secret-essay") }]]));
+  // B (a different buyer's session, same process) must see nothing.
+  const bView = await sessionB.load();
+  assert.equal(bView.size, 0);
+  assert.equal(bView.get("secret-essay"), undefined);
+  // And A still holds its own — isolation, not amnesia.
+  assert.equal((await sessionA.load()).get("secret-essay")?.jti, "id-secret-essay");
+});
+
+test("memoryHeldStore load returns a copy — mutating it never leaks back into the store", async () => {
+  const store = memoryHeldStore();
+  const decoded = decodeHeld(token("the-naulon"))!;
+  await store.save(new Map([["the-naulon", { ...decoded, jws: token("the-naulon") }]]));
+  const view = await store.load();
+  view.set("injected", { slug: "injected", title: "x", jti: "j", exp: 1, aud: "a", pop: false, jws: "z" });
+  assert.equal((await store.load()).has("injected"), false);
+});
+
+test("fileHeldStore is the process-global file default (load/save delegate to it)", async () => {
+  const decoded = decodeHeld(token("file-essay"))!;
+  await fileHeldStore.save(new Map([["file-essay", { ...decoded, jws: token("file-essay") }]]));
+  // Read through the bare functions to prove fileHeldStore IS the file (same backend).
+  assert.equal((await loadHeld()).get("file-essay")?.jti, "id-file-essay");
+  assert.equal((await fileHeldStore.load()).get("file-essay")?.jti, "id-file-essay");
 });

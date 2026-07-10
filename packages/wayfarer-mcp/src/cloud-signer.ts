@@ -8,7 +8,7 @@
  * signer elsewhere or raise its own spend ceiling. The chainId is taken from the request's own domain,
  * so it can never drift from what wayfarer is paying against.
  */
-import type { MemoSigner } from "@naulon/wayfarer";
+import type { AgentWallet, MemoSigner } from "@naulon/wayfarer";
 
 /** The grant (cap or TTL) refused the spend. Carries the remaining budget when the BFF reports it. */
 export class GrantExceededError extends Error {
@@ -91,6 +91,40 @@ export function cloudMemoSigner(opts: CloudSignerOpts): MemoSigner {
         throw new SignerError(res.status, body.error);
       }
       const body = (await res.json().catch(() => ({}))) as { signature?: `0x${string}` };
+      if (!body.signature) throw new SignerError(res.status, "no_signature");
+      return body.signature;
+    },
+  };
+}
+
+/**
+ * The cloud PoP signer (Phase 4 / C2). A held re-read of a cnf-bound license must prove control of
+ * the paying wallet by signing an EIP-191 holder-of-key challenge. On the custody-free hosted path the
+ * paying identity is the session EOA, whose key lives encrypted in the cloud — so the proof is signed
+ * by `/_naulon/buyer-wallet/sign-pop` (the session key) rather than a local key. Returns an
+ * `AgentWallet` so `buildPopProof` consumes it exactly like the env wallet.
+ *
+ * Unlike `/sign-memo` this leg is GRANT-FREE: a PoP is a free re-read, not a spend, so there is no cap
+ * to debit. The BFF still authenticates the bearer, checks the `address` matches the session, AND
+ * constrains the signed bytes to a canonical `naulon-pop` challenge — the session key can never be
+ * coerced into signing an arbitrary message. The endpoint + token are SERVER-CONFIG, never a tool arg.
+ */
+export function cloudPopSigner(opts: CloudSignerOpts): AgentWallet {
+  const doFetch = opts.fetchImpl ?? fetch;
+  return {
+    address: opts.address,
+    mock: false,
+    signMessage: async (message: string): Promise<string> => {
+      const res = await doFetch(`${opts.endpoint}/_naulon/buyer-wallet/sign-pop`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${opts.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ address: opts.address, message }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new SignerError(res.status, body.error);
+      }
+      const body = (await res.json().catch(() => ({}))) as { signature?: string };
       if (!body.signature) throw new SignerError(res.status, "no_signature");
       return body.signature;
     },

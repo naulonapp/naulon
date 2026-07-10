@@ -52,8 +52,8 @@ export { allocateByContribution } from "./allocation.ts";
 export type { SourceAllocation } from "./allocation.ts";
 
 // ── citation licenses (pay once, re-read free) ──────────────────────────────
-export { decodeHeld, isLive, loadHeld, saveHeld } from "./licenseStore.ts";
-export type { HeldLicense } from "./licenseStore.ts";
+export { decodeHeld, fileHeldStore, isLive, loadHeld, memoryHeldStore, saveHeld } from "./licenseStore.ts";
+export type { HeldLicense, HeldStore } from "./licenseStore.ts";
 export { buildPopProof } from "./pop.ts";
 
 // ── wallet ──────────────────────────────────────────────────────────────────

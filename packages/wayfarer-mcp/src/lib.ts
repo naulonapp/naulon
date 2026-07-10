@@ -7,4 +7,11 @@
  * without dragging in the stdio bootstrap.
  */
 export { buildServer, SERVER_NAME, SERVER_VERSION, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
-export { cloudMemoSigner, cloudSignerFromEnv, GrantExceededError, SignerError, type CloudSignerOpts } from "./cloud-signer.ts";
+export {
+  cloudMemoSigner,
+  cloudPopSigner,
+  cloudSignerFromEnv,
+  GrantExceededError,
+  SignerError,
+  type CloudSignerOpts,
+} from "./cloud-signer.ts";
