@@ -296,6 +296,14 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               slug: z.string().describe("Stable identifier used to quote and pay for this source."),
               title: z.string(),
               summary: z.string().describe("Free teaser — what the agent reads to judge relevance before paying."),
+              url: z
+                .string()
+                .optional()
+                .describe(
+                  "Canonical URL this source is served from (from the RSS <link> / catalog / directory). " +
+                    "Pass it back to naulon_quote / naulon_pay_and_read so the toll targets the real link " +
+                    "(e.g. /articles/<slug>) instead of a reconstructed /essays/<slug> path.",
+                ),
             }),
           )
           .describe("Free teasers; the agent has paid for nothing at this stage."),
@@ -371,6 +379,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "before paying so you can plan spend against real prices.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug from naulon_discover."),
+        url: z
+          .string()
+          .optional()
+          .describe(
+            "Canonical URL from naulon_discover (the source's real link). When present it is probed VERBATIM; " +
+              "absent, the slug is reconstructed to the /essays/<slug> template.",
+          ),
       },
       outputSchema: {
         gated: z.boolean().describe("True if the source requires payment; false if it is a free read."),
@@ -395,8 +410,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ slug }) => {
-      const quoted = await probePrice(slugUrl(slug), KIND, payerAddress());
+    async ({ slug, url }) => {
+      const quoted = await probePrice(url ?? slugUrl(slug), KIND, payerAddress());
       if (!quoted) {
         return structured({
           gated: false,
@@ -438,6 +453,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "gated, or payment is rejected, it returns ok:false and spends nothing.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug from naulon_discover / naulon_quote."),
+        url: z
+          .string()
+          .optional()
+          .describe(
+            "Canonical URL from naulon_discover / naulon_quote (the source's real link). When present the toll " +
+              "is paid at it VERBATIM; absent, the slug is reconstructed to the /essays/<slug> template.",
+          ),
       },
       outputSchema: {
         ok: z.boolean(),
@@ -465,11 +487,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
     },
-    async ({ slug }) => {
+    async ({ slug, url }) => {
       // Quote first and gate on the SESSION BUDGET before any spend. The price is the
       // buyer's true total across legs; refusing here is the budget ceiling (the
       // on-chain insufficient-funds + toll-moved-at-pay tolerance are BUY-1.4).
-      const quoted = await probePrice(slugUrl(slug), KIND, payerAddress());
+      // The canonical url (when the model passes it) is the pay target, verbatim — one
+      // buyer pays any publisher's URL shape (/articles/, custom domain) without a
+      // reconstructed /essays/ template. Absent, fall back to the template.
+      const target = url ?? slugUrl(slug);
+      const quoted = await probePrice(target, KIND, payerAddress());
       if (!quoted) {
         return structured({
           ok: false,
@@ -502,7 +528,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       await buyer.init();
       // Re-quote at pay time and abort if the toll moved past the quote we gated the
       // budget on (BUY-1.4 toll-moved guard). The buyer pays NOTHING if it has moved.
-      const result = await buyer.fetch(slugUrl(slug), KIND, { maxTotalAtomic: guardCeilingAtomic(quoted) });
+      const result = await buyer.fetch(target, KIND, { maxTotalAtomic: guardCeilingAtomic(quoted) });
       if (!result.ok) {
         // A failed pay is an accountable non-spend: the agent decided to pay, the rail refused.
         // Audit it as a skip carrying the typed failure so the org can see the attempt + cause.
