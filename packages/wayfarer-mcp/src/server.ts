@@ -49,7 +49,8 @@ import {
   getWallet,
   isLive,
   memoBuyer,
-  probePrice,
+  probe,
+  probeFailure,
   quotedTotalAtomic,
   rereadWithLicense,
   run,
@@ -57,7 +58,7 @@ import {
   tollgateBase,
   verifyAgainst,
 } from "@naulon/wayfarer";
-import type { AgentWallet, DecisionPolicy, HeldStore, MemoSigner } from "@naulon/wayfarer";
+import type { AgentWallet, DecisionPolicy, HeldStore, MemoSigner, ProbeOutcome } from "@naulon/wayfarer";
 import { getConfig, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
@@ -238,6 +239,26 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // Resolved server-side, never from a tool arg — the model can't aim a payment off it.
   const gateBase = (): string => opts.tollgateUrl ?? tollgateBase();
   const slugUrl = (slug: string): string => articleUrl(gateBase(), slug);
+  // A non-gated quote must say WHY it isn't gated: a genuine free (2xx) read is very
+  // different from a 404 (wrong path — usually the /essays/<slug> fallback missing a
+  // /articles/<slug> publisher) or an unreachable origin. Collapsing them into a bare
+  // "free read" is the money-correctness footgun this note prevents.
+  const quoteNote = (outcome: Exclude<ProbeOutcome, { status: "gated" }>, target: string): string => {
+    switch (outcome.status) {
+      case "free":
+        return "Not gated — this is a free read; no payment is required.";
+      case "not_found":
+        return (
+          `Probed ${target} and got HTTP 404 — this is NOT a free read, the path was not found. ` +
+          `Pass the canonical url from naulon_discover (the /essays/<slug> fallback does not match every ` +
+          `publisher — many serve /articles/<slug> or a custom path).`
+        );
+      case "unreachable":
+        return `Probed ${target} and got HTTP ${outcome.httpStatus || "no response"} — the origin/gate is unreachable, not a free read. Retry.`;
+      case "malformed":
+        return `Probed ${target} and got a 402 but ${outcome.reason} — the gate looks misconfigured; cannot quote.`;
+    }
+  };
   const ceilingUsdc = (): number => opts.budgetUsdc ?? getConfig().WAYFARER_BUDGET_USDC;
   // BUY-3 policy: an injected per-session policy (hosted path) wins; else it is
   // folded from env at call time (server-config, never a tool arg — the model can't
@@ -411,14 +432,16 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ slug, url }) => {
-      const quoted = await probePrice(url ?? slugUrl(slug), KIND, payerAddress());
-      if (!quoted) {
+      const target = url ?? slugUrl(slug);
+      const outcome = await probe(target, KIND, payerAddress());
+      if (outcome.status !== "gated") {
         return structured({
           gated: false,
-          note: "Not gated — this is a free read; no payment is required.",
+          note: quoteNote(outcome, target),
           ...envelope(),
         });
       }
+      const quoted = outcome.quoted;
       const legs = quoted.legs;
       const totalUsdc = round6(trueTotalUsdc(quoted));
       return structured({
@@ -477,9 +500,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         remainingUsdc: z.number().describe("Budget left for this session (after this call)."),
         error: z.string().optional(),
         errorCode: z
-          .enum(["not_gated", "toll_moved", "insufficient_funds", "expired", "rejected", "origin_error"])
+          .enum(["not_gated", "not_found", "toll_moved", "insufficient_funds", "expired", "rejected", "origin_error"])
           .optional()
-          .describe("Typed failure reason when ok:false — lets you decide whether to retry."),
+          .describe("Typed failure reason when ok:false — lets you decide whether to retry. not_found = the probed URL 404'd (pass the canonical url; it is not a free read)."),
         retryable: z
           .boolean()
           .optional()
@@ -495,14 +518,24 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // buyer pays any publisher's URL shape (/articles/, custom domain) without a
       // reconstructed /essays/ template. Absent, fall back to the template.
       const target = url ?? slugUrl(slug);
-      const quoted = await probePrice(target, KIND, payerAddress());
-      if (!quoted) {
+      const outcome = await probe(target, KIND, payerAddress());
+      if (outcome.status !== "gated") {
+        const failure = probeFailure(outcome, target);
+        emitAudit({
+          slug,
+          action: "skip",
+          reason: `not payable: ${failure.errorCode ?? "not_gated"} — ${failure.error ?? ""}`.trim(),
+          agentId: policyFromConfig().agentId,
+        });
         return structured({
           ok: false,
-          error: "Not gated — this is a free read; no payment is required.",
+          error: failure.error ?? "not gated — no payment is required.",
+          ...(failure.errorCode ? { errorCode: failure.errorCode } : {}),
+          ...(failure.retryable === undefined ? {} : { retryable: failure.retryable }),
           ...envelope(),
         });
       }
+      const quoted = outcome.quoted;
       const cost = round6(trueTotalUsdc(quoted));
       if (cost > remainingUsdc()) {
         emitAudit({

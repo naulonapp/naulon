@@ -29,7 +29,9 @@ export { appraise } from "./appraise.ts";
 
 // ── quote + pay (the Buyer seam) ────────────────────────────────────────────
 export {
+  probe,
   probePrice,
+  probeFailure,
   assemblePayment,
   rereadWithLicense,
   selectBuyer,
@@ -37,7 +39,7 @@ export {
   tollMovedOrNull,
   classifyPaymentError,
 } from "./buyer.ts";
-export type { Buyer, Quoted, LegRequirements, Fetched, FetchErrorCode, PayGuard } from "./buyer.ts";
+export type { Buyer, Quoted, LegRequirements, Fetched, FetchErrorCode, PayGuard, ProbeOutcome } from "./buyer.ts";
 export { mockBuyer } from "./pay.ts";
 export { gatewayBuyer } from "./gateway.ts";
 export { memoBuyer, signMemoPayment } from "./memo.ts";

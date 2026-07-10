@@ -272,6 +272,38 @@ test("naulon_quote reads real price + terms from a 402, and reports gated:false 
   });
 });
 
+test("naulon_pay_and_read reports not_found (not a free read) when the path 404s", async () => {
+  // A gate that 404s every path — the exact shape of a slug-only pay whose /essays/<slug>
+  // fallback misses a publisher serving /articles/<slug>. This must NOT read as "free".
+  const handler = (_req: IncomingMessage, res: ServerResponse): void => {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+  };
+  await withStubGate(handler, async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } });
+    const r = res.structuredContent as { ok: boolean; error?: string; errorCode?: string; spentSessionUsdc: number };
+    assert.equal(r.ok, false, "a 404 path is not payable");
+    assert.equal(r.errorCode, "not_found", "a 404 is a wrong path, not the free-read not_gated");
+    assert.match(r.error ?? "", /404|canonical url/i, "the error points the agent at passing the real url");
+    assert.equal(r.spentSessionUsdc, 0, "nothing was spent");
+  });
+});
+
+test("naulon_quote does not pass off a 404 path as a plain free read", async () => {
+  const handler = (_req: IncomingMessage, res: ServerResponse): void => {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+  };
+  await withStubGate(handler, async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
+    const q = res.structuredContent as { gated: boolean; note?: string };
+    assert.equal(q.gated, false, "still not gated (nothing was paid)");
+    assert.match(q.note ?? "", /404|not found|canonical url/i, "the note distinguishes a 404 from a genuine free read");
+  });
+});
+
 test("naulon_read_held with no held license tells the model to pay first (no network)", async () => {
   await withEnv(
     { WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-empty-${process.pid}.json`) },

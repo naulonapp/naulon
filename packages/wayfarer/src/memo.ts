@@ -25,6 +25,8 @@ import {
   AGENT_UA,
   assemblePayment,
   classifyPaymentError,
+  probe,
+  probeFailure,
   probePrice,
   tollMovedOrNull,
   type Buyer,
@@ -142,8 +144,9 @@ export function memoBuyer(signer?: MemoSigner): Buyer {
       return probePrice(url, kind, address);
     },
     async fetch(url, kind, guard?: PayGuard): Promise<Fetched> {
-      const quoted = await probePrice(url, kind, address);
-      if (!quoted) return { ok: false, error: "not gated / no price", errorCode: "not_gated", retryable: false };
+      const outcome = await probe(url, kind, address);
+      if (outcome.status !== "gated") return probeFailure(outcome, url);
+      const quoted = outcome.quoted;
       // Re-quote at pay time and abort if the toll moved past the authorized ceiling.
       const moved = tollMovedOrNull(quoted, guard);
       if (moved) return moved;

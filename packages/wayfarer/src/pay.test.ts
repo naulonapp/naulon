@@ -118,3 +118,46 @@ test("mockBuyer classifies an insufficient-funds rejection as a non-retryable ha
     globalThis.fetch = real;
   }
 });
+
+// ── buyer.fetch must not mistake a wrong path / down origin for a free read ────
+// Before the fix, any non-402 (404, 5xx, 200) probe collapsed to `not_gated`, so
+// paying a slug at the wrong /essays/ template on a /articles/ publisher looked
+// like "this article is free" and the agent silently read nothing.
+
+test("mockBuyer.fetch reports not_found (not not_gated) when the path 404s", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof globalThis.fetch;
+  try {
+    const result = await mockBuyer().fetch("https://x.test/essays/zeybek", "read");
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "not_found", "a 404 is a wrong/unknown path, not a free article");
+    assert.match(result.error ?? "", /404|not found|canonical url/i, "the message must point the agent at the real url");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("mockBuyer.fetch reports not_gated only for a genuine 2xx free read", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("<html>free</html>", { status: 200 })) as typeof globalThis.fetch;
+  try {
+    const result = await mockBuyer().fetch("https://x.test/essays/a", "read");
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "not_gated", "a real 200 free read is the one true not_gated");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("mockBuyer.fetch reports a retryable origin_error when the origin is down (5xx)", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 502 })) as typeof globalThis.fetch;
+  try {
+    const result = await mockBuyer().fetch("https://x.test/essays/a", "read");
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "origin_error", "a 5xx is transient origin trouble, not a free read");
+    assert.equal(result.retryable, true, "worth a retry once the origin recovers");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
