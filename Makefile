@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build-enforce build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-down
+.PHONY: help install build-shared build-enforce build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-down
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[33m%-18s\033[0m %s\n", $$1, $$2}'
@@ -8,17 +8,22 @@ install: ## Install dependencies (+ build the SDK so consumers resolve dist/)
 	npm install
 	$(MAKE) build-sdk
 
-# The gate and any downstream consumer resolve @naulon/sdk's package exports against
-# dist/, so the SDK must be built before lint/test pick up any source change. And
-# @naulon/enforce (the toll-decision kernel + in-app middleware, which the gate and a
-# publisher's app consume) resolves against enforce/dist too — it imports @naulon/shared,
-# which re-exports @naulon/sdk, so enforce must build AFTER the SDK. The SDK does NOT
-# depend on enforce, so the order is a plain linear chain (sdk → enforce), no cycle.
-build-enforce: ## Build @naulon/enforce (tsc → dist/) — builds after the SDK
+# The gate and any downstream consumer (incl. a non-tsx publisher app) resolve the
+# @naulon/{sdk,shared,enforce} package exports against dist/, so these three must be
+# built before lint/test pick up any source change. The dependency order is a plain
+# linear chain, no cycle: @naulon/shared re-exports @naulon/sdk (so sdk builds first),
+# and @naulon/enforce imports @naulon/shared (so enforce builds last) — sdk → shared →
+# enforce. shared ships dist/ (not raw src) precisely so enforce/dist resolves it in a
+# plain-node consumer, not only under tsx.
+build-shared: ## Build @naulon/shared (tsc → dist/) — builds after the SDK
+	npm run build -w @naulon/shared
+
+build-enforce: ## Build @naulon/enforce (tsc → dist/) — builds after shared
 	npm run build -w @naulon/enforce
 
-build-sdk: ## Build @naulon/sdk then @naulon/enforce (tsc → dist/), in dependency order
+build-sdk: ## Build @naulon/sdk → shared → enforce (tsc → dist/), in dependency order
 	npm run build -w @naulon/sdk
+	npm run build -w @naulon/shared
 	npm run build -w @naulon/enforce
 
 dev: ## Run the live stack (stub origin :3000 + tollgate :8402 + dashboard :8403)
