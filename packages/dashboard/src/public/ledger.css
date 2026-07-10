@@ -1,0 +1,215 @@
+/*
+ * naulon — the ledger. Live-wire terminal skin.
+ *
+ * Ported from the naulon design system (neon-on-near-black, JetBrains Mono for
+ * every figure, real glow). Self-contained on purpose: this file owns its
+ * tokens rather than importing a shared package, so the dashboard stays a
+ * zero-build, self-hostable artifact. No external font/CDN calls — a strict
+ * `default-src 'self'` CSP holds because nothing here reaches off-origin.
+ */
+
+:root {
+  /* Live-wire palette — the portal's dark tokens, verbatim. */
+  --bg: #07080b;
+  --bg-grid: rgba(233, 237, 243, 0.04);
+  --fg: #e9edf3;
+  --card: #11141c;
+  --surface-2: #1a2030;
+  --muted: #8d96a3;          /* AA on --bg (WCAG 4.5:1) — replaces the old faint bone */
+  --faint: #6b7482;
+  --line: #242b39;
+  --line-strong: #2e3647;
+
+  --primary: #2bf5a0;        /* money-up · the one owned color */
+  --primary-dim: rgba(43, 245, 160, 0.55);
+  --down: #ff476f;           /* a refusal / a down move */
+  --patina: #38bdf8;         /* info accent — citations */
+
+  --wire: color-mix(in oklab, var(--primary) 65%, transparent);
+  --glow: 0 0 24px -6px color-mix(in oklab, var(--primary) 55%, transparent);
+  --shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.7);
+
+  /* No CDN. Uses the OS copy of these families if present, else the fallback. */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, sans-serif;
+  --font-serif: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  --motion: 180ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; text-rendering: optimizeLegibility; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  min-height: 100vh;
+  line-height: 1.5;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  /* faint grid + top glow — the trading-desk floor */
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(43, 245, 160, 0.07), transparent 60%),
+    linear-gradient(var(--bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 100% 100%, 44px 44px, 44px 44px;
+}
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
+
+/* ── the live wire ── */
+.wire {
+  height: 1px; width: 100%;
+  background: linear-gradient(90deg, transparent, var(--primary) 20%, #7dffc9 50%, var(--primary) 80%, transparent);
+  background-size: 200% 100%;
+  animation: flow 9s linear infinite;
+  opacity: 0.6;
+}
+@keyframes flow { to { background-position: 200% 0; } }
+
+/* ── masthead ── */
+header {
+  padding: 30px 0 22px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+}
+.mark { display: flex; align-items: baseline; gap: 12px; }
+.glyph {
+  font-family: var(--font-serif); font-size: 32px; color: var(--primary);
+  line-height: 1; filter: drop-shadow(0 0 14px color-mix(in oklab, var(--primary) 45%, transparent));
+}
+.word {
+  font-family: var(--font-mono); font-weight: 500; font-size: 22px;
+  letter-spacing: 0.02em; text-transform: lowercase;
+}
+.word b { color: var(--primary); font-weight: 600; }
+.kicker {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--muted); margin-top: 9px;
+}
+.status {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--muted);
+  display: flex; align-items: center; gap: 9px;
+}
+.dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--primary);
+  box-shadow: 0 0 0 0 var(--primary);
+  animation: pulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.dot.off { background: var(--faint); animation: none; box-shadow: none; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 55%, transparent); }
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* ── hero total ── */
+.hero { padding: 62px 0 54px; text-align: center; }
+.hero .label {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.36em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 22px;
+}
+.total {
+  font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums;
+  font-size: clamp(52px, 11vw, 116px); line-height: 0.92; color: var(--fg);
+  letter-spacing: -0.02em; text-shadow: var(--glow);
+}
+.total .cur { color: var(--primary); font-size: 0.5em; vertical-align: 0.42em; margin-right: 0.06em; }
+.total .frac { color: var(--muted); }
+.hero .sub { margin-top: 26px; font-size: 15px; color: var(--muted); }
+.hero .sub b { color: var(--fg); font-family: var(--font-mono); font-weight: 500; font-size: 0.94em; }
+.creed { margin-top: 16px; font-family: var(--font-serif); font-size: 18px; color: var(--faint); font-style: italic; }
+.creed em { color: var(--primary); font-style: italic; }
+
+/* ── columns ── */
+main { display: grid; grid-template-columns: 1.35fr 1fr; gap: 54px; padding: 8px 0 70px; align-items: start; }
+.col-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding-bottom: 14px; margin-bottom: 6px; border-bottom: 1px solid var(--line);
+}
+.col-head h2 { font-family: var(--font-serif); font-weight: 400; font-size: 21px; letter-spacing: 0.01em; }
+.col-head .n {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--muted);
+}
+
+/* ── ledger rows ── */
+.row {
+  display: grid; grid-template-columns: 26px 1fr auto; gap: 16px; align-items: center;
+  padding: 16px 0; border-bottom: 1px solid var(--line);
+}
+.rise { animation: rise 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 60ms); }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.rank { font-family: var(--font-mono); font-size: 13px; color: var(--faint); text-align: right; }
+.who .name { font-family: var(--font-mono); font-size: 16px; font-weight: 500; }
+.who .addr { font-family: var(--font-mono); font-size: 11px; color: var(--faint); letter-spacing: 0.03em; margin-top: 4px; }
+.who .meta { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+.earned { text-align: right; min-width: 150px; }
+.earned .amt {
+  font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums;
+  font-size: 19px; color: var(--primary);
+}
+.earned .amt .frac { color: var(--primary-dim); }
+.bar {
+  height: 2px; margin-top: 9px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--primary), #7dffc9);
+  box-shadow: var(--glow); transform-origin: right; transform: scaleX(0);
+  animation: grow 1s var(--ease) forwards;
+}
+@keyframes grow { to { transform: scaleX(1); } }
+
+/* ── crossings feed ── */
+.feed { display: flex; flex-direction: column; }
+.cross { padding: 15px 0; border-bottom: 1px solid var(--line); }
+.cross.fresh { animation: flash 2.2s ease forwards; }
+@keyframes flash {
+  0% { opacity: 0; transform: translateX(-10px); background: color-mix(in oklab, var(--primary) 14%, transparent); }
+  18% { opacity: 1; transform: none; }
+  100% { background: transparent; }
+}
+.cross .when { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
+.cross .line { margin-top: 5px; font-size: 15px; }
+.cross .line .agent { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+.cross .line .verb { color: var(--muted); }
+.cross .line .amt { font-family: var(--font-mono); color: var(--primary); font-weight: 600; }
+.cross .line .slug { font-family: var(--font-serif); color: var(--fg); font-style: italic; }
+.cross .tag {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: 2px; color: var(--muted); margin-left: 6px;
+}
+.cross .tag.citation { color: var(--patina); border-color: color-mix(in oklab, var(--patina) 40%, transparent); }
+.cross .tag.read { color: var(--primary); border-color: var(--primary-dim); }
+.cross .split { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.cross .split span { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); }
+.cross .split span b { color: var(--primary); font-weight: 500; }
+.cross .prov { margin-top: 7px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--faint); }
+.cross .prov b { color: var(--muted); font-weight: 500; }
+
+/* ── empty / footer ── */
+.empty { padding: 50px 0; text-align: center; color: var(--faint); }
+.empty .big { font-family: var(--font-serif); font-style: italic; font-size: 21px; color: var(--muted); }
+.empty code { font-family: var(--font-mono); font-size: 13px; color: var(--primary); background: var(--surface-2); padding: 2px 8px; border-radius: 3px; }
+
+footer {
+  border-top: 1px solid var(--line); padding: 26px 0 40px;
+  display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+}
+footer .thesis { font-family: var(--font-serif); font-size: 15px; color: var(--muted); }
+footer .note { font-size: 12.5px; color: var(--faint); max-width: 440px; }
+
+@media (max-width: 860px) {
+  main { grid-template-columns: 1fr; gap: 40px; }
+  header { flex-direction: column; gap: 14px; }
+  .earned { min-width: 0; }
+}
+
+/* Respect the OS motion preference — everything that moves, stops. */
+@media (prefers-reduced-motion: reduce) {
+  .wire, .dot, .rise, .bar, .cross.fresh { animation: none !important; }
+  .bar { transform: scaleX(1); }
+  .total { text-shadow: none; }
+}
