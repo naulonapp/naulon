@@ -26,17 +26,13 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { logger } from "hono/logger";
 import {
-  activeNetwork,
   botAuthDirectoryBody,
   botAuthKeyFromSeed,
   BOT_AUTH_DIRECTORY_CONTENT_TYPE,
   BOT_AUTH_DIRECTORY_PATH,
   getConfig,
-  mintLicense,
   signBotAuthDirectory,
   usdc,
-  walletAddress,
-  type AttributedEvent,
   type ObservationVerdict,
   type PublisherResolver,
   type TollKind,
@@ -52,13 +48,13 @@ import {
   PAYMENT_LINK_HEADER,
   X402_MANIFEST_PATH,
 } from "./discoverability.ts";
-import { get as getEvent, record } from "./eventLog.ts";
+import { get as getEvent } from "./eventLog.ts";
 import { licensing } from "./license.ts";
 import { observe } from "./observationLog.ts";
 import { quote } from "./pricing.ts";
 import { rateLimit } from "./rateLimit.ts";
 import { revocations } from "./revocation.ts";
-import { emitSettlement } from "./settlementSink.ts";
+import { settleAndAttribute } from "./settle.ts";
 import { envPublisherResolver } from "./publisher.ts";
 
 // Re-exported for downstream embedding: a host that injects its own resolver via
@@ -70,10 +66,12 @@ export { drainSettlements, type DrainScope } from "./settlementSink.ts";
 // path. Scoped by `publisherId` for multi-tenant isolation. See pendingLegs / x402.
 export { drainPendingLegs, type DrainLegScope, type DrainLegResult } from "./x402.ts";
 // The runtime-agnostic decision surface (app.ts is the package's public entry).
-// `@naulon/sdk`'s in-app middleware reaches the SAME verdict from a web Request;
-// the private control plane consumes the settle primitives for its hosted /verify.
+// `@naulon/tollgate/enforce`'s in-app middleware reaches the SAME verdict from a
+// web Request; the private control plane consumes the settle primitives + the
+// shared settlement tail (`settleAndAttribute`) for its hosted /verify.
 export { decide, LICENSE_HEADER } from "./decide.ts";
 export type { Decision, DecideInput, DecideObs } from "./decide.ts";
+export { settleAndAttribute, type SettleResult, type SettleArgs } from "./settle.ts";
 export {
   verifyAndSettle,
   build402,
@@ -85,26 +83,13 @@ export {
   type VerifyResult,
 } from "./x402.ts";
 export type { TollKind } from "@naulon/shared";
-import {
-  PAYMENT_REQUIRED_HEADER,
-  PAYMENT_RESPONSE_HEADER,
-  verifyAndSettle,
-} from "./x402.ts";
+import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER } from "./x402.ts";
 
-// Global license POLICY (TTL, payees mode, holder-of-key, online check) and the
-// settlement network coordinates are gate-operator settings, not publisher identity,
-// so they stay on global config. Only per-publisher facts (origin, price, credits,
-// license issuer, settlement secret) live on the resolved PublisherConfig.
+// Global license POLICY (online check) + settlement network coordinates are
+// gate-operator settings, read where they're used (here for /licenses + the
+// bot-auth key; in settle.ts for the mint). Only per-publisher facts live on the
+// resolved PublisherConfig.
 const cfg = getConfig();
-
-/** Network coordinates embedded in a minted license — the active settlement chain. */
-const settlementNetwork = activeNetwork();
-const LICENSE_NETWORK = {
-  chainId: settlementNetwork.chainId,
-  usdc: settlementNetwork.usdc,
-  gateway: settlementNetwork.gatewayWallet,
-};
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 /**
  * Headers we never forward upstream. Hop-by-hop headers are connection-scoped
@@ -529,12 +514,12 @@ export function createApp(
 
       // Machine WITH a payment: verify + settle (custody-free), then serve.
       case "payment-presented": {
-        const q = d.quote;
-        const result = await verifyAndSettle(d.payment, d.legs, now, publisher.id);
-        if (!result.ok) {
-          emitObs(d.obs, "payment-failed", { kind: d.tollKind, price: usdc(q.price) });
+        // The settlement tail — the exact same code path the hosted /verify runs.
+        const settled = await settleAndAttribute({ payment: d.payment, legs: d.legs, quote: d.quote, publisher, now });
+        if (!settled.ok) {
+          emitObs(d.obs, "payment-failed", { kind: d.tollKind, price: usdc(d.quote.price) });
           return stampGateCacheHeaders(
-            c.json({ error: result.error }, 402, {
+            c.json({ error: settled.error }, 402, {
               [PAYMENT_REQUIRED_HEADER]: d.header,
               Link: PAYMENT_LINK_HEADER,
             }),
@@ -542,70 +527,12 @@ export function createApp(
           );
         }
 
-        // Paid. Build the attributed event (full recursive split).
-        const payerResolved = /^0x[0-9a-fA-F]{40}$/.test(result.payer ?? "") ? result.payer! : ZERO_ADDRESS;
-        const event: AttributedEvent = {
-          // Full UUID — this is also the license `jti`. A sliced/derived id risks a
-          // collision that would make the supabase ignore-duplicates path silently
-          // drop a second paid event and make /licenses/:jti return the wrong one.
-          id: randomUUID(),
-          // Attribute the event to the resolved publisher (the default resolver's id
-          // is "default"). A single optional tag; the single-tenant drain never reads it.
-          publisherId: publisher.id,
-          slug: q.slug,
-          kind: q.kind,
-          amount: usdc(q.price),
-          payees: q.payees,
-          payerAddress: walletAddress(payerResolved),
-          settlementRef: result.settlementRef ?? "unknown",
-          at: now,
-        };
-
-        // Mint the receipt from the IN-MEMORY event, before persisting — money has
-        // already moved, so a ledger hiccup must never cost the agent its license or
-        // turn a paid request into a 402. Skip minting only when we couldn't resolve a
-        // real payer (a zero-address bearer token would be unscoped).
-        let licenseJws: string | undefined;
-        if (licensing && payerResolved !== ZERO_ADDRESS) {
-          licenseJws = mintLicense(
-            {
-              event,
-              issuer: publisher.licenseIdentity,
-              audience: publisher.licenseIdentity,
-              ttlSeconds: cfg.LICENSE_TTL_SECONDS,
-              payeesMode: cfg.LICENSE_PAYEES_MODE,
-              tieBreak: cfg.PRIMARY_PAYEE_TIEBREAK,
-              title: q.title,
-              network: LICENSE_NETWORK,
-              // Holder-of-key: bind to the (already non-zero) payer wallet so re-reads
-              // need a proof-of-possession. Off → a v1 bearer license, demo unchanged.
-              popBindAddress: cfg.LICENSE_POP ? payerResolved : undefined,
-            },
-            licensing.key,
-            now,
-          );
-        }
-
-        // Persist best-effort. A failure here is logged, never surfaced to the agent
-        // (it already paid and holds a valid receipt).
-        await record(event).catch((err: unknown) => {
-          console.error("[tollgate] ledger write failed (payment already settled on-chain):", err);
-        });
-
-        // Report the settlement to the publisher's earnings ledger (wire #3). Fire and
-        // forget — never delay the agent's content on the publisher's RTT; the
-        // background drain guarantees eventual delivery if this attempt misses. Dark
-        // without the publisher's settlement secret; idempotent on event.id; never throws.
-        void emitSettlement(event, publisher.settlementSecret, publisher.originUrl).catch((err: unknown) => {
-          console.error("[tollgate] settlement emit threw (payment already settled):", err);
-        });
-
         // Audit plane: the paid outcome on the same timeline as denials/free reads.
-        emitObs(d.obs, "paid", { kind: q.kind, price: usdc(q.price) });
+        emitObs(d.obs, "paid", { kind: d.quote.kind, price: usdc(d.quote.price) });
 
         const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
-        if (result.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, result.responseHeader);
-        if (licenseJws) res.headers.set(LICENSE_HEADER, licenseJws);
+        if (settled.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, settled.responseHeader);
+        if (settled.licenseJws) res.headers.set(LICENSE_HEADER, settled.licenseJws);
         res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${d.obs.classifyReason})`));
         return stampGateCacheHeaders(res, { noStore: true });
       }
