@@ -5,7 +5,8 @@
   "type": "module",
   "main": "./src/app.ts",
   "exports": {
-    ".": "./src/app.ts"
+    ".": "./src/app.ts",
+    "./enforce": "./src/enforce/index.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",

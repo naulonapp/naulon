@@ -35,6 +35,20 @@ import {
 // Global license POLICY (online-check flag) is a gate-operator setting, read once.
 const cfg = getConfig();
 
+// Re-exported for `@naulon/sdk/enforce` (the in-app middleware): the wire
+// primitives a runtime needs to act on a `Decision` without pulling the whole
+// gate (`app.ts` boots `createApp()` at import — the `./decide` subpath does not).
+export {
+  PAYMENT_SIGNATURE_HEADER,
+  PAYMENT_REQUIRED_HEADER,
+  PAYMENT_RESPONSE_HEADER,
+  type SettlementLegReq,
+  type PaymentRequirements,
+} from "./x402.ts";
+export { PAYMENT_LINK_HEADER } from "./discoverability.ts";
+export type { Quote } from "./pricing.ts";
+export type { TollKind } from "@naulon/shared";
+
 /** The header that carries a Citation License Token, both ways. */
 export const LICENSE_HEADER = "X-Naulon-License";
 /** The header that carries a holder-of-key proof-of-possession on a re-read. */
