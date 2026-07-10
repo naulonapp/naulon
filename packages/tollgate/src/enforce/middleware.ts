@@ -108,7 +108,7 @@ export function naulonMiddleware(
               authorization: `Bearer ${opts.apiKey}`,
               "content-type": "application/json",
             },
-            body: JSON.stringify({ payment: d.payment, legs: d.legs, resource: req.url }),
+            body: JSON.stringify({ payment: d.payment, legs: d.legs, quote: d.quote, resource: req.url }),
           });
           status = res.status;
           body = (await res.json().catch(() => ({}))) as VerifyResponse;
