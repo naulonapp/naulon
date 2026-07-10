@@ -121,6 +121,9 @@ export function rssItemToCandidate(item: RssItem): Candidate {
     slug: slugFromLink(item.link || item.guid || ""),
     title: item.title,
     summary: extractTeaser(item),
+    // Carry the real feed link so pay/quote hit the publisher's actual URL shape
+    // (e.g. /articles/<slug>) instead of reconstructing /essays/<slug>.
+    url: item.link || undefined,
   };
 }
 

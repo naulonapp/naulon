@@ -116,7 +116,7 @@ export function decide(
     const price = c.price as number;
     const density = c.relevance / price;
     const host = normHost(c.host);
-    const base = { slug: c.slug, title: c.title, relevance: c.relevance, price, density };
+    const base = { slug: c.slug, title: c.title, url: c.url, relevance: c.relevance, price, density };
     const skip = (reason: string) => decisions.push({ ...base, action: "skip", reason });
 
     // Free gates first — a held license re-reads for $0, so it is not "spend" and
