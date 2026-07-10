@@ -1,0 +1,42 @@
+{
+  "name": "@naulon/enforce",
+  "version": "0.1.0",
+  "description": "Runtime-agnostic naulon toll-decision kernel + in-app enforcement middleware. The neutral low-level core shared by @naulon/tollgate (the gate) and @naulon/sdk (the publisher SDK) — no dependency cycle.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./next": {
+      "types": "./dist/enforce/next.d.ts",
+      "import": "./dist/enforce/next.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@naulon/shared": "*",
+    "viem": "^2.52.2"
+  },
+  "peerDependencies": {
+    "next": ">=15"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

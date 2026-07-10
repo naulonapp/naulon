@@ -1,5 +1,6 @@
 /**
- * `@naulon/tollgate/enforce/next` — the Next.js App Router middleware adapter.
+ * `@naulon/enforce/next` (re-exported as `@naulon/sdk/enforce/next`) — the
+ * Next.js App Router middleware adapter.
  *
  * Next middleware is a pre-filter: return a `Response` to short-circuit (402/403),
  * or `NextResponse.next()` to let the route render. The one thing that needs the
@@ -10,7 +11,7 @@
  *
  *   // middleware.ts (in the publisher's Next app)
  *   import { NextResponse } from "next/server";
- *   import { createNaulonMiddleware } from "@naulon/tollgate/enforce/next";
+ *   import { createNaulonMiddleware } from "@naulon/sdk/enforce/next";
  *   export const middleware = createNaulonMiddleware({ …opts }, NextResponse);
  *   export const config = { matcher: ["/essays/:path*"] };
  */

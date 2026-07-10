@@ -42,18 +42,16 @@ import {
   decide,
   LICENSE_HEADER,
   type DecideObs,
-} from "./decide.ts";
-import {
   buildX402Manifest,
   PAYMENT_LINK_HEADER,
   X402_MANIFEST_PATH,
-} from "./discoverability.ts";
+  licensing,
+  quote,
+  revocations,
+} from "@naulon/enforce";
 import { get as getEvent } from "./eventLog.ts";
-import { licensing } from "./license.ts";
 import { observe } from "./observationLog.ts";
-import { quote } from "./pricing.ts";
 import { rateLimit } from "./rateLimit.ts";
-import { revocations } from "./revocation.ts";
 import { settleAndAttribute } from "./settle.ts";
 import { envPublisherResolver } from "./publisher.ts";
 
@@ -66,16 +64,17 @@ export { drainSettlements, type DrainScope } from "./settlementSink.ts";
 // path. Scoped by `publisherId` for multi-tenant isolation. See pendingLegs / x402.
 export { drainPendingLegs, type DrainLegScope, type DrainLegResult } from "./x402.ts";
 // The runtime-agnostic decision surface (app.ts is the package's public entry).
-// `@naulon/tollgate/enforce`'s in-app middleware reaches the SAME verdict from a
-// web Request; the private control plane consumes the settle primitives + the
+// `@naulon/enforce`'s in-app middleware (re-exported as `@naulon/sdk/enforce`)
+// reaches the SAME verdict from a web Request; the private control plane consumes
+// the settle primitives + the
 // shared settlement tail (`settleAndAttribute`) for its hosted /verify.
-export { decide, LICENSE_HEADER } from "./decide.ts";
-export type { Decision, DecideInput, DecideObs } from "./decide.ts";
+export { decide, LICENSE_HEADER } from "@naulon/enforce";
+export type { Decision, DecideInput, DecideObs } from "@naulon/enforce";
 export { settleAndAttribute, type SettleResult, type SettleArgs } from "./settle.ts";
 // The gate's pricing — the hosted /quote prices a resource with the SAME resolver
 // the gate uses (custody-free: a Quote carries payTo addresses, never a key).
-export { quote as resolveQuote } from "./pricing.ts";
-export type { Quote } from "./pricing.ts";
+export { quote as resolveQuote } from "@naulon/enforce";
+export type { Quote } from "@naulon/enforce";
 export {
   verifyAndSettle,
   build402,

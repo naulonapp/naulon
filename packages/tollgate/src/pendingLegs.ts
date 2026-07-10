@@ -21,7 +21,7 @@
  * dev/tests, supabase for the fleet), env-selected, callers use `getPendingLegSink()`.
  */
 import { getConfig, supabaseRest } from "@naulon/shared";
-import type { PaymentRequirements } from "./x402.ts";
+import type { PaymentRequirements } from "@naulon/enforce";
 
 /** One buyer-authorized extra leg awaiting settlement. The `payload` is the buyer's
  *  signed payment for THIS leg — what the drain hands to the facilitator. */

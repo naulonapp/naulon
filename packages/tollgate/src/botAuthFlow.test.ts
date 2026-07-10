@@ -25,7 +25,7 @@ process.env.LICENSES_ENABLED = "false";
 process.env.RATE_LIMIT_RPM = "0";
 
 const { createApp } = await import("./app.ts");
-const { jwkThumbprint, buildSignatureBase, parseSignatureInput } = await import("./botAuth.ts");
+const { jwkThumbprint, buildSignatureBase, parseSignatureInput } = await import("@naulon/enforce");
 const { usdc, walletAddress } = await import("@naulon/shared");
 type PublisherConfig = import("@naulon/shared").PublisherConfig;
 

@@ -19,7 +19,7 @@
  */
 import { classify, matchUaFragment, type RequestSignals, type Verdict } from "./agentDetect.ts";
 import { verifyBotAuth, type RequestFacts, type BotAuthOptions } from "./botAuth.ts";
-import { build402, PAYMENT_SIGNATURE_HEADER, type SettlementLegReq } from "./x402.ts";
+import { build402, PAYMENT_SIGNATURE_HEADER, type SettlementLegReq } from "./build402.ts";
 import type { Quote } from "./pricing.ts";
 import { licensing } from "./license.ts";
 import { revocations } from "./revocation.ts";
@@ -44,7 +44,7 @@ export {
   PAYMENT_RESPONSE_HEADER,
   type SettlementLegReq,
   type PaymentRequirements,
-} from "./x402.ts";
+} from "./build402.ts";
 export { PAYMENT_LINK_HEADER } from "./discoverability.ts";
 export type { Quote } from "./pricing.ts";
 export type { TollKind } from "@naulon/shared";

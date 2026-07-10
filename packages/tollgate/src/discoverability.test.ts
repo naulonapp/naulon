@@ -14,7 +14,7 @@ process.env.LICENSES_ENABLED = "true";
 process.env.RATE_LIMIT_RPM = "0";
 
 const { app } = await import("./app.ts");
-const { buildX402Manifest, PAYMENT_LINK_HEADER } = await import("./discoverability.ts");
+const { buildX402Manifest, PAYMENT_LINK_HEADER } = await import("@naulon/enforce");
 const { usdc } = await import("@naulon/shared");
 type PublisherConfig = import("@naulon/shared").PublisherConfig;
 

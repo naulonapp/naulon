@@ -23,11 +23,10 @@ import {
   type AttributedEvent,
   type PublisherConfig,
 } from "@naulon/shared";
-import { licensing } from "./license.ts";
+import { licensing, type Quote, type SettlementLegReq } from "@naulon/enforce";
 import { record } from "./eventLog.ts";
 import { emitSettlement } from "./settlementSink.ts";
-import { verifyAndSettle, type SettlementLegReq } from "./x402.ts";
-import type { Quote } from "./pricing.ts";
+import { verifyAndSettle } from "./x402.ts";
 
 const cfg = getConfig();
 

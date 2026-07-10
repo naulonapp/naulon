@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decide } from "./decide.ts";
-import { PAYMENT_SIGNATURE_HEADER } from "./x402.ts";
+import { PAYMENT_SIGNATURE_HEADER } from "./build402.ts";
 
 const basePublisher = {
   id: "pub_test",

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { privateKeyToAccount } from "viem/accounts";
 import { usdc, walletAddress } from "@naulon/shared";
-import type { Quote } from "./pricing.ts";
+import type { Quote } from "@naulon/enforce";
 import {
   build402,
   buildGatewaySignature,

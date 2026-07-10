@@ -15,7 +15,7 @@ process.env.RATE_LIMIT_RPM = "0";
 
 const { createApp } = await import("./app.ts");
 const { buildSignatureBase, parseSignatureInput, parseSignatureHeader, verifyEd25519, jwkThumbprint } = await import(
-  "./botAuth.ts"
+  "@naulon/enforce"
 );
 const { botAuthKeyFromSeed } = await import("@naulon/shared");
 

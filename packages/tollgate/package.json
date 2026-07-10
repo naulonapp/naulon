@@ -5,9 +5,7 @@
   "type": "module",
   "main": "./src/app.ts",
   "exports": {
-    ".": "./src/app.ts",
-    "./enforce": "./src/enforce/index.ts",
-    "./enforce/next": "./src/enforce/next.ts"
+    ".": "./src/app.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -15,6 +13,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@naulon/enforce": "*",
     "@naulon/sdk": "*",
     "@naulon/shared": "*",
     "@circle-fin/x402-batching": "^3.2.0",
