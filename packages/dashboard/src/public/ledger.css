@@ -295,6 +295,14 @@ footer .note { font-size: 12.5px; color: var(--faint); max-width: 440px; }
   border: 1px solid var(--line-strong); background: var(--card);
 }
 .banner b { color: var(--primary); font-weight: 600; }
+.banner.pending {
+  border-color: color-mix(in oklab, var(--warning, #ffb020) 45%, transparent);
+  background: color-mix(in oklab, var(--warning, #ffb020) 10%, transparent);
+}
+.banner.pending b { color: var(--warning, #ffb020); }
+.banner.synced { border-color: color-mix(in oklab, var(--primary) 40%, transparent); }
+.confirm { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.btn.sm { padding: 5px 11px; font-size: 12px; }
 .dim { color: var(--faint); }
 .err { color: var(--down); } .ok { color: var(--primary); } .warn-txt { color: var(--warning, #ffb020); }
 

@@ -22,7 +22,7 @@ import { watchLedger } from "./watch.ts";
 import { summarizeOps } from "./ops.ts";
 import { summarizeConfig } from "./config-view.ts";
 import { readObservations } from "./observations.ts";
-import { readContent, scanArticles, writeCredits } from "./content.ts";
+import { readContent, scanArticles, writeCredits, isRestartPending } from "./content.ts";
 import { decideAccess } from "./access.ts";
 import { RECENT_LIMIT } from "./constants.ts";
 
@@ -64,13 +64,13 @@ const maskLedger = (l: Ledger): Ledger => ({
 });
 const ledgerFor = (l: Ledger): Ledger => (isPublic ? maskLedger(l) : l);
 
-async function gateHealth(): Promise<{ up: boolean; service?: string; detail?: string }> {
+async function gateHealth(): Promise<{ up: boolean; service?: string; startedAt?: string; detail?: string }> {
   const url = cfg.GATE_URL.replace(/\/$/, "") + "/healthz";
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(1500) });
     if (!r.ok) return { up: false, detail: `HTTP ${r.status}` };
-    const j = (await r.json()) as { ok?: boolean; service?: string };
-    return { up: j.ok === true, service: j.service };
+    const j = (await r.json()) as { ok?: boolean; service?: string; startedAt?: string };
+    return { up: j.ok === true, service: j.service, startedAt: j.startedAt };
   } catch (e) {
     // A throw here always means we couldn't reach the gate — surface that plainly
     // rather than Node's opaque "fetch failed".
@@ -143,7 +143,24 @@ if (ACCESS.refuse) {
       return c.json({ at: now, health, ops: summarizeOps(observations, now), config });
     });
 
-    app.get("/api/content", async (c) => c.json(await readContent()));
+    app.get("/api/content", async (c) => {
+      const content = await readContent();
+      // Restart-drift: the gate loaded credits.json at boot, so an edit written
+      // since then is on disk but not yet served. Surface it so the operator knows
+      // to restart (and the console can pitch cloud's live-apply). API mode has no
+      // local file, so no drift to report.
+      if (content.apiMode) return c.json({ ...content, gate: { up: false }, restartPending: false });
+      const health = await gateHealth();
+      return c.json({
+        ...content,
+        gate: { up: health.up, startedAt: health.startedAt ?? null },
+        restartPending: isRestartPending({
+          fileModifiedAt: content.fileModifiedAt,
+          gateStartedAt: health.startedAt ?? null,
+          gateUp: health.up,
+        }),
+      });
+    });
 
     // State-changing routes: reject cross-origin (Basic-auth browsers auto-send
     // creds, so a same-origin check is the CSRF guard on this money-write surface).
