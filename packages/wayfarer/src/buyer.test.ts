@@ -17,6 +17,7 @@ import { test } from "node:test";
 import {
   assemblePayment,
   classifyPaymentError,
+  probe,
   probePrice,
   quotedTotalAtomic,
   tollMovedOrNull,
@@ -187,4 +188,90 @@ test("classifyPaymentError separates a fundable hard stop from a retryable rejec
   const other = classifyPaymentError("nonce already used");
   assert.equal(other.errorCode, "rejected", "an unrecognized reason defaults to a generic rejection");
   assert.equal(other.retryable, true, "and stays retryable — never silently a hard stop");
+});
+
+// ── probe() — classify the HTTP outcome, never collapse non-402 to "free" ──────
+// The bug this pins: probePrice returned null for ANY non-402 (404, 5xx, 200),
+// so a wrong path or a down origin was indistinguishable from a genuine free read.
+// probe() must classify the outcome so callers stop treating a 404 as free content.
+
+/** Stub global fetch to return one Response with the given status/headers/body. */
+function stubStatus(status: number, opts: { header?: string; body?: string } = {}): typeof globalThis.fetch {
+  const headers: Record<string, string> = {};
+  if (opts.header !== undefined) headers["payment-required"] = opts.header;
+  return (async () => new Response(opts.body ?? null, { status, headers })) as typeof globalThis.fetch;
+}
+
+async function withFetch<T>(f: typeof globalThis.fetch, run: () => Promise<T>): Promise<T> {
+  const real = globalThis.fetch;
+  globalThis.fetch = f;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+test("probe classifies a valid 402 as gated with the decoded quote", async () => {
+  await withFetch(stubStatus(402, { header: paymentRequiredHeader({ withOperatorLeg: false }) }), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "gated");
+    if (o.status === "gated") assert.equal(o.quoted.amountAtomic, "10000");
+  });
+});
+
+test("probe classifies a 2xx as a genuine free read (not an error)", async () => {
+  await withFetch(stubStatus(200, { body: "<html>free</html>" }), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "free");
+  });
+});
+
+test("probe classifies a 404 as not_found — NOT free (the /essays wrong-path footgun)", async () => {
+  await withFetch(stubStatus(404), async () => {
+    const o = await probe("https://x.test/essays/zeybek", "read", "tester");
+    assert.equal(o.status, "not_found", "a 404 is a wrong/unknown path, not a free article");
+    if (o.status === "not_found") assert.equal(o.httpStatus, 404);
+  });
+});
+
+test("probe classifies a 5xx / 403 as unreachable (retryable origin trouble), not free", async () => {
+  for (const status of [500, 502, 403]) {
+    await withFetch(stubStatus(status), async () => {
+      const o = await probe("https://x.test/essays/a", "read", "tester");
+      assert.equal(o.status, "unreachable", `HTTP ${status} → unreachable`);
+      if (o.status === "unreachable") assert.equal(o.httpStatus, status);
+    });
+  }
+});
+
+test("probe flags a 402 with no payment-required header as malformed (never silently free)", async () => {
+  await withFetch(stubStatus(402), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "a 402 without the header is a broken gate, not a free read");
+  });
+});
+
+test("probe flags a 402 with an empty accepts[] as malformed (no crash)", async () => {
+  const emptyAccepts = Buffer.from(JSON.stringify({ x402Version: 2, accepts: [] })).toString("base64");
+  await withFetch(stubStatus(402, { header: emptyAccepts }), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "an empty accepts list must not throw on accepts[0]");
+  });
+});
+
+test("probe flags a 402 with an undecodable header as malformed (no throw)", async () => {
+  await withFetch(stubStatus(402, { header: "@@@not-base64-json@@@" }), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed");
+  });
+});
+
+test("probePrice stays back-compatible: the gated quote for a 402, null for anything else", async () => {
+  await withFetch(stubStatus(402, { header: paymentRequiredHeader({ withOperatorLeg: false }) }), async () => {
+    assert.ok(await probePrice("https://x.test/essays/a", "read", "tester"), "402 → quote");
+  });
+  await withFetch(stubStatus(404), async () => {
+    assert.equal(await probePrice("https://x.test/essays/a", "read", "tester"), null, "404 → null (legacy shape)");
+  });
 });

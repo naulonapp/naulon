@@ -39,6 +39,7 @@ export type LegRequirements = Quoted["requirements"];
  */
 export type FetchErrorCode =
   | "not_gated"
+  | "not_found"
   | "toll_moved"
   | "insufficient_funds"
   | "expired"
@@ -136,43 +137,138 @@ export function classifyPaymentError(errorText: string): { errorCode: FetchError
   return { errorCode: "rejected", retryable: true };
 }
 
-/** Shared price probe — reads the 402 PAYMENT-REQUIRED header. */
+/**
+ * The classified outcome of a price probe. A probe is NOT just "gated or not" — the
+ * reason it isn't gated matters, and collapsing everything non-402 into one bucket is a
+ * money-correctness bug: a wrong URL (404) or a down origin (5xx) is NOT a free read, and
+ * an agent that treats it as one silently skips paying and reads nothing (or an error
+ * page). This union keeps the four cases apart so every caller can respond correctly:
+ *   - `gated`       — a real 402 with a decodable toll; pay it.
+ *   - `free`        — a genuine 2xx; there is nothing to pay (the one true "not gated").
+ *   - `not_found`   — a 404; the path is wrong/unknown, NOT free. On a slug-only pay this
+ *                     is usually the `/essays/<slug>` fallback missing a publisher that
+ *                     serves `/articles/<slug>` — the fix is to pass the canonical url.
+ *   - `unreachable` — any other non-2xx (5xx, 403, a network throw); transient, retryable.
+ *   - `malformed`   — a 402 whose PAYMENT-REQUIRED header is missing/undecodable/empty;
+ *                     a broken gate, never silently a free read.
+ */
+export type ProbeOutcome =
+  | { status: "gated"; quoted: Quoted }
+  | { status: "free" }
+  | { status: "not_found"; httpStatus: number }
+  | { status: "unreachable"; httpStatus: number }
+  | { status: "malformed"; reason: string };
+
+/** Shared price probe — classify the gate's response by HTTP status, decoding the 402
+ *  PAYMENT-REQUIRED header only for a real toll. Never throws: a broken 402 body or a
+ *  network failure is returned as a typed outcome, not an exception. */
+export async function probe(
+  url: string,
+  kind: "read" | "citation",
+  agentId: string,
+): Promise<ProbeOutcome> {
+  let res: Response;
+  try {
+    res = await agentFetch(url, {
+      headers: { "user-agent": AGENT_UA, "x-naulon-agent": agentId, "x-naulon-kind": kind },
+    });
+  } catch {
+    // A DNS/connection failure is unreachable, not "free" — httpStatus 0 = no response.
+    return { status: "unreachable", httpStatus: 0 };
+  }
+  if (res.status === 402) {
+    const header = res.headers.get("payment-required");
+    if (!header) return { status: "malformed", reason: "missing the PAYMENT-REQUIRED header" };
+    let decoded: {
+      accepts?: {
+        network: string;
+        asset: string;
+        payTo: string;
+        amount: string;
+        maxTimeoutSeconds: number;
+        extra?: { nonce?: string };
+      }[];
+      extensions?: { naulonLegs?: { legs?: { role: string; payTo: string; amount: string; nonce?: string }[] } };
+    };
+    try {
+      decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+    } catch {
+      return { status: "malformed", reason: "an undecodable PAYMENT-REQUIRED header" };
+    }
+    const req = decoded.accepts?.[0];
+    if (!req) return { status: "malformed", reason: "a 402 with no payment options (empty accepts)" };
+    // The author leg is what the agent appraises (the content's price), so `priceUsdc`
+    // stays the author amount even when an additive fee leg makes the buyer's TOTAL
+    // higher. `legs` (when present) is the full set the buyer must sign — see assemblePayment.
+    const legs = decoded.extensions?.naulonLegs?.legs;
+    return {
+      status: "gated",
+      quoted: {
+        priceUsdc: Number(req.amount) / 1_000_000,
+        amountAtomic: req.amount,
+        nonce: req.extra?.nonce,
+        requirements: req,
+        ...(legs && legs.length > 0 ? { legs } : {}),
+      },
+    };
+  }
+  if (res.status === 404) return { status: "not_found", httpStatus: 404 };
+  if (res.ok) return { status: "free" };
+  return { status: "unreachable", httpStatus: res.status };
+}
+
+/** Back-compat thin wrapper: the decoded quote for a gated 402, else null. Callers that
+ *  must distinguish free / not_found / unreachable use `probe()` directly. */
 export async function probePrice(
   url: string,
   kind: "read" | "citation",
   agentId: string,
 ): Promise<Quoted | null> {
-  const res = await agentFetch(url, {
-    headers: { "user-agent": AGENT_UA, "x-naulon-agent": agentId, "x-naulon-kind": kind },
-  });
-  if (res.status !== 402) return null;
-  const header = res.headers.get("payment-required");
-  if (!header) return null;
-  const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as {
-    accepts: {
-      network: string;
-      asset: string;
-      payTo: string;
-      amount: string;
-      maxTimeoutSeconds: number;
-      extra?: { nonce?: string };
-    }[];
-    extensions?: {
-      naulonLegs?: { legs?: { role: string; payTo: string; amount: string; nonce?: string }[] };
-    };
-  };
-  const req = decoded.accepts[0]!;
-  // The author leg is what the agent appraises (the content's price), so `priceUsdc`
-  // stays the author amount even when an additive fee leg makes the buyer's TOTAL
-  // higher. `legs` (when present) is the full set the buyer must sign — see assemblePayment.
-  const legs = decoded.extensions?.naulonLegs?.legs;
-  return {
-    priceUsdc: Number(req.amount) / 1_000_000,
-    amountAtomic: req.amount,
-    nonce: req.extra?.nonce,
-    requirements: req,
-    ...(legs && legs.length > 0 ? { legs } : {}),
-  };
+  const outcome = await probe(url, kind, agentId);
+  return outcome.status === "gated" ? outcome.quoted : null;
+}
+
+/**
+ * Map a NON-gated probe outcome to the typed `Fetched` failure every buyer returns, so a
+ * 404/5xx/malformed response never masquerades as a paid or free success. `not_gated` is
+ * reserved for the one true free (2xx) read; a 404 is `not_found` with a message that
+ * points the agent at the canonical url (the usual cause is the `/essays/<slug>` fallback
+ * not matching a `/articles/<slug>` publisher).
+ */
+export function probeFailure(outcome: Exclude<ProbeOutcome, { status: "gated" }>, url: string): Fetched {
+  switch (outcome.status) {
+    case "free":
+      return {
+        ok: false,
+        errorCode: "not_gated",
+        retryable: false,
+        error: "not gated — the source returned a free (2xx) read; no payment is required.",
+      };
+    case "not_found":
+      return {
+        ok: false,
+        errorCode: "not_found",
+        retryable: false,
+        error:
+          `probed ${url} — HTTP 404. This is NOT a free read: the path was not found. Pass the canonical ` +
+          `url from naulon_discover — the /essays/<slug> fallback does not match every publisher (many serve ` +
+          `/articles/<slug> or a custom path).`,
+      };
+    case "unreachable":
+      return {
+        ok: false,
+        errorCode: "origin_error",
+        retryable: true,
+        error: `probed ${url} — HTTP ${outcome.httpStatus || "no response"}. The origin/gate is unreachable or erroring; retry.`,
+      };
+    case "malformed":
+      return {
+        ok: false,
+        errorCode: "rejected",
+        retryable: true,
+        error: `the gate returned a 402 but ${outcome.reason}; cannot quote the toll. Retry or check the gate.`,
+      };
+  }
 }
 
 /**

@@ -10,6 +10,8 @@
 import { activeNetwork, getConfig } from "@naulon/shared";
 import {
   classifyPaymentError,
+  probe,
+  probeFailure,
   probePrice,
   tollMovedOrNull,
   type Buyer,
@@ -64,17 +66,20 @@ export function gatewayBuyer(): Buyer {
       // Refuse loudly and point at the rail that does support N-leg (memo/Arc). Probing
       // here costs one extra request only on the gateway path; gateway N-leg is a
       // documented follow-up (it needs per-leg Circle signing outside pay()).
-      const probe = await probePrice(url, kind, cfg.BUYER_ADDRESS ?? "wayfarer");
+      const outcome = await probe(url, kind, cfg.BUYER_ADDRESS ?? "wayfarer");
+      // A non-gated probe is never something to pay: a 404 (wrong path), a down origin,
+      // or a genuine free read must short-circuit with the typed failure — NOT fall
+      // through into Circle's pay() against an unpriced URL.
+      if (outcome.status !== "gated") return probeFailure(outcome, url);
+      const quoted = outcome.quoted;
       // Re-quote at pay time and abort if the toll moved past the authorized ceiling.
-      if (probe) {
-        const moved = tollMovedOrNull(probe, guard);
-        if (moved) return moved;
-      }
-      if (probe?.legs && probe.legs.length > 1) {
+      const moved = tollMovedOrNull(quoted, guard);
+      if (moved) return moved;
+      if (quoted.legs && quoted.legs.length > 1) {
         return {
           ok: false,
           error:
-            `gateway (Circle SDK) mode cannot pay a ${probe.legs.length}-leg toll (operator fee): ` +
+            `gateway (Circle SDK) mode cannot pay a ${quoted.legs.length}-leg toll (operator fee): ` +
             `the SDK signs only the author leg. Use the memo (Arc) rail for multi-leg settlement.`,
         };
       }

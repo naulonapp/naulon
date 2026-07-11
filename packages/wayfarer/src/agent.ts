@@ -135,7 +135,7 @@ export async function run(
   // 2. price (free x402 probes — no payment yet)
   const priced: PricedCandidate[] = [];
   for (const c of candidates) {
-    const quoted = await buyer.price(articleUrl(base, c.slug), "citation");
+    const quoted = await buyer.price(c.url ?? articleUrl(base, c.slug), "citation");
     if (quoted) priced.push({ ...c, price: usdc(quoted.priceUsdc) });
     else log(`  · ${c.slug}: not gated — skipping`);
   }
@@ -163,7 +163,7 @@ export async function run(
   const sources: Source[] = [];
   let spent = 0;
   for (const d of decisions) {
-    const url = articleUrl(base, d.slug);
+    const url = d.url ?? articleUrl(base, d.slug);
 
     if (d.action === "cache") {
       const h = held.get(d.slug);

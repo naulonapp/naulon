@@ -134,6 +134,58 @@ test("run discovers, prices, decides, pays for and cites a relevant source under
   );
 });
 
+test("URL-centric: run uses a candidate's canonical url verbatim, never a reconstructed /essays/ path", async () => {
+  const CATALOG = "http://catalog.test/list";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-urlcentric-${process.pid}.json`),
+    },
+    async () => {
+      const probed: string[] = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        // Discovery: one candidate whose canonical url sits at /articles/, not /essays/.
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: "deep", title: "Deep", summary: "a deep essay on passage and payment", url: "http://gate.test/articles/deep" },
+            ]),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (u.includes("gate.test")) probed.push(u); // every gate hit (quote probe + pay)
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the fare is paid", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        await run("passage and payment", () => {});
+        assert.ok(
+          probed.some((u) => u === "http://gate.test/articles/deep"),
+          `expected the canonical /articles/deep url used verbatim; got ${JSON.stringify(probed)}`,
+        );
+        assert.ok(!probed.some((u) => u.includes("/essays/deep")), "must NOT reconstruct an /essays/ path when a canonical url is present");
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
 test("BUY-4.3 P2: an injected session signer pays through run() — no BUYER_PRIVATE_KEY needed", async () => {
   // The hosted path: the cloud injects the buyer's custody-free session signer, and the
   // MCP threads it into run() (mirroring naulon_pay_and_read). Proof it works even with

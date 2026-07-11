@@ -272,6 +272,38 @@ test("naulon_quote reads real price + terms from a 402, and reports gated:false 
   });
 });
 
+test("naulon_pay_and_read reports not_found (not a free read) when the path 404s", async () => {
+  // A gate that 404s every path — the exact shape of a slug-only pay whose /essays/<slug>
+  // fallback misses a publisher serving /articles/<slug>. This must NOT read as "free".
+  const handler = (_req: IncomingMessage, res: ServerResponse): void => {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+  };
+  await withStubGate(handler, async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } });
+    const r = res.structuredContent as { ok: boolean; error?: string; errorCode?: string; spentSessionUsdc: number };
+    assert.equal(r.ok, false, "a 404 path is not payable");
+    assert.equal(r.errorCode, "not_found", "a 404 is a wrong path, not the free-read not_gated");
+    assert.match(r.error ?? "", /404|canonical url/i, "the error points the agent at passing the real url");
+    assert.equal(r.spentSessionUsdc, 0, "nothing was spent");
+  });
+});
+
+test("naulon_quote does not pass off a 404 path as a plain free read", async () => {
+  const handler = (_req: IncomingMessage, res: ServerResponse): void => {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+  };
+  await withStubGate(handler, async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
+    const q = res.structuredContent as { gated: boolean; note?: string };
+    assert.equal(q.gated, false, "still not gated (nothing was paid)");
+    assert.match(q.note ?? "", /404|not found|canonical url/i, "the note distinguishes a 404 from a genuine free read");
+  });
+});
+
 test("naulon_read_held with no held license tells the model to pay first (no network)", async () => {
   await withEnv(
     { WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-empty-${process.pid}.json`) },
@@ -831,4 +863,91 @@ test("C3 — hosted signer WITH popWallet injected ⇒ no warn", async () => {
     false,
     "no warn when a PoP signer is supplied",
   );
+});
+
+// ── Slice A′ — URL-centric discrete MCP tools ──────────────────────────────────
+// The composite run()/naulon_research pipeline is URL-centric (Slice A). These prove
+// the DISCRETE tools carry the canonical url too, so a hosted MCP pays a publisher's
+// real /articles/<slug> link (inneraxiom's shape) instead of the reconstructed
+// /essays/<slug> template. Absent a url, quote/pay must still fall back to the template.
+
+test("A′: naulon_discover surfaces each candidate's canonical url", async () => {
+  const CATALOG = "http://catalog.test/list";
+  await withEnv(
+    { RSS_URL: undefined, PUBLISHER_URL: undefined, CATALOG_URL: CATALOG, OPENAI_API_KEY: undefined },
+    async () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL) => {
+        if (String(url).startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: "deep", title: "Deep", summary: "a deep essay on passage and payment", url: "http://gate.test/articles/deep" },
+            ]),
+            { status: 200 },
+          );
+        }
+        return new Response(null, { status: 404 });
+      }) as typeof globalThis.fetch;
+      try {
+        const client = await connectedClient();
+        const res = await client.callTool({ name: "naulon_discover", arguments: { topic: "passage and payment" } });
+        const s = res.structuredContent as { candidates: Array<{ slug: string; url?: string }> };
+        const deep = s.candidates.find((c) => c.slug === "deep");
+        assert.ok(deep, "the catalog candidate is discovered");
+        assert.equal(deep.url, "http://gate.test/articles/deep", "the canonical url is surfaced to the model");
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+test("A′: naulon_quote probes the passed canonical url verbatim, not a reconstructed /essays/ path", async () => {
+  const gate = await standGate((_req, res) => {
+    res.writeHead(402, { "payment-required": paymentRequired("5000"), "content-type": "application/json" });
+    res.end("{}");
+  });
+  try {
+    const client = await connectedClientWith({ tollgateUrl: gate.url });
+    const q = (
+      await client.callTool({ name: "naulon_quote", arguments: { slug: "deep", url: `${gate.url}/articles/deep` } })
+    ).structuredContent as { gated: boolean };
+    assert.equal(q.gated, true, "the source is quoted from its canonical url");
+    assert.ok(gate.hits.some((u) => u.includes("/articles/deep")), "the canonical /articles/ url was probed verbatim");
+    assert.ok(!gate.hits.some((u) => u.includes("/essays/")), "no /essays/ reconstruction when a url is present");
+  } finally {
+    await gate.close();
+  }
+});
+
+test("A′: naulon_quote falls back to the /essays/ template when no url is passed", async () => {
+  const gate = await standGate((_req, res) => {
+    res.writeHead(402, { "payment-required": paymentRequired("5000"), "content-type": "application/json" });
+    res.end("{}");
+  });
+  try {
+    const client = await connectedClientWith({ tollgateUrl: gate.url });
+    const q = (await client.callTool({ name: "naulon_quote", arguments: { slug: "deep" } })).structuredContent as {
+      gated: boolean;
+    };
+    assert.equal(q.gated, true, "the slug-only quote still works");
+    assert.ok(gate.hits.some((u) => u.includes("/essays/deep")), "slug-only reconstructs the /essays/ template");
+  } finally {
+    await gate.close();
+  }
+});
+
+test("A′: naulon_pay_and_read pays the passed canonical url verbatim (/articles/), never /essays/", async () => {
+  const gate = await standGate(payGate("5000"));
+  try {
+    const client = await connectedClientWith({ signer: mockSigner, tollgateUrl: gate.url, budgetUsdc: 1 });
+    const p = (
+      await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "deep", url: `${gate.url}/articles/deep` } })
+    ).structuredContent as { ok: boolean };
+    assert.equal(p.ok, true, "the pay completes");
+    assert.ok(gate.hits.some((u) => u.includes("/articles/deep")), "both the budget probe and the pay hit the canonical url");
+    assert.ok(!gate.hits.some((u) => u.includes("/essays/")), "no /essays/ reconstruction on the pay path");
+  } finally {
+    await gate.close();
+  }
 });

@@ -65,8 +65,10 @@ test("teaser boundary: the full body never leaks into the teaser", () => {
 
 test("rssItemToCandidate yields a free teaser (slug + title + summary, no price)", () => {
   const c = rssItemToCandidate(parseRss(FEED)[0]!);
-  assert.deepEqual(Object.keys(c).sort(), ["slug", "summary", "title"]);
+  assert.deepEqual(Object.keys(c).sort(), ["slug", "summary", "title", "url"]);
   assert.equal(c.slug, "esoteric-bible-reading-666");
+  // URL-centric: the real feed link is carried verbatim (here /articles/, not /essays/).
+  assert.equal(c.url, "https://meridian.example/articles/esoteric-bible-reading-666");
 });
 
 test("rssToCandidates maps the whole feed and drops slugless items", () => {
