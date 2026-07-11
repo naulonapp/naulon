@@ -18,8 +18,13 @@
         <div class="kicker">operator console — your gate at a glance</div>
       </div>
       <div class="head-right">
-        <nav class="nav"><a href="/" class="on">Console</a><a href="/content">Content</a></nav>
-        <div class="status"><span class="dot off" id="gateDot" aria-hidden="true"></span><span id="gateState">checking gate…</span></div>
+        <nav class="nav"><a href="/" class="on">Console</a><a href="/content">Content</a><a href="/ledger">Ledger</a></nav>
+        <div class="seg" id="winSeg" role="group" aria-label="traffic window">
+          <button type="button" class="seg-btn" data-win="1h">1h</button>
+          <button type="button" class="seg-btn on" data-win="24h">24h</button>
+          <button type="button" class="seg-btn" data-win="7d">7d</button>
+        </div>
+        <div class="status"><span class="dot off" id="gateDot" aria-hidden="true"></span><span id="gateState">checking gate…</span><span class="freshness" id="freshness" aria-live="off"></span></div>
       </div>
     </header>
 

@@ -290,6 +290,27 @@ footer .note { font-size: 12.5px; color: var(--faint); max-width: 440px; }
 .nav a:hover { color: var(--fg); }
 .nav a.on { color: var(--primary); border-color: var(--line-strong); }
 
+/* traffic-window selector (console) */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg-btn {
+  font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.06em;
+  background: transparent; color: var(--muted); border: 0; padding: 5px 11px; cursor: pointer;
+  border-left: 1px solid var(--line);
+  transition: color var(--motion) var(--ease), background var(--motion) var(--ease);
+}
+.seg-btn:first-child { border-left: 0; }
+.seg-btn:hover { color: var(--fg); }
+.seg-btn.on { color: var(--primary); background: color-mix(in oklab, var(--primary) 12%, transparent); }
+
+/* liveness cue — "updated Ns ago", pulses on each good poll */
+.freshness { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--faint); }
+.freshness.beat { animation: freshbeat 600ms var(--ease); }
+@keyframes freshbeat {
+  0% { color: var(--primary); }
+  100% { color: var(--faint); }
+}
+@media (prefers-reduced-motion: reduce) { .freshness.beat { animation: none; } }
+
 .banner {
   margin: 24px 0 6px; padding: 11px 16px; border-radius: 4px; font-size: 13px; color: var(--fg);
   border: 1px solid var(--line-strong); background: var(--card);

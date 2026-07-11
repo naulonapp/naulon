@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { usdc, type ObservationEvent, type ObservationVerdict } from "@naulon/shared";
-import { summarizeOps } from "./ops.ts";
+import { summarizeOps, windowMsFromKey, OPS_WINDOWS } from "./ops.ts";
 
 let seq = 0;
 function obs(
@@ -105,4 +105,16 @@ test("empty input is a zeroed, valid shape", () => {
   assert.equal(s.agents.total, 0);
   assert.deepEqual(s.recent, []);
   assert.equal(s.byVerdict["paid"], 0);
+});
+
+test("windowMsFromKey maps known keys to their spans", () => {
+  assert.equal(windowMsFromKey("1h"), 3_600_000);
+  assert.equal(windowMsFromKey("24h"), 24 * 3_600_000);
+  assert.equal(windowMsFromKey("7d"), 7 * 24 * 3_600_000);
+});
+
+test("windowMsFromKey falls back to 24h for unknown / missing keys", () => {
+  assert.equal(windowMsFromKey(undefined), OPS_WINDOWS["24h"]);
+  assert.equal(windowMsFromKey("nonsense"), OPS_WINDOWS["24h"]);
+  assert.equal(windowMsFromKey(""), OPS_WINDOWS["24h"]);
 });

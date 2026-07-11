@@ -19,7 +19,7 @@ import { basicAuth } from "hono/basic-auth";
 import { getConfig, getSink } from "@naulon/shared";
 import { aggregate, type Ledger } from "./aggregate.ts";
 import { watchLedger } from "./watch.ts";
-import { summarizeOps } from "./ops.ts";
+import { summarizeOps, windowMsFromKey } from "./ops.ts";
 import { summarizeConfig } from "./config-view.ts";
 import { readObservations } from "./observations.ts";
 import { readContent, scanArticles, writeCredits, isRestartPending } from "./content.ts";
@@ -135,12 +135,13 @@ if (ACCESS.refuse) {
   if (!isPublic) {
     app.get("/api/ops", async (c) => {
       const now = Date.now();
+      const windowMs = windowMsFromKey(c.req.query("window"));
       const [health, observations, config] = await Promise.all([
         gateHealth(),
         readObservations(),
         summarizeConfig(),
       ]);
-      return c.json({ at: now, health, ops: summarizeOps(observations, now), config });
+      return c.json({ at: now, health, ops: summarizeOps(observations, now, windowMs), config });
     });
 
     app.get("/api/content", async (c) => {
@@ -164,10 +165,21 @@ if (ACCESS.refuse) {
 
     // State-changing routes: reject cross-origin (Basic-auth browsers auto-send
     // creds, so a same-origin check is the CSRF guard on this money-write surface).
+    // Prefer Origin; fall back to Referer's host when Origin is absent (older
+    // browsers / some form posts omit Origin but still send Referer). Neither
+    // present ⇒ not a browser CSRF vector (curl/tooling carry no ambient creds).
     const sameOrigin = async (c: import("hono").Context, next: () => Promise<void>) => {
-      const origin = c.req.header("Origin");
       const host = c.req.header("Host");
-      if (origin && new URL(origin).host !== host) return c.text("cross-origin request refused", 403);
+      const source = c.req.header("Origin") ?? c.req.header("Referer");
+      if (source) {
+        let sourceHost: string;
+        try {
+          sourceHost = new URL(source).host;
+        } catch {
+          return c.text("malformed Origin/Referer", 403);
+        }
+        if (sourceHost !== host) return c.text("cross-origin request refused", 403);
+      }
       await next();
     };
 
