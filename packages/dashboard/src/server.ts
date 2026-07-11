@@ -69,7 +69,9 @@ async function gateHealth(): Promise<{ up: boolean; service?: string; detail?: s
     const j = (await r.json()) as { ok?: boolean; service?: string };
     return { up: j.ok === true, service: j.service };
   } catch (e) {
-    return { up: false, detail: (e as Error).name === "TimeoutError" ? "unreachable" : (e as Error).message };
+    // A throw here always means we couldn't reach the gate — surface that plainly
+    // rather than Node's opaque "fetch failed".
+    return { up: false, detail: (e as Error).name === "TimeoutError" ? "timed out" : "unreachable" };
   }
 }
 
