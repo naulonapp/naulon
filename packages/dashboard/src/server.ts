@@ -22,6 +22,7 @@ import { watchLedger } from "./watch.ts";
 import { summarizeOps } from "./ops.ts";
 import { summarizeConfig } from "./config-view.ts";
 import { readObservations } from "./observations.ts";
+import { readContent, scanArticles, writeCredits } from "./content.ts";
 import { decideAccess } from "./access.ts";
 import { RECENT_LIMIT } from "./constants.ts";
 
@@ -48,9 +49,11 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
   : {
       "/": { file: "index.html", type: "text/html; charset=utf-8" },
       "/ledger": { file: "ledger.html", type: "text/html; charset=utf-8" },
+      "/content": { file: "content.html", type: "text/html; charset=utf-8" },
       "/ledger.css": { file: "ledger.css", type: "text/css; charset=utf-8" },
       "/ledger.js": { file: "ledger.js", type: "text/javascript; charset=utf-8" },
       "/ops.js": { file: "ops.js", type: "text/javascript; charset=utf-8" },
+      "/content.js": { file: "content.js", type: "text/javascript; charset=utf-8" },
     };
 
 const maskWallet = (w: string): string => (w.length > 12 ? w.slice(0, 6) + "…" + w.slice(-4) : w);
@@ -128,7 +131,7 @@ if (ACCESS.refuse) {
     }),
   );
 
-  // Ops plane — health, traffic verdicts, config sanity. Never exposed publicly.
+  // Ops + content planes — never exposed publicly (wallets, config, the write path).
   if (!isPublic) {
     app.get("/api/ops", async (c) => {
       const now = Date.now();
@@ -138,6 +141,32 @@ if (ACCESS.refuse) {
         summarizeConfig(),
       ]);
       return c.json({ at: now, health, ops: summarizeOps(observations, now), config });
+    });
+
+    app.get("/api/content", async (c) => c.json(await readContent()));
+
+    // State-changing routes: reject cross-origin (Basic-auth browsers auto-send
+    // creds, so a same-origin check is the CSRF guard on this money-write surface).
+    const sameOrigin = async (c: import("hono").Context, next: () => Promise<void>) => {
+      const origin = c.req.header("Origin");
+      const host = c.req.header("Host");
+      if (origin && new URL(origin).host !== host) return c.text("cross-origin request refused", 403);
+      await next();
+    };
+
+    app.post("/api/content/scan", sameOrigin, async (c) => {
+      const body = await c.req.json<{ defaultWallet?: string }>().catch(() => ({}) as { defaultWallet?: string });
+      try {
+        return c.json(await scanArticles(body.defaultWallet?.trim() || undefined));
+      } catch (e) {
+        return c.json({ error: (e as Error).message }, 502);
+      }
+    });
+
+    app.post("/api/content", sameOrigin, async (c) => {
+      const body = await c.req.json<{ credits?: Record<string, unknown> }>().catch(() => ({}) as { credits?: Record<string, unknown> });
+      const result = await writeCredits(body.credits ?? {});
+      return c.json(result, result.written ? 200 : 422);
     });
   }
 }

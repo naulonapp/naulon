@@ -62,6 +62,26 @@ Credits are validated when loaded — a malformed source is rejected, never sett
 `npx naulon init` scaffolds a starter `.env` + `credits.json` if you're starting
 from scratch.
 
+## Managing credits without the CLI — the Content tab
+
+You don't hand-write `credits.json`. The console's **Content** tab does it in the
+browser, over the same crawl + validation engine as `naulon-kit crawl` (one
+engine, two front-doors — they can't drift):
+
+1. **Scan site** reads your sitemap/RSS/WordPress and lists your articles.
+2. Fill in the **payout wallet** per article — the one thing no crawler can
+   supply, since only you know who gets paid. An article with >1 payee (a split)
+   shows read-only and is preserved verbatim; edit those in the file.
+3. **Save** validates every wallet and writes `credits.json` (backing up the old
+   to `credits.json.bak`). One bad wallet rejects the whole save — a typo can't
+   half-write a payout map.
+
+Two things to know: edits apply on the **next gate restart** (the file is read at
+boot), and this manager is a **write surface**, so it's served only in the private
+or authed modes — never in public mode, and cross-origin writes are refused. If
+your credits come from a live API (`CREDITS_API_URL`), edit them at your CMS; the
+tab tells you so.
+
 ## Turning the traffic panel on
 
 The gate records nothing by default. To populate the tiles and the request feed:

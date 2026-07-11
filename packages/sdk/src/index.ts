@@ -15,3 +15,8 @@ export * from "./resolver/types.ts";
 export * from "./resolver/http.ts";
 export * from "./resolver/fixture.ts";
 export * from "./idempotency.ts";
+// The crawl engine — shared verbatim by the `naulon-kit crawl` CLI and the
+// self-host console's Content tab, so the two front-doors never drift.
+export { runCrawl, type CrawlOptions, type CrawlResult } from "./crawl/crawl.ts";
+export { makeGuardedFetcher } from "./crawl/fetcher.ts";
+export type { CrawlConfig, DiscoveredArticle, SourceAdapterId } from "./crawl/types.ts";

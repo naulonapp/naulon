@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>naulon — content</title>
+<meta name="description" content="Map your articles to payout wallets — no JSON by hand. Scan your site, fill in wallets, save." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2307080b'/%3E%3Ctext x='16' y='23' font-size='22' text-anchor='middle' fill='%232bf5a0'%3E%F0%9F%9C%89%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/ledger.css" />
+</head>
+<body>
+  <div class="wire" aria-hidden="true"></div>
+  <div class="wrap">
+    <header>
+      <div>
+        <div class="mark"><span class="glyph" aria-hidden="true">🜉</span><span class="word"><b>naulon</b></span></div>
+        <div class="kicker">content — articles &amp; payout wallets</div>
+      </div>
+      <nav class="nav"><a href="/">Console</a><a href="/content" class="on">Content</a></nav>
+    </header>
+
+    <div class="banner" id="banner">
+      Edits write <span class="mono">credits.json</span> and apply when you <b>restart the gate</b>.
+    </div>
+
+    <section class="scan">
+      <div class="scan-row">
+        <label class="fld"><span>default wallet <span class="dim">(optional — used when a scanned article has no author mapping)</span></span>
+          <input id="defaultWallet" class="in" placeholder="0x… 40 hex" spellcheck="false" autocomplete="off" /></label>
+        <button id="scanBtn" class="btn">Scan site</button>
+      </div>
+      <div class="scan-out" id="scanOut"></div>
+    </section>
+
+    <section>
+      <div class="col-head"><h2>Articles</h2><span class="n" id="count">—</span></div>
+      <div class="thead"><span>slug</span><span>author</span><span>payout wallet</span><span></span></div>
+      <div id="rows"></div>
+      <div class="actions">
+        <button id="addBtn" class="btn ghost">+ Add article</button>
+        <button id="saveBtn" class="btn primary">Save credits.json</button>
+      </div>
+      <div class="save-out" id="saveOut" aria-live="polite"></div>
+    </section>
+
+    <section class="upsell" id="upsell">
+      <div class="up-k">running this for real?</div>
+      <h3>naulon cloud does this hosted — no box, no restarts.</h3>
+      <ul>
+        <li><b>Many sites</b>, one dashboard — not one gate per box.</li>
+        <li><b>A team</b> with roles + approvals, not one shared password.</li>
+        <li><b>Audited</b> credit changes — who changed which wallet, when.</li>
+        <li><b>Live apply</b> — wallet edits take effect instantly, no gate restart.</li>
+      </ul>
+      <a class="up-cta" href="https://naulon.app" target="_blank" rel="noopener">See naulon cloud →</a>
+    </section>
+
+    <footer>
+      <div class="thesis">You map the wallets. The scanner finds the articles.</div>
+      <div class="note">Wallets are the one thing no crawler can supply — only you know who gets paid. See <span class="mono">docs/operating.md</span>.</div>
+    </footer>
+  </div>
+
+  <script src="/content.js"></script>
+</body>
+</html>
