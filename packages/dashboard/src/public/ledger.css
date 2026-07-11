@@ -207,9 +207,81 @@ footer .note { font-size: 12.5px; color: var(--faint); max-width: 440px; }
   .earned { min-width: 0; }
 }
 
+/* ═══ operator console ═══ */
+.mono { font-family: var(--font-mono); }
+.gap-lg { margin-top: 34px; }
+
+/* stat tiles */
+.tiles {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+  padding: 30px 0 12px;
+}
+.tile {
+  border: 1px solid var(--line); border-radius: 4px; padding: 16px 18px;
+  background: linear-gradient(180deg, var(--card), var(--bg));
+}
+.tile.wide { grid-column: span 2; }
+.t-label {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--muted);
+}
+.t-num {
+  font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums;
+  font-size: 30px; line-height: 1.1; margin-top: 8px; color: var(--fg);
+}
+.t-num.pos { color: var(--primary); }
+.t-num.warn { color: var(--warning, #ffb020); }
+.t-num.bad { color: var(--down); }
+.t-sub { font-size: 11.5px; color: var(--faint); margin-top: 6px; }
+
+/* panels (config, warnings) */
+.panel { border-top: 1px solid var(--line-strong); }
+.kv {
+  display: grid; grid-template-columns: 120px 1fr; gap: 4px 16px;
+  padding: 11px 0; border-bottom: 1px solid var(--line);
+  font-size: 13px; align-items: baseline;
+}
+.kv .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.kv .v { font-family: var(--font-mono); color: var(--fg); word-break: break-all; }
+.kv .v .dim { color: var(--faint); }
+.kv .v .ok { color: var(--primary); }
+.article { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.article .slug { font-family: var(--font-serif); font-style: italic; color: var(--fg); }
+.article .w { font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+.warn-row {
+  padding: 11px 14px; margin: 8px 0; border-radius: 3px; font-size: 12.5px;
+  border: 1px solid color-mix(in oklab, var(--warning, #ffb020) 40%, transparent);
+  background: color-mix(in oklab, var(--warning, #ffb020) 10%, transparent);
+  color: var(--fg);
+}
+.warn-none { padding: 16px 0; color: var(--faint); font-style: italic; }
+
+/* verdict-coded request feed */
+.req { padding: 12px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: baseline; }
+.req.fresh { animation: flash 2.2s ease forwards; }
+.req .rt { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
+.req .rmid .slug { font-family: var(--font-serif); font-style: italic; color: var(--fg); font-size: 14px; }
+.req .rmid .who { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+.req .rmid .who .badge { color: var(--primary); }
+.req .rmid .who .bad { color: var(--down); }
+.req .vd {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 2px; border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap;
+}
+.req .vd.paid { color: var(--primary); border-color: var(--primary-dim); }
+.req .vd.served-free, .req .vd.agent-reread { color: var(--patina); border-color: color-mix(in oklab, var(--patina) 40%, transparent); }
+.req .vd.denied { color: var(--warning, #ffb020); border-color: color-mix(in oklab, var(--warning, #ffb020) 45%, transparent); }
+.req .vd.payment-failed, .req .vd.blocked { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
+.req .rprice { font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+
+@media (max-width: 860px) {
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+  .tile.wide { grid-column: span 2; }
+}
+
 /* Respect the OS motion preference — everything that moves, stops. */
 @media (prefers-reduced-motion: reduce) {
-  .wire, .dot, .rise, .bar, .cross.fresh { animation: none !important; }
+  .wire, .dot, .rise, .bar, .cross.fresh, .req.fresh { animation: none !important; }
   .bar { transform: scaleX(1); }
   .total { text-shadow: none; }
 }

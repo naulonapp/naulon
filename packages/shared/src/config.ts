@@ -236,6 +236,20 @@ export const configSchema = z.object({
   // public internet directly. Set "0.0.0.0" only behind your own auth (reverse
   // proxy, access gateway). See README "Dashboard exposure".
   DASHBOARD_BIND: z.string().default("127.0.0.1"),
+  // HTTP Basic credential ("user:pass") that gates the ops console when the
+  // dashboard is bound wider than loopback. Unset + a non-loopback bind makes the
+  // dashboard REFUSE to serve (fail-safe — it won't leak wallets by accident).
+  DASHBOARD_AUTH: z.string().optional(),
+  // Opt in to the PUBLIC earnings view: a read-only "authors are earning" page
+  // with wallets masked and every operational panel hidden. Off by default — the
+  // ops console (health, traffic, config, wallets) is never public.
+  DASHBOARD_PUBLIC: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  // The gate's base URL, so the dashboard can report gate health (GET /healthz).
+  // Defaults to the local gate (TOLLGATE_PORT); unreachable → health shows "down".
+  GATE_URL: z.string().url().default("http://127.0.0.1:8402"),
 
   // ── Storage backend ──
   // Where attributed events live. "jsonl" = an append-only local file (default,

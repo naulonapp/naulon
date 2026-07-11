@@ -133,17 +133,18 @@ the reasoning is the artifact. It runs offline against mock settlement; set
 `OPENAI_API_KEY` for LLM appraisal and answer synthesis instead of the keyword
 heuristic.
 
-### The earnings dashboard
+### The operator console
 
 ```bash
-npm run -w @naulon/dashboard seed   # optional: sample crossings to look at
 npm run dashboard                         # http://localhost:8403
 ```
 
-A real-time ledger of who's earning, streamed over Server-Sent Events — every
-crossing the tollgate settles appears live, split across the essay's authors. It
-reads the same event ledger the gate writes (`EVENTS_PATH`), so pointing the
-Wayfarer at the gate makes earnings tick up on screen as the agent pays.
+Your read-only window onto the gate: health, live toll traffic (served free /
+denied / paid), settlement earnings, and a config-sanity panel — so you can see
+your proxy actually working. It reads the gate's observation log (set
+`OBSERVATIONS_BACKEND=jsonl`) and event ledger. Private on `127.0.0.1` by default;
+exposing it wider needs `DASHBOARD_AUTH`, and `DASHBOARD_PUBLIC=true` serves only a
+masked public earnings page. Full guide: [docs/operating.md](./docs/operating.md).
 
 ### Settling payouts
 
@@ -196,7 +197,7 @@ A small npm-workspaces monorepo. Each piece is independent and runs on its own.
 | [`shared`](./packages/shared) | Domain types, validated config, and the attribution + recursive-split algorithm (unit-tested). |
 | [`wayfarer`](./packages/wayfarer) | An autonomous research agent that decides which articles are worth paying to cite under a budget, then pays. |
 | [`attribution`](./packages/attribution) | Batches sub-cent tolls per wallet and settles author payouts (mock, or real Circle Gateway via `PAYMENT_MODE`). |
-| [`dashboard`](./packages/dashboard) | A live, real-time view of authors earning, streamed over SSE. |
+| [`dashboard`](./packages/dashboard) | The operator console — gate health, live toll traffic, earnings, and config sanity (plus an opt-in public earnings page). |
 
 ```
 packages/
@@ -204,7 +205,7 @@ packages/
   tollgate/     proxy · agentDetect · x402 · pricing · credits · eventLog
   wayfarer/     the paying agent
   attribution/  settlement + payouts
-  dashboard/    earnings view
+  dashboard/    operator console
 examples/
   meridian/     worked example — a fictional publisher adapter
   cascade/      second adapter — proves the core is publisher-agnostic
@@ -302,12 +303,13 @@ The gate is built to sit on the public internet in front of a real site:
   through a strict schema before any wallet becomes a `payTo` — a malformed or
   hostile credits source is rejected, not settled
   ([`shared/credits.ts`](./packages/shared/src/credits.ts)).
-- **Dashboard exposure.** The earnings view is read-only but **unauthenticated**,
-  and it shows author wallets and USD. It binds `127.0.0.1` by default
-  (`DASHBOARD_BIND`) so it isn't public out of the box. To expose it, set
-  `DASHBOARD_BIND=0.0.0.0` **only behind your own auth** — a reverse proxy with
-  basic-auth, an access gateway, or a platform password. The gate (`:8402`) is
-  built to face the internet; the dashboard (`:8403`) is not.
+- **Dashboard exposure.** The operator console is read-only but shows wallets,
+  earnings, and traffic, so exposure is deliberate. It binds `127.0.0.1` by default
+  (private). Bind wider (`DASHBOARD_BIND=0.0.0.0`) and it **requires**
+  `DASHBOARD_AUTH=user:pass` (HTTP Basic) — wide with no auth and not public, it
+  refuses to serve rather than leak. `DASHBOARD_PUBLIC=true` serves only a masked
+  earnings page. The gate (`:8402`) is built to face the internet; the console
+  (`:8403`) is not. See [docs/operating.md](./docs/operating.md).
 
 Hardening knobs (all optional — safe defaults shown), add to `.env`:
 

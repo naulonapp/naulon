@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>naulon — the ledger</title>
+<meta name="description" content="Live earnings ledger: USDC settled to authors as machines pay to read and cite their work." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2307080b'/%3E%3Ctext x='16' y='23' font-size='22' text-anchor='middle' fill='%232bf5a0'%3E%F0%9F%9C%89%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/ledger.css" />
+</head>
+<body>
+  <div class="wire" aria-hidden="true"></div>
+  <div class="wrap">
+    <header>
+      <div>
+        <div class="mark"><span class="glyph" aria-hidden="true">🜉</span><span class="word"><b>naulon</b></span></div>
+        <div class="kicker">the ledger — fares paid to cross</div>
+      </div>
+      <div class="status"><span class="dot off" id="dot" aria-hidden="true"></span><span id="conn">connecting</span></div>
+    </header>
+
+    <section class="hero">
+      <div class="label">settled to authors</div>
+      <div class="total" id="total" role="status" aria-live="polite" aria-label="0 settled to authors"><span class="cur">$</span>0<span class="frac">.000000</span></div>
+      <div class="sub"><b id="nCross">0</b> crossings paid · <b id="nAuthors">0</b> authors earning</div>
+      <div class="creed">Humans read free, forever. <em>Machines pay.</em></div>
+    </section>
+
+    <main>
+      <section>
+        <div class="col-head"><h2>The Ledger</h2><span class="n" id="ledgerN">by earnings</span></div>
+        <div id="ledger"></div>
+      </section>
+      <section>
+        <div class="col-head"><h2>Recent crossings</h2><span class="n">live</span></div>
+        <div class="feed" id="feed" aria-live="polite" aria-relevant="additions"></div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="thesis">Attribution is the payout rule.</div>
+      <div class="note">Every read or citation by a machine settles in USDC on Arc, split across an essay's authors by the credits graph — recursively, down to the coin.</div>
+    </footer>
+  </div>
+
+  <script src="/ledger.js"></script>
+</body>
+</html>
