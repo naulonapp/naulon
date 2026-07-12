@@ -188,6 +188,12 @@ export interface BuildServerOptions {
    * Server-config, never a tool arg — the model cannot point the signer elsewhere.
    */
   popWallet?: AgentWallet;
+  /**
+   * Where the agent (or its operator) tops up / renews the funding session — surfaced on a
+   * `needs_topup` / `grant_expired` pay refusal so the refusal is ACTIONABLE, not a dead end. On
+   * the hosted path the cloud injects its portal wallet URL; the stdio funnel leaves it at the
+   * `/buyer/wallet` default. Server-config, never a tool arg. */
+  buyerWalletUrl?: string;
 }
 
 /**
@@ -206,6 +212,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // server instance's lifetime — one stdio/HTTP session = one budget envelope. The
   // model sees what remains and can plan within it; it can never raise the ceiling.
   let spentUsdc = 0;
+  // Where a needs_topup / grant_expired refusal points the agent to fund/renew (default: the
+  // portal wallet path). Server-config, resolved once — never a tool arg.
+  const buyerWalletUrl = opts.buyerWalletUrl ?? "/buyer/wallet";
   // Hosted-wallet opt-in (BUY-2): when the cloud env is configured, tolls are signed by naulon's
   // grant-checked /sign-memo BFF (the custody-free session key), so this process holds NO private
   // key. Unset ⇒ the OSS default (BYO BUYER_PRIVATE_KEY via selectBuyer). Server-config, not a tool
@@ -500,13 +509,21 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         remainingUsdc: z.number().describe("Budget left for this session (after this call)."),
         error: z.string().optional(),
         errorCode: z
-          .enum(["not_gated", "not_found", "toll_moved", "insufficient_funds", "expired", "rejected", "origin_error"])
+          .enum(["not_gated", "not_found", "toll_moved", "insufficient_funds", "expired", "rejected", "origin_error", "needs_topup", "grant_expired"])
           .optional()
-          .describe("Typed failure reason when ok:false — lets you decide whether to retry. not_found = the probed URL 404'd (pass the canonical url; it is not a free read)."),
+          .describe("Typed failure reason when ok:false — lets you decide whether to retry. not_found = the probed URL 404'd (pass the canonical url; it is not a free read). needs_topup = the funding session is exhausted/unset — fund it at topUpUrl. grant_expired = the funding window lapsed (funds intact) — renew at topUpUrl."),
         retryable: z
           .boolean()
           .optional()
-          .describe("True if re-quoting/retrying may succeed (toll moved, expired, rejected); false for a hard stop (insufficient funds — the wallet needs funding)."),
+          .describe("True if re-quoting/retrying may succeed (toll moved, expired, rejected); false for a hard stop (insufficient funds, needs_topup, grant_expired — the wallet needs funding or renewal, not a retry)."),
+        topUpUrl: z
+          .string()
+          .optional()
+          .describe("Where to fund / renew the session — present only on a needs_topup / grant_expired refusal. Send the operator here; retrying the pay without acting only re-fails."),
+        requiredUsdc: z
+          .number()
+          .optional()
+          .describe("The toll (true total, USDC) this call could not cover — present on a needs_topup refusal so the operator knows how much the session is short."),
       },
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
     },
@@ -572,11 +589,16 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           priceUsdc: quoted.priceUsdc,
           agentId: policyFromConfig().agentId,
         });
+        // A hosted session-signer refusal (needs_topup / grant_expired) is actionable, not a dead
+        // end: surface WHERE to fund/renew and HOW MUCH the toll was, so the agent points its
+        // operator at the fix instead of re-calling a pay that can only fail again.
+        const actionable = result.errorCode === "needs_topup" || result.errorCode === "grant_expired";
         return structured({
           ok: false,
           error: result.error ?? "payment failed",
           ...(result.errorCode ? { errorCode: result.errorCode } : {}),
           ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
+          ...(actionable ? { topUpUrl: buyerWalletUrl, requiredUsdc: cost } : {}),
           ...envelope(),
         });
       }

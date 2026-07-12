@@ -217,3 +217,75 @@ test("an injected MemoSigner signs every leg as itself; the env key is never use
     globalThis.fetch = real;
   }
 });
+
+// ── BUY-4 — a hosted session-signer refusal is a TYPED result, never a thrown MCP error ──
+// The injected cloud session signer throws on a grant refusal (its message is the sign guard's
+// code). memoBuyer must CATCH that throw and return a typed `Fetched` — otherwise it escapes the
+// buyer AND the MCP pay tool as a generic protocol error, and the agent never learns it can top up.
+test("a grant refusal thrown by the injected signer becomes a typed needs_topup Fetched (no throw)", async () => {
+  const { memoBuyer } = await import("./memo.ts");
+  type MemoSigner = import("./memo.ts").MemoSigner;
+  const sessionAccount = privateKeyToAccount(generatePrivateKey());
+  const signer: MemoSigner = {
+    address: sessionAccount.address,
+    // Mirror inProcessMemoSigner: throw the guard code, suffixed with the remaining budget.
+    signTypedData: () => {
+      throw new Error("grant_exceeded (remaining 0)");
+    },
+  };
+  const header = Buffer.from(
+    JSON.stringify({
+      x402Version: 2,
+      resource: { url: "https://x.test/a", description: "naulon read toll: A", mimeType: "text/html" },
+      accepts: [{ network: net.network, asset: net.usdc, payTo, amount: "10000", maxTimeoutSeconds: 691200 }],
+    }),
+  ).toString("base64");
+
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_url: string, init?: { headers?: Record<string, string> }) => {
+    // Only the probe runs (no payment-signature) — the signer throws before any paid fetch.
+    if (!init?.headers?.["payment-signature"]) return new Response(null, { status: 402, headers: { "payment-required": header } });
+    throw new Error("a paid fetch must never be reached — the signer refused first");
+  }) as typeof globalThis.fetch;
+
+  try {
+    const result = await memoBuyer(signer).fetch("https://x.test/a", "read");
+    assert.equal(result.ok, false, "a refused sign is a non-spend, not a throw");
+    assert.equal(result.errorCode, "needs_topup", "the agent must learn funding is the remedy");
+    assert.equal(result.retryable, false, "retrying without funding only re-fails");
+    assert.match(result.error ?? "", /grant_exceeded/, "the raw guard reason is preserved for the operator");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+// A genuine socket throw (not a signer code) must still surface as a retryable origin_error,
+// never be mistaken for a fundable refusal.
+test("a socket throw during pay surfaces as a retryable origin_error, not needs_topup", async () => {
+  const { memoBuyer } = await import("./memo.ts");
+  type MemoSigner = import("./memo.ts").MemoSigner;
+  const sessionAccount = privateKeyToAccount(generatePrivateKey());
+  const signer: MemoSigner = { address: sessionAccount.address, signTypedData: (args) => sessionAccount.signTypedData(args) };
+  const header = Buffer.from(
+    JSON.stringify({
+      x402Version: 2,
+      resource: { url: "https://x.test/a", description: "naulon read toll: A", mimeType: "text/html" },
+      accepts: [{ network: net.network, asset: net.usdc, payTo, amount: "10000", maxTimeoutSeconds: 691200 }],
+    }),
+  ).toString("base64");
+
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_url: string, init?: { headers?: Record<string, string> }) => {
+    if (!init?.headers?.["payment-signature"]) return new Response(null, { status: 402, headers: { "payment-required": header } });
+    throw new Error("ECONNRESET"); // the paid fetch dies at the socket
+  }) as typeof globalThis.fetch;
+
+  try {
+    const result = await memoBuyer(signer).fetch("https://x.test/a", "read");
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "origin_error", "an unknown throw is a transient origin failure, not a fundable one");
+    assert.equal(result.retryable, true);
+  } finally {
+    globalThis.fetch = real;
+  }
+});

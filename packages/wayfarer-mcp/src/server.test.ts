@@ -290,6 +290,31 @@ test("naulon_pay_and_read reports not_found (not a free read) when the path 404s
   });
 });
 
+test("naulon_pay_and_read surfaces a hosted session-signer grant refusal as needs_topup + a top-up link", async () => {
+  // The hosted path injects a grant-checked session signer that THROWS on a refusal. The pay
+  // tool must turn that into a structured non-spend the agent can act on — errorCode:needs_topup
+  // plus the top-up URL — never a thrown MCP protocol error that hides the remedy.
+  const throwingSigner: MemoSigner = {
+    address: "0x000000000000000000000000000000000000bEEF",
+    signTypedData: () => {
+      throw new Error("grant_exceeded (remaining 0)");
+    },
+  };
+  await withStubGate(payGate("5000"), async () => {
+    // Budget clears the toll ($0.005) so the flow reaches the signer (the refusal is the point).
+    const client = await connectedClientWith({ signer: throwingSigner, budgetUsdc: 1, buyerWalletUrl: "https://portal.test/buyer/wallet" });
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } });
+    assert.notEqual(res.isError, true, "a grant refusal is a typed result, not a thrown MCP error");
+    const r = res.structuredContent as { ok: boolean; errorCode?: string; retryable?: boolean; topUpUrl?: string; requiredUsdc?: number; spentSessionUsdc: number };
+    assert.equal(r.ok, false, "nothing was paid");
+    assert.equal(r.errorCode, "needs_topup", "the agent learns the remedy is funding");
+    assert.equal(r.retryable, false, "retrying without funding only re-fails");
+    assert.equal(r.topUpUrl, "https://portal.test/buyer/wallet", "the configured wallet URL is surfaced");
+    assert.equal(r.requiredUsdc, 0.005, "the toll it could not cover is reported");
+    assert.equal(r.spentSessionUsdc, 0, "the budget is untouched");
+  });
+});
+
 test("naulon_quote does not pass off a 404 path as a plain free read", async () => {
   const handler = (_req: IncomingMessage, res: ServerResponse): void => {
     res.writeHead(404, { "content-type": "text/plain" });

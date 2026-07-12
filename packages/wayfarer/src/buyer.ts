@@ -44,7 +44,10 @@ export type FetchErrorCode =
   | "insufficient_funds"
   | "expired"
   | "rejected"
-  | "origin_error";
+  | "origin_error"
+  // A hosted session-signer refusal (never reached the gate — nothing was paid):
+  | "needs_topup" // the grant is exhausted / unset — funding the session is the remedy
+  | "grant_expired"; // the grant WINDOW lapsed though funds remain — renewing is the remedy
 
 export interface Fetched {
   ok: boolean;
@@ -126,6 +129,40 @@ export function tollMovedOrNull(quoted: Quoted, guard?: PayGuard): Fetched | nul
  * re-quote. Conservative by design: an unrecognized reason is `rejected` (retryable),
  * never silently treated as a fundable hard stop.
  */
+/**
+ * Classify a THROWN session-signer refusal (BUY-4 hosted path). The cloud injects a
+ * grant-guarded session signer whose `signTypedData` throws an Error whose message is the
+ * sign guard's code, optionally suffixed " (remaining <micro>)". Unlike `classifyPaymentError`
+ * (which reads a gate 402 body), this refusal never reached the gate — nothing was paid — and
+ * must NOT be run through the 402 classifier, where `grant_exceeded`/`no_session` would fall
+ * through to a retryable `rejected`, telling the agent to retry a pay that can only fail again.
+ *
+ *   grant_exceeded · leg_too_large · no_session      → needs_topup   (fund the session)
+ *   grant_expired                                     → grant_expired (renew — funds intact)
+ *   bad_from · chain_mismatch · payee_not_allowed     → rejected      (a config error a top-up can't fix)
+ *
+ * Returns null when the message is NOT a known signer code (a real socket / unknown throw the
+ * caller should surface as `origin_error`). Never retryable: every signer refusal needs a
+ * host-side action (fund / renew / fix config), never a blind re-call.
+ */
+export function classifySignerRefusal(errorText: string): { errorCode: FetchErrorCode; retryable: boolean } | null {
+  const code = errorText.toLowerCase().match(/^([a-z_]+)/)?.[1];
+  switch (code) {
+    case "grant_exceeded":
+    case "leg_too_large":
+    case "no_session":
+      return { errorCode: "needs_topup", retryable: false };
+    case "grant_expired":
+      return { errorCode: "grant_expired", retryable: false };
+    case "bad_from":
+    case "chain_mismatch":
+    case "payee_not_allowed":
+      return { errorCode: "rejected", retryable: false };
+    default:
+      return null;
+  }
+}
+
 export function classifyPaymentError(errorText: string): { errorCode: FetchErrorCode; retryable: boolean } {
   const t = errorText.toLowerCase();
   if (/insufficient|exceeds balance|transfer amount exceeds|not enough|balance too low/.test(t)) {
