@@ -109,6 +109,27 @@ test("gatewayBuyer signs the authorization with an INJECTED signer, not the env 
   }
 });
 
+test("gatewayBuyer surfaces a network throw on the paid request as {ok:false} (origin_error), never rejects", async () => {
+  // The paid retry can die at the socket (DNS failure, connection refused). fetch() must
+  // return the typed failure like every other error path — a raw rejection would escape the
+  // host's retry loop, which only ever inspects a resolved Fetched.
+  const injected = privateKeyToAccount(generatePrivateKey());
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const sig = (init?.headers as Record<string, string> | undefined)?.["payment-signature"];
+    if (!sig) return new Response(null, { status: 402, headers: { "payment-required": gateway402() } });
+    throw new TypeError("fetch failed: ECONNREFUSED"); // the paid request dies at the socket
+  }) as typeof globalThis.fetch;
+  try {
+    const result = await gatewayBuyer(injected).fetch("https://x.test/a", "read");
+    assert.equal(result.ok, false, "a network throw on the paid request must be a typed failure, not a rejection");
+    assert.equal(result.errorCode, "origin_error");
+    assert.equal(result.retryable, true);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 // ── Settlement-confirmation seam ─────────────────────────────────────────────
 // A Gateway settle credits the payee's OFF-CHAIN Gateway balance, not their wallet, so
 // `balanceOf(payee)` never moves and is the wrong check — the authoritative signal is the

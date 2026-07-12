@@ -162,14 +162,23 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
         const error = err instanceof Error ? err.message : String(err);
         return { ok: false, error, ...classifyPaymentError(error) };
       }
-      const res = await agentFetch(url, {
-        headers: {
-          "user-agent": AGENT_UA,
-          "x-naulon-agent": this.address,
-          "x-naulon-kind": kind,
-          "payment-signature": paymentSignature,
-        },
-      });
+      // A paid request can die at the socket (DNS failure, connection refused). Keep the
+      // Fetched contract total — every other exit here returns a typed failure, so a raw
+      // rejection would escape the host's retry loop (it only ever inspects a resolved Fetched).
+      let res: Response;
+      try {
+        res = await agentFetch(url, {
+          headers: {
+            "user-agent": AGENT_UA,
+            "x-naulon-agent": this.address,
+            "x-naulon-kind": kind,
+            "payment-signature": paymentSignature,
+          },
+        });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: `gateway request failed: ${error}`, errorCode: "origin_error", retryable: true };
+      }
       if (res.status === 402) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         const error = body.error ?? "payment rejected";
