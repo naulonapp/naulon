@@ -19,10 +19,18 @@
  * Gateway Wallet); the pay path here is pure sign-only. On the env/CLI path `init()` still
  * deposits via the SDK `GatewayClient` for backwards compatibility.
  */
-import { type Hex, type TypedDataDomain } from "viem";
+import { type Address, type Hex, type TypedDataDomain } from "viem";
 import { activeNetwork, getConfig } from "@naulon/shared";
 // Type-only (erased at runtime) — the SDK itself is loaded lazily so the mock path never pulls it in.
-import type { Balances, DepositResult, SupportedChainName } from "@circle-fin/x402-batching/client";
+import type {
+  Balances,
+  DepositResult,
+  SearchTransfersParams,
+  SearchTransfersResponse,
+  SupportedChainName,
+  TransferResponse,
+  TransferStatus,
+} from "@circle-fin/x402-batching/client";
 import {
   AGENT_UA,
   classifyPaymentError,
@@ -208,8 +216,59 @@ export async function gatewayDeposit(opts: GatewayDepositOpts): Promise<DepositR
 }
 
 /** Read the wallet + Gateway balances for a key — the preflight a deposit script shows before it moves
- *  funds, and the check the buyer uses to see if its unified balance covers a toll. SDK loaded lazily. */
-export async function gatewayBalances(opts: { chain: SupportedChainName; privateKey: Hex }): Promise<Balances> {
+ *  funds, and the check the buyer uses to see if its unified balance covers a toll. Pass `address` to
+ *  read ANOTHER account's balances (e.g. confirm the AUTHOR received a settle) — the client key only
+ *  authenticates the read, it needn't own the address. SDK loaded lazily. */
+export async function gatewayBalances(
+  opts: { chain: SupportedChainName; privateKey: Hex; address?: Address },
+): Promise<Balances> {
   const { GatewayClient } = await import("@circle-fin/x402-batching/client");
-  return new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey }).getBalances();
+  return new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey }).getBalances(opts.address);
+}
+
+/**
+ * Look up a single Gateway transfer (a settlement) by its Circle id — the `settlementRef` a gateway
+ * settle stamps. On the Gateway rail that ref is a **Circle UUID, not an on-chain tx hash**; the
+ * response carries the authoritative `status` plus the eventual on-chain `txHash`. This is the
+ * correct "did the settle land?" check — pair `status` with `classifyGatewaySettlement`. SDK lazy.
+ */
+export async function gatewayTransferStatus(
+  opts: { chain: SupportedChainName; privateKey: Hex; id: string },
+): Promise<TransferResponse> {
+  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
+  return new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey }).getTransferById(opts.id);
+}
+
+/**
+ * Search Gateway transfers with optional filters (`to`/`from`/`status`/`network`/date range). Use to
+ * confirm a payee (author) received without holding the transfer id — e.g. `{ to: authorAddress }`.
+ * SDK loaded lazily.
+ */
+export async function gatewayTransfers(
+  opts: { chain: SupportedChainName; privateKey: Hex } & SearchTransfersParams,
+): Promise<SearchTransfersResponse> {
+  const { chain, privateKey, ...params } = opts;
+  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
+  return new GatewayClient({ chain, privateKey }).searchTransfers(params);
+}
+
+/** The one bit a caller settling buyer→author needs from a transfer's lifecycle: did the money land? */
+export type GatewaySettlementState = "pending" | "settled" | "failed";
+
+/**
+ * Classify a Circle Gateway transfer `status` into settled / pending / failed. This is the CODE form
+ * of the hard-won rule that a Gateway settle credits the payee's OFF-CHAIN Gateway balance — so
+ * `balanceOf(payee)` is the wrong check and the transfer's own `status` is the authoritative signal.
+ * `completed` ⇒ settled; the in-pipeline states ⇒ pending; `failed` ⇒ failed. An unknown/future status
+ * is treated as `pending` — never falsely report the money landed.
+ */
+export function classifyGatewaySettlement(status: TransferStatus): GatewaySettlementState {
+  switch (status) {
+    case "completed":
+      return "settled";
+    case "failed":
+      return "failed";
+    default:
+      return "pending"; // received | batched | confirmed | any future status
+  }
 }

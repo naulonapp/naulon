@@ -108,3 +108,29 @@ test("gatewayBuyer signs the authorization with an INJECTED signer, not the env 
     globalThis.fetch = real;
   }
 });
+
+// ── Settlement-confirmation seam ─────────────────────────────────────────────
+// A Gateway settle credits the payee's OFF-CHAIN Gateway balance, not their wallet, so
+// `balanceOf(payee)` never moves and is the wrong check — the authoritative signal is the
+// transfer's own status. `classifyGatewaySettlement` encodes that as code so callers can't
+// fall back into the balanceOf trap.
+const { classifyGatewaySettlement } = await import("./gateway.ts");
+
+test("classifyGatewaySettlement: completed ⇒ settled", () => {
+  assert.equal(classifyGatewaySettlement("completed"), "settled");
+});
+
+test("classifyGatewaySettlement: in-pipeline statuses ⇒ pending (not yet landed)", () => {
+  for (const s of ["received", "batched", "confirmed"] as const) {
+    assert.equal(classifyGatewaySettlement(s), "pending", `${s} must be pending`);
+  }
+});
+
+test("classifyGatewaySettlement: failed ⇒ failed", () => {
+  assert.equal(classifyGatewaySettlement("failed"), "failed");
+});
+
+test("classifyGatewaySettlement: an unknown/future status is treated as pending, never settled", () => {
+  // Forward-compat: if Circle adds a status, never falsely report the money landed.
+  assert.equal(classifyGatewaySettlement("some_future_status" as never), "pending");
+});
