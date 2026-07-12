@@ -25,6 +25,11 @@ export interface Quoted {
    * then the buyer pays the bare single payload, byte-identical to before.
    */
   legs?: { role: string; payTo: string; amount: string; nonce?: string }[];
+  /** The 402's `resource` object (`{url, description, mimeType}`), verbatim. The gateway
+   *  rail's payment envelope MUST echo it back — the facilitator's `verify` rejects a
+   *  payload missing `resource` (400 `resource: Required`). Absent on the memo rail, which
+   *  relays the raw authorization and never sends the x402 envelope. */
+  resource?: unknown;
 }
 
 /** A per-leg requirement the buyer signs — the author requirement with this leg's
@@ -189,6 +194,7 @@ export async function probe(
         extra?: { nonce?: string };
       }[];
       extensions?: { naulonLegs?: { legs?: { role: string; payTo: string; amount: string; nonce?: string }[] } };
+      resource?: unknown;
     };
     try {
       decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
@@ -208,6 +214,7 @@ export async function probe(
         amountAtomic: req.amount,
         nonce: req.extra?.nonce,
         requirements: req,
+        ...(decoded.resource !== undefined ? { resource: decoded.resource } : {}),
         ...(legs && legs.length > 0 ? { legs } : {}),
       },
     };
