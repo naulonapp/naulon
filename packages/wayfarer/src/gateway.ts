@@ -268,7 +268,17 @@ export function classifyGatewaySettlement(status: TransferStatus): GatewaySettle
       return "settled";
     case "failed":
       return "failed";
-    default:
-      return "pending"; // received | batched | confirmed | any future status
+    case "received":
+    case "batched":
+    case "confirmed":
+      return "pending";
+    default: {
+      // Exhaustiveness guard: if Circle adds a TransferStatus, this line fails tsc —
+      // forcing a human to classify it, NOT silently bucketing it as pending. At
+      // runtime an unknown value is treated as pending (never falsely "settled").
+      const _exhaustive: never = status;
+      void _exhaustive;
+      return "pending";
+    }
   }
 }
