@@ -27,6 +27,10 @@ test("the package is importable by name and exposes the buy-side pipeline API", 
   assert.equal(typeof wayfarer.selectBuyer, "function"); // "pay" — Buyer seam
   assert.equal(typeof wayfarer.rereadWithLicense, "function"); // "read-held"
 
+  // out-of-band Gateway funding — the custody-free cloud path deposits here, not in init()
+  assert.equal(typeof wayfarer.gatewayDeposit, "function");
+  assert.equal(typeof wayfarer.gatewayBalances, "function");
+
   // a default policy consumers extend (BUY-3)
   assert.equal(typeof wayfarer.DEFAULT_POLICY, "object");
 });

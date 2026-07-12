@@ -19,8 +19,10 @@
  * Gateway Wallet); the pay path here is pure sign-only. On the env/CLI path `init()` still
  * deposits via the SDK `GatewayClient` for backwards compatibility.
  */
-import { type TypedDataDomain } from "viem";
+import { type Hex, type TypedDataDomain } from "viem";
 import { activeNetwork, getConfig } from "@naulon/shared";
+// Type-only (erased at runtime) — the SDK itself is loaded lazily so the mock path never pulls it in.
+import type { Balances, DepositResult, SupportedChainName } from "@circle-fin/x402-batching/client";
 import {
   AGENT_UA,
   classifyPaymentError,
@@ -181,4 +183,33 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
       return { ok: true, content: await res.text(), settlementRef, paidUsdc: quoted.priceUsdc, license };
     },
   };
+}
+
+/** Options for a standalone out-of-band Gateway deposit. */
+export interface GatewayDepositOpts {
+  chain: SupportedChainName;
+  privateKey: Hex;
+  /** USDC amount as a DECIMAL string, e.g. "10.5" — the SDK approves then deposits. */
+  amountUsdc: string;
+}
+
+/**
+ * Out-of-band, custody-free deposit into the Circle Gateway Wallet — the non-custodial contract that
+ * holds the buyer's unified balance (Circle infra, buyer-controlled; naulon custodies nothing). The
+ * cloud (injected-signer) path funds the Gateway balance HERE, out of band, because `gatewayBuyer.init()`
+ * is a deposit NO-OP when a signer is injected (the key lives in the grant-checked BFF, not this process).
+ * The self-host/CLI path still deposits inside `init()`; this is the standalone entry a deposit
+ * script/operator calls. SDK loaded lazily so the mock/memo paths never pull it in.
+ */
+export async function gatewayDeposit(opts: GatewayDepositOpts): Promise<DepositResult> {
+  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
+  const client = new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey });
+  return client.deposit(opts.amountUsdc);
+}
+
+/** Read the wallet + Gateway balances for a key — the preflight a deposit script shows before it moves
+ *  funds, and the check the buyer uses to see if its unified balance covers a toll. SDK loaded lazily. */
+export async function gatewayBalances(opts: { chain: SupportedChainName; privateKey: Hex }): Promise<Balances> {
+  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
+  return new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey }).getBalances();
 }
