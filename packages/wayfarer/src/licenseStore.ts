@@ -21,6 +21,13 @@ export interface HeldLicense {
   pop: boolean;
   /** The compact-JWS token to present on a re-read. */
   jws: string;
+  /** The canonical URL this source was actually PAID at — captured at pay time so a
+   * later `read_held` re-fetches the exact link (`/articles/<slug>`, a custom domain,
+   * whatever the publisher serves) instead of reconstructing a `/essays/<slug>`
+   * template that 404s off-shape. Optional: a license held from before this field
+   * existed has none, and the re-read falls back to the template. NOT part of the
+   * decoded token — it's the buyer's own bookkeeping, so `decodeHeld` never sets it. */
+  url?: string;
 }
 
 const file = (): string => getConfig().WAYFARER_LICENSE_PATH;

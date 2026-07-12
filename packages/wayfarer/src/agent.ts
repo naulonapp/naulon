@@ -201,7 +201,9 @@ export async function run(
       const decoded = decodeHeld(result.license);
       const verified = jwks ? verifyAgainst(result.license, jwks) : null;
       if (decoded) {
-        held.set(d.slug, { ...decoded, jws: result.license });
+        // Persist the url actually paid alongside the license, so it travels with the
+        // held record (a slug-only re-read can then target the real link, not a template).
+        held.set(d.slug, { ...decoded, jws: result.license, url });
         licenseId = decoded.jti;
       }
       const mark =

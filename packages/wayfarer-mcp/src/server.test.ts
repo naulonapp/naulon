@@ -823,6 +823,40 @@ test("C1 — two sessions with separate stores do not cross-read (the hosted lea
   assert.match(rb.error ?? "", /No held license/i, "B never sees A's license — isolation holds");
 });
 
+test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /essays/ path", async () => {
+  // The publisher serves the source at a custom path (/articles/<slug>), captured at pay
+  // time in HeldLicense.url. A later read_held must re-fetch THAT url verbatim — not
+  // articleUrl(gateBase(), slug), which would 404 off-shape. Two stub gates disambiguate:
+  // the url-gate (where the license was paid) vs the session's tollgate base (the template
+  // target). The re-read must hit the url-gate and never the base.
+  const urlGate = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("the real paid content");
+  });
+  const baseGate = await standGate((_req, res) => {
+    res.writeHead(404);
+    res.end("wrong shape");
+  });
+  try {
+    const exp = Math.floor(Date.now() / 1000) + 3600; // live
+    const store = memoryHeldStore([
+      ["custom", { ...heldLicense("custom", exp), url: `${urlGate.url}/articles/the-real-path` }],
+    ]);
+    const client = await connectedClientWith({ heldStore: store, tollgateUrl: baseGate.url });
+    const res = await client.callTool({ name: "naulon_read_held", arguments: { slug: "custom" } });
+    const r = res.structuredContent as { ok: boolean; content?: string };
+    assert.equal(r.ok, true, "re-read succeeded against the stored url");
+    assert.equal(r.content, "the real paid content");
+    assert.ok(
+      urlGate.hits.some((u) => u.includes("/articles/the-real-path")),
+      "re-read hit the STORED paid url verbatim",
+    );
+    assert.equal(baseGate.hits.length, 0, "never reconstructed a /essays/<slug> path against the gate base");
+  } finally {
+    await Promise.all([urlGate.close(), baseGate.close()]);
+  }
+});
+
 test("C3 — hosted signer present but no popWallet + mock dev key ⇒ loud warn", async () => {
   const warnings: string[] = [];
   const orig = console.warn;

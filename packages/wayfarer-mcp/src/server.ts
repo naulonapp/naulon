@@ -591,7 +591,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         if (decoded) {
           licenseId = decoded.jti;
           const held = await heldStore.load();
-          held.set(decoded.slug, { ...decoded, jws: result.license });
+          // Capture the url actually paid so a later read_held re-fetches THIS link
+          // verbatim, not a reconstructed /essays/<slug> template that 404s off-shape.
+          held.set(decoded.slug, { ...decoded, jws: result.license, url: target });
           await heldStore.save(held);
         }
         const jwks = await fetchJwks(gateBase());
@@ -668,7 +670,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         }
       }
 
-      const reread = await rereadWithLicense(slugUrl(slug), KIND, license.jws, popWallet().address, proof);
+      // Re-read the exact url the license was paid at; fall back to the template only
+      // for a legacy license captured before the url was stored.
+      const target = license.url ?? slugUrl(slug);
+      const reread = await rereadWithLicense(target, KIND, license.jws, popWallet().address, proof);
       if (!reread.ok) {
         return structured({ ok: false, error: reread.error ?? "re-read failed" });
       }
