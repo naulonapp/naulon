@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { resetConfig } from "@naulon/shared";
 
 import { run } from "./agent.ts";
@@ -259,4 +260,76 @@ test("BUY-3.1: a kill-switch policy threads through run() — the real pipeline 
       });
     },
   );
+});
+
+test("RAS-A2b: on a gateway (memo-less) network run() routes the injected signer through gatewayBuyer", async () => {
+  // The research path (run) had the SAME memo-only hardcode as pay_and_read: opts.signer ?
+  // memoBuyer(opts.signer). On Base + every Gateway chain that 400s the facilitator verify.
+  // run() must mirror selectBuyer() and route the injected signer to gatewayBuyer, which posts
+  // the Circle envelope — proven by the paid payment-signature carrying the injected authorization.
+  const injected = privateKeyToAccount(generatePrivateKey());
+  const GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+  let paidHeader: string | undefined;
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+    const u = String(url);
+    if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+    if (init?.headers?.["payment-signature"]) {
+      paidHeader = init.headers["payment-signature"];
+      return new Response("the fare is paid", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+    }
+    const header = Buffer.from(
+      JSON.stringify({
+        x402Version: 2,
+        resource: { url: u, description: "naulon read toll", mimeType: "text/html" },
+        accepts: [
+          {
+            scheme: "exact",
+            network: "eip155:84532",
+            asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            payTo: "0x00000000000000000000000000000000000000Ad",
+            amount: "1000",
+            maxTimeoutSeconds: 691200,
+            extra: { name: "GatewayWalletBatched", version: "1", verifyingContract: GATEWAY_WALLET },
+          },
+        ],
+      }),
+    ).toString("base64");
+    return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+  }) as typeof globalThis.fetch;
+  try {
+    await withEnv(
+      {
+        SETTLEMENT_NETWORK: "baseSepolia",
+        PAYMENT_MODE: "gateway",
+        LICENSES_ENABLED: "false",
+        WAYFARER_BUDGET_USDC: "0.1",
+        BUYER_PRIVATE_KEY: undefined,
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        CATALOG_URL: undefined,
+        OPENAI_API_KEY: undefined,
+        TOLLGATE_URL: "http://gate.test",
+        WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-gw-signer-${process.pid}.json`),
+      },
+      async () => {
+        const result = await run("payment and passage", () => {}, { signer: injected });
+        assert.ok((result.spent as number) > 0, "the injected signer paid on the gateway rail");
+        assert.ok(paidHeader, "the buyer retried with a payment-signature");
+        const envelope = JSON.parse(Buffer.from(paidHeader!, "base64").toString("utf8")) as {
+          payload?: { authorization?: { from?: string } };
+          resource?: unknown;
+          accepted?: unknown;
+        };
+        assert.equal(
+          envelope.payload?.authorization?.from?.toLowerCase(),
+          injected.address.toLowerCase(),
+          "the Gateway envelope's authorization.from is the injected signer — gatewayBuyer ran, not memoBuyer",
+        );
+        assert.ok(envelope.resource && envelope.accepted, "the envelope carries resource + accepted (facilitator verify requires them)");
+      },
+    );
+  } finally {
+    globalThis.fetch = real;
+  }
 });

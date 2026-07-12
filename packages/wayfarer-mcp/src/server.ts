@@ -46,6 +46,7 @@ import {
   discover,
   fetchJwks,
   fileHeldStore,
+  gatewayBuyer,
   getWallet,
   isLive,
   memoBuyer,
@@ -58,8 +59,8 @@ import {
   tollgateBase,
   verifyAgainst,
 } from "@naulon/wayfarer";
-import type { AgentWallet, DecisionPolicy, HeldStore, MemoSigner, ProbeOutcome } from "@naulon/wayfarer";
-import { getConfig, usdc } from "@naulon/shared";
+import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome } from "@naulon/wayfarer";
+import { activeNetwork, getConfig, supportsMemo, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
@@ -146,8 +147,13 @@ export interface DecisionAuditEvent {
 }
 
 export interface BuildServerOptions {
-  /** This session's custody-free cloud signer (else `cloudSignerFromEnv()`). */
-  signer?: MemoSigner;
+  /**
+   * This session's custody-free cloud signer (else `cloudSignerFromEnv()`). A `MemoSigner`
+   * (memo/Arc rail) or a `GatewaySigner` (memo-less Circle rails — Base + every Gateway
+   * chain); the cloud injects the one matching the active settlement network's rail, and
+   * `buildServer` routes it to the matching buyer (`supportsMemo(activeNetwork())`).
+   */
+  signer?: MemoSigner | GatewaySigner;
   /** This session's spend ceiling in USDC (else `WAYFARER_BUDGET_USDC`). */
   budgetUsdc?: number;
   /** This session's decision policy (else the env-derived policy over DEFAULT_POLICY). */
@@ -555,9 +561,17 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         });
       }
 
-      // Hosted path: sign each leg via the cloud session key. Default: the BYO-key memo/mock/gateway
-      // buyer selectBuyer() picks. memoBuyer(cloudSigner) never reads BUYER_PRIVATE_KEY.
-      const buyer = cloudSigner ? memoBuyer(cloudSigner) : await selectBuyer();
+      // Hosted path: sign each leg via the cloud session key. Route the injected signer to the
+      // active network's rail — mirroring selectBuyer()'s env-path branch — so a memo-LESS network
+      // (Base + every Gateway chain) settles via gatewayBuyer (the Circle envelope) instead of the
+      // memo rail (which 400s the facilitator verify). The cloud injects the signer matching the
+      // network's rail; both buyers never read BUYER_PRIVATE_KEY. Default: the BYO-key buyer
+      // selectBuyer() picks (which already branches the same way for the env path).
+      const buyer = cloudSigner
+        ? supportsMemo(activeNetwork())
+          ? memoBuyer(cloudSigner as MemoSigner)
+          : gatewayBuyer(cloudSigner as GatewaySigner)
+        : await selectBuyer();
       await buyer.init();
       // Re-quote at pay time and abort if the toll moved past the quote we gated the
       // budget on (BUY-1.4 toll-moved guard). The buyer pays NOTHING if it has moved.

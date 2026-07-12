@@ -42,6 +42,7 @@ export {
 export type { Buyer, Quoted, LegRequirements, Fetched, FetchErrorCode, PayGuard, ProbeOutcome } from "./buyer.ts";
 export { mockBuyer } from "./pay.ts";
 export { gatewayBuyer } from "./gateway.ts";
+export type { GatewaySigner } from "./gateway.ts";
 export { memoBuyer, signMemoPayment } from "./memo.ts";
 export type { MemoSigner } from "./memo.ts";
 
