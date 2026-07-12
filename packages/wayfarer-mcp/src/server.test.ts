@@ -19,6 +19,7 @@ import { test } from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { resetConfig } from "@naulon/shared";
 import { DEFAULT_POLICY, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
@@ -1006,6 +1007,80 @@ test("A′: naulon_pay_and_read pays the passed canonical url verbatim (/article
     assert.equal(p.ok, true, "the pay completes");
     assert.ok(gate.hits.some((u) => u.includes("/articles/deep")), "both the budget probe and the pay hit the canonical url");
     assert.ok(!gate.hits.some((u) => u.includes("/essays/")), "no /essays/ reconstruction on the pay path");
+  } finally {
+    await gate.close();
+  }
+});
+
+// ── RAS-A2b — buildServer routes the injected signer to the network's rail ────
+// The injected-cloud-signer pay path hardcoded memoBuyer(cloudSigner), so on a
+// memo-LESS network (Base + every Gateway chain) the hosted MCP could never settle
+// (the Base-settle bug). buildServer must mirror selectBuyer(): on a gateway network
+// route the SAME injected signer through gatewayBuyer, which posts the Circle
+// envelope the facilitator verify requires — proof the branch, not memo, ran.
+const GATEWAY_WALLET_BASE_SEPOLIA = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+function gatewayPaymentRequired(amountAtomic: string): string {
+  return Buffer.from(
+    JSON.stringify({
+      x402Version: 2,
+      resource: { url: "https://x.test/a", description: "naulon read toll", mimeType: "text/html" },
+      accepts: [
+        {
+          scheme: "exact",
+          network: "eip155:84532",
+          asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          payTo: "0x000000000000000000000000000000000000dEaD",
+          amount: amountAtomic,
+          maxTimeoutSeconds: 691200,
+          extra: { name: "GatewayWalletBatched", version: "1", verifyingContract: GATEWAY_WALLET_BASE_SEPOLIA },
+        },
+      ],
+    }),
+  ).toString("base64");
+}
+
+test("RAS-A2b: on a gateway (memo-less) network buildServer routes the injected signer through gatewayBuyer", async () => {
+  const injected = privateKeyToAccount(generatePrivateKey()); // ≠ any env key
+  let paidHeader: string | undefined;
+  const gate = await standGate((req, res) => {
+    if (req.headers["payment-signature"]) {
+      paidHeader = req.headers["payment-signature"] as string;
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("paid content");
+    } else {
+      res.writeHead(402, { "payment-required": gatewayPaymentRequired("10000"), "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "payment required" }));
+    }
+  });
+  try {
+    await withEnv(
+      {
+        SETTLEMENT_NETWORK: "baseSepolia",
+        PAYMENT_MODE: "gateway",
+        LICENSES_ENABLED: "false",
+        WAYFARER_BUDGET_USDC: "1",
+        BUYER_PRIVATE_KEY: undefined,
+      },
+      async () => {
+        const client = await connectedClientWith({ signer: injected, tollgateUrl: gate.url, budgetUsdc: 1 });
+        const p = (
+          await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x", url: `${gate.url}/articles/x` } })
+        ).structuredContent as { ok: boolean; error?: string };
+        assert.equal(p.ok, true, `expected a paid read on the gateway rail, got: ${p.ok ? "" : p.error}`);
+        assert.ok(paidHeader, "the buyer retried with a payment-signature");
+        const envelope = JSON.parse(Buffer.from(paidHeader!, "base64").toString("utf8")) as {
+          payload?: { authorization?: { from?: string } };
+          resource?: unknown;
+          accepted?: unknown;
+        };
+        assert.equal(
+          envelope.payload?.authorization?.from?.toLowerCase(),
+          injected.address.toLowerCase(),
+          "the Gateway envelope's authorization.from is the injected signer — gatewayBuyer ran, not memoBuyer",
+        );
+        assert.ok(envelope.resource && envelope.accepted, "the envelope carries resource + accepted (facilitator verify requires them)");
+      },
+    );
   } finally {
     await gate.close();
   }
