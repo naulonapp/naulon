@@ -53,13 +53,14 @@ import {
   probe,
   probeFailure,
   quotedTotalAtomic,
+  railBuyer,
   rereadWithLicense,
   run,
   selectBuyer,
   tollgateBase,
   verifyAgainst,
 } from "@naulon/wayfarer";
-import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome } from "@naulon/wayfarer";
+import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners } from "@naulon/wayfarer";
 import { activeNetwork, getConfig, supportsMemo, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
@@ -154,6 +155,15 @@ export interface BuildServerOptions {
    * `buildServer` routes it to the matching buyer (`supportsMemo(activeNetwork())`).
    */
   signer?: MemoSigner | GatewaySigner;
+  /**
+   * A mixed-fleet session's BOTH rail signers (RAS-B): the cloud injects a memo AND a gateway
+   * signer wrapping the same sealed session key, and `buildServer` builds a `railBuyer` that picks
+   * the rail from each tenant's advertised 402 — so one process serves an Arc-default fleet with a
+   * Base tenant. Takes precedence over `signer` when present; the single-rail `signer` path stays for
+   * the stdio funnel and any host that settles on one network. Both wrap the same key, so the payer
+   * identity is either signer's `address` (they are equal).
+   */
+  railSigners?: RailSigners;
   /** This session's spend ceiling in USDC (else `WAYFARER_BUDGET_USDC`). */
   budgetUsdc?: number;
   /** This session's decision policy (else the env-derived policy over DEFAULT_POLICY). */
@@ -228,11 +238,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // wallet), mirroring the budget envelope.
   // Per-session override wins; else the env default (stdio funnel unchanged).
   const cloudSigner = opts.signer ?? cloudSignerFromEnv();
+  // RAS-B mixed fleet: when both rail signers are injected, they wrap the SAME sealed session key,
+  // so either one's address is the payer identity. This is the hosted signer for identity + the
+  // hosted-armed checks below; the actual rail (which signer pays) is picked per-402 by railBuyer.
+  const hostedSigner = opts.railSigners?.memo ?? opts.railSigners?.gateway ?? cloudSigner;
   // The buyer identity a 402 quote / license is bound to. On the hosted path this MUST be the
-  // cloud session EOA that actually pays (`cloudSigner.address`) — NOT `getWallet()`, which on a
+  // cloud session EOA that actually pays (`hostedSigner.address`) — NOT `getWallet()`, which on a
   // custody-free deploy (no BUYER_PRIVATE_KEY) is a throwaway dev key, so the quote would bind to
   // an identity the buyer never pays from. BYO-key path: fall back to the env wallet, unchanged.
-  const payerAddress = (): string => cloudSigner?.address ?? getWallet().address;
+  const payerAddress = (): string => hostedSigner?.address ?? getWallet().address;
   // Per-session held-license store: the injected store (hosted, isolated) wins over the
   // process-global file, so many buyers in one process never cross-read each other's licenses.
   const heldStore: HeldStore = opts.heldStore ?? fileHeldStore;
@@ -242,7 +256,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // C3 — loud warn when the hosted pay path is armed (a cloud signer is present) but no PoP
   // wallet was injected: held re-reads of cnf-bound licenses will fall back to the mock dev key
   // and fail, silently degrading to re-pay. Surface it instead of letting it look like a toll bug.
-  if (cloudSigner && !opts.popWallet && getWallet().mock) {
+  if (hostedSigner && !opts.popWallet && getWallet().mock) {
     console.warn(
       "[wayfarer-mcp] hosted session active (cloud signer present) but no popWallet injected — " +
         "proof-of-possession re-reads will use the mock dev key and cannot satisfy a cnf-bound license. " +
@@ -578,17 +592,19 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         });
       }
 
-      // Hosted path: sign each leg via the cloud session key. Route the injected signer to the
-      // active network's rail — mirroring selectBuyer()'s env-path branch — so a memo-LESS network
-      // (Base + every Gateway chain) settles via gatewayBuyer (the Circle envelope) instead of the
-      // memo rail (which 400s the facilitator verify). The cloud injects the signer matching the
-      // network's rail; both buyers never read BUYER_PRIVATE_KEY. Default: the BYO-key buyer
-      // selectBuyer() picks (which already branches the same way for the env path).
-      const buyer = cloudSigner
-        ? supportsMemo(activeNetwork())
-          ? memoBuyer(cloudSigner as MemoSigner)
-          : gatewayBuyer(cloudSigner as GatewaySigner)
-        : await selectBuyer();
+      // Hosted path: sign each leg via the cloud session key. With BOTH rail signers (RAS-B mixed
+      // fleet) railBuyer picks the rail from the TENANT's advertised 402 — a gateway 402 signs the
+      // Circle envelope even under a memo-default fleet, and vice-versa. With a single injected signer
+      // (one-network host / stdio) keep the activeNetwork() branch: a memo-LESS network (Base + every
+      // Gateway chain) settles via gatewayBuyer, else memoBuyer. Neither reads BUYER_PRIVATE_KEY.
+      // Default: the BYO-key buyer selectBuyer() picks (which branches the same way for the env path).
+      const buyer = opts.railSigners
+        ? railBuyer(opts.railSigners)
+        : cloudSigner
+          ? supportsMemo(activeNetwork())
+            ? memoBuyer(cloudSigner as MemoSigner)
+            : gatewayBuyer(cloudSigner as GatewaySigner)
+          : await selectBuyer();
       await buyer.init();
       // Re-quote at pay time and abort if the toll moved past the quote we gated the
       // budget on (BUY-1.4 toll-moved guard). The buyer pays NOTHING if it has moved.

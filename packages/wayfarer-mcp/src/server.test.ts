@@ -1039,6 +1039,62 @@ function gatewayPaymentRequired(amountAtomic: string): string {
   ).toString("base64");
 }
 
+test("RAS-B5: with railSigners buildServer picks the rail from the 402 — a gateway 402 under an Arc (memo) fleet signs the gateway envelope", async () => {
+  // The mixed-fleet buy side: the fleet default is arcTestnet (memo-capable), but the tenant's 402
+  // is gateway-shaped. railBuyer must sign the GATEWAY envelope off the 402, not the memo rail the
+  // fleet's activeNetwork() would pick. The two rail signers are distinct accounts so the envelope's
+  // authorization.from proves the GATEWAY signer ran (not memo).
+  const memoAcct = privateKeyToAccount(generatePrivateKey());
+  const gatewayAcct = privateKeyToAccount(generatePrivateKey());
+  let paidHeader: string | undefined;
+  const gate = await standGate((req, res) => {
+    if (req.headers["payment-signature"]) {
+      paidHeader = req.headers["payment-signature"] as string;
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("paid content");
+    } else {
+      res.writeHead(402, { "payment-required": gatewayPaymentRequired("10000"), "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "payment required" }));
+    }
+  });
+  try {
+    await withEnv(
+      {
+        SETTLEMENT_NETWORK: "arcTestnet", // fleet default is memo-capable, ON PURPOSE
+        PAYMENT_MODE: "gateway",
+        LICENSES_ENABLED: "false",
+        WAYFARER_BUDGET_USDC: "1",
+        BUYER_PRIVATE_KEY: undefined,
+      },
+      async () => {
+        const client = await connectedClientWith({
+          railSigners: { memo: memoAcct, gateway: gatewayAcct },
+          tollgateUrl: gate.url,
+          budgetUsdc: 1,
+        });
+        const p = (
+          await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x", url: `${gate.url}/articles/x` } })
+        ).structuredContent as { ok: boolean; error?: string };
+        assert.equal(p.ok, true, `expected a paid read on the gateway rail, got: ${p.ok ? "" : p.error}`);
+        assert.ok(paidHeader, "the buyer retried with a payment-signature");
+        const envelope = JSON.parse(Buffer.from(paidHeader!, "base64").toString("utf8")) as {
+          payload?: { authorization?: { from?: string } };
+          resource?: unknown;
+          accepted?: unknown;
+        };
+        assert.equal(
+          envelope.payload?.authorization?.from?.toLowerCase(),
+          gatewayAcct.address.toLowerCase(),
+          "the gateway envelope's authorization.from is the GATEWAY signer — railBuyer picked gateway off the 402, not memo off the Arc fleet",
+        );
+        assert.ok(envelope.resource && envelope.accepted, "the envelope carries resource + accepted (facilitator verify requires them)");
+      },
+    );
+  } finally {
+    await gate.close();
+  }
+});
+
 test("RAS-A2b: on a gateway (memo-less) network buildServer routes the injected signer through gatewayBuyer", async () => {
   const injected = privateKeyToAccount(generatePrivateKey()); // ≠ any env key
   let paidHeader: string | undefined;
