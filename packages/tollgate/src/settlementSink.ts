@@ -39,7 +39,10 @@ type Outcome =
 async function attempt(event: AttributedEvent, secret: string, originUrl: string): Promise<Outcome> {
   const cfg = getConfig();
   const target = new URL("/api/credits/settlement", originUrl);
-  const body = JSON.stringify(buildSettlementBody(event, activeNetwork().chainId, cfg.PRIMARY_PAYEE_TIEBREAK));
+  // The event's own settle chain when stamped (per-tenant), else the fleet default
+  // — so a re-send on any path reports the chain the money actually moved on.
+  const chainId = event.chainId ?? activeNetwork().chainId;
+  const body = JSON.stringify(buildSettlementBody(event, chainId, cfg.PRIMARY_PAYEE_TIEBREAK));
   const { timestamp, signature } = signSettlement(body, secret, Math.floor(Date.now() / 1000));
 
   const ctrl = new AbortController();

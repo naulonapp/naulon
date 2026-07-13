@@ -93,6 +93,13 @@ export interface AttributedEvent {
   payerAddress: WalletAddress;
   /** Gateway settlement / batch reference. */
   settlementRef: string;
+  /**
+   * The chain this event settled on (the per-tenant settlement network's chainId).
+   * Optional: stamped by the settle tail so a later drain re-sends on the right
+   * chain even across a multi-network fleet. Absent (every pre-per-tenant event) ⇒
+   * the settlement body falls back to `activeNetwork().chainId`, unchanged.
+   */
+  chainId?: number;
   /** epoch ms — passed in by the caller (no ambient clock in shared code). */
   at: number;
 }

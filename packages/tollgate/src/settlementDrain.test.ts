@@ -103,3 +103,21 @@ test("dark scope (no secret, no global secret) is a no-op", async () => {
   assert.deepEqual(summary, { acked: 0, pending: 0 });
   assert.equal(calls.length, 0);
 });
+
+test("the settlement body carries the event's own settlement chain (per-tenant), not the fleet default", async () => {
+  // A base-settled event carries chainId 8453, stamped at settle time. The drain
+  // must re-send it on base — never the process-global activeNetwork() (arcTestnet
+  // in this suite). This is what makes a per-tenant chain survive a re-send.
+  await sink.record({ ...evt("c1", "publisher-c"), chainId: 8453 });
+  const calls = captureFetch();
+  await drainSettlements({ secret: "s", originUrl: "https://c.example", publisherId: "publisher-c" });
+  assert.equal(calls.length, 1);
+  assert.equal(JSON.parse(calls[0]!.body).chainId, 8453);
+});
+
+test("an event with no stamped chain falls back to activeNetwork (single-tenant default)", async () => {
+  await sink.record(evt("d1", "publisher-d")); // no chainId — the pre-B default
+  const calls = captureFetch();
+  await drainSettlements({ secret: "s", originUrl: "https://d.example", publisherId: "publisher-d" });
+  assert.equal(JSON.parse(calls[0]!.body).chainId, ARC_TESTNET.chainId);
+});
