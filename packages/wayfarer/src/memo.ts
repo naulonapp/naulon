@@ -25,6 +25,7 @@ import {
   AGENT_UA,
   assemblePayment,
   classifyPaymentError,
+  classifySignerRefusal,
   probe,
   probeFailure,
   probePrice,
@@ -152,16 +153,28 @@ export function memoBuyer(signer?: MemoSigner): Buyer {
       if (moved) return moved;
       // One raw EIP-3009 authorization per advertised leg (operator fee → 2-leg array);
       // a stock single-author quote stays the bare object, byte-identical to before.
+      // Signing + the paid fetch are wrapped: a hosted session signer THROWS on a grant
+      // refusal, and a socket can throw on the paid GET — both must become a typed non-spend
+      // Fetched, never escape the buyer (and the MCP pay tool) as a generic protocol error.
       const nowMs = Date.now();
-      const paymentSignature = await assemblePayment(quoted, (req) => memoLegPayload(req, nowMs, signer));
-      const res = await agentFetch(url, {
-        headers: {
-          "user-agent": AGENT_UA,
-          "x-naulon-agent": address,
-          "x-naulon-kind": kind,
-          "payment-signature": paymentSignature,
-        },
-      });
+      let res: Awaited<ReturnType<typeof agentFetch>>;
+      try {
+        const paymentSignature = await assemblePayment(quoted, (req) => memoLegPayload(req, nowMs, signer));
+        res = await agentFetch(url, {
+          headers: {
+            "user-agent": AGENT_UA,
+            "x-naulon-agent": address,
+            "x-naulon-kind": kind,
+            "payment-signature": paymentSignature,
+          },
+        });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        // A recognized session-signer refusal (grant exhausted/expired, no session, bad config)
+        // is typed so the agent can act (top up / renew); anything else is a transient origin throw.
+        const refusal = classifySignerRefusal(error);
+        return refusal ? { ok: false, error, ...refusal } : { ok: false, error, errorCode: "origin_error", retryable: true };
+      }
       if (res.status === 402) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         const error = body.error ?? "payment rejected";

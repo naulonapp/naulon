@@ -2,6 +2,11 @@
   "name": "@naulon/shared",
   "version": "0.0.1",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naulonapp/naulon.git",
+    "directory": "packages/shared"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -32,7 +37,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@naulon/sdk": "*",
+    "@naulon/sdk": "^0.1.0",
     "dotenv": "^17.4.2",
     "zod": "^4.4.3"
   }

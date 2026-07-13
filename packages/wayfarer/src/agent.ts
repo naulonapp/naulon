@@ -6,9 +6,10 @@
  * tollgate over the real x402 contract; the Buyer is mock (offline) or Circle
  * Gateway (PAYMENT_MODE=gateway), chosen at startup.
  */
-import { getConfig, usdc, verifyLicense, type JwkSet } from "@naulon/shared";
+import { activeNetwork, getConfig, supportsMemo, usdc, verifyLicense, type JwkSet } from "@naulon/shared";
 import { appraise } from "./appraise.ts";
 import { rereadWithLicense, selectBuyer } from "./buyer.ts";
+import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
 import { memoBuyer, type MemoSigner } from "./memo.ts";
 import { decide, DEFAULT_POLICY } from "./decide.ts";
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
@@ -90,9 +91,11 @@ export interface RunOptions {
    * over an encrypted session key) instead of the env `BUYER_PRIVATE_KEY` — so the
    * hosted `naulon_research` pays from the buyer's managed session wallet, mirroring
    * `naulon_pay_and_read`. Omitted ⇒ `selectBuyer()` picks the env buyer (the OSS
-   * self-host path). Server/config-supplied, never LLM-controlled.
+   * self-host path). Server/config-supplied, never LLM-controlled. A `MemoSigner`
+   * (memo/Arc rail) or a `GatewaySigner` (memo-less Circle rails); `run` routes it to
+   * the matching buyer via `supportsMemo(activeNetwork())`, like `selectBuyer()`.
    */
-  signer?: MemoSigner;
+  signer?: MemoSigner | GatewaySigner;
   /**
    * This run's held-license backend (BUY-4 hosted path). The cloud injects a
    * per-session store so the composite loop's free re-reads never cross buyer
@@ -116,9 +119,16 @@ export async function run(
   const budget = opts.budgetUsdc ?? cfg.WAYFARER_BUDGET_USDC;
   const base = opts.tollgateUrl ?? tollgateBase();
   // Hosted path: sign each leg via the injected cloud session key (custody-free); the
-  // env BUYER_PRIVATE_KEY is never read. Default: the BYO-key buyer selectBuyer() picks.
-  // Mirrors naulon_pay_and_read's selection so hosted research pays from the same wallet.
-  const buyer = opts.signer ? memoBuyer(opts.signer) : await selectBuyer();
+  // env BUYER_PRIVATE_KEY is never read. Route the injected signer to the active network's
+  // rail — memo-LESS networks (Base + every Gateway chain) settle via gatewayBuyer (the Circle
+  // envelope), memo networks via memoBuyer — mirroring selectBuyer() and naulon_pay_and_read so
+  // hosted research pays from the same wallet on whatever rail the tenant settles on. The cloud
+  // injects the signer matching the network's rail. Default: the BYO-key buyer selectBuyer() picks.
+  const buyer = opts.signer
+    ? supportsMemo(activeNetwork())
+      ? memoBuyer(opts.signer as MemoSigner)
+      : gatewayBuyer(opts.signer as GatewaySigner)
+    : await selectBuyer();
   // Per-session held store + PoP signer (BUY-4): the injected pair keeps the composite loop's
   // free re-reads isolated per buyer and signed by the paying session EOA. Omitted ⇒ OSS defaults.
   const heldStore: HeldStore = opts.heldStore ?? fileHeldStore;
@@ -201,7 +211,9 @@ export async function run(
       const decoded = decodeHeld(result.license);
       const verified = jwks ? verifyAgainst(result.license, jwks) : null;
       if (decoded) {
-        held.set(d.slug, { ...decoded, jws: result.license });
+        // Persist the url actually paid alongside the license, so it travels with the
+        // held record (a slug-only re-read can then target the real link, not a template).
+        held.set(d.slug, { ...decoded, jws: result.license, url });
         licenseId = decoded.jti;
       }
       const mark =

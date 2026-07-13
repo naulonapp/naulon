@@ -19,6 +19,7 @@ import { test } from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { resetConfig } from "@naulon/shared";
 import { DEFAULT_POLICY, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
@@ -287,6 +288,31 @@ test("naulon_pay_and_read reports not_found (not a free read) when the path 404s
     assert.equal(r.errorCode, "not_found", "a 404 is a wrong path, not the free-read not_gated");
     assert.match(r.error ?? "", /404|canonical url/i, "the error points the agent at passing the real url");
     assert.equal(r.spentSessionUsdc, 0, "nothing was spent");
+  });
+});
+
+test("naulon_pay_and_read surfaces a hosted session-signer grant refusal as needs_topup + a top-up link", async () => {
+  // The hosted path injects a grant-checked session signer that THROWS on a refusal. The pay
+  // tool must turn that into a structured non-spend the agent can act on — errorCode:needs_topup
+  // plus the top-up URL — never a thrown MCP protocol error that hides the remedy.
+  const throwingSigner: MemoSigner = {
+    address: "0x000000000000000000000000000000000000bEEF",
+    signTypedData: () => {
+      throw new Error("grant_exceeded (remaining 0)");
+    },
+  };
+  await withStubGate(payGate("5000"), async () => {
+    // Budget clears the toll ($0.005) so the flow reaches the signer (the refusal is the point).
+    const client = await connectedClientWith({ signer: throwingSigner, budgetUsdc: 1, buyerWalletUrl: "https://portal.test/buyer/wallet" });
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } });
+    assert.notEqual(res.isError, true, "a grant refusal is a typed result, not a thrown MCP error");
+    const r = res.structuredContent as { ok: boolean; errorCode?: string; retryable?: boolean; topUpUrl?: string; requiredUsdc?: number; spentSessionUsdc: number };
+    assert.equal(r.ok, false, "nothing was paid");
+    assert.equal(r.errorCode, "needs_topup", "the agent learns the remedy is funding");
+    assert.equal(r.retryable, false, "retrying without funding only re-fails");
+    assert.equal(r.topUpUrl, "https://portal.test/buyer/wallet", "the configured wallet URL is surfaced");
+    assert.equal(r.requiredUsdc, 0.005, "the toll it could not cover is reported");
+    assert.equal(r.spentSessionUsdc, 0, "the budget is untouched");
   });
 });
 
@@ -823,6 +849,40 @@ test("C1 — two sessions with separate stores do not cross-read (the hosted lea
   assert.match(rb.error ?? "", /No held license/i, "B never sees A's license — isolation holds");
 });
 
+test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /essays/ path", async () => {
+  // The publisher serves the source at a custom path (/articles/<slug>), captured at pay
+  // time in HeldLicense.url. A later read_held must re-fetch THAT url verbatim — not
+  // articleUrl(gateBase(), slug), which would 404 off-shape. Two stub gates disambiguate:
+  // the url-gate (where the license was paid) vs the session's tollgate base (the template
+  // target). The re-read must hit the url-gate and never the base.
+  const urlGate = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("the real paid content");
+  });
+  const baseGate = await standGate((_req, res) => {
+    res.writeHead(404);
+    res.end("wrong shape");
+  });
+  try {
+    const exp = Math.floor(Date.now() / 1000) + 3600; // live
+    const store = memoryHeldStore([
+      ["custom", { ...heldLicense("custom", exp), url: `${urlGate.url}/articles/the-real-path` }],
+    ]);
+    const client = await connectedClientWith({ heldStore: store, tollgateUrl: baseGate.url });
+    const res = await client.callTool({ name: "naulon_read_held", arguments: { slug: "custom" } });
+    const r = res.structuredContent as { ok: boolean; content?: string };
+    assert.equal(r.ok, true, "re-read succeeded against the stored url");
+    assert.equal(r.content, "the real paid content");
+    assert.ok(
+      urlGate.hits.some((u) => u.includes("/articles/the-real-path")),
+      "re-read hit the STORED paid url verbatim",
+    );
+    assert.equal(baseGate.hits.length, 0, "never reconstructed a /essays/<slug> path against the gate base");
+  } finally {
+    await Promise.all([urlGate.close(), baseGate.close()]);
+  }
+});
+
 test("C3 — hosted signer present but no popWallet + mock dev key ⇒ loud warn", async () => {
   const warnings: string[] = [];
   const orig = console.warn;
@@ -947,6 +1007,80 @@ test("A′: naulon_pay_and_read pays the passed canonical url verbatim (/article
     assert.equal(p.ok, true, "the pay completes");
     assert.ok(gate.hits.some((u) => u.includes("/articles/deep")), "both the budget probe and the pay hit the canonical url");
     assert.ok(!gate.hits.some((u) => u.includes("/essays/")), "no /essays/ reconstruction on the pay path");
+  } finally {
+    await gate.close();
+  }
+});
+
+// ── RAS-A2b — buildServer routes the injected signer to the network's rail ────
+// The injected-cloud-signer pay path hardcoded memoBuyer(cloudSigner), so on a
+// memo-LESS network (Base + every Gateway chain) the hosted MCP could never settle
+// (the Base-settle bug). buildServer must mirror selectBuyer(): on a gateway network
+// route the SAME injected signer through gatewayBuyer, which posts the Circle
+// envelope the facilitator verify requires — proof the branch, not memo, ran.
+const GATEWAY_WALLET_BASE_SEPOLIA = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+function gatewayPaymentRequired(amountAtomic: string): string {
+  return Buffer.from(
+    JSON.stringify({
+      x402Version: 2,
+      resource: { url: "https://x.test/a", description: "naulon read toll", mimeType: "text/html" },
+      accepts: [
+        {
+          scheme: "exact",
+          network: "eip155:84532",
+          asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          payTo: "0x000000000000000000000000000000000000dEaD",
+          amount: amountAtomic,
+          maxTimeoutSeconds: 691200,
+          extra: { name: "GatewayWalletBatched", version: "1", verifyingContract: GATEWAY_WALLET_BASE_SEPOLIA },
+        },
+      ],
+    }),
+  ).toString("base64");
+}
+
+test("RAS-A2b: on a gateway (memo-less) network buildServer routes the injected signer through gatewayBuyer", async () => {
+  const injected = privateKeyToAccount(generatePrivateKey()); // ≠ any env key
+  let paidHeader: string | undefined;
+  const gate = await standGate((req, res) => {
+    if (req.headers["payment-signature"]) {
+      paidHeader = req.headers["payment-signature"] as string;
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("paid content");
+    } else {
+      res.writeHead(402, { "payment-required": gatewayPaymentRequired("10000"), "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "payment required" }));
+    }
+  });
+  try {
+    await withEnv(
+      {
+        SETTLEMENT_NETWORK: "baseSepolia",
+        PAYMENT_MODE: "gateway",
+        LICENSES_ENABLED: "false",
+        WAYFARER_BUDGET_USDC: "1",
+        BUYER_PRIVATE_KEY: undefined,
+      },
+      async () => {
+        const client = await connectedClientWith({ signer: injected, tollgateUrl: gate.url, budgetUsdc: 1 });
+        const p = (
+          await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x", url: `${gate.url}/articles/x` } })
+        ).structuredContent as { ok: boolean; error?: string };
+        assert.equal(p.ok, true, `expected a paid read on the gateway rail, got: ${p.ok ? "" : p.error}`);
+        assert.ok(paidHeader, "the buyer retried with a payment-signature");
+        const envelope = JSON.parse(Buffer.from(paidHeader!, "base64").toString("utf8")) as {
+          payload?: { authorization?: { from?: string } };
+          resource?: unknown;
+          accepted?: unknown;
+        };
+        assert.equal(
+          envelope.payload?.authorization?.from?.toLowerCase(),
+          injected.address.toLowerCase(),
+          "the Gateway envelope's authorization.from is the injected signer — gatewayBuyer ran, not memoBuyer",
+        );
+        assert.ok(envelope.resource && envelope.accepted, "the envelope carries resource + accepted (facilitator verify requires them)");
+      },
+    );
   } finally {
     await gate.close();
   }

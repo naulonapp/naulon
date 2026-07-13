@@ -10,13 +10,22 @@
  */
 import type { AgentWallet, MemoSigner } from "@naulon/wayfarer";
 
-/** The grant (cap or TTL) refused the spend. Carries the remaining budget when the BFF reports it. */
+/** The grant CAP/budget refused the spend — funding the session is the remedy. The message STARTS with the
+ *  raw code (`grant_exceeded`) so memo.ts's message-prefix classifier maps it to `needs_topup`, not a
+ *  retryable `origin_error` (mirrors in-process-signer.ts, which already throws code-prefixed messages). */
 export class GrantExceededError extends Error {
   constructor(public readonly remainingMicro?: number) {
-    super(
-      `buyer wallet grant exceeded${remainingMicro !== undefined ? ` (${remainingMicro} micro-USDC remaining)` : ""}`,
-    );
+    super(`grant_exceeded${remainingMicro !== undefined ? ` (remaining ${remainingMicro})` : ""}`);
     this.name = "GrantExceededError";
+  }
+}
+
+/** The grant WINDOW lapsed though funds may be intact — RENEWING the session is the remedy, not a top-up.
+ *  Distinct class + code-prefixed message so the hosted agent renews rather than funds. */
+export class GrantExpiredError extends Error {
+  constructor(public readonly remainingMicro?: number) {
+    super(`grant_expired${remainingMicro !== undefined ? ` (remaining ${remainingMicro})` : ""}`);
+    this.name = "GrantExpiredError";
   }
 }
 
@@ -83,8 +92,12 @@ export function cloudMemoSigner(opts: CloudSignerOpts): MemoSigner {
         }),
       });
       if (res.status === 402) {
-        const body = (await res.json().catch(() => ({}))) as { remainingMicro?: number };
-        throw new GrantExceededError(body.remainingMicro);
+        // The BFF returns 402 for BOTH grant stops (sign.ts:57/60). Read `error` to pick the remedy:
+        // grant_expired ⇒ renew (funds intact); grant_exceeded / anything else ⇒ top up (fund the session).
+        const body = (await res.json().catch(() => ({}))) as { error?: string; remainingMicro?: number };
+        throw body.error === "grant_expired"
+          ? new GrantExpiredError(body.remainingMicro)
+          : new GrantExceededError(body.remainingMicro);
       }
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };

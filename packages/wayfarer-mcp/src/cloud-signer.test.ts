@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cloudMemoSigner, cloudPopSigner, cloudSignerFromEnv, GrantExceededError, SignerError } from "./cloud-signer.ts";
+import { cloudMemoSigner, cloudPopSigner, cloudSignerFromEnv, GrantExceededError, GrantExpiredError, SignerError } from "./cloud-signer.ts";
 import type { MemoSigner } from "@naulon/wayfarer";
 
 const SESSION = ("0x" + "2".repeat(40)) as `0x${string}`;
@@ -57,6 +57,27 @@ test("402 → GrantExceededError carrying remainingMicro", async () => {
     assert.equal(err.remainingMicro, 42);
     return true;
   });
+});
+
+test("402 grant_expired → GrantExpiredError (renew, funds intact — NOT a top-up)", async () => {
+  const { fetchImpl } = stub(402, { error: "grant_expired", remainingMicro: 4990000 });
+  const signer = cloudMemoSigner({ endpoint: "x", token: "t", address: SESSION, fetchImpl });
+  await assert.rejects(signer.signTypedData(args), (err: unknown) => {
+    assert.ok(err instanceof GrantExpiredError, "a lapsed window is renew, not top-up");
+    assert.equal((err as GrantExpiredError).remainingMicro, 4990000);
+    return true;
+  });
+});
+
+test("error-class messages LEAD with the raw code so memo.ts's prefix classifier can bridge them", () => {
+  // The bug this fixes: memo.ts classifies a signer throw by err.message prefix (classifySignerRefusal's
+  // regex ^([a-z_]+)); the old prose message ("buyer wallet grant exceeded") matched nothing → the refusal
+  // fell through to origin_error/retryable. The messages must lead with the raw code + the same
+  // "(remaining N)" suffix as in-process-signer.ts. The code→errorCode half is covered in wayfarer's
+  // buyer.test.ts (classifySignerRefusal), so this + that = the whole bridge.
+  assert.match(new GrantExceededError(42).message, /^grant_exceeded \(remaining 42\)$/);
+  assert.match(new GrantExpiredError(4990000).message, /^grant_expired \(remaining 4990000\)$/);
+  assert.match(new GrantExceededError().message, /^grant_exceeded$/); // no suffix when remaining is unknown
 });
 
 test("403 → SignerError carrying the status + code", async () => {

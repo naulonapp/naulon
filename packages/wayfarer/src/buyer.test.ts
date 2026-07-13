@@ -17,6 +17,7 @@ import { test } from "node:test";
 import {
   assemblePayment,
   classifyPaymentError,
+  classifySignerRefusal,
   probe,
   probePrice,
   quotedTotalAtomic,
@@ -188,6 +189,39 @@ test("classifyPaymentError separates a fundable hard stop from a retryable rejec
   const other = classifyPaymentError("nonce already used");
   assert.equal(other.errorCode, "rejected", "an unrecognized reason defaults to a generic rejection");
   assert.equal(other.retryable, true, "and stays retryable — never silently a hard stop");
+});
+
+// ── classifySignerRefusal() — a THROWN session-signer refusal, not a gate 402 ──
+// The cloud injects a grant-checked session signer whose signTypedData THROWS on a
+// refusal, message = the sign guard's code (optionally " (remaining <micro>)"). That
+// throw never reached the gate, so nothing was paid — and it must not be run through
+// classifyPaymentError (built for a 402 body): `grant_exceeded`/`no_session` fall
+// through there to a retryable `rejected`, telling the agent to retry a doomed pay.
+test("classifySignerRefusal maps fundable refusals to needs_topup (not retryable)", () => {
+  for (const msg of ["grant_exceeded (remaining 0)", "no_session", "leg_too_large"]) {
+    const c = classifySignerRefusal(msg);
+    assert.equal(c?.errorCode, "needs_topup", `"${msg}" → needs_topup`);
+    assert.equal(c?.retryable, false, "a top-up is the remedy — retrying without funding is doomed");
+  }
+});
+
+test("classifySignerRefusal maps a lapsed grant to grant_expired (renew, not retryable)", () => {
+  const c = classifySignerRefusal("grant_expired (remaining 4990000)");
+  assert.equal(c?.errorCode, "grant_expired", "funds intact — the WINDOW lapsed; remedy is renew, not top-up");
+  assert.equal(c?.retryable, false);
+});
+
+test("classifySignerRefusal maps a config refusal to a hard rejection (a top-up won't fix it)", () => {
+  for (const msg of ["bad_from", "chain_mismatch", "payee_not_allowed"]) {
+    const c = classifySignerRefusal(msg);
+    assert.equal(c?.errorCode, "rejected", `"${msg}" → rejected`);
+    assert.equal(c?.retryable, false);
+  }
+});
+
+test("classifySignerRefusal returns null for a non-signer throw (caller maps origin_error)", () => {
+  assert.equal(classifySignerRefusal("fetch failed: ECONNRESET"), null);
+  assert.equal(classifySignerRefusal(""), null);
 });
 
 // ── probe() — classify the HTTP outcome, never collapse non-402 to "free" ──────
