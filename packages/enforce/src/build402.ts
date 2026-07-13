@@ -17,6 +17,7 @@ import {
   activeNetwork,
   gatewayExtra,
   getConfig,
+  getNetwork,
   primaryPayee,
   splitAuthorLegs,
   toAtomicUsdc,
@@ -56,7 +57,9 @@ export interface PaymentRequirements {
 }
 
 export function buildRequirements(quote: Quote): PaymentRequirements {
-  const net = activeNetwork();
+  // Per-tenant chain when the quote carries one (control-plane supplied), else the
+  // fleet default — so the single-tenant gate advertises activeNetwork() unchanged.
+  const net = quote.network ? getNetwork(quote.network) : activeNetwork();
   return {
     scheme: "exact",
     network: net.network,
