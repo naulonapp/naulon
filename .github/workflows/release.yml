@@ -1,0 +1,60 @@
+name: Release (npm)
+
+# Publishes the publisher-facing @naulon/* packages to npm on a version tag.
+# Ordered by the real dependency graph — sdk (clean base) → shared (imports sdk)
+# → enforce (imports shared). @naulon/tollgate is NOT published here: the gate
+# ships as a Docker image (see the OSS distribution decision), not npm.
+#
+# Trigger: push a tag like `v0.1.0`, or run manually (workflow_dispatch).
+# Auth: repo secret NPM_TOKEN (an npm automation token with publish rights on the
+# @naulon scope). setup-node wires it into ~/.npmrc via NODE_AUTH_TOKEN — the token
+# is never echoed. Provenance is on (public repo → verifiable supply-chain link).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build in dependency order so each package's dist/ resolves the one below it.
+      # (prepublishOnly rebuilds too, but building up front fails fast on a bad tree.)
+      - name: Build sdk → shared → enforce
+        run: |
+          npm run build -w @naulon/sdk
+          npm run build -w @naulon/shared
+          npm run build -w @naulon/enforce
+
+      # Publish in the same order. --access public is required for a first-time
+      # scoped publish. Each package's prepublishOnly re-runs its build (harmless).
+      - name: Publish @naulon/sdk
+        run: npm publish -w @naulon/sdk --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @naulon/shared
+        run: npm publish -w @naulon/shared --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @naulon/enforce
+        run: npm publish -w @naulon/enforce --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
