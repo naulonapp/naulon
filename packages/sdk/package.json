@@ -1,6 +1,11 @@
 {
   "name": "@naulon/sdk",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naulonapp/naulon.git",
+    "directory": "packages/sdk"
+  },
   "description": "The naulon publisher contract: credits + settlement wire types, validators, HMAC sign/verify, and credits resolvers. One source of truth for the money-routing trust boundary.",
   "license": "MIT",
   "type": "module",
