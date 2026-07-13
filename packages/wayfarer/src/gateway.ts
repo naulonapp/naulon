@@ -63,7 +63,7 @@ export interface GatewaySigner {
 /** The 402's author accept, with the Gateway batching `extra` the envelope needs. `probe`
  *  keeps the runtime object verbatim on `quoted.requirements`; the type there is narrowed to
  *  the common fields, so the gateway rail casts to reach `extra.verifyingContract`. */
-type BatchingRequirements = Quoted["requirements"] & {
+export type BatchingRequirements = Quoted["requirements"] & {
   scheme?: string;
   extra?: { name?: string; version?: string; verifyingContract?: `0x${string}` };
 };
@@ -83,7 +83,7 @@ function envAccountKey(): `0x${string}` {
  *  the full envelope `{x402Version, payload, resource, accepted}` — exactly the gate's
  *  `gatewayLegPayload` shape. Wraps the SDK's `BatchEvmScheme` so the domain / validity clamp
  *  never drifts from the rail. SDK loaded lazily so the mock path never pulls it in. */
-async function gatewayLegPayload(
+export async function gatewayLegPayload(
   signer: GatewaySigner,
   requirements: BatchingRequirements,
   resource: unknown,

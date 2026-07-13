@@ -85,13 +85,13 @@ export async function signMemoPayment(
  *  per-leg primitive `assemblePayment` calls once per advertised leg (mirrors the gate's
  *  `memoLegPayload` → `buildMemoSignatures`). The memo id is NOT signed (the relayer
  *  attaches it at submit), so each leg needs nothing beyond its own authorization. */
-async function memoLegPayload(
+export async function memoLegPayload(
   requirements: LegRequirements,
   nowMs: number,
   signer?: MemoSigner,
+  net = activeNetwork(),
 ): Promise<{ authorization: MemoAuthorization; signature: `0x${string}` }> {
   const cfg = getConfig();
-  const net = activeNetwork();
   // Default path resolves the local key; an injected signer NEVER reads BUYER_PRIVATE_KEY (the whole
   // point of the cloud wallet — the key lives in the grant-checked BFF, not this process).
   const envAccount = signer ? undefined : privateKeyToAccount(buyerKey());
