@@ -125,3 +125,15 @@ test("a memoId hook that returns undefined leaves the key absent (opt-out per ar
   assert.ok(q);
   assert.ok(!("memoId" in q), "undefined return is not stamped");
 });
+
+test("quote copies the publisher's settlementNetwork onto the Quote (per-tenant chain)", async () => {
+  const q = await quote(publisher({ settlementNetwork: "base" }), "on-passage", "read");
+  assert.ok(q);
+  assert.equal(q.network, "base");
+});
+
+test("quote leaves Quote.network undefined when the publisher declares no settlementNetwork", async () => {
+  const q = await quote(publisher(), "on-passage", "read");
+  assert.ok(q);
+  assert.equal(q.network, undefined); // ⇒ downstream falls back to activeNetwork()
+});

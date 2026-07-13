@@ -11,6 +11,7 @@ import {
   resolvePayees,
   usdc,
   type AuthorShare,
+  type NetworkName,
   type PayoutLeg,
   type PublisherConfig,
   type TollKind,
@@ -51,6 +52,13 @@ export interface Quote {
    * one, so the default single-tenant gate is unaffected.
    */
   memoId?: string;
+  /**
+   * Per-tenant settlement chain, carried from `PublisherConfig.settlementNetwork`.
+   * Read by `build402`/`buildRequirements` to advertise the tenant's chain in the
+   * 402, and resolved per-request on the settle path. Absent ⇒ `activeNetwork()`
+   * (fleet default), byte-identical to the single-tenant toll.
+   */
+  network?: NetworkName;
 }
 
 /**
@@ -89,5 +97,8 @@ export async function quote(
       const memoId = publisher.memoId?.({ slug: credits.slug, kind });
       return memoId ? { memoId } : {};
     })(),
+    // Per-tenant settlement chain. Spread so an unset field leaves the key absent
+    // entirely — build402 then reads activeNetwork(), byte-identical to the default.
+    ...(publisher.settlementNetwork ? { network: publisher.settlementNetwork } : {}),
   };
 }
