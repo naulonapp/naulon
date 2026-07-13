@@ -18,7 +18,7 @@ function quote(overrides: Partial<Quote> = {}): Quote {
     title: "On Passage",
     kind: "read",
     price: usdc(0.001),
-    payees: [{ wallet: walletAddress(WALLET), share: 1 }],
+    payees: [{ authorId: "anna", wallet: walletAddress(WALLET), share: 1 }],
     extraLegs: [],
     coauthorSplit: false,
     ...overrides,
