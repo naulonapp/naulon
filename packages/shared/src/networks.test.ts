@@ -17,6 +17,7 @@ import {
   ARC_TESTNET,
   gatewayExtra,
   getNetwork,
+  networkByCaip2,
   NETWORKS,
   supportsMemo,
   type NetworkName,
@@ -98,6 +99,21 @@ test("the memo contract is the verified Arc Memo predeploy", () => {
   // Cross-checked against testnet.arcscan.app (Blockscout). If Arc redeploys it, this
   // catches the stale copy before a self-relay settle targets the wrong contract.
   assert.equal(NETWORKS.arcTestnet.memo?.contract, "0x5294E9927c3306DcBaDb03fe70b92e01cCede505");
+});
+
+test("networkByCaip2 maps a known CAIP-2 id back to its network", () => {
+  // The settle path resolves the per-request chain from the leg's advertised
+  // `requirements.network` (an `eip155:<chainId>`), never a process global — this
+  // reverse lookup is that resolution.
+  assert.equal(networkByCaip2("eip155:8453"), NETWORKS.base);
+  assert.equal(networkByCaip2("eip155:5042002"), NETWORKS.arcTestnet);
+  assert.equal(networkByCaip2("eip155:84532"), NETWORKS.baseSepolia);
+});
+
+test("networkByCaip2 returns undefined for an unknown id (caller falls back to activeNetwork)", () => {
+  assert.equal(networkByCaip2("eip155:1"), undefined);
+  assert.equal(networkByCaip2("garbage"), undefined);
+  assert.equal(networkByCaip2(""), undefined);
 });
 
 test("supportsMemo narrows the type so the settle path reads memo without a non-null assertion", () => {
