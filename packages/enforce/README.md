@@ -54,7 +54,7 @@ import { httpQuoteSource } from "@naulon/enforce";
 
 export const middleware = createNaulonMiddleware(
   {
-    publisher: { id: "your-site", articlePrefixes: ["/articles/"] },
+    publisher: { id: "your-site", articlePrefixes: ["articles"] },
     quote: httpQuoteSource("https://<your-control-plane>/_naulon/quote", process.env.NAULON_API_KEY!),
     verifyUrl: "https://<your-control-plane>/_naulon/verify",
     apiKey: process.env.NAULON_API_KEY!,
