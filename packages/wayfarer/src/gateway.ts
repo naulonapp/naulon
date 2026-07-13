@@ -34,6 +34,7 @@ import type {
 import {
   AGENT_UA,
   classifyPaymentError,
+  classifySignerRefusal,
   probe,
   probeFailure,
   tollMovedOrNull,
@@ -160,7 +161,12 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
         paymentSignature = Buffer.from(JSON.stringify(payload)).toString("base64");
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        return { ok: false, error, ...classifyPaymentError(error) };
+        // A hosted session signer THROWS a coded refusal (grant exhausted/expired, no session) when
+        // the buyer is out of budget — type it so the agent can act (top up / renew), matching the
+        // memo rail. Only signing is wrapped here, so an unrecognized throw is a payload/config fault,
+        // not a socket error → the non-refusal fallback stays classifyPaymentError (never origin_error).
+        const refusal = classifySignerRefusal(error);
+        return refusal ? { ok: false, error, ...refusal } : { ok: false, error, ...classifyPaymentError(error) };
       }
       // A paid request can die at the socket (DNS failure, connection refused). Keep the
       // Fetched contract total — every other exit here returns a typed failure, so a raw

@@ -130,6 +130,51 @@ test("gatewayBuyer surfaces a network throw on the paid request as {ok:false} (o
   }
 });
 
+test("gatewayBuyer types a session-signer grant refusal as needs_topup, not a generic rejected", async () => {
+  // A hosted session signer THROWS a coded refusal (grant_exceeded / no_session / grant_expired)
+  // when the buyer is out of budget. The memo rail already classifies these so the agent can act
+  // (top up / renew); the gateway rail must too, instead of collapsing them into a retryable
+  // `rejected` (which would loop the host forever on a wall no re-call can clear).
+  const refusing: import("./gateway.ts").GatewaySigner = {
+    address: privateKeyToAccount(generatePrivateKey()).address,
+    async signTypedData() {
+      throw new Error("grant_exceeded: leg 10000 over remaining budget");
+    },
+  };
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(null, { status: 402, headers: { "payment-required": gateway402() } })) as typeof globalThis.fetch;
+  try {
+    const result = await gatewayBuyer(refusing).fetch("https://x.test/a", "read");
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "needs_topup", "grant_exceeded must classify as needs_topup so the agent tops up");
+    assert.equal(result.retryable, false, "a budget wall is never a blind-retry");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("gatewayBuyer keeps a genuine signing/payload error as a payment error (not needs_topup)", async () => {
+  // The non-refusal fallback stays classifyPaymentError — the gateway try wraps only signing,
+  // so an unrecognized throw here is a payload/config fault, never a socket error.
+  const broken: import("./gateway.ts").GatewaySigner = {
+    address: privateKeyToAccount(generatePrivateKey()).address,
+    async signTypedData() {
+      throw new Error("insufficient balance for gateway authorization");
+    },
+  };
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(null, { status: 402, headers: { "payment-required": gateway402() } })) as typeof globalThis.fetch;
+  try {
+    const result = await gatewayBuyer(broken).fetch("https://x.test/a", "read");
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "insufficient_funds", "an unrecognized signing throw keeps classifyPaymentError");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 // ── Settlement-confirmation seam ─────────────────────────────────────────────
 // A Gateway settle credits the payee's OFF-CHAIN Gateway balance, not their wallet, so
 // `balanceOf(payee)` never moves and is the wrong check — the authoritative signal is the
