@@ -7,7 +7,7 @@
  * This is the one WRITE surface in the dashboard, and it routes money — the
  * server only mounts it off loopback/authed, never in public mode (see server.ts).
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, stat } from "node:fs/promises";
 import { getConfig, type ArticleCredits } from "@naulon/shared";
 import { runCrawl, makeGuardedFetcher, type CrawlConfig } from "@naulon/sdk";
 import { validateCreditsMap, type CreditsValidation } from "./credits-edit.ts";
@@ -31,12 +31,15 @@ export interface ContentState {
   creditsPath: string;
   /** The current credits.json map (raw, editable). Empty in API mode. */
   credits: Record<string, unknown>;
+  /** credits.json's last-modified time (ISO), or null if the file doesn't exist / API mode. */
+  fileModifiedAt: string | null;
 }
 
 export async function readContent(): Promise<ContentState> {
   const c = getConfig();
   const apiMode = !!c.CREDITS_API_URL;
   let credits: Record<string, unknown> = {};
+  let fileModifiedAt: string | null = null;
   if (!apiMode) {
     try {
       const parsed = JSON.parse(await readFile(c.CREDITS_FIXTURES, "utf8")) as unknown;
@@ -44,8 +47,28 @@ export async function readContent(): Promise<ContentState> {
     } catch {
       // no file yet → empty, the operator starts from a scan or a manual add.
     }
+    try {
+      fileModifiedAt = (await stat(c.CREDITS_FIXTURES)).mtime.toISOString();
+    } catch {
+      // no file → no mtime; stays null.
+    }
   }
-  return { apiMode, origin: c.ORIGIN_URL, articlePrefixes: prefixes(c.ARTICLE_PATH_PREFIXES), creditsPath: c.CREDITS_FIXTURES, credits };
+  return { apiMode, origin: c.ORIGIN_URL, articlePrefixes: prefixes(c.ARTICLE_PATH_PREFIXES), creditsPath: c.CREDITS_FIXTURES, credits, fileModifiedAt };
+}
+
+/**
+ * Is the gate serving stale credits? The gate loads credits.json ONCE at boot
+ * (fixtureResolverFromFile), so any edit written after the gate started is on disk
+ * but not yet live — it applies only on the next gate restart. Pure so it's tested:
+ * pending ⇔ the gate is up, we know both timestamps, and the file changed after boot.
+ */
+export function isRestartPending(a: {
+  fileModifiedAt: string | null;
+  gateStartedAt: string | null;
+  gateUp: boolean;
+}): boolean {
+  if (!a.gateUp || !a.fileModifiedAt || !a.gateStartedAt) return false;
+  return new Date(a.fileModifiedAt).getTime() > new Date(a.gateStartedAt).getTime();
 }
 
 export interface ScanResult {

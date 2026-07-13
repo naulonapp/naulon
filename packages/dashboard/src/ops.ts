@@ -40,6 +40,18 @@ export interface OpsSummary {
 const zeroVerdicts = (): Record<ObservationVerdict, number> =>
   Object.fromEntries(VERDICTS.map((v) => [v, 0])) as Record<ObservationVerdict, number>;
 
+/** The traffic windows the console offers, newest-narrowest first. */
+export const OPS_WINDOWS: Record<string, number> = {
+  "1h": 3_600_000,
+  "24h": 24 * 3_600_000,
+  "7d": 7 * 24 * 3_600_000,
+};
+
+/** Map a window key from the console to its span in ms; unknown → 24h default. */
+export function windowMsFromKey(key: string | undefined): number {
+  return (key && OPS_WINDOWS[key]) || OPS_WINDOWS["24h"]!;
+}
+
 export function summarizeOps(
   observations: ObservationEvent[],
   nowMs: number,

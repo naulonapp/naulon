@@ -119,6 +119,12 @@ function setConn(ok) {
   $("#conn").textContent = ok ? "settling live" : "offline";
 }
 
+// Back-nav to the console — ONLY on the operator preview (`/ledger`). The public
+// earnings page is served at `/`, where no console exists, so it stays link-free.
+if (location.pathname === "/ledger") {
+  $("#lnav").innerHTML = `<a href="/">Console</a><a href="/content">Content</a><a href="/ledger" class="on">Ledger</a>`;
+}
+
 const es = new EventSource("/api/stream");
 es.addEventListener("ledger", (e) => { setConn(true); render(JSON.parse(e.data)); });
 es.onerror = () => setConn(false);

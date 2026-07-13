@@ -94,6 +94,11 @@ import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER } from "./x402.ts";
 // resolved PublisherConfig.
 const cfg = getConfig();
 
+// When this gate process booted. The credits resolver reads its fixture file once
+// at boot (fixtureResolverFromFile), so the operator dashboard compares this to the
+// credits.json mtime to tell whether an edit is live yet or needs a gate restart.
+const BOOT_AT = new Date().toISOString();
+
 /**
  * Headers we never forward upstream. Hop-by-hop headers are connection-scoped
  * (RFC 7230 §6.1) and meaningless to the origin; the naulon/x402 headers are our
@@ -320,7 +325,7 @@ export function createApp(
     });
   });
 
-  app.get("/healthz", (c) => c.json({ ok: true, service: "tollgate" }));
+  app.get("/healthz", (c) => c.json({ ok: true, service: "tollgate", startedAt: BOOT_AT }));
 
   // Public key set for offline CLT verification. Registered BEFORE the catch-all
   // so it's served by the gate, never proxied. Empty when disabled.

@@ -25,6 +25,33 @@ const rel = (ms) => {
 };
 
 let seen = new Set(), firstPaint = true;
+let currentWindow = "24h";      // traffic window (#winSeg) — sent to /api/ops
+let lastUpdate = 0;             // epoch ms of the last good poll (liveness cue)
+const prevNum = {};             // last displayed value per tile → count-up from it
+
+// Count a tile from its previous value to the new one (matches the ledger total's
+// count-up, so the console reads as one system). Snaps under reduced-motion / no change.
+function countUp(el, to, money) {
+  const from = prevNum[el.id] ?? 0;
+  prevNum[el.id] = to;
+  const paint = (v) => { el.textContent = money ? fmt6(v) : String(Math.round(v)); };
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce || from === to) { paint(to); return; }
+  const t0 = performance.now(), dur = 500;
+  (function step(t) {
+    const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+    paint(from + (to - from) * e);
+    if (k < 1) requestAnimationFrame(step);
+  })(performance.now());
+}
+
+// Liveness cue — the poll is silent otherwise; show how stale the view is, ticking
+// every second so a stalled dashboard is visible (the number keeps climbing).
+function paintFreshness() {
+  if (!lastUpdate) return;
+  const s = Math.floor((Date.now() - lastUpdate) / 1000);
+  $("#freshness").textContent = s < 1 ? "updated now" : `updated ${s}s ago`;
+}
 
 function renderHealth(h) {
   const up = h && h.up;
@@ -34,19 +61,19 @@ function renderHealth(h) {
 
 function renderTiles(ops) {
   const v = ops.byVerdict || {};
-  $("#tHumans").textContent = ops.humans ?? 0;
-  $("#tDenied").textContent = v["denied"] ?? 0;
-  $("#tPaid").textContent = v["paid"] ?? 0;
+  countUp($("#tHumans"), ops.humans ?? 0, false);
+  countUp($("#tDenied"), v["denied"] ?? 0, false);
+  countUp($("#tPaid"), v["paid"] ?? 0, false);
   const failed = v["payment-failed"] ?? 0;
   const f = $("#tFailed");
-  f.textContent = failed;
+  countUp(f, failed, false);
   f.classList.toggle("bad", failed > 0);
-  $("#tEarned").textContent = fmt6(ops.earnings);
-  $("#tMissed").textContent = fmt6(ops.earningsMissed);
+  countUp($("#tEarned"), ops.earnings || 0, true);
+  countUp($("#tMissed"), ops.earningsMissed || 0, true);
   const a = ops.agents || {};
   $("#agentSplit").textContent = `${a.verified || 0} verified · ${a.unverified || 0} unsigned · ${a.masquerade || 0} spoofed`;
   const hrs = Math.round((ops.windowMs || 0) / 3_600_000);
-  $("#window").textContent = `last ${hrs}h`;
+  $("#window").textContent = hrs > 24 ? `last ${Math.round(hrs / 24)}d` : `last ${hrs}h`;
 }
 
 function renderConfig(cfg) {
@@ -97,7 +124,7 @@ function renderFeed(recent) {
 
 async function tick() {
   try {
-    const r = await fetch("/api/ops", { cache: "no-store" });
+    const r = await fetch(`/api/ops?window=${currentWindow}`, { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
     renderHealth(d.health);
@@ -106,11 +133,26 @@ async function tick() {
     renderWarnings(d.config.warnings || []);
     renderFeed(d.ops.recent || []);
     firstPaint = false;
+    lastUpdate = Date.now();
+    paintFreshness();
+    // Pulse the freshness cue so a live refresh is visible even when no number moved.
+    const fr = $("#freshness");
+    fr.classList.remove("beat"); void fr.offsetWidth; fr.classList.add("beat");
   } catch (e) {
     $("#gateState").textContent = "dashboard offline";
     $("#gateDot").classList.add("off");
   }
 }
 
+// Traffic-window selector — refetch immediately on change.
+$("#winSeg").querySelectorAll(".seg-btn").forEach((b) =>
+  b.addEventListener("click", () => {
+    currentWindow = b.dataset.win;
+    $("#winSeg").querySelectorAll(".seg-btn").forEach((x) => x.classList.toggle("on", x === b));
+    tick();
+  }),
+);
+
 tick();
 setInterval(tick, 4000);
+setInterval(paintFreshness, 1000); // keep the "updated Ns ago" cue climbing between polls
