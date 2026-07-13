@@ -13,6 +13,7 @@
  * one way: a resolver impl may depend on this interface; this interface depends on
  * nothing about how the config is sourced.
  */
+import type { NetworkName } from "./networks.ts";
 import type { CreditsResolver, TollKind, Usdc, WalletAddress } from "./types.ts";
 
 /**
@@ -180,6 +181,15 @@ export interface PublisherConfig {
    * exactly like `extraLegs` owns the secondary-leg math.
    */
   memoId?: (ctx: { slug: string; kind: TollKind }) => string | undefined;
+  /**
+   * Settle this publisher's tolls on a specific chain instead of the fleet default
+   * (`SETTLEMENT_NETWORK`). One of the {@link NetworkName} registry keys. Carried
+   * straight onto `Quote.network`, which `build402` reads to advertise the tenant's
+   * chain and the settle path resolves per-request. Absent ⇒ the gate's
+   * `activeNetwork()`, byte-identical to the single-tenant default. Supplied by the
+   * control plane (per-tenant); the open-core gate never sets it.
+   */
+  settlementNetwork?: NetworkName;
   /**
    * Publisher is paused (e.g. a billing lapse upstream) — serve the origin straight
    * through, FREE and untolled, instead of darking the site. Suspension must never

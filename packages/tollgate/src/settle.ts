@@ -18,6 +18,7 @@ import {
   activeNetwork,
   getConfig,
   mintLicense,
+  networkByCaip2,
   usdc,
   walletAddress,
   type AttributedEvent,
@@ -29,14 +30,6 @@ import { emitSettlement } from "./settlementSink.ts";
 import { verifyAndSettle } from "./x402.ts";
 
 const cfg = getConfig();
-
-/** Network coordinates embedded in a minted license — the active settlement chain. */
-const settlementNetwork = activeNetwork();
-const LICENSE_NETWORK = {
-  chainId: settlementNetwork.chainId,
-  usdc: settlementNetwork.usdc,
-  gateway: settlementNetwork.gatewayWallet,
-};
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export interface SettleResult {
@@ -67,7 +60,17 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
   const result = await verifyAndSettle(payment, legs, now, publisher.id);
   if (!result.ok) return { ok: false, error: result.error };
 
-  // Paid. Build the attributed event (full recursive split).
+  // Paid. Resolve the chain this settled on from the author leg the 402 advertised
+  // (per-tenant), falling back to the fleet default — so the license + the earnings
+  // settlement both name the chain the money actually moved on, not a global.
+  const settleNet = networkByCaip2(legs[0]?.requirements.network ?? "") ?? activeNetwork();
+  const licenseNetwork = {
+    chainId: settleNet.chainId,
+    usdc: settleNet.usdc,
+    gateway: settleNet.gatewayWallet,
+  };
+
+  // Build the attributed event (full recursive split).
   const payerResolved = /^0x[0-9a-fA-F]{40}$/.test(result.payer ?? "") ? result.payer! : ZERO_ADDRESS;
   const event: AttributedEvent = {
     // Full UUID — this is also the license `jti`. A sliced/derived id risks a
@@ -83,6 +86,9 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     payees: q.payees,
     payerAddress: walletAddress(payerResolved),
     settlementRef: result.settlementRef ?? "unknown",
+    // Stamp the settle chain so a later drain re-sends on the same chain (survives
+    // a multi-network fleet). Absent on pre-per-tenant events ⇒ activeNetwork().
+    chainId: settleNet.chainId,
     at: now,
   };
 
@@ -101,7 +107,7 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
         payeesMode: cfg.LICENSE_PAYEES_MODE,
         tieBreak: cfg.PRIMARY_PAYEE_TIEBREAK,
         title: q.title,
-        network: LICENSE_NETWORK,
+        network: licenseNetwork,
         // Holder-of-key: bind to the (already non-zero) payer wallet so re-reads
         // need a proof-of-possession. Off → a v1 bearer license, demo unchanged.
         popBindAddress: cfg.LICENSE_POP ? payerResolved : undefined,

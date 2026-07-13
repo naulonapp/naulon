@@ -123,6 +123,15 @@ export function getNetwork(name: NetworkName): SettlementNetwork {
   return NETWORKS[name];
 }
 
+/** Reverse the registry: an x402 CAIP-2 id (`eip155:<chainId>`) → its
+ *  SettlementNetwork. The settle path resolves the per-request chain from the leg's
+ *  advertised `requirements.network`, never a global — this is that resolution.
+ *  Unknown id → undefined (the caller falls back to `activeNetwork()`, keeping the
+ *  single-tenant default byte-identical). */
+export function networkByCaip2(caip2: string): SettlementNetwork | undefined {
+  return Object.values(NETWORKS).find((n) => n.network === caip2);
+}
+
 /** The network the gate is configured to settle on (`SETTLEMENT_NETWORK`). */
 export function activeNetwork(): SettlementNetwork {
   return NETWORKS[getConfig().SETTLEMENT_NETWORK];

@@ -22,21 +22,16 @@ import {
   type MemoAuthorization,
 } from "@naulon/shared";
 import {
-  AGENT_UA,
   assemblePayment,
-  classifyPaymentError,
   classifySignerRefusal,
-  probe,
-  probeFailure,
   probePrice,
-  tollMovedOrNull,
   type Buyer,
   type Fetched,
   type LegRequirements,
   type PayGuard,
   type Quoted,
 } from "./buyer.ts";
-import { agentFetch } from "./sign.ts";
+import { runPaidFetch } from "./paidFetch.ts";
 
 /**
  * The signer seam (BUY-2). By default the memo buyer signs each EIP-3009 leg with the local
@@ -90,13 +85,13 @@ export async function signMemoPayment(
  *  per-leg primitive `assemblePayment` calls once per advertised leg (mirrors the gate's
  *  `memoLegPayload` → `buildMemoSignatures`). The memo id is NOT signed (the relayer
  *  attaches it at submit), so each leg needs nothing beyond its own authorization. */
-async function memoLegPayload(
+export async function memoLegPayload(
   requirements: LegRequirements,
   nowMs: number,
   signer?: MemoSigner,
+  net = activeNetwork(),
 ): Promise<{ authorization: MemoAuthorization; signature: `0x${string}` }> {
   const cfg = getConfig();
-  const net = activeNetwork();
   // Default path resolves the local key; an injected signer NEVER reads BUYER_PRIVATE_KEY (the whole
   // point of the cloud wallet — the key lives in the grant-checked BFF, not this process).
   const envAccount = signer ? undefined : privateKeyToAccount(buyerKey());
@@ -145,55 +140,23 @@ export function memoBuyer(signer?: MemoSigner): Buyer {
       return probePrice(url, kind, address);
     },
     async fetch(url, kind, guard?: PayGuard): Promise<Fetched> {
-      const outcome = await probe(url, kind, address);
-      if (outcome.status !== "gated") return probeFailure(outcome, url);
-      const quoted = outcome.quoted;
-      // Re-quote at pay time and abort if the toll moved past the authorized ceiling.
-      const moved = tollMovedOrNull(quoted, guard);
-      if (moved) return moved;
-      // One raw EIP-3009 authorization per advertised leg (operator fee → 2-leg array);
-      // a stock single-author quote stays the bare object, byte-identical to before.
-      // Signing + the paid fetch are wrapped: a hosted session signer THROWS on a grant
-      // refusal, and a socket can throw on the paid GET — both must become a typed non-spend
-      // Fetched, never escape the buyer (and the MCP pay tool) as a generic protocol error.
-      const nowMs = Date.now();
-      let res: Awaited<ReturnType<typeof agentFetch>>;
-      try {
-        const paymentSignature = await assemblePayment(quoted, (req) => memoLegPayload(req, nowMs, signer));
-        res = await agentFetch(url, {
-          headers: {
-            "user-agent": AGENT_UA,
-            "x-naulon-agent": address,
-            "x-naulon-kind": kind,
-            "payment-signature": paymentSignature,
-          },
-        });
-      } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
-        // A recognized session-signer refusal (grant exhausted/expired, no session, bad config)
-        // is typed so the agent can act (top up / renew); anything else is a transient origin throw.
-        const refusal = classifySignerRefusal(error);
-        return refusal ? { ok: false, error, ...refusal } : { ok: false, error, errorCode: "origin_error", retryable: true };
-      }
-      if (res.status === 402) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        const error = body.error ?? "payment rejected";
-        return { ok: false, error, ...classifyPaymentError(error) };
-      }
-      if (!res.ok) return { ok: false, error: `origin returned ${res.status}`, errorCode: "origin_error", retryable: true };
-      let settlementRef: string | undefined;
-      const respHeader = res.headers.get("payment-response");
-      if (respHeader) {
-        try {
-          settlementRef = (JSON.parse(Buffer.from(respHeader, "base64").toString("utf8")) as {
-            transaction?: string;
-          }).transaction;
-        } catch {
-          /* ignore */
-        }
-      }
-      const license = res.headers.get("x-naulon-license") ?? undefined;
-      return { ok: true, content: await res.text(), settlementRef, paidUsdc: quoted.priceUsdc, license };
+      // One raw EIP-3009 authorization per advertised leg (operator fee → 2-leg array); a stock
+      // single-author quote stays the bare object, byte-identical to before. The shared loop owns
+      // probe→moved-guard→paid-GET→classify; the memo rail supplies only how it signs and how it
+      // types a sign refusal (grant exhausted/expired/no session → typed; else a transient origin throw).
+      return runPaidFetch(
+        url,
+        kind,
+        address,
+        guard,
+        (quoted, nowMs) => assemblePayment(quoted, (req) => memoLegPayload(req, nowMs, signer)),
+        (error) => {
+          const refusal = classifySignerRefusal(error);
+          return refusal
+            ? { ok: false, error, ...refusal }
+            : { ok: false, error, errorCode: "origin_error", retryable: true };
+        },
+      );
     },
   };
 }

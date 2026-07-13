@@ -19,8 +19,10 @@ import { createHash } from "node:crypto";
 import {
   activeNetwork,
   getConfig,
+  networkByCaip2,
   supportsMemo,
   type MemoAuthorization,
+  type SettlementNetwork,
 } from "@naulon/shared";
 import {
   preverifyEip3009,
@@ -72,37 +74,35 @@ export interface VerifyResult {
 }
 
 // Lazily construct the real facilitator only in gateway mode.
-let facilitatorPromise: Promise<{
+type FacilitatorClient = {
   verify: (p: unknown, r: unknown) => Promise<{ isValid: boolean; invalidReason?: string; payer?: string }>;
   settle: (p: unknown, r: unknown) => Promise<{ success: boolean; errorReason?: string; payer?: string; transaction?: string }>;
-}> | null = null;
+};
+// Keyed by facilitator URL, NOT a single global — a multi-network fleet spans the
+// testnet AND mainnet facilitators, so one memoized client would settle a base
+// tenant against the testnet endpoint. One client per endpoint, built once.
+const facilitators = new Map<string, Promise<FacilitatorClient>>();
 
-async function getFacilitator() {
-  if (!facilitatorPromise) {
-    facilitatorPromise = import("@circle-fin/x402-batching/server").then(
-      ({ BatchFacilitatorClient }) => {
-        // The testnet facilitator works keyless (see circlefin/arc-nanopayments).
-        // A CIRCLE_API_KEY is optional — when set we thread it through as a bearer
-        // token (useful for rate limits / a custom GATEWAY_API_URL).
-        // Endpoint follows the active network (testnet vs mainnet facilitator)
-        // unless GATEWAY_API_URL pins it explicitly — so flipping SETTLEMENT_NETWORK
-        // also flips the facilitator, no second env to remember.
-        const config: Record<string, unknown> = { url: cfg.GATEWAY_API_URL ?? activeNetwork().gatewayApiUrl };
-        if (cfg.CIRCLE_API_KEY) {
-          const headers = { authorization: `Bearer ${cfg.CIRCLE_API_KEY}` };
-          config.createAuthHeaders = async () => ({
-            verify: headers,
-            settle: headers,
-            supported: headers,
-          });
-        }
-        return new BatchFacilitatorClient(config) as unknown as Awaited<
-          NonNullable<typeof facilitatorPromise>
-        >;
-      },
-    );
+async function getFacilitator(net: SettlementNetwork = activeNetwork()): Promise<FacilitatorClient> {
+  // GATEWAY_API_URL pins every network to one endpoint (a test/self-host override);
+  // otherwise the endpoint follows the resolved network (testnet vs mainnet).
+  const url = cfg.GATEWAY_API_URL ?? net.gatewayApiUrl;
+  let promise = facilitators.get(url);
+  if (!promise) {
+    promise = import("@circle-fin/x402-batching/server").then(({ BatchFacilitatorClient }) => {
+      // The testnet facilitator works keyless (see circlefin/arc-nanopayments).
+      // A CIRCLE_API_KEY is optional — when set we thread it through as a bearer
+      // token (useful for rate limits / a custom GATEWAY_API_URL).
+      const config: Record<string, unknown> = { url };
+      if (cfg.CIRCLE_API_KEY) {
+        const headers = { authorization: `Bearer ${cfg.CIRCLE_API_KEY}` };
+        config.createAuthHeaders = async () => ({ verify: headers, settle: headers, supported: headers });
+      }
+      return new BatchFacilitatorClient(config) as unknown as FacilitatorClient;
+    });
+    facilitators.set(url, promise);
   }
-  return facilitatorPromise;
+  return promise;
 }
 
 /**
@@ -145,13 +145,17 @@ export async function verifyAndSettle(
   }));
 
   if (cfg.PAYMENT_MODE !== "gateway") return settleMock(pairs, now, publisherId);
+  // Resolve the settle chain from the AUTHOR leg the 402 advertised (per-tenant),
+  // not the process-global — so a base tenant settles on base even when the fleet
+  // default is Arc. Fallback to activeNetwork() keeps the single-tenant path exact.
+  const net = networkByCaip2(legReqs[0]!.requirements.network) ?? activeNetwork();
   // On a memo-capable network (Arc) the buyer signs a RAW USDC EIP-3009 authorization
   // and we self-relay it through the Memo predeploy — Circle's facilitator can't verify
   // that domain. Field-presence gate, never a chainName check (see supportsMemo): a
-  // swap to Base falls through to the stock Gateway path with no edit here.
-  return supportsMemo(activeNetwork())
-    ? settleMemo(pairs, now, publisherId)
-    : settleGateway(pairs, now, publisherId);
+  // memo-less leg (Base) falls through to the stock Gateway path with no edit here.
+  return supportsMemo(net)
+    ? settleMemo(pairs, net, now, publisherId)
+    : settleGateway(pairs, net, now, publisherId);
 }
 
 /** Memo-network settlement: pre-verify every leg's raw EIP-3009 authorization, then
@@ -160,8 +164,7 @@ export async function verifyAndSettle(
  *  N-leg protocol (verify all → settle author sync → defer extras), but the rail is the
  *  relayer EOA, not Circle's facilitator. Custody-free: the inner transfer is the
  *  buyer's authorization; the relayer only pays gas. */
-async function settleMemo(pairs: LegPair[], now: number, publisherId?: string): Promise<VerifyResult> {
-  const net = activeNetwork();
+async function settleMemo(pairs: LegPair[], net: SettlementNetwork, now: number, publisherId?: string): Promise<VerifyResult> {
   if (!supportsMemo(net)) return { ok: false, error: `network ${net.chainName} has no Memo predeploy` };
   const relayerKey = cfg.RELAYER_PRIVATE_KEY;
   if (!relayerKey) return { ok: false, error: "RELAYER_PRIVATE_KEY required for memo-network settlement" };
@@ -241,8 +244,8 @@ function mockRef(r: PaymentRequirements): string {
 
 /** Gateway mode: verify all legs against the real facilitator, then settle the author
  *  synchronously and DEFER the rest to the drain (O5). */
-async function settleGateway(pairs: LegPair[], now: number, publisherId?: string): Promise<VerifyResult> {
-  const facilitator = await getFacilitator();
+async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: number, publisherId?: string): Promise<VerifyResult> {
+  const facilitator = await getFacilitator(net);
   // Verify EVERY leg first.
   const payers: (string | undefined)[] = [];
   for (let i = 0; i < pairs.length; i++) {
@@ -372,13 +375,15 @@ function legValidBefore(payload: unknown, now: number): number {
  *  undefined on failure (the leg stays pending for the next pass). */
 async function settleOneLeg(leg: PendingLeg, now: number): Promise<string | undefined> {
   if (cfg.PAYMENT_MODE === "gateway") {
-    const net = activeNetwork();
+    // Resolve from the leg's OWN advertised network so a deferred re-settle lands on
+    // the chain it was authorized for, even across a multi-network fleet.
+    const net = networkByCaip2(leg.requirements.network) ?? activeNetwork();
     // Memo network: the pending leg's payload is a raw EIP-3009 authorization, not a
     // Gateway one — relay it through the Memo predeploy (same primitive as the sync
     // author leg). Field-presence gated, so a Base deploy never reaches this branch.
     if (supportsMemo(net)) return relayPendingLeg(leg, net, now);
     try {
-      const facilitator = await getFacilitator();
+      const facilitator = await getFacilitator(net);
       const s = await facilitator.settle(leg.payload, leg.requirements);
       if (!s.success) console.error(`[tollgate] pending leg ${leg.id} (${leg.payTo}) settle failed: ${s.errorReason}`);
       return s.success ? s.transaction : undefined;
@@ -516,7 +521,9 @@ async function memoLegPayload(
 ): Promise<{ authorization: MemoAuthorization; signature: `0x${string}` }> {
   return signMemoAuthorization({
     privateKey,
-    net: activeNetwork(),
+    // Sign against the chain the requirement names (per-tenant), not a global — so a
+    // buyer signing a leg for one tenant's chain signs the right USDC domain.
+    net: networkByCaip2(requirements.network) ?? activeNetwork(),
     payTo: requirements.payTo as `0x${string}`,
     amountAtomic: requirements.amount,
     maxTimeoutSeconds: requirements.maxTimeoutSeconds,
