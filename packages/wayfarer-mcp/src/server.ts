@@ -797,8 +797,14 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         policy: policyFromConfig(),
         ...(opts.tollgateUrl ? { tollgateUrl: opts.tollgateUrl } : {}),
         // Hosted path: pay from the buyer's custody-free session wallet, not the env key
-        // (mirrors naulon_pay_and_read). Absent ⇒ run() falls back to selectBuyer().
-        ...(cloudSigner ? { signer: cloudSigner } : {}),
+        // (mirrors naulon_pay_and_read). Both rail signers win — run() then rail-picks PER-402
+        // (mixed fleet), same as the pay_and_read buyer above; a single cloud signer keeps the
+        // fleet-global routing. Absent ⇒ run() falls back to selectBuyer().
+        ...(opts.railSigners
+          ? { railSigners: opts.railSigners }
+          : cloudSigner
+            ? { signer: cloudSigner }
+            : {}),
         // Same per-session isolation + PoP identity for the composite loop's held re-reads.
         ...(opts.heldStore ? { heldStore: opts.heldStore } : {}),
         ...(opts.popWallet ? { popWallet: opts.popWallet } : {}),

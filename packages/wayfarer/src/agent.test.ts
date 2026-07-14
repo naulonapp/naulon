@@ -229,6 +229,79 @@ test("BUY-4.3 P2: an injected session signer pays through run() — no BUYER_PRI
   );
 });
 
+test("RAS-B: injected railSigners rail-pick PER-402 in run() — a memo-network 402 under a gateway-default fleet pays via the MEMO signer", async () => {
+  // The naulon_research half of the mixed-fleet fix: run() with BOTH rail signers must route
+  // like railBuyer (per-402 network registry), not by supportsMemo(activeNetwork()). Fleet default
+  // here is baseSepolia (gateway) while the 402 advertises Arc — with the REAL gate shape, i.e.
+  // the GatewayWalletBatched extra stamped on it (build402 stamps it on every gateway-mode 402).
+  const mkSigner = () => {
+    const calls: { count: number } = { count: 0 };
+    return {
+      calls,
+      signer: {
+        address: "0x000000000000000000000000000000000000C0DE" as `0x${string}`,
+        async signTypedData(): Promise<`0x${string}`> {
+          calls.count += 1;
+          return `0x${"11".repeat(65)}` as `0x${string}`;
+        },
+      },
+    };
+  };
+  const memo = mkSigner();
+  const gateway = mkSigner();
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      SETTLEMENT_NETWORK: "baseSepolia", // fleet default = gateway rail, on purpose
+      PAYMENT_MODE: "gateway",
+      LICENSES_ENABLED: "false", // real-payment mode would demand a stable signing key
+      BUYER_PRIVATE_KEY: undefined,
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: undefined,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-rail-${process.pid}.json`),
+    },
+    async () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the fare is paid", { status: 200 });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [
+              {
+                scheme: "exact",
+                network: "eip155:5042002", // Arc testnet — a memo chain, NOT the fleet default
+                asset: "0x3600000000000000000000000000000000000000",
+                payTo: "0x00000000000000000000000000000000000000Ad",
+                amount: "1000",
+                maxTimeoutSeconds: 691200,
+                extra: { name: "GatewayWalletBatched", version: "1", verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" },
+              },
+            ],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {}, {
+          railSigners: { memo: memo.signer, gateway: gateway.signer },
+        });
+        assert.ok((result.spent as number) > 0, "the run paid for at least one source");
+        assert.ok(memo.calls.count >= 1, "the MEMO signer must sign an Arc 402 — per-402 rail pick, not the fleet default");
+        assert.equal(gateway.calls.count, 0, "the gateway signer must NOT be consulted despite the fleet-default gateway rail");
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
 test("BUY-3.1: a kill-switch policy threads through run() — the real pipeline pays nothing", async () => {
   await withEnv(
     {

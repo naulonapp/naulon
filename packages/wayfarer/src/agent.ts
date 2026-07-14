@@ -11,6 +11,7 @@ import { appraise } from "./appraise.ts";
 import { rereadWithLicense, selectBuyer } from "./buyer.ts";
 import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
 import { memoBuyer, type MemoSigner } from "./memo.ts";
+import { railBuyer, type RailSigners } from "./rail.ts";
 import { decide, DEFAULT_POLICY } from "./decide.ts";
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
@@ -97,6 +98,13 @@ export interface RunOptions {
    */
   signer?: MemoSigner | GatewaySigner;
   /**
+   * BOTH rail signers over the same sealed session key (RAS-B mixed fleet). When present, the run
+   * pays through `railBuyer`, which picks memo vs gateway PER-402 from each tenant's advertised
+   * network — exactly like `naulon_pay_and_read` — instead of the fleet-global `supportsMemo`
+   * routing a single `signer` gets. Wins over `signer`. Server/config-supplied, never LLM-controlled.
+   */
+  railSigners?: RailSigners;
+  /**
    * This run's held-license backend (BUY-4 hosted path). The cloud injects a
    * per-session store so the composite loop's free re-reads never cross buyer
    * boundaries in a shared process. Omitted ⇒ the process-global file (OSS path).
@@ -124,11 +132,13 @@ export async function run(
   // envelope), memo networks via memoBuyer — mirroring selectBuyer() and naulon_pay_and_read so
   // hosted research pays from the same wallet on whatever rail the tenant settles on. The cloud
   // injects the signer matching the network's rail. Default: the BYO-key buyer selectBuyer() picks.
-  const buyer = opts.signer
-    ? supportsMemo(activeNetwork())
-      ? memoBuyer(opts.signer as MemoSigner)
-      : gatewayBuyer(opts.signer as GatewaySigner)
-    : await selectBuyer();
+  const buyer = opts.railSigners
+    ? railBuyer(opts.railSigners)
+    : opts.signer
+      ? supportsMemo(activeNetwork())
+        ? memoBuyer(opts.signer as MemoSigner)
+        : gatewayBuyer(opts.signer as GatewaySigner)
+      : await selectBuyer();
   // Per-session held store + PoP signer (BUY-4): the injected pair keeps the composite loop's
   // free re-reads isolated per buyer and signed by the paying session EOA. Omitted ⇒ OSS defaults.
   const heldStore: HeldStore = opts.heldStore ?? fileHeldStore;
