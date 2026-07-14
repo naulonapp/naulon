@@ -21,15 +21,22 @@ import {
 import { runPaidFetch } from "./paidFetch.ts";
 import { memoLegPayload, type MemoSigner } from "./memo.ts";
 import { gatewayLegPayload, type BatchingRequirements, type GatewaySigner } from "./gateway.ts";
-import { networkByCaip2 } from "@naulon/shared";
+import { networkByCaip2, supportsMemo } from "@naulon/shared";
 
 export interface RailSigners {
   memo?: MemoSigner;
   gateway?: GatewaySigner;
 }
 
-/** The gateway tell: the gate stamps a Circle Gateway batching option into the 402's `extra`. */
+/** Pick the rail the GATE will settle this 402 on. Registry first: a known CAIP-2 network uses the
+ *  same predicate the gate's verifyAndSettle uses (`supportsMemo` — memo self-relay vs Circle
+ *  Gateway), so buyer and gate can never disagree. The `extra.name 'GatewayWalletBatched'` tell is
+ *  only the fallback for a network we don't know: build402 stamps that descriptor on EVERY
+ *  gateway-mode 402 — memo chains included — so on a known memo network it is noise, not a signal
+ *  (trusting it signed the Gateway envelope against Arc's memo settle: "malformed memo payload"). */
 function isGateway402(quoted: Quoted): boolean {
+  const net = networkByCaip2(quoted.requirements.network);
+  if (net) return !supportsMemo(net);
   return (quoted.requirements as BatchingRequirements).extra?.name === "GatewayWalletBatched";
 }
 

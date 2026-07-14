@@ -53,6 +53,31 @@ function memo402(): string {
   ).toString("base64");
 }
 
+/** The REAL gate shape on a memo chain: build402 stamps the GatewayWalletBatched descriptor into
+ *  `extra` on every gateway-mode 402 — Arc included — while verifyAndSettle still settles it via
+ *  the memo self-relay. The 2026-07-13 prod outage: railBuyer trusted the descriptor, signed the
+ *  Gateway envelope, and the gate's memo settle rejected every pay ("malformed memo payload"). */
+function memo402WithGatewayExtra(): string {
+  const net = activeNetwork();
+  return Buffer.from(
+    JSON.stringify({
+      x402Version: 2,
+      resource: { url: "https://x.test/a", description: "naulon read toll: A", mimeType: "text/html" },
+      accepts: [
+        {
+          scheme: "exact",
+          network: net.network,
+          asset: net.usdc,
+          payTo: AUTHOR,
+          amount: "5000",
+          maxTimeoutSeconds: 691200,
+          extra: { name: "GatewayWalletBatched", version: "1", verifyingContract: net.gatewayWallet },
+        },
+      ],
+    }),
+  ).toString("base64");
+}
+
 /** A real viem account wrapped to count how many times its signTypedData was consulted. */
 function recorder() {
   const acct = privateKeyToAccount(generatePrivateKey());
@@ -120,6 +145,20 @@ test("railBuyer decision is independent of activeNetwork() (gateway 402 under a 
     assert.equal(result.ok, true, `expected a paid read, got ${JSON.stringify(result)}`);
     assert.ok(gw.calls.length >= 1, "gateway must be chosen off the 402 even though the fleet is memo-capable");
     assert.equal(memo.calls.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("railBuyer picks MEMO for a memo-network 402 even when it carries the GatewayWalletBatched extra (the real gate shape)", async () => {
+  const memo = recorder();
+  const gw = recorder();
+  const restore = stubFetch(memo402WithGatewayExtra());
+  try {
+    const result = await railBuyer({ memo: memo.signer, gateway: gw.signer }).fetch("https://x.test/a", "read");
+    assert.equal(result.ok, true, `expected a paid read, got ${JSON.stringify(result)}`);
+    assert.ok(memo.calls.length >= 1, "the memo signer must be consulted — the registry rail beats the extra tell");
+    assert.equal(gw.calls.length, 0, "the gateway signer must NOT be consulted for a known memo network");
   } finally {
     restore();
   }
