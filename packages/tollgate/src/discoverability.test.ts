@@ -54,6 +54,15 @@ test("buildX402Manifest derives both price legs from the publisher", () => {
   assert.equal(m.license.identity, "naulon:test.host");
 });
 
+test("buildX402Manifest advertises catalogUrl when the publisher sets one", () => {
+  const m = buildX402Manifest({ ...fixturePublisher(), catalogUrl: "https://example.com/api/catalog" });
+  assert.deepEqual(m.catalog, { url: "https://example.com/api/catalog" });
+});
+
+test("buildX402Manifest omits catalog when unset", () => {
+  assert.equal(buildX402Manifest(fixturePublisher()).catalog, undefined);
+});
+
 test("manifest never names an author wallet (payTo is a per-article policy)", () => {
   const m = buildX402Manifest(fixturePublisher());
   assert.ok(!/0x[0-9a-fA-F]{40}/.test(m.payment.payTo), "payTo describes derivation, lists no wallet");

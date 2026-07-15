@@ -64,6 +64,8 @@ export interface X402Manifest {
     /** issuer === audience for this publisher's Citation License Tokens. */
     identity: string;
   };
+  /** Public catalog enumeration endpoint, advertised when the publisher sets one. */
+  catalog?: { url: string };
 }
 
 /** Same validity window the 402 advertises (x402.ts MAX_TIMEOUT_SECONDS). */
@@ -104,5 +106,6 @@ export function buildX402Manifest(
         "Resolved per article to the primary author from the publisher's credits graph; the recursive co-author split is recorded on each settled event. Custody-free: settlement is buyer → author.",
     },
     license: { jwks: JWKS_PATH, verify: LICENSE_VERIFY_PATH, identity: publisher.licenseIdentity },
+    ...(publisher.catalogUrl ? { catalog: { url: publisher.catalogUrl } } : {}),
   };
 }

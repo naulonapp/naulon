@@ -99,6 +99,8 @@ export interface PublisherConfig {
    * what stops a receipt minted for one publisher from unlocking another.
    */
   licenseIdentity: string;
+  /** Public catalog enumeration endpoint (GET → Candidate[] or {entries,nextCursor}). Optional. */
+  catalogUrl?: string;
   /**
    * HMAC secret for the settlement emit to this publisher's earnings ledger.
    * Undefined leaves the emit dark — the gate still tolls and serves; it just
