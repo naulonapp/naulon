@@ -83,7 +83,8 @@ flowchart TD
 A publisher vendors `@naulon/enforce` directly (it builds to its own `dist/`
 tarball) and wires the middleware; the gate consumes the very same package, which
 is what guarantees both reach an identical verdict. `@naulon/enforce` is
-deliberately NOT re-exported through `@naulon/sdk` — the SDK imports `@naulon/shared`,
-which re-exports the SDK, so an `sdk → enforce` edge would form a declaration-build
-cycle. Keeping enforce standalone (a second, small dependency alongside the SDK)
-avoids that and keeps the package graph a clean chain.
+deliberately NOT re-exported through `@naulon/sdk` — `@naulon/shared` imports the SDK
+and re-exports it, so an `sdk → enforce` edge would close the loop
+`sdk → enforce → shared → sdk`, a declaration-build cycle. Keeping enforce standalone
+(a second, small dependency alongside the SDK) avoids that and keeps the package
+graph a clean chain.

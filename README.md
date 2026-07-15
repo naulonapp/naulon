@@ -238,6 +238,7 @@ flowchart TD
 
     tollgate --> enforce
     tollgate --> sdk
+    tollgate --> shared
     wmcp --> wayfarer
     wayfarer --> shared
     attribution --> shared
