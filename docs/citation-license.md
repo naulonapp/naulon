@@ -19,6 +19,26 @@ depending on the human/agent classifier. The CLT is a signed projection of the
 `AttributedEvent` already recorded per payment (`jti = event.id`), reusing
 `settlementRef` / `payees` / `payerAddress`.
 
+### Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant Ag as Agent (wayfarer)
+    participant G as Gate (tollgate)
+    participant J as JWKS endpoint
+    participant V as Any verifier (jose / pyjwt)
+
+    Ag->>G: pay the x402 toll
+    Note over G: mint CLT — EdDSA over the AttributedEvent (jti = event.id)
+    G-->>Ag: 200 content + Citation License Token
+    Note over Ag: capture, surface downstream as provenance
+    Ag->>G: re-present CLT within TTL
+    G-->>Ag: free re-read (valid + unexpired)
+    V->>J: fetch public key by kid
+    J-->>V: Ed25519 JWK
+    Note over V: pin EdDSA, verify signature, THEN read claims
+```
+
 ## Two CRITICAL invariants (a build that violates either is a free-read bypass)
 
 1. **Stable signing key off the mock path.** Ephemeral Ed25519 keys break a
