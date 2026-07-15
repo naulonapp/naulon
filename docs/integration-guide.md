@@ -142,7 +142,8 @@ offline fixture.
 ## Declaring your URLs to naulon
 
 The endpoints are the same in both deployment modes; only where you register them
-differs.
+differs. The managed fleet — if you don't want to run a gate yourself — is
+[naulon.app](https://naulon.app); "cloud tenant" below means you've onboarded there.
 
 | | You run the gate | You're a cloud tenant |
 |---|---|---|
