@@ -45,16 +45,30 @@ export function demoSource(): DiscoverySource {
   return { discover: async () => DEMO_CATALOG };
 }
 
-/** A bespoke catalog endpoint that filters server-side by `?q=topic`. */
+/**
+ * A catalog endpoint: bare `Candidate[]` (legacy, single page) or the paginated
+ * `{ entries, nextCursor }` envelope. Filters server-side by `?q=topic`; follows
+ * `nextCursor` (as `?cursor=`) up to 50 pages so a large fleet catalog enumerates.
+ */
 export function catalogSource(url: string): DiscoverySource {
   const base = url.replace(/\/$/, "");
   return {
     async discover(topic: string): Promise<Candidate[]> {
-      const res = await agentFetch(`${base}?q=${encodeURIComponent(topic)}`, {
-        headers: { "user-agent": AGENT_UA },
-      });
-      if (!res.ok) return DEMO_CATALOG;
-      return (await res.json()) as Candidate[];
+      const out: Candidate[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 50; page++) {
+        const u = new URL(base);
+        u.searchParams.set("q", topic);
+        if (cursor) u.searchParams.set("cursor", cursor);
+        const res = await agentFetch(u.toString(), { headers: { "user-agent": AGENT_UA } });
+        if (!res.ok) return out.length ? out : DEMO_CATALOG;
+        const json = (await res.json()) as Candidate[] | { entries: Candidate[]; nextCursor?: string };
+        if (Array.isArray(json)) return [...out, ...json]; // legacy shape: single page
+        out.push(...json.entries);
+        cursor = json.nextCursor;
+        if (!cursor) break;
+      }
+      return out;
     },
   };
 }

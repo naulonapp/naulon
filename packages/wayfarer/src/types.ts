@@ -23,6 +23,10 @@ export interface Candidate {
    * a custom domain, a query string — instead of reconstructing a fixed template.
    */
   url?: string;
+  /** Indicative read price (USDC) a fleet catalog may carry. Advisory — the 402 is the truth. */
+  priceUsdc?: number;
+  /** Indicative citation price (USDC). Advisory — the 402 is the truth. */
+  citationPriceUsdc?: number;
 }
 
 /** A candidate after the tollgate has quoted a price for it. The author split is
