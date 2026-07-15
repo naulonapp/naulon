@@ -17,6 +17,24 @@ naulon needs two things from your site, and gives you one back:
 Both are **receive-side**: naulon (your gate, or the fleet) calls *you*. You never
 call a naulon URL. The SDK has no naulon base URL in it.
 
+```mermaid
+sequenceDiagram
+    participant Ag as AI agent
+    participant Gate as naulon gate (yours or the fleet)
+    participant Cr as Your /credits/:slug
+    participant Set as Your settlement receiver
+
+    Ag->>Gate: request an article
+    Gate->>Cr: GET /credits/:slug — who to pay?
+    Cr-->>Gate: ArticleCredits (or 404 = free)
+    Gate-->>Ag: 402 · price · payees
+    Ag->>Gate: sign USDC, retry
+    Note over Gate: verify + settle on-chain
+    Gate->>Set: POST settlement (HMAC-signed)
+    Set-->>Gate: 200, deduped on event id
+    Gate-->>Ag: 200 content
+```
+
 ## Install
 
 ```bash

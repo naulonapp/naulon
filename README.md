@@ -30,29 +30,45 @@ cent and still settle.
 
 ## How it works
 
-```
-                      ┌───────────────┐
-                      │   tollgate    │
-                      │ (x402 proxy)  │
-                      └───────┬───────┘
-                              │
-              human ◀─────────┤
-              read free       │ machine
-                              ▼
-                    402 Payment Required
-                    + price + author wallet(s)
-                              │  agent signs USDC, retries
-                              ▼
-             ┌────────────────┴────────────────┐
-             │   verify via Circle Gateway →   │
-             │ serve content + log who earned  │
-             └─────────────────────────────────┘
+```mermaid
+flowchart TD
+    Req([Incoming request]) --> Cls{"agentDetect —<br/>human or machine?"}
+    Cls -->|human| Free[["Proxied through, untouched — free read"]]
+    Cls -->|machine| Bill["402 Payment Required<br/>price · author wallet(s) · signed nonce"]
+    Bill --> Sign["Agent signs a USDC payment,<br/>echoes the nonce, retries with X-Payment"]
+    Sign --> Verify{"Verify via Circle Gateway"}
+    Verify -->|valid| Serve[["Serve content + mint a Citation License,<br/>record who earned what"]]
+    Verify -->|replayed / invalid| Bill
+
+    linkStyle 0 stroke-width:2px
+    linkStyle 1 stroke:#3fb950,stroke-width:2px
+    linkStyle 2 stroke:#d29922,stroke-width:2px
 ```
 
 The piece that makes it interesting: **attribution is the payout rule.** An
 article's credits graph — who wrote it, and in what proportion — *is* how the
 money splits. Co-authored pieces split automatically, and a credit can itself be
 a collective that splits again among its members. No invoices, no manual payouts.
+
+The split is recursive: a payee can itself be a collective that divides its cut
+again, all the way down. This is the real credits graph from
+[`examples/cascade`](./examples/cascade/credits.json) (`how-vaccines-teach`),
+resolved by the split algorithm in `@naulon/shared`:
+
+```mermaid
+flowchart TD
+    Toll["Toll paid — $0.006"]
+    Toll -->|weight 3| Desk["the-immunology-desk<br/><i>collective</i> · $0.0045"]
+    Toll -->|weight 1| Mira["mira · $0.0015"]
+    Desk -->|weight 1| Oko["okonkwo · $0.0015"]
+    Desk -->|weight 2| Bench["the-bench-team<br/><i>collective</i> · $0.0030"]
+    Bench -->|equal| Pet["petrova · $0.0015"]
+    Bench -->|equal| Had["haddad · $0.0015"]
+```
+
+Every leaf is a direct author payout, tracked per `(event, author)`, and recorded
+whether or not it clears the payout floor yet. The intermediate collectives never
+hold the money — they're only a rule for how the cut divides.
 
 ## Quick start
 
@@ -199,11 +215,46 @@ A small npm-workspaces monorepo. Each piece is independent and runs on its own.
 | [`attribution`](./packages/attribution) | Batches sub-cent tolls per wallet and settles author payouts (mock, or real Circle Gateway via `PAYMENT_MODE`). |
 | [`dashboard`](./packages/dashboard) | The operator console — gate health, live toll traffic, earnings, and config sanity (plus an opt-in public earnings page). |
 
+Under those sit three libraries the runnable pieces share:
+[`sdk`](./packages/sdk) (the publisher contract + crawl engine),
+[`shared`](./packages/shared) (domain types, config, the split algorithm), and
+[`enforce`](./packages/enforce) (the runtime-agnostic toll-decision kernel). There's
+also [`wayfarer-mcp`](./packages/wayfarer-mcp), which exposes the paying agent as an
+MCP server.
+
+**How the packages layer** — arrows point to what a package depends on. The
+dependency graph is strictly one-directional; nothing lower reaches up.
+
+```mermaid
+flowchart TD
+    tollgate["tollgate<br/><i>the gate</i>"]
+    wayfarer["wayfarer<br/><i>paying agent</i>"]
+    wmcp["wayfarer-mcp<br/><i>MCP server</i>"]
+    attribution["attribution<br/><i>settlement</i>"]
+    dashboard["dashboard<br/><i>console</i>"]
+    enforce["enforce<br/><i>decision kernel</i>"]
+    shared["shared<br/><i>contract + split math</i>"]
+    sdk["sdk<br/><i>publisher kit + crawl</i>"]
+
+    tollgate --> enforce
+    tollgate --> sdk
+    wmcp --> wayfarer
+    wayfarer --> shared
+    attribution --> shared
+    dashboard --> sdk
+    dashboard --> shared
+    enforce --> shared
+    shared --> sdk
+```
+
 ```
 packages/
+  sdk/          publisher contract · framework adapters · crawl engine
   shared/       types, config, attribution + split math
+  enforce/      runtime-agnostic toll-decision kernel + in-app middleware
   tollgate/     proxy · agentDetect · x402 · pricing · credits · eventLog
   wayfarer/     the paying agent
+  wayfarer-mcp/ the paying agent as an MCP server
   attribution/  settlement + payouts
   dashboard/    operator console
 examples/
@@ -244,6 +295,24 @@ PAYMENT_MODE=gateway make wayfarer TOPIC="payment and passage"
 - **One payment, one `payTo`.** x402 settles to a single address, so the on-chain
   leg pays the article's primary author; the recursive co-author split is the
   attribution layer's job (its onward payouts). The split is always recorded.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Agent (wayfarer)
+    participant G as Gate (tollgate)
+    participant C as Circle Gateway (Arc)
+    participant Au as Author wallet
+
+    A->>G: GET /essays/the-naulon
+    G-->>A: 402 · price · payTo · nonce · Link: /.well-known/x402
+    Note over A: appraise relevance-per-dollar, decide to pay under budget
+    A->>C: GatewayClient.pay() — deposit-backed, gasless
+    A->>G: retry + X-Payment (signature, nonce)
+    G->>C: BatchFacilitatorClient.verify + settle
+    C->>Au: USDC settles buyer → author (custody-free)
+    G-->>A: 200 · content + Citation License Token
+```
 
 The header contract (`PAYMENT-REQUIRED` / `payment-signature` / `PAYMENT-RESPONSE`)
 and Arc constants mirror `circlefin/arc-nanopayments`, so a stock Gateway client

@@ -72,12 +72,12 @@ signed payment to `verifyUrl`, which settles buyer → author directly.
 
 ## Layering
 
-```
-@naulon/shared
-      ▲
-@naulon/enforce        ← this package (decision kernel + middleware)
-      ▲
-@naulon/tollgate       (the gate shell runs decide() inside its reverse proxy)
+Arrows point to what a package depends on:
+
+```mermaid
+flowchart TD
+    tollgate["@naulon/tollgate<br/><i>gate shell — runs decide() in its reverse proxy</i>"] --> enforce
+    enforce["@naulon/enforce<br/><i>this package — decision kernel + middleware</i>"] --> shared["@naulon/shared"]
 ```
 
 A publisher vendors `@naulon/enforce` directly (it builds to its own `dist/`
