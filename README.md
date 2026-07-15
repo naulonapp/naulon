@@ -238,6 +238,7 @@ flowchart TD
 
     tollgate --> enforce
     tollgate --> sdk
+    tollgate --> shared
     wmcp --> wayfarer
     wayfarer --> shared
     attribution --> shared
@@ -338,6 +339,13 @@ host the gate + dashboard on a serverless platform (Vercel) in front of a real
 site, swap those two pieces of state for **Supabase** (`EVENTS_BACKEND=supabase`,
 `NONCE_BACKEND=supabase`) so every instance shares one ledger and nonce set.
 Step-by-step (Vercel projects, Supabase schema, DNS): **[DEPLOY.md](./DEPLOY.md)**.
+
+**Self-host or hosted.** Everything in this repo runs standalone — you own the
+gate. If you'd rather not run the infrastructure, [naulon.app](https://naulon.app)
+operates a managed fleet that speaks the same protocol: you point your site at it
+and declare your credits URL exactly as the [integration guide](./docs/integration-guide.md)
+shows, then serve the same two endpoints. Same toll, same custody-free settlement —
+nothing here is held back to push you toward it.
 
 ## Design notes
 
