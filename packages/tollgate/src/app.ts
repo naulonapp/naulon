@@ -31,7 +31,9 @@ import {
   BOT_AUTH_DIRECTORY_CONTENT_TYPE,
   BOT_AUTH_DIRECTORY_PATH,
   getConfig,
+  signBotAuth,
   signBotAuthDirectory,
+  type BotAuthKey,
   usdc,
   type ObservationVerdict,
   type PublisherResolver,
@@ -215,6 +217,11 @@ export interface UpstreamOutcome {
  */
 const MITIGATION_MARKERS = ["x-vercel-mitigated", "cf-mitigated"] as const;
 
+/** The gate's outbound Web Bot Auth identity for the origin pull: the operator's
+ *  boot-materialized signing key paired with the Signature-Agent it advertises.
+ *  Gate-global (the OPERATOR's identity), not per-publisher. See proxyToOrigin. */
+type ProxySigningIdentity = { key: BotAuthKey; agent: string };
+
 /** Proxy a request to the publisher's origin and return its response verbatim. */
 async function proxyToOrigin(
   req: Request,
@@ -224,6 +231,7 @@ async function proxyToOrigin(
   originAuthSecret: string | undefined,
   publisherId: string,
   onUpstreamOutcome: ((publisherId: string, outcome: UpstreamOutcome) => void) | undefined,
+  proxySigning: ProxySigningIdentity | null,
 ): Promise<Response> {
   const origin = new URL(originUrl);
   const target = new URL(path, originUrl);
@@ -243,6 +251,16 @@ async function proxyToOrigin(
   // cleartext. The header was stripped from the inbound request (STRIP_HEADERS), so
   // this is the only place it can be set: a client can't spoof it.
   if (originAuthSecret && origin.protocol === "https:") outHeaders.set("x-naulon-origin-auth", originAuthSecret);
+  // Web Bot Auth (RFC 9421): additionally sign the pull as our operator identity when
+  // configured, so a Cloudflare/Vercel-verified publisher recognizes fleet traffic
+  // without a pasted bypass rule. https only (mirrors the secret guard — never sign
+  // over cleartext); signed per call for a fresh ~1-minute validity window. The secret
+  // header still rides alongside, so nothing depends solely on WBA mid-migration.
+  // Unconfigured (proxySigning null) ⇒ byte-identical, unsigned — the standing bar.
+  if (proxySigning && origin.protocol === "https:") {
+    const signed = signBotAuth({ key: proxySigning.key, authority: origin.host, tag: "web-bot-auth", agent: proxySigning.agent });
+    for (const [k, v] of Object.entries(signed)) outHeaders.set(k, v);
+  }
   const upstream = await fetch(target, {
     method: req.method,
     headers: outHeaders,
@@ -355,6 +373,11 @@ export function createApp(
   // Key materialized at boot: a malformed seed fails loud here, never at
   // request time (config discipline). /.well-known/* is never tolled/proxied.
   const botAuthKey = cfg.BOT_AUTH_SIGNING_KEY ? botAuthKeyFromSeed(cfg.BOT_AUTH_SIGNING_KEY) : null;
+  // The gate's outbound origin-pull identity: the SAME boot-materialized operator key
+  // the directory publishes (never re-derived per request), paired with the advertised
+  // Signature-Agent. null unless both are configured ⇒ the pull stays unsigned. Consumed
+  // by every proxyToOrigin call below.
+  const proxySigning = botAuthKey && cfg.BOT_AUTH_SIGNATURE_AGENT ? { key: botAuthKey, agent: cfg.BOT_AUTH_SIGNATURE_AGENT } : null;
   app.get(BOT_AUTH_DIRECTORY_PATH, (c) => {
     if (!botAuthKey) return c.json({ error: "this gate publishes no key directory" }, 404);
     const host = c.req.header("host") ?? new URL(c.req.url).host;
@@ -433,7 +456,7 @@ export function createApp(
     // live site or turn its readers away. The gate just stops earning until it's
     // lifted. (Unknown host already failed closed above; this is a KNOWN host.)
     if (publisher.suspended) {
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
+      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
       res.headers.set("X-Naulon-Verdict", "suspended (degraded passthrough)");
       return res;
     }
@@ -480,7 +503,7 @@ export function createApp(
     switch (d.kind) {
       // Non-article OR unknown-article: pure passthrough, no observation.
       case "passthrough":
-        return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
+        return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
 
       // Publisher-refused crawler: 403 before any content leaves.
       case "blocked": {
@@ -494,7 +517,7 @@ export function createApp(
       // (a fresh Response from proxyToOrigin doesn't inherit c.header()).
       case "free": {
         emitObs(d.obs, "served-free");
-        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
+        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
         res.headers.set("X-Naulon-Verdict", headerSafe(d.verdict));
         return stampGateCacheHeaders(res, { noStore: false });
       }
@@ -502,7 +525,7 @@ export function createApp(
       // A valid license scoped to this slug+kind re-reads free.
       case "reread": {
         emitObs(d.obs, "agent-reread", { kind: d.tollKind });
-        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
+        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
         res.headers.set("X-Naulon-Verdict", "agent reread (license)");
         return stampGateCacheHeaders(res, { noStore: true });
       }
@@ -538,7 +561,7 @@ export function createApp(
         // Audit plane: the paid outcome on the same timeline as denials/free reads.
         emitObs(d.obs, "paid", { kind: d.quote.kind, price: usdc(d.quote.price) });
 
-        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome);
+        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
         if (settled.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, settled.responseHeader);
         if (settled.licenseJws) res.headers.set(LICENSE_HEADER, settled.licenseJws);
         res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${d.obs.classifyReason})`));
