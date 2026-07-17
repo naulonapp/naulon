@@ -1,6 +1,8 @@
 /**
- * Config validation — the licensing superRefine. Tested against the exported
- * configSchema so we don't have to mutate process.env or the getConfig singleton.
+ * Config validation — the licensing superRefine. Most tests go through the exported
+ * configSchema.safeParse directly, so they never touch process.env or the getConfig
+ * singleton. The dual-mode env test is the exception: it drives getConfig()/resetConfig()
+ * directly and relies on the afterEach below to clean up after itself.
  */
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";

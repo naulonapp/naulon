@@ -94,10 +94,14 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
   arcTestnet: {
     chainName: "arcTestnet", network: "eip155:5042002", chainId: 5042002,
     usdc: "0x3600000000000000000000000000000000000000",
+    // Verified on-chain 2026-06-19 (live Arc memo settle): Arc-testnet USDC names
+    // itself "USDC"/"2", NOT the mainnet FiatToken "USD Coin".
     usdcName: "USDC", usdcVersion: "2",
     gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
     gatewayApiUrl: TESTNET_FACILITATOR, rpcUrl: "https://rpc.testnet.arc.network",
     testnet: true, modularChainName: "arcTestnet",
+    // Arc ships the Memo + CallFrom predeploys; Base does not — gated on presence,
+    // so a swap to Base drops memos with no settle-path edit.
     memo: { contract: "0x5294E9927c3306DcBaDb03fe70b92e01cCede505" },
   },
   baseSepolia: {
@@ -139,7 +143,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     chainName: "polygon", network: "eip155:137", chainId: 137,
     usdc: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
-    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://polygon-rpc.com",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://poly.api.pocket.network",
     testnet: false, modularChainName: "polygon",
   },
   avalanche: {
@@ -153,14 +157,14 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     chainName: "unichain", network: "eip155:130", chainId: 130,
     usdc: "0x078D782b760474a361dDA0AF3839290b0EF57AD6",
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
-    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://mainnet.unichain.org",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://mainnet.unichain.org/",
     testnet: false, modularChainName: "unichain",
   },
   sei: {
     chainName: "sei", network: "eip155:1329", chainId: 1329,
     usdc: "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392",
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
-    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://evm-rpc.sei-apis.com",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://sei.api.pocket.network",
     testnet: false,
   },
   sonic: {
