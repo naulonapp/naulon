@@ -19,9 +19,9 @@ process.env.SETTLEMENT_NETWORK = "baseSepolia";
 process.env.LICENSES_ENABLED = "false"; // no signing key needed — we only reach the settle branch
 delete process.env.RELAYER_PRIVATE_KEY;
 
-const { resetConfig } = await import("@naulon/shared");
+const { resetConfig, NETWORKS } = await import("@naulon/shared");
 resetConfig();
-const { verifyAndSettle } = await import("./x402.ts");
+const { verifyAndSettle, facilitatorBearer } = await import("./x402.ts");
 
 /** An Arc (memo-capable) leg — a per-tenant chain that differs from the fleet default. */
 function arcLeg(): PaymentRequirements {
@@ -44,4 +44,24 @@ test("an Arc leg routes to the MEMO settle path even when the fleet default is b
   const res = await verifyAndSettle(sig, [{ role: "author", requirements: arcLeg() }], Date.now());
   assert.equal(res.ok, false);
   assert.match(res.error ?? "", /RELAYER_PRIVATE_KEY required for memo-network settlement/);
+});
+
+test("facilitatorBearer picks test key on testnet, live key on mainnet", () => {
+  process.env.CIRCLE_API_KEY = "live-key";
+  process.env.CIRCLE_API_KEY_TESTNET = "test-key";
+  resetConfig();
+  try {
+    assert.equal(facilitatorBearer(NETWORKS.baseSepolia), "test-key");
+    assert.equal(facilitatorBearer(NETWORKS.arcTestnet), "test-key");
+    assert.equal(facilitatorBearer(NETWORKS.base), "live-key");
+    assert.equal(facilitatorBearer(NETWORKS.ethereum), "live-key");
+
+    delete process.env.CIRCLE_API_KEY_TESTNET;
+    resetConfig();
+    assert.equal(facilitatorBearer(NETWORKS.baseSepolia), "live-key", "testnet falls back to live key when _TESTNET unset");
+  } finally {
+    delete process.env.CIRCLE_API_KEY;
+    delete process.env.CIRCLE_API_KEY_TESTNET;
+    resetConfig();
+  }
 });

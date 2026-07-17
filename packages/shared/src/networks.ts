@@ -224,6 +224,18 @@ export function activeNetwork(): SettlementNetwork {
   return NETWORKS[getConfig().SETTLEMENT_NETWORK];
 }
 
+/** The Arc self-relay gas EOA for a network: the shared testnet key on testnet, a
+ *  SEPARATE mainnet key on mainnet — unlike `facilitatorBearer` (Circle's key, which
+ *  falls back testnet→live), there is NO fallback here: mainnet gas is real money, so
+ *  a missing mainnet key must never silently spend the testnet one. Reads config live
+ *  on every call (not a module-frozen snapshot) so a `resetConfig()` mid-process is
+ *  observed immediately. Callers each keep their own 0x-normalization + "which var is
+ *  missing" error message — this only selects which raw value applies. */
+export function relayerKeyFor(net: SettlementNetwork): string | undefined {
+  const cfg = getConfig();
+  return net.testnet ? cfg.RELAYER_PRIVATE_KEY : cfg.RELAYER_PRIVATE_KEY_MAINNET;
+}
+
 /** The Gateway batching x402 `extra` block, naming the verifying contract. */
 export function gatewayExtra(net: SettlementNetwork = activeNetwork()): Record<string, unknown> {
   return { name: "GatewayWalletBatched", version: "1", verifyingContract: net.gatewayWallet };

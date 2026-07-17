@@ -19,6 +19,7 @@ import {
   getNetwork,
   networkByCaip2,
   NETWORKS,
+  relayerKeyFor,
   supportsMemo,
   supportsModularWallet,
   type NetworkName,
@@ -32,6 +33,8 @@ const ALL: NetworkName[] = [
 
 afterEach(() => {
   delete process.env.SETTLEMENT_NETWORK;
+  delete process.env.RELAYER_PRIVATE_KEY;
+  delete process.env.RELAYER_PRIVATE_KEY_MAINNET;
   resetConfig();
 });
 
@@ -72,6 +75,23 @@ test("gatewayExtra names the network's own verifying contract", () => {
     version: "1",
     verifyingContract: NETWORKS.base.gatewayWallet,
   });
+});
+
+test("relayerKeyFor: testnet gas EOA on testnet, mainnet gas EOA on mainnet, NO fallback either way", () => {
+  process.env.RELAYER_PRIVATE_KEY = "testnet-relayer-key";
+  process.env.RELAYER_PRIVATE_KEY_MAINNET = "mainnet-relayer-key";
+  resetConfig();
+  assert.equal(relayerKeyFor(NETWORKS.arcTestnet), "testnet-relayer-key");
+  assert.equal(relayerKeyFor(NETWORKS.baseSepolia), "testnet-relayer-key");
+  assert.equal(relayerKeyFor(NETWORKS.arc), "mainnet-relayer-key");
+  assert.equal(relayerKeyFor(NETWORKS.base), "mainnet-relayer-key");
+
+  // Mainnet gas is real money — unlike the facilitator bearer, there is NO fallback
+  // to the testnet key when the mainnet var is unset.
+  delete process.env.RELAYER_PRIVATE_KEY_MAINNET;
+  resetConfig();
+  assert.equal(relayerKeyFor(NETWORKS.arc), undefined, "no silent fallback to the testnet relayer key on mainnet");
+  assert.equal(relayerKeyFor(NETWORKS.arcTestnet), "testnet-relayer-key", "testnet is unaffected by the mainnet var");
 });
 
 test("activeNetwork defaults to arcTestnet (safe: never silently mainnet)", () => {

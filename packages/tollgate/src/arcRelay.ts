@@ -263,10 +263,26 @@ async function defaultViemBroadcaster(
   tx: { to: `0x${string}`; data: `0x${string}` },
   net: SettlementNetwork,
 ): Promise<{ success: boolean; transaction?: string; errorReason?: string }> {
-  const { getConfig } = await import("@naulon/shared");
-  const relayerKey = getConfig().RELAYER_PRIVATE_KEY;
+  const { getConfig, relayerKeyFor } = await import("@naulon/shared");
+  const relayerKey = relayerKeyFor(net);
   if (!relayerKey) {
-    return { success: false, errorReason: "RELAYER_PRIVATE_KEY required for memo-network settlement" };
+    return {
+      success: false,
+      errorReason: net.testnet
+        ? "RELAYER_PRIVATE_KEY required for memo-network settlement"
+        : "RELAYER_PRIVATE_KEY_MAINNET required for mainnet memo-network settlement",
+    };
+  }
+  // Arc mainnet has no public RPC during the private preview — ARC_RPC_URL is required.
+  // Fail loud (a typed failure return, not a silent dial of the placeholder net.rpcUrl,
+  // which would just time out against a chain that isn't actually reachable there).
+  let rpcUrl = net.rpcUrl;
+  if (net.chainName === "arc") {
+    const arcRpcUrl = getConfig().ARC_RPC_URL;
+    if (!arcRpcUrl) {
+      return { success: false, errorReason: "ARC_RPC_URL required to settle on Arc mainnet (no public RPC in preview)" };
+    }
+    rpcUrl = arcRpcUrl;
   }
   const key = (relayerKey.startsWith("0x") ? relayerKey : `0x${relayerKey}`) as `0x${string}`;
   try {
@@ -278,9 +294,9 @@ async function defaultViemBroadcaster(
       id: net.chainId,
       name: net.chainName,
       nativeCurrency: { name: "USD Coin", symbol: "USDC", decimals: 6 },
-      rpcUrls: { default: { http: [net.rpcUrl] } },
+      rpcUrls: { default: { http: [rpcUrl] } },
     });
-    const client = createWalletClient({ account: privateKeyToAccount(key), chain, transport: http(net.rpcUrl) });
+    const client = createWalletClient({ account: privateKeyToAccount(key), chain, transport: http(rpcUrl) });
     const hash = await client.sendTransaction({ to: tx.to, data: tx.data });
     return { success: true, transaction: hash };
   } catch (err) {
