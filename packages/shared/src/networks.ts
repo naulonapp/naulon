@@ -16,7 +16,10 @@
 import { getConfig } from "./config.ts";
 
 /** The chains this gate can settle on — each a SupportedChainName in the SDK. */
-export type NetworkName = "arcTestnet" | "baseSepolia" | "base";
+export type NetworkName =
+  | "arc" | "base" | "ethereum" | "arbitrum" | "optimism" | "polygon"
+  | "avalanche" | "unichain" | "sei" | "sonic" | "hyperEvm" | "worldChain"
+  | "arcTestnet" | "baseSepolia";
 
 export interface SettlementNetwork {
   /** GatewayClient `chain` key — must match a SupportedChainName in the SDK. */
@@ -58,6 +61,13 @@ export interface SettlementNetwork {
      *  Verified on testnet.arcscan.app (Blockscout). Arc-testnet-only. */
     contract: `0x${string}`;
   };
+  /** Circle Modular Wallets transport URL suffix (the browser embedded passkey wallet).
+   *  Present ONLY on chains Circle's Modular Wallets support; ABSENT on the four
+   *  gateway-only mainnets (sei/sonic/hyperEvm/worldChain) and Arc mainnet. The portal
+   *  gates its embedded-wallet UI on the PRESENCE of this field (field-presence
+   *  capability, mirroring `memo`/`supportsMemo`) — a chain without it takes
+   *  API/agent buyers only. The modular transport URL is `clientUrl + '/' + this`. */
+  modularChainName?: string;
 }
 
 /** Field-presence capability gate — true iff this network ships the Memo predeploy.
@@ -69,47 +79,124 @@ export function supportsMemo(
   return net.memo !== undefined;
 }
 
+/** Field-presence capability gate — true iff Circle Modular Wallets support this chain
+ *  (so the portal can offer the in-browser passkey wallet). Narrowed like supportsMemo. */
+export function supportsModularWallet(
+  net: SettlementNetwork,
+): net is SettlementNetwork & { modularChainName: string } {
+  return net.modularChainName !== undefined;
+}
+
 const TESTNET_FACILITATOR = "https://gateway-api-testnet.circle.com";
 const MAINNET_FACILITATOR = "https://gateway-api.circle.com";
 
 export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
   arcTestnet: {
-    chainName: "arcTestnet",
-    network: "eip155:5042002",
-    chainId: 5042002,
+    chainName: "arcTestnet", network: "eip155:5042002", chainId: 5042002,
     usdc: "0x3600000000000000000000000000000000000000",
-    // Verified on-chain 2026-06-19 (live Arc memo settle): the Arc-testnet USDC
-    // names itself "USDC"/"2", NOT the mainnet FiatToken "USD Coin". This is the
-    // EIP-712 domain the buyer's raw EIP-3009 authorization is signed against.
-    usdcName: "USDC",
-    usdcVersion: "2",
+    usdcName: "USDC", usdcVersion: "2",
     gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-    gatewayApiUrl: TESTNET_FACILITATOR,
-    rpcUrl: "https://rpc.testnet.arc.network",
-    testnet: true,
-    // Arc ships the Memo + CallFrom predeploys; Base does not. Set here, gated on
-    // presence at settle time → a swap to Base drops memos with no settle-path edit.
+    gatewayApiUrl: TESTNET_FACILITATOR, rpcUrl: "https://rpc.testnet.arc.network",
+    testnet: true, modularChainName: "arcTestnet",
     memo: { contract: "0x5294E9927c3306DcBaDb03fe70b92e01cCede505" },
   },
   baseSepolia: {
-    chainName: "baseSepolia",
-    network: "eip155:84532",
-    chainId: 84532,
+    chainName: "baseSepolia", network: "eip155:84532", chainId: 84532,
     usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-    gatewayApiUrl: TESTNET_FACILITATOR,
-    rpcUrl: "https://sepolia-preconf.base.org",
-    testnet: true,
+    gatewayApiUrl: TESTNET_FACILITATOR, rpcUrl: "https://sepolia-preconf.base.org",
+    testnet: true, modularChainName: "baseSepolia",
   },
   base: {
-    chainName: "base",
-    network: "eip155:8453",
-    chainId: 8453,
+    chainName: "base", network: "eip155:8453", chainId: 8453,
     usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
-    gatewayApiUrl: MAINNET_FACILITATOR,
-    rpcUrl: "https://mainnet.base.org",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://mainnet.base.org",
+    testnet: false, modularChainName: "base",
+  },
+  ethereum: {
+    chainName: "ethereum", network: "eip155:1", chainId: 1,
+    usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://ethereum-rpc.publicnode.com",
+    testnet: false, modularChainName: "ethereum",
+  },
+  arbitrum: {
+    chainName: "arbitrum", network: "eip155:42161", chainId: 42161,
+    usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://arb1.arbitrum.io/rpc",
+    testnet: false, modularChainName: "arbitrum",
+  },
+  optimism: {
+    chainName: "optimism", network: "eip155:10", chainId: 10,
+    usdc: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://mainnet.optimism.io",
+    testnet: false, modularChainName: "optimism",
+  },
+  polygon: {
+    chainName: "polygon", network: "eip155:137", chainId: 137,
+    usdc: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://polygon-rpc.com",
+    testnet: false, modularChainName: "polygon",
+  },
+  avalanche: {
+    chainName: "avalanche", network: "eip155:43114", chainId: 43114,
+    usdc: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://api.avax.network/ext/bc/C/rpc",
+    testnet: false, modularChainName: "avalanche",
+  },
+  unichain: {
+    chainName: "unichain", network: "eip155:130", chainId: 130,
+    usdc: "0x078D782b760474a361dDA0AF3839290b0EF57AD6",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://mainnet.unichain.org",
+    testnet: false, modularChainName: "unichain",
+  },
+  sei: {
+    chainName: "sei", network: "eip155:1329", chainId: 1329,
+    usdc: "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://evm-rpc.sei-apis.com",
     testnet: false,
+  },
+  sonic: {
+    chainName: "sonic", network: "eip155:146", chainId: 146,
+    usdc: "0x29219dd400f2Bf60E5a23d13Be72B486D4038894",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://rpc.soniclabs.com",
+    testnet: false,
+  },
+  hyperEvm: {
+    chainName: "hyperEvm", network: "eip155:999", chainId: 999,
+    usdc: "0xb88339CB7199b77E23DB6E890353E22632Ba630f",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://rpc.hyperliquid.xyz/evm",
+    testnet: false,
+  },
+  worldChain: {
+    chainName: "worldChain", network: "eip155:480", chainId: 480,
+    usdc: "0x79A02482A880bCE3F13e09Da970dC34db4CD24d1",
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR,
+    rpcUrl: "https://worldchain-mainnet.g.alchemy.com/public",
+    testnet: false,
+  },
+  arc: {
+    chainName: "arc", network: "eip155:5042", chainId: 5042,
+    usdc: "0x3600000000000000000000000000000000000000",
+    // Arc mainnet's USDC EIP-712 domain is UNVERIFIED (chain not public). Left unset;
+    // the memo rail (which reads these) is absent until verified on-chain at enrollment.
+    gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
+    gatewayApiUrl: MAINNET_FACILITATOR,
+    // No public RPC yet — the settle path substitutes cfg.ARC_RPC_URL (fail-loud if unset).
+    rpcUrl: "https://rpc.arc.network",
+    testnet: false,
+    // NO memo field: the Arc mainnet Memo predeploy is unverified. Add only after an
+    // on-chain read confirms it (illegal-state-unrepresentable — never assume a capability).
   },
 };
 

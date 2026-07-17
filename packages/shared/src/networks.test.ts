@@ -20,10 +20,15 @@ import {
   networkByCaip2,
   NETWORKS,
   supportsMemo,
+  supportsModularWallet,
   type NetworkName,
 } from "./networks.ts";
 
-const ALL: NetworkName[] = ["arcTestnet", "baseSepolia", "base"];
+const ALL: NetworkName[] = [
+  "arc", "base", "ethereum", "arbitrum", "optimism", "polygon",
+  "avalanche", "unichain", "sei", "sonic", "hyperEvm", "worldChain",
+  "arcTestnet", "baseSepolia",
+];
 
 afterEach(() => {
   delete process.env.SETTLEMENT_NETWORK;
@@ -111,7 +116,9 @@ test("networkByCaip2 maps a known CAIP-2 id back to its network", () => {
 });
 
 test("networkByCaip2 returns undefined for an unknown id (caller falls back to activeNetwork)", () => {
-  assert.equal(networkByCaip2("eip155:1"), undefined);
+  // eip155:1 (Ethereum mainnet) is now a registered chain in the 14-chain fleet, so an
+  // unmapped id must be one truly outside the registry.
+  assert.equal(networkByCaip2("eip155:999999999"), undefined);
   assert.equal(networkByCaip2("garbage"), undefined);
   assert.equal(networkByCaip2(""), undefined);
 });
@@ -125,4 +132,35 @@ test("supportsMemo narrows the type so the settle path reads memo without a non-
   } else {
     assert.fail("arcTestnet should have narrowed to memo-capable");
   }
+});
+
+test("all 12 mainnets carry the mainnet GatewayWallet; both testnets carry the testnet one", () => {
+  const MAINNET_GW = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE";
+  const TESTNET_GW = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+  for (const name of ALL) {
+    const net = NETWORKS[name];
+    assert.equal(net.gatewayWallet, net.testnet ? TESTNET_GW : MAINNET_GW, `${name} gatewayWallet vs testnet flag`);
+  }
+});
+
+test("modular-wallet capability is present exactly on the modular-supported chains", () => {
+  const MODULAR = new Set<NetworkName>([
+    "base", "ethereum", "arbitrum", "optimism", "polygon", "avalanche", "unichain",
+    "arcTestnet", "baseSepolia",
+  ]);
+  for (const name of ALL) {
+    const net = NETWORKS[name];
+    assert.equal(supportsModularWallet(net), MODULAR.has(name), `${name} modular capability`);
+    if (supportsModularWallet(net)) assert.equal(typeof net.modularChainName, "string");
+  }
+  // The four gateway-only mainnets + arc-mainnet must NOT advertise an embedded wallet.
+  for (const name of ["sei", "sonic", "hyperEvm", "worldChain", "arc"] as NetworkName[]) {
+    assert.equal(supportsModularWallet(NETWORKS[name]), false, `${name} must be API-buyers-only`);
+  }
+});
+
+test("arc mainnet ships WITHOUT a memo field until the predeploy is verified on mainnet", () => {
+  assert.equal(supportsMemo(NETWORKS.arc), false, "arc mainnet memo is unverified — must be absent");
+  assert.equal(NETWORKS.arc.testnet, false);
+  assert.equal(NETWORKS.arc.network, "eip155:5042");
 });
