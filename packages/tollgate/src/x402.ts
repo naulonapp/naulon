@@ -96,14 +96,40 @@ export function facilitatorBearer(net: SettlementNetwork): string | undefined {
   return net.testnet ? (c.CIRCLE_API_KEY_TESTNET ?? c.CIRCLE_API_KEY) : c.CIRCLE_API_KEY;
 }
 
+/** The auth + Arc-preview header map for a network's facilitator calls: `authorization`
+ *  when a bearer is configured (see `facilitatorBearer`), plus the Arc private-mainnet
+ *  preview header when `net.chainName === "arc"`. Empty object when neither applies (the
+ *  testnet facilitator works keyless). Pure + exported so it's unit-testable without
+ *  module-mocking the SDK's dynamic import — `getFacilitator` is the only production
+ *  caller, so this IS the code that runs, not a parallel copy. */
+export function facilitatorHeaders(net: SettlementNetwork): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const bearer = facilitatorBearer(net);
+  if (bearer) headers.authorization = `Bearer ${bearer}`;
+  if (net.chainName === "arc") headers["X-ARC-PRIVATE-MAINNET-ENABLED"] = "true";
+  return headers;
+}
+
+/** The facilitator-client cache key for a network: endpoint + bearer + an Arc-preview
+ *  flag, so a multi-network fleet never shares a client across a different endpoint,
+ *  key, or preview requirement. Reads `GATEWAY_API_URL` FRESH (`getConfig()`, not the
+ *  module-frozen `cfg`) so it stays self-consistent with `facilitatorBearer` (also
+ *  fresh) within one `getFacilitator` call — see the module doc on `facilitatorBearer`.
+ *  Pure + exported for direct unit testing. */
+export function facilitatorCacheKey(net: SettlementNetwork): string {
+  const url = getConfig().GATEWAY_API_URL ?? net.gatewayApiUrl;
+  const bearer = facilitatorBearer(net);
+  const arcFlag = net.chainName === "arc" ? "arc" : "";
+  return `${url}|${bearer ?? ""}|${arcFlag}`;
+}
+
 async function getFacilitator(net: SettlementNetwork = activeNetwork()): Promise<FacilitatorClient> {
   // GATEWAY_API_URL pins every network to one endpoint (a test/self-host override);
-  // otherwise the endpoint follows the resolved network (testnet vs mainnet).
-  const url = cfg.GATEWAY_API_URL ?? net.gatewayApiUrl;
-  const bearer = facilitatorBearer(net);
-  // Arc mainnet is a private preview: Gateway API calls need the preview header until GA.
-  const arcPreview = net.chainName === "arc";
-  const cacheKey = `${url}|${bearer ?? ""}|${arcPreview ? "arc" : ""}`;
+  // otherwise the endpoint follows the resolved network (testnet vs mainnet). Read
+  // fresh here too (not the frozen `cfg`) so it can never mix a stale url with the
+  // fresh bearer `facilitatorCacheKey`/`facilitatorHeaders` read.
+  const url = getConfig().GATEWAY_API_URL ?? net.gatewayApiUrl;
+  const cacheKey = facilitatorCacheKey(net);
   let promise = facilitators.get(cacheKey);
   if (!promise) {
     promise = import("@circle-fin/x402-batching/server").then(({ BatchFacilitatorClient }) => {
@@ -111,9 +137,7 @@ async function getFacilitator(net: SettlementNetwork = activeNetwork()): Promise
       // A bearer is optional — when set we thread it through as a bearer token
       // (useful for rate limits / a custom GATEWAY_API_URL).
       const config: Record<string, unknown> = { url };
-      const headers: Record<string, string> = {};
-      if (bearer) headers.authorization = `Bearer ${bearer}`;
-      if (arcPreview) headers["X-ARC-PRIVATE-MAINNET-ENABLED"] = "true";
+      const headers = facilitatorHeaders(net);
       if (Object.keys(headers).length > 0) {
         config.createAuthHeaders = async () => ({ verify: headers, settle: headers, supported: headers });
       }
