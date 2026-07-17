@@ -3,13 +3,23 @@
  * configSchema so we don't have to mutate process.env or the getConfig singleton.
  */
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { configSchema } from "./config.ts";
+import { afterEach, test } from "node:test";
+import { configSchema, getConfig, resetConfig } from "./config.ts";
 
 function issuePaths(env: Record<string, string>): string[] {
   const r = configSchema.safeParse(env);
   return r.success ? [] : r.error.issues.map((i) => i.path.join("."));
 }
+
+// getConfig()/resetConfig() drive process.env directly (unlike the configSchema.safeParse
+// tests above, which never touch it) — restore the env after so a dual-mode/Arc choice
+// never leaks into another test in this suite.
+afterEach(() => {
+  delete process.env.CIRCLE_API_KEY_TESTNET;
+  delete process.env.ARC_RPC_URL;
+  delete process.env.RELAYER_PRIVATE_KEY_MAINNET;
+  resetConfig();
+});
 
 test("mock mode with zero creds parses — the offline loop stays unbroken", () => {
   const r = configSchema.safeParse({});
@@ -102,4 +112,22 @@ test("WAYFARER_KILL_SWITCH coerces only 'true'/'1' to true; default false", () =
   assert.equal(kill("1"), true);
   assert.equal(kill("false"), false, "'false' does NOT coerce true (the naive z.coerce.boolean footgun)");
   assert.equal(kill("no"), false);
+});
+
+test("dual-mode + arc env vars parse and default to undefined", () => {
+  delete process.env.CIRCLE_API_KEY_TESTNET;
+  delete process.env.ARC_RPC_URL;
+  delete process.env.RELAYER_PRIVATE_KEY_MAINNET;
+  resetConfig();
+  const c = getConfig();
+  assert.equal(c.CIRCLE_API_KEY_TESTNET, undefined);
+  assert.equal(c.ARC_RPC_URL, undefined);
+  assert.equal(c.RELAYER_PRIVATE_KEY_MAINNET, undefined);
+
+  process.env.CIRCLE_API_KEY_TESTNET = "test-key";
+  process.env.ARC_RPC_URL = "https://arc.example/rpc";
+  resetConfig();
+  const c2 = getConfig();
+  assert.equal(c2.CIRCLE_API_KEY_TESTNET, "test-key");
+  assert.equal(c2.ARC_RPC_URL, "https://arc.example/rpc");
 });

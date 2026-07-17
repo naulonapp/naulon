@@ -63,7 +63,15 @@ export const configSchema = z.object({
   // Circle Gateway. GATEWAY_API_URL overrides the facilitator endpoint; the
   // testnet facilitator needs no key.
   CIRCLE_API_KEY: z.string().optional(),
+  // Test-environment facilitator bearer. Circle issues one test + one live key per
+  // account (the split is by ENVIRONMENT, not chain). getFacilitator picks this for a
+  // testnet leg and CIRCLE_API_KEY for a mainnet leg — so one process serves both.
+  // Unset ⇒ testnet falls back to CIRCLE_API_KEY (and the testnet facilitator works keyless).
+  CIRCLE_API_KEY_TESTNET: z.string().optional(),
   GATEWAY_API_URL: z.string().url().optional(),
+  // Arc MAINNET has no public RPC during the private preview — a settle on `arc`
+  // requires this. Fail-loud at settle time (not boot), so testnet deploys never need it.
+  ARC_RPC_URL: z.string().url().optional(),
 
   // Relayer key for the Arc self-relay (memo) settlement path. Required ONLY when
   // PAYMENT_MODE=gateway AND the active network ships the Memo predeploy (Arc) —
@@ -73,6 +81,9 @@ export const configSchema = z.object({
   // (buyer→author by the buyer's EIP-3009 authorization). Custody-free holds. A
   // settle-time guard (not boot) errors clearly if it's missing on a memo network.
   RELAYER_PRIVATE_KEY: z.string().optional(),
+  // Arc MAINNET memo-rail gas EOA. NO fallback to the testnet relayer key: mainnet gas
+  // is real money. An arc-mainnet memo settle without this fails loud (settle-time guard).
+  RELAYER_PRIVATE_KEY_MAINNET: z.string().optional(),
   // Override the Arc USDC EIP-712 domain `name` if it is ever not the standard
   // "USD Coin" (PREFLIGHT: confirm against the on-chain name() before real settle).
   USDC_EIP712_NAME: z.string().optional(),
