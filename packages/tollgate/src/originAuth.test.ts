@@ -85,3 +85,15 @@ test("inbound spoof is stripped, the real per-tenant secret wins", async () => {
   await app.request("/about", { headers: { host: "p.example", "x-naulon-origin-auth": "spoofed" } });
   assert.equal(captured[0]!.get("x-naulon-origin-auth"), "nlo_real");
 });
+
+// Byte-identical regression bar: with no BOT_AUTH_* configured (this file never
+// sets it), the origin pull carries NONE of the Web Bot Auth request headers —
+// the outbound request is exactly what it always was. The signed path is proven
+// in originAuthWba.test.ts, which boots a gate WITH the identity configured.
+test("no BOT_AUTH identity → the pull carries no RFC 9421 signature headers", async () => {
+  current = pub("https://origin.example", undefined);
+  await app.request("/about", { headers: { host: "p.example" } });
+  assert.equal(captured[0]!.get("signature"), null);
+  assert.equal(captured[0]!.get("signature-input"), null);
+  assert.equal(captured[0]!.get("signature-agent"), null);
+});
