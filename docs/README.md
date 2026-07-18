@@ -1,6 +1,6 @@
 # naulon docs
 
-Deeper references behind the [root README](../README.md). Start with whichever
+Deeper references behind the [root README](https://github.com/naulonapp/naulon/blob/main/README.md). Start with whichever
 side you're on.
 
 ### Getting your site tolled
@@ -22,7 +22,7 @@ You run the toll proxy in front of a site.
 
 - **[operating.md](./operating.md)** — the operator console: health, live toll
   traffic, earnings, and config sanity — and how to expose it safely.
-- **[../DEPLOY.md](../DEPLOY.md)** — click-by-click to host the gate on Vercel +
+- **[DEPLOY.md](https://github.com/naulonapp/naulon/blob/main/DEPLOY.md)** — click-by-click to host the gate on Vercel +
   Supabase in front of a real site.
 
 ### Protocol
@@ -36,5 +36,5 @@ You run the toll proxy in front of a site.
 
 The wire contracts (`credits-api`, `settlement-contract`, `citation-license`) are
 the breaking-change boundary self-hosters depend on. The runnable counterparts:
-[`packages/sdk/examples/next-credits/`](../packages/sdk/examples/next-credits) for
-the publisher side, [`examples/meridian/`](../examples/meridian) for a full toll.
+[`packages/sdk/examples/next-credits/`](https://github.com/naulonapp/naulon/tree/main/packages/sdk/examples/next-credits) for
+the publisher side, [`examples/meridian/`](https://github.com/naulonapp/naulon/tree/main/examples/meridian) for a full toll.
