@@ -10,6 +10,7 @@ straight to the author.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](./LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-black.svg)
+[![Built on Arc Network](https://img.shields.io/badge/built_on-Arc_Network-black.svg)](https://docs.arc.network/)
 
 </div>
 
