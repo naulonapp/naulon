@@ -172,6 +172,6 @@ you toll a small site without hosting anything dynamic.
 
 ## Reference
 
-[`packages/sdk/examples/next-credits/`](../packages/sdk/examples/next-credits) is a
+[`packages/sdk/examples/next-credits/`](https://github.com/naulonapp/naulon/tree/main/packages/sdk/examples/next-credits) is a
 runnable App Router app with both endpoints and a fixture — the fastest way to see
 the whole shape working before you wire your own data in.

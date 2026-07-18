@@ -1,0 +1,55 @@
+# Docs site config — builds the docs/ guides into a themed site published to
+# GitHub Pages by .github/workflows/pages.yml. The repo README stays the landing
+# page on github.com; this site is the deeper reference set. Cross-links out to
+# code (packages/, examples/, DEPLOY.md, root README) are absolute github.com
+# URLs so they resolve both here and in-repo. Source of truth stays the markdown
+# under docs/ — nothing is generated back into the repo.
+site_name: naulon docs
+site_description: The open citation toll for the agentic web.
+site_url: https://naulonapp.github.io/naulon/
+repo_url: https://github.com/naulonapp/naulon
+repo_name: naulonapp/naulon
+docs_dir: docs
+# Fail the build on a broken internal link or a nav gap — the site never ships
+# a dead cross-reference silently.
+strict: true
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - tables
+
+nav:
+  - Home: README.md
+  - Getting your site tolled:
+      - Integration guide: integration-guide.md
+      - Credits API contract: credits-api.md
+      - Settlement contract: settlement-contract.md
+  - Operating a gate:
+      - Operator console: operating.md
+  - Protocol:
+      - Citation License Token: citation-license.md
