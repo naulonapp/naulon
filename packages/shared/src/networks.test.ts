@@ -19,14 +19,22 @@ import {
   getNetwork,
   networkByCaip2,
   NETWORKS,
+  relayerKeyFor,
   supportsMemo,
+  supportsModularWallet,
   type NetworkName,
 } from "./networks.ts";
 
-const ALL: NetworkName[] = ["arcTestnet", "baseSepolia", "base"];
+const ALL: NetworkName[] = [
+  "arc", "base", "ethereum", "arbitrum", "optimism", "polygon",
+  "avalanche", "unichain", "sei", "sonic", "hyperEvm", "worldChain",
+  "arcTestnet", "baseSepolia",
+];
 
 afterEach(() => {
   delete process.env.SETTLEMENT_NETWORK;
+  delete process.env.RELAYER_PRIVATE_KEY;
+  delete process.env.RELAYER_PRIVATE_KEY_MAINNET;
   resetConfig();
 });
 
@@ -67,6 +75,23 @@ test("gatewayExtra names the network's own verifying contract", () => {
     version: "1",
     verifyingContract: NETWORKS.base.gatewayWallet,
   });
+});
+
+test("relayerKeyFor: testnet gas EOA on testnet, mainnet gas EOA on mainnet, NO fallback either way", () => {
+  process.env.RELAYER_PRIVATE_KEY = "testnet-relayer-key";
+  process.env.RELAYER_PRIVATE_KEY_MAINNET = "mainnet-relayer-key";
+  resetConfig();
+  assert.equal(relayerKeyFor(NETWORKS.arcTestnet), "testnet-relayer-key");
+  assert.equal(relayerKeyFor(NETWORKS.baseSepolia), "testnet-relayer-key");
+  assert.equal(relayerKeyFor(NETWORKS.arc), "mainnet-relayer-key");
+  assert.equal(relayerKeyFor(NETWORKS.base), "mainnet-relayer-key");
+
+  // Mainnet gas is real money — unlike the facilitator bearer, there is NO fallback
+  // to the testnet key when the mainnet var is unset.
+  delete process.env.RELAYER_PRIVATE_KEY_MAINNET;
+  resetConfig();
+  assert.equal(relayerKeyFor(NETWORKS.arc), undefined, "no silent fallback to the testnet relayer key on mainnet");
+  assert.equal(relayerKeyFor(NETWORKS.arcTestnet), "testnet-relayer-key", "testnet is unaffected by the mainnet var");
 });
 
 test("activeNetwork defaults to arcTestnet (safe: never silently mainnet)", () => {
@@ -111,7 +136,9 @@ test("networkByCaip2 maps a known CAIP-2 id back to its network", () => {
 });
 
 test("networkByCaip2 returns undefined for an unknown id (caller falls back to activeNetwork)", () => {
-  assert.equal(networkByCaip2("eip155:1"), undefined);
+  // eip155:1 (Ethereum mainnet) is now a registered chain in the 14-chain fleet, so an
+  // unmapped id must be one truly outside the registry.
+  assert.equal(networkByCaip2("eip155:999999999"), undefined);
   assert.equal(networkByCaip2("garbage"), undefined);
   assert.equal(networkByCaip2(""), undefined);
 });
@@ -125,4 +152,35 @@ test("supportsMemo narrows the type so the settle path reads memo without a non-
   } else {
     assert.fail("arcTestnet should have narrowed to memo-capable");
   }
+});
+
+test("all 12 mainnets carry the mainnet GatewayWallet; both testnets carry the testnet one", () => {
+  const MAINNET_GW = "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE";
+  const TESTNET_GW = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+  for (const name of ALL) {
+    const net = NETWORKS[name];
+    assert.equal(net.gatewayWallet, net.testnet ? TESTNET_GW : MAINNET_GW, `${name} gatewayWallet vs testnet flag`);
+  }
+});
+
+test("modular-wallet capability is present exactly on the modular-supported chains", () => {
+  const MODULAR = new Set<NetworkName>([
+    "base", "ethereum", "arbitrum", "optimism", "polygon", "avalanche", "unichain",
+    "arcTestnet", "baseSepolia",
+  ]);
+  for (const name of ALL) {
+    const net = NETWORKS[name];
+    assert.equal(supportsModularWallet(net), MODULAR.has(name), `${name} modular capability`);
+    if (supportsModularWallet(net)) assert.equal(typeof net.modularChainName, "string");
+  }
+  // The four gateway-only mainnets + arc-mainnet must NOT advertise an embedded wallet.
+  for (const name of ["sei", "sonic", "hyperEvm", "worldChain", "arc"] as NetworkName[]) {
+    assert.equal(supportsModularWallet(NETWORKS[name]), false, `${name} must be API-buyers-only`);
+  }
+});
+
+test("arc mainnet ships WITHOUT a memo field until the predeploy is verified on mainnet", () => {
+  assert.equal(supportsMemo(NETWORKS.arc), false, "arc mainnet memo is unverified — must be absent");
+  assert.equal(NETWORKS.arc.testnet, false);
+  assert.equal(NETWORKS.arc.network, "eip155:5042");
 });

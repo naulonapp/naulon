@@ -20,6 +20,7 @@ import {
   activeNetwork,
   getConfig,
   networkByCaip2,
+  relayerKeyFor,
   supportsMemo,
   type MemoAuthorization,
   type SettlementNetwork,
@@ -78,29 +79,71 @@ type FacilitatorClient = {
   verify: (p: unknown, r: unknown) => Promise<{ isValid: boolean; invalidReason?: string; payer?: string }>;
   settle: (p: unknown, r: unknown) => Promise<{ success: boolean; errorReason?: string; payer?: string; transaction?: string }>;
 };
-// Keyed by facilitator URL, NOT a single global — a multi-network fleet spans the
-// testnet AND mainnet facilitators, so one memoized client would settle a base
-// tenant against the testnet endpoint. One client per endpoint, built once.
+// Keyed by facilitator URL + which key — a multi-network fleet spans the testnet AND
+// mainnet facilitators AND holds two bearers, so a single global client would settle a
+// base tenant against the testnet endpoint (or with the wrong key). One client per
+// (endpoint, bearer), built once.
 const facilitators = new Map<string, Promise<FacilitatorClient>>();
+
+/** The facilitator bearer for a network: test key on testnet, live key on mainnet.
+ *  Circle's key split is by environment, not chain. Testnet falls back to the live key
+ *  when CIRCLE_API_KEY_TESTNET is unset (and the testnet facilitator also works keyless).
+ *  Reads config live on every call (not the module's frozen `cfg` snapshot) so a
+ *  `resetConfig()` mid-process is observed immediately — see the direct unit test.
+ *  Exported for the branch test; getFacilitator uses it. */
+export function facilitatorBearer(net: SettlementNetwork): string | undefined {
+  const c = getConfig();
+  return net.testnet ? (c.CIRCLE_API_KEY_TESTNET ?? c.CIRCLE_API_KEY) : c.CIRCLE_API_KEY;
+}
+
+/** The auth + Arc-preview header map for a network's facilitator calls: `authorization`
+ *  when a bearer is configured (see `facilitatorBearer`), plus the Arc private-mainnet
+ *  preview header when `net.chainName === "arc"`. Empty object when neither applies (the
+ *  testnet facilitator works keyless). Pure + exported so it's unit-testable without
+ *  module-mocking the SDK's dynamic import — `getFacilitator` is the only production
+ *  caller, so this IS the code that runs, not a parallel copy. */
+export function facilitatorHeaders(net: SettlementNetwork): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const bearer = facilitatorBearer(net);
+  if (bearer) headers.authorization = `Bearer ${bearer}`;
+  if (net.chainName === "arc") headers["X-ARC-PRIVATE-MAINNET-ENABLED"] = "true";
+  return headers;
+}
+
+/** The facilitator-client cache key for a network: endpoint + bearer + an Arc-preview
+ *  flag, so a multi-network fleet never shares a client across a different endpoint,
+ *  key, or preview requirement. Reads `GATEWAY_API_URL` FRESH (`getConfig()`, not the
+ *  module-frozen `cfg`) so it stays self-consistent with `facilitatorBearer` (also
+ *  fresh) within one `getFacilitator` call — see the module doc on `facilitatorBearer`.
+ *  Pure + exported for direct unit testing. */
+export function facilitatorCacheKey(net: SettlementNetwork): string {
+  const url = getConfig().GATEWAY_API_URL ?? net.gatewayApiUrl;
+  const bearer = facilitatorBearer(net);
+  const arcFlag = net.chainName === "arc" ? "arc" : "";
+  return `${url}|${bearer ?? ""}|${arcFlag}`;
+}
 
 async function getFacilitator(net: SettlementNetwork = activeNetwork()): Promise<FacilitatorClient> {
   // GATEWAY_API_URL pins every network to one endpoint (a test/self-host override);
-  // otherwise the endpoint follows the resolved network (testnet vs mainnet).
-  const url = cfg.GATEWAY_API_URL ?? net.gatewayApiUrl;
-  let promise = facilitators.get(url);
+  // otherwise the endpoint follows the resolved network (testnet vs mainnet). Read
+  // fresh here too (not the frozen `cfg`) so it can never mix a stale url with the
+  // fresh bearer `facilitatorCacheKey`/`facilitatorHeaders` read.
+  const url = getConfig().GATEWAY_API_URL ?? net.gatewayApiUrl;
+  const cacheKey = facilitatorCacheKey(net);
+  let promise = facilitators.get(cacheKey);
   if (!promise) {
     promise = import("@circle-fin/x402-batching/server").then(({ BatchFacilitatorClient }) => {
       // The testnet facilitator works keyless (see circlefin/arc-nanopayments).
-      // A CIRCLE_API_KEY is optional — when set we thread it through as a bearer
-      // token (useful for rate limits / a custom GATEWAY_API_URL).
+      // A bearer is optional — when set we thread it through as a bearer token
+      // (useful for rate limits / a custom GATEWAY_API_URL).
       const config: Record<string, unknown> = { url };
-      if (cfg.CIRCLE_API_KEY) {
-        const headers = { authorization: `Bearer ${cfg.CIRCLE_API_KEY}` };
+      const headers = facilitatorHeaders(net);
+      if (Object.keys(headers).length > 0) {
         config.createAuthHeaders = async () => ({ verify: headers, settle: headers, supported: headers });
       }
       return new BatchFacilitatorClient(config) as unknown as FacilitatorClient;
     });
-    facilitators.set(url, promise);
+    facilitators.set(cacheKey, promise);
   }
   return promise;
 }
@@ -166,8 +209,12 @@ export async function verifyAndSettle(
  *  buyer's authorization; the relayer only pays gas. */
 async function settleMemo(pairs: LegPair[], net: SettlementNetwork, now: number, publisherId?: string): Promise<VerifyResult> {
   if (!supportsMemo(net)) return { ok: false, error: `network ${net.chainName} has no Memo predeploy` };
-  const relayerKey = cfg.RELAYER_PRIVATE_KEY;
-  if (!relayerKey) return { ok: false, error: "RELAYER_PRIVATE_KEY required for memo-network settlement" };
+  const relayerKey = relayerKeyFor(net);
+  if (!relayerKey) {
+    return { ok: false, error: net.testnet
+      ? "RELAYER_PRIVATE_KEY required for memo-network settlement"
+      : "RELAYER_PRIVATE_KEY_MAINNET required for mainnet memo-network settlement" };
+  }
   const key = (relayerKey.startsWith("0x") ? relayerKey : `0x${relayerKey}`) as `0x${string}`;
   const relayer = await relayerAddress(key);
 
@@ -408,9 +455,12 @@ async function relayPendingLeg(
   net: ReturnType<typeof activeNetwork>,
   now: number,
 ): Promise<string | undefined> {
-  const relayerKey = cfg.RELAYER_PRIVATE_KEY;
+  const relayerKey = relayerKeyFor(net);
   if (!relayerKey) {
-    console.error(`[tollgate] pending leg ${leg.id}: RELAYER_PRIVATE_KEY required for memo settlement`);
+    const msg = net.testnet
+      ? "RELAYER_PRIVATE_KEY required for memo settlement"
+      : "RELAYER_PRIVATE_KEY_MAINNET required for mainnet memo settlement";
+    console.error(`[tollgate] pending leg ${leg.id}: ${msg}`);
     return undefined;
   }
   const payload = leg.payload as { authorization?: MemoAuthorization; signature?: `0x${string}` };

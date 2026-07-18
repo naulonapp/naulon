@@ -19,9 +19,9 @@ process.env.SETTLEMENT_NETWORK = "baseSepolia";
 process.env.LICENSES_ENABLED = "false"; // no signing key needed — we only reach the settle branch
 delete process.env.RELAYER_PRIVATE_KEY;
 
-const { resetConfig } = await import("@naulon/shared");
+const { resetConfig, NETWORKS } = await import("@naulon/shared");
 resetConfig();
-const { verifyAndSettle } = await import("./x402.ts");
+const { verifyAndSettle, facilitatorBearer, facilitatorHeaders, facilitatorCacheKey } = await import("./x402.ts");
 
 /** An Arc (memo-capable) leg — a per-tenant chain that differs from the fleet default. */
 function arcLeg(): PaymentRequirements {
@@ -44,4 +44,94 @@ test("an Arc leg routes to the MEMO settle path even when the fleet default is b
   const res = await verifyAndSettle(sig, [{ role: "author", requirements: arcLeg() }], Date.now());
   assert.equal(res.ok, false);
   assert.match(res.error ?? "", /RELAYER_PRIVATE_KEY required for memo-network settlement/);
+});
+
+test("facilitatorBearer picks test key on testnet, live key on mainnet", () => {
+  process.env.CIRCLE_API_KEY = "live-key";
+  process.env.CIRCLE_API_KEY_TESTNET = "test-key";
+  resetConfig();
+  try {
+    assert.equal(facilitatorBearer(NETWORKS.baseSepolia), "test-key");
+    assert.equal(facilitatorBearer(NETWORKS.arcTestnet), "test-key");
+    assert.equal(facilitatorBearer(NETWORKS.base), "live-key");
+    assert.equal(facilitatorBearer(NETWORKS.ethereum), "live-key");
+
+    delete process.env.CIRCLE_API_KEY_TESTNET;
+    resetConfig();
+    assert.equal(facilitatorBearer(NETWORKS.baseSepolia), "live-key", "testnet falls back to live key when _TESTNET unset");
+  } finally {
+    delete process.env.CIRCLE_API_KEY;
+    delete process.env.CIRCLE_API_KEY_TESTNET;
+    resetConfig();
+  }
+});
+
+test("facilitatorHeaders: bearer + Arc-preview header, scoped to Arc only", () => {
+  process.env.CIRCLE_API_KEY = "live-key";
+  resetConfig();
+  try {
+    // Mainnet base with a live key: auth header only, no preview header.
+    assert.deepEqual(facilitatorHeaders(NETWORKS.base), { authorization: "Bearer live-key" });
+    // Arc: BOTH the auth header and the private-mainnet preview header.
+    assert.deepEqual(facilitatorHeaders(NETWORKS.arc), {
+      authorization: "Bearer live-key",
+      "X-ARC-PRIVATE-MAINNET-ENABLED": "true",
+    });
+    // A different mainnet chain must never pick up the Arc-only preview header.
+    assert.deepEqual(facilitatorHeaders(NETWORKS.ethereum), { authorization: "Bearer live-key" });
+    assert.equal(
+      "X-ARC-PRIVATE-MAINNET-ENABLED" in facilitatorHeaders(NETWORKS.ethereum),
+      false,
+      "preview header must not leak onto a non-Arc mainnet",
+    );
+  } finally {
+    delete process.env.CIRCLE_API_KEY;
+    resetConfig();
+  }
+});
+
+test("facilitatorHeaders: keyless testnet → empty header map", () => {
+  delete process.env.CIRCLE_API_KEY;
+  delete process.env.CIRCLE_API_KEY_TESTNET;
+  resetConfig();
+  try {
+    assert.deepEqual(facilitatorHeaders(NETWORKS.baseSepolia), {});
+  } finally {
+    resetConfig();
+  }
+});
+
+test("facilitatorCacheKey: differs across env/url, isolates Arc from a same-endpoint mainnet, stable per env", () => {
+  process.env.CIRCLE_API_KEY = "live-key";
+  resetConfig();
+  try {
+    const baseKey = facilitatorCacheKey(NETWORKS.base);
+
+    // Single stable env → stable (repeatable) key — the facilitator Map depends on
+    // this to reuse one client instead of rebuilding per call.
+    assert.equal(facilitatorCacheKey(NETWORKS.base), baseKey);
+
+    // Arc shares base's mainnet facilitator endpoint + bearer, but must still key to
+    // a DIFFERENT client (the preview header only applies to Arc) — differing by
+    // exactly the trailing "arc" segment.
+    const arcKey = facilitatorCacheKey(NETWORKS.arc);
+    assert.notEqual(arcKey, baseKey);
+    assert.equal(arcKey, `${baseKey}arc`);
+
+    // A different bearer (env) → a different key.
+    process.env.CIRCLE_API_KEY = "live-key-2";
+    resetConfig();
+    const rekeyedBase = facilitatorCacheKey(NETWORKS.base);
+    assert.notEqual(rekeyedBase, baseKey);
+
+    // A different GATEWAY_API_URL override → a different key too.
+    process.env.GATEWAY_API_URL = "https://gateway-api-custom.example.com";
+    resetConfig();
+    const rehostedBase = facilitatorCacheKey(NETWORKS.base);
+    assert.notEqual(rehostedBase, rekeyedBase);
+  } finally {
+    delete process.env.CIRCLE_API_KEY;
+    delete process.env.GATEWAY_API_URL;
+    resetConfig();
+  }
 });
