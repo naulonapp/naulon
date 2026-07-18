@@ -50,7 +50,7 @@ and `enforce/src/nonce.ts`.
   end).
 - A **Supabase account** (free tier; 500 MB is plenty).
 - Access to the **DNS** for the site's domain (to add one subdomain record).
-- For real settlement: a funded **Arc-testnet** wallet (`PAYMENT_MODE=gateway`).
+- For real settlement: a funded **Arc Network testnet** wallet (`PAYMENT_MODE=gateway`).
   To demo the loop without a chain, use `PAYMENT_MODE=mock` — it still settles,
   records, and lights up the dashboard.
 

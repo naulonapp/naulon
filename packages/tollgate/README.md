@@ -7,7 +7,7 @@ Every request is classified (`agentDetect`): a human is proxied straight to your
 origin, a machine gets an HTTP `402 Payment Required` carrying the price, the
 author wallet(s) to pay, and a signed, single-use nonce. The agent signs a USDC
 payment, echoes the nonce, and retries; the gate verifies it — in mock mode
-against the HMAC nonce, live against Circle Gateway on Arc — serves the content,
+against the HMAC nonce, live against Circle Gateway on Arc Network — serves the content,
 mints a [Citation License](../../docs/citation-license.md), and records who earned
 what in the event log.
 

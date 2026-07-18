@@ -25,7 +25,7 @@ decisions:
 
 It runs offline against mock settlement. Set `OPENAI_API_KEY` for LLM appraisal
 and answer synthesis instead of the keyword heuristic; set `PAYMENT_MODE=gateway`
-with a funded buyer wallet to pay for real over Circle Gateway on Arc.
+with a funded buyer wallet to pay for real over Circle Gateway on Arc Network.
 
 ## What's inside
 

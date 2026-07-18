@@ -24,8 +24,8 @@ old coin you paid to cross.
 
 The toll is what keeps the work open: machines subsidize the free human read.
 
-Built on the [Circle](https://www.circle.com/) nanopayment rail, Arc-first on the
-[Arc](https://docs.arc.network/) chain — with the wider set of Circle Gateway
+Built on the [Circle](https://www.circle.com/) nanopayment rail, Arc-first on
+[Arc Network](https://docs.arc.network/) — with the wider set of Circle Gateway
 chains in the network registry — so a single read can cost a fraction of a cent
 and still settle.
 
@@ -422,3 +422,6 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, conventions, and PR rules.
 
 <sub>Built during the Lepton Agents hackathon (Canteen × Circle, on Arc) — kept
 general so anyone can run it.</sub>
+
+<sub>Arc is a trademark of Circle Internet Group, Inc. and/or its affiliates.
+naulon is an independent project, not endorsed by or affiliated with Circle.</sub>

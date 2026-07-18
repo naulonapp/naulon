@@ -26,7 +26,7 @@ Register it with your MCP client (example — Claude Desktop `mcpServers`):
 ```
 
 It runs offline against mock settlement by default. Provide a funded wallet and
-`PAYMENT_MODE=gateway` to pay tolls for real over Circle Gateway on Arc; a hosted
+`PAYMENT_MODE=gateway` to pay tolls for real over Circle Gateway on Arc Network; a hosted
 deployment can sign through a cloud signer (`cloud-signer.ts`) instead of holding a
 raw key.
 
