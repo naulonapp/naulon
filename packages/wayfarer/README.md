@@ -13,7 +13,7 @@ reasoning is the artifact.
 
 ```bash
 npm run -w @naulon/tollgate dev &                    # the gate to pay
-npm run -w @naulon/wayfarer -- "payment and passage" # the agent
+npm run -w @naulon/wayfarer start -- "payment and passage" # the agent
 ```
 
 ```text
@@ -25,7 +25,7 @@ decisions:
 
 It runs offline against mock settlement. Set `OPENAI_API_KEY` for LLM appraisal
 and answer synthesis instead of the keyword heuristic; set `PAYMENT_MODE=gateway`
-with a funded buyer wallet to pay for real over Circle's Gateway on Arc.
+with a funded buyer wallet to pay for real over Circle Gateway on Arc.
 
 ## What's inside
 

@@ -1,7 +1,6 @@
 # Contributing
 
-Thanks for helping build the citation toll. This is a small TypeScript monorepo;
-you can be productive in minutes.
+Thanks for helping build the citation toll. This is a small TypeScript monorepo.
 
 ## Setup
 

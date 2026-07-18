@@ -37,7 +37,7 @@ breaks the HMAC.
   "eventId": "11111111-2222-4333-8444-555555555555", // stable id — your dedupe key
   "slug": "on-stillness",
   "txHash": "0xfeed…",
-  "chainId": 5042002,
+  "chainId": 5042002,                      // the settlement network's chain id (Arc testnet here)
   "currency": "USDC",
   "grossAmount": "5000",                  // integer micro-USDC, as a string
   "paidTo": "0x1111111111111111111111111111111111111111",   // the on-chain recipient

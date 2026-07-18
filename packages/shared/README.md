@@ -16,8 +16,8 @@ package one layer up gets the whole contract from a single import.
 npm install @naulon/shared
 ```
 
-You usually don't add this directly — it arrives as a dependency of `@naulon/sdk`
-and [`@naulon/enforce`](https://www.npmjs.com/package/@naulon/enforce). Install it
-on its own only if you're consuming the shared types or config loader directly.
+You usually don't add this directly — it arrives as a dependency of
+[`@naulon/enforce`](https://www.npmjs.com/package/@naulon/enforce) and of the gate.
+Install it on its own only if you're consuming the shared types or config loader directly.
 
 MIT.

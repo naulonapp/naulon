@@ -57,10 +57,10 @@ sequenceDiagram
 | Question | Decision | Why |
 |---|---|---|
 | Token binding & TTL | Bind to **slug + kind + iss + aud** (all mandatory-equal); `kind` is equal-or-greater privilege (a citation license entitles a read, never the reverse). `sub`=payer is a **provenance claim only**, not a re-read security boundary in v1. TTL default **600s**, hard cap 3600s. | slug-only = a public free-read coupon; slug+`sub` is illusory over plain HTTP (no proof-of-possession on a GET). The honest model is a short-TTL bearer entitlement; TTL is the only offline kill switch. Matches the nonce's existing amount+payTo+network binding bar. |
-| Claim surface | Embed **full `payees[]`** by default (`LICENSE_PAYEES_MODE=full`); `hashed` mode emits `payeesHash` + primary `payTo` only. | Transparency (recursive co-author split) is the judged innovation axis and wallets are already public on-chain via `settlementRef`. Hashed is a first-class option for publishers who don't want the full graph cached. |
-| Key management | **Stable key required** off the mock path (zod superRefine, mirrors the supabase-creds check). Ephemeral only single-instance mock. JWKS always carries a `kid = base64url(SHA-256(rawPublicKey))[:16]`. | Unanimous, highest-severity finding. Ephemeral on Vercel fan-out makes JWKS + paid re-read non-deterministic and voids licenses on every cold start. `kid` makes rotation/revocation possible. |
+| Claim surface | Embed **full `payees[]`** by default (`LICENSE_PAYEES_MODE=full`); `hashed` mode emits `payeesHash` + primary `payTo` only. | The recursive co-author split is the thing the token exists to prove, and wallets are already public on-chain via `settlementRef`. Hashed is a first-class option for publishers who don't want the full graph cached. |
+| Key management | **Stable key required** off the mock path (zod superRefine, mirrors the supabase-creds check). Ephemeral only single-instance mock. JWKS always carries a `kid = base64url(SHA-256(rawPublicKey))[:16]`. | Ephemeral keys on Vercel fan-out make JWKS + paid re-read non-deterministic and void licenses on every cold start. `kid` makes rotation/revocation possible. |
 | Revocation | **Seam in v1**, enforced on the **online tier + the gate's own re-read path** (a `jti` denylist reusing the ConsumedStore/Supabase pattern) + **kid-based** key revocation. The **offline JWKS tier stays exp-only** by nature (documented limit, bounded by short TTL). | Strongest middle: a remedy for leak/key-compromise exists without forcing shared state onto the offline/mock/no-creds path. |
-| JWS hardening | Verifier ignores `alg`, hard-pins EdDSA; rejects `alg:none`, `crit/jku/x5u/jwk`, >4 KB input, wrong segment count / non-base64url; verifies literal received ASCII bytes; reads claims post-verify only. | All three personas; security rated critical. The published public key makes HMAC-confusion forgery *practical*, not theoretical. |
+| JWS hardening | Verifier ignores `alg`, hard-pins EdDSA; rejects `alg:none`, `crit/jku/x5u/jwk`, >4 KB input, wrong segment count / non-base64url; verifies literal received ASCII bytes; reads claims post-verify only. | The published public key makes HMAC-confusion forgery *practical*, not theoretical. |
 | Route order & jti | Register `/.well-known/naulon-jwks.json` and `/licenses/:jti` **before** `app.all('*')`; exclude those prefixes in `slugFromPath`. Change `event.id`/`jti` to a **full `randomUUID()`** (drop `.slice(0,8)`); keep `:` out of the composed id. | The catch-all otherwise proxies the routes to origin. The sliced UUID risks a `jti` collision → Supabase `ignore-duplicates` silently drops a *paid* event and `/licenses/:jti` returns the wrong one. |
 
 ## Token spec (CLT v1)
@@ -259,7 +259,7 @@ The mock wayfarer derives a deterministic, non-secret **dev wallet** from a fixe
 6. **Clock skew beyond 60s** across instances can prematurely reject a near-`exp` license — mitigated by keeping TTL ≫ skew, not eliminated.
 7. **Key rotation is operational/manual in v1** — a mis-sequenced rotation can invalidate outstanding licenses early.
 
-## The demo (answers the chicken-and-egg with zero external buy-in)
+## The demo
 
 Lead with **the agent's self-interested free re-read** (pay once, re-read free,
 visible in the wayfarer's reasoning) **+ one <10-line trustless `jose` verify**

@@ -19,7 +19,7 @@ coupling to the publisher (the gate talks to it purely over HTTP):
 
 ```
    agent  ──▶  naulon.<site>     (Vercel project A — the tollgate)
-                  │  402 → pay USDC on Arc → settles to the author
+                  │  402 → pay USDC (Arc by default) → settles to the author
                   │  on success, proxies upstream to:
                   ▼
                <site>            (the publisher's own site, untouched)
@@ -40,7 +40,7 @@ Vercel runs your function as many short-lived instances with no shared disk, so
 the JSONL ledger and the in-process nonce set (replay protection) can't live
 locally. Both sit behind interfaces (`EventSink`, `ConsumedStore`) with a Supabase
 implementation; you turn them on with two env vars. See `shared/src/eventsink.ts`
-and `tollgate/src/nonce.ts`.
+and `enforce/src/nonce.ts`.
 
 ---
 
@@ -92,6 +92,7 @@ and `tollgate/src/nonce.ts`.
    | `ARTICLE_PATH_PREFIXES` | e.g. `essays` | which URL prefixes are gateable; match the site |
    | `DEFAULT_PRICE_USDC` | e.g. `0.001` | per machine read |
    | `CITATION_MULTIPLIER` | e.g. `5` | a citation costs this × a read (default 5; 1 = same) |
+   | `SETTLEMENT_NETWORK` | `arcTestnet` (default) | `arcTestnet` · `baseSepolia` · `base` — Arc-first; the full Circle chain registry lives in `shared/src/networks.ts` |
    | `PAYMENT_MODE` | `mock` or `gateway` | start `mock` to prove the path, switch to `gateway` once a wallet is funded |
    | `CREDITS_API_URL` *or* `CREDITS_FIXTURES` | author resolution | how slugs map to wallets — see `examples/meridian` |
    | `LICENSE_SIGNING_KEY` | an Ed25519 PKCS8 PEM | **secret; required** once `PAYMENT_MODE=gateway` *or* any `*_BACKEND=supabase` — an ephemeral key breaks license verification across instances. Generate: `node -e "const{generateKeyPairSync}=require('crypto');console.log(generateKeyPairSync('ed25519',{privateKeyEncoding:{type:'pkcs8',format:'pem'}}).privateKey)"` |
@@ -101,7 +102,7 @@ and `tollgate/src/nonce.ts`.
    Add the Arc/Circle vars (`CIRCLE_API_KEY`, `GATEWAY_API_URL`, …) only when you
    move `PAYMENT_MODE=gateway`; the testnet facilitator needs no key.
 5. **Deploy.** Smoke-test the health route: `curl https://<deployment>/healthz`
-   → `{"ok":true,"service":"tollgate"}`.
+   → `{"ok":true,"service":"tollgate","startedAt":…}`.
 
 ## 3. Vercel project B — the dashboard
 

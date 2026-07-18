@@ -51,7 +51,7 @@ between `petrova` and `haddad` (50/50). Three levels of normalization collapse
 to a clean 25% each — across different graph depths — and the shares still sum
 to exactly 1. That recursion is the attribution layer's job; the x402 on-chain
 leg still pays a single primary author, with the full split recorded on the
-event (see the root `AGENTS.md` "one known constraint").
+event (see "One payment, one `payTo`" under "Going live on Arc" in the root README).
 
 ## Building your own adapter
 

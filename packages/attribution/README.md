@@ -25,7 +25,7 @@ flowchart LR
     Carry --> Accrue
 ```
 
-Mock settlement runs offline. Real payouts go over Circle's Gateway batching on Arc
+Mock settlement runs offline. Real payouts go over Circle Gateway batching on Arc
 with `PAYMENT_MODE=gateway` and a funded wallet. Payments are custody-free — money
 moves agent → author; the toll never pools USDC in a wallet the operator controls.
 

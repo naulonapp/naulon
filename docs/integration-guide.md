@@ -130,7 +130,7 @@ endpoint — it validates a real slug against the contract and confirms a nonsen
 returns `404`:
 
 ```bash
-npx @naulon/sdk check https://your-site.example/api --slug a-real-slug
+npx naulon-kit check https://your-site.example/api --slug a-real-slug
 # add --token <t> if your endpoint is bearer-gated;
 # add --secret <s> to also print a signed settlement fixture for the test above.
 ```

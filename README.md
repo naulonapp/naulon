@@ -24,9 +24,10 @@ old coin you paid to cross.
 
 The toll is what keeps the work open: machines subsidize the free human read.
 
-Built on [Circle](https://www.circle.com/)'s nanopayment rail and the
-[Arc](https://docs.arc.network/) chain, so a single read can cost a fraction of a
-cent and still settle.
+Built on the [Circle](https://www.circle.com/) nanopayment rail, Arc-first on the
+[Arc](https://docs.arc.network/) chain — with the wider set of Circle Gateway
+chains in the network registry — so a single read can cost a fraction of a cent
+and still settle.
 
 ## How it works
 
@@ -111,7 +112,7 @@ curl -H 'accept: text/html' -A 'Mozilla/5.0' localhost:8402/essays/on-stillness
 
 # an agent gets a bill
 curl -A 'python-requests' localhost:8402/essays/on-stillness
-# → 402 { price: 0.001, payees: [{ wallet, share }], nonce, ... }
+# → 402 { x402Version: 2, resource, accepts: [{ scheme, network, asset, amount, payTo, extra: { nonce } }] }
 
 # a co-authored piece, cited rather than read: 5× the price by default
 # (CITATION_MULTIPLIER), split 2:1
@@ -279,23 +280,29 @@ no build step while developing.
 ## Going live on Arc
 
 Everything above runs in **mock** settlement so you can develop offline. The real
-rail is wired to Circle's Gateway batching SDK (`@circle-fin/x402-batching`) on
-Arc — flip `PAYMENT_MODE` to switch:
+rail is wired to the Circle Gateway batching SDK (`@circle-fin/x402-batching`),
+Arc-first — flip `PAYMENT_MODE` to switch:
 
 ```bash
-make generate-wallets         # a buyer + author wallet; fund the buyer via Circle's Arc faucet
+make generate-wallets         # a buyer + author wallet; fund the buyer via the Circle faucet on Arc
 # put PAYMENT_MODE=gateway and BUYER_PRIVATE_KEY in .env
 PAYMENT_MODE=gateway make wayfarer TOPIC="payment and passage"
 ```
 
 - **Seller (tollgate):** `BatchFacilitatorClient.verify` / `.settle` against the
-  Arc GatewayWallet (`0x0077777d7EBA…`, network `eip155:5042002`). No seller key
+  Arc GatewayWallet (`0x0077777d7EBA…`, network `eip155:5042002`, Arc testnet). No seller key
   — Gateway settles the buyer's deposit straight to the author. Custody-free.
 - **Buyer (wayfarer):** `GatewayClient.deposit` once, then `.pay()` per citation
   runs the full deposit-backed 402 flow (gasless, batched, <500ms finality).
 - **One payment, one `payTo`.** x402 settles to a single address, so the on-chain
   leg pays the article's primary author; the recursive co-author split is the
   attribution layer's job (its onward payouts). The split is always recorded.
+- **Network.** `SETTLEMENT_NETWORK` picks the chain — `arcTestnet` (default),
+  `baseSepolia`, or `base`. Arc is the first-class rail (it ships the Memo
+  contract that carries the citation reference); the full Circle chain registry,
+  Arc mainnet included, lives in
+  [`shared/src/networks.ts`](./packages/shared/src/networks.ts), and chains light
+  up as live settlement is verified on each.
 
 ```mermaid
 sequenceDiagram
@@ -353,7 +360,7 @@ nothing here is held back to push you toward it.
   wallet we control, which keeps the operator clear of money-transmission rules.
 - **Conservative classifier.** Mistaking a human for a machine paywalls a reader
   and breaks the whole promise; mistaking a machine for a human just misses a
-  fraction of a cent. So [`agentDetect`](./packages/tollgate/src/agentDetect.ts)
+  fraction of a cent. So [`agentDetect`](./packages/enforce/src/agentDetect.ts)
   is tuned to favor humans, and declared intent (an agent that *says* it'll pay)
   is trusted over fragile user-agent sniffing.
 - **No secrets in the repo.** Credentials live in `.env` (gitignored); only
@@ -365,10 +372,10 @@ The gate is built to sit on the public internet in front of a real site:
 
 - **Replay-proof payments.** Every `402` carries a fresh, HMAC-signed nonce bound
   to the price + payee; the agent echoes it in its payment and the gate spends it
-  exactly once ([`nonce.ts`](./packages/tollgate/src/nonce.ts)). A captured
+  exactly once ([`nonce.ts`](./packages/enforce/src/nonce.ts)). A captured
   `payment-signature` can't be replayed for a free read, and a cheap nonce can't
-  be swapped onto a pricier resource. Mandatory in mock mode; live, Circle's
-  deposit-backed settlement is the chain-level guarantor.
+  be swapped onto a pricier resource. Mandatory in mock mode; live, the
+  deposit-backed Circle Gateway settlement is the chain-level guarantor.
 - **Rate limiting.** A per-client token bucket
   ([`rateLimit.ts`](./packages/tollgate/src/rateLimit.ts)) caps request floods.
   Client identity is the socket peer IP; `X-Forwarded-For` is trusted only when
