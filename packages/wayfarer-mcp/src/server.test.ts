@@ -928,7 +928,7 @@ test("C3 — hosted signer WITH popWallet injected ⇒ no warn", async () => {
 // ── Slice A′ — URL-centric discrete MCP tools ──────────────────────────────────
 // The composite run()/naulon_research pipeline is URL-centric (Slice A). These prove
 // the DISCRETE tools carry the canonical url too, so a hosted MCP pays a publisher's
-// real /articles/<slug> link (inneraxiom's shape) instead of the reconstructed
+// real /articles/<slug> link (a typical publisher's shape) instead of the reconstructed
 // /essays/<slug> template. Absent a url, quote/pay must still fall back to the template.
 
 test("A′: naulon_discover surfaces each candidate's canonical url", async () => {

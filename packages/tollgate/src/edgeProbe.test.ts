@@ -9,12 +9,12 @@ import { app } from "./app.ts";
 
 test("GET /.well-known/naulon-edge returns the naulon marker + echoes the Host", async () => {
   const res = await app.request("/.well-known/naulon-edge", {
-    headers: { host: "inneraxiom.com" },
+    headers: { host: "meridian.example" },
   });
   assert.equal(res.status, 200);
   const body = (await res.json()) as { gate: string; host: string };
   assert.equal(body.gate, "naulon", "the marker only a naulon gate emits");
-  assert.equal(body.host, "inneraxiom.com", "echoes the Host the gate saw, so the caller confirms the domain it probed");
+  assert.equal(body.host, "meridian.example", "echoes the Host the gate saw, so the caller confirms the domain it probed");
 });
 
 test("edge probe is host-independent — an unknown host still gets the marker (routing != tenant config)", async () => {
