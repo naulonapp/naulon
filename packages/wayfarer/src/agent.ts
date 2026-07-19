@@ -8,7 +8,7 @@
  */
 import { activeNetwork, getConfig, supportsMemo, usdc, verifyLicense, type JwkSet } from "@naulon/shared";
 import { appraise } from "./appraise.ts";
-import { rereadWithLicense, selectBuyer } from "./buyer.ts";
+import { quotedTotalAtomic, rereadWithLicense, selectBuyer } from "./buyer.ts";
 import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
 import { memoBuyer, type MemoSigner } from "./memo.ts";
 import { railBuyer, type RailSigners } from "./rail.ts";
@@ -154,10 +154,16 @@ export async function run(
 
   // 2. price (free x402 probes — no payment yet)
   const priced: PricedCandidate[] = [];
+  // The TRUE total (all legs, atomic micro-USDC) each candidate was quoted at here. The pay step
+  // uses it as the toll-moved ceiling, so a gate that quotes low at appraisal and charges more at
+  // pay time is aborted — the BUY-1.4 guarantee. Budget-remaining alone cannot detect that.
+  const quotedTotals = new Map<string, bigint>();
   for (const c of candidates) {
     const quoted = await buyer.price(c.url ?? articleUrl(base, c.slug), "citation");
-    if (quoted) priced.push({ ...c, price: usdc(quoted.priceUsdc) });
-    else log(`  · ${c.slug}: not gated — skipping`);
+    if (quoted) {
+      priced.push({ ...c, price: usdc(quoted.priceUsdc) });
+      quotedTotals.set(c.slug, quotedTotalAtomic(quoted));
+    } else log(`  · ${c.slug}: not gated — skipping`);
   }
   log(`priced ${priced.length} gated essays`);
 
@@ -173,7 +179,12 @@ export async function run(
   const licensed = new Set([...held.values()].filter((h) => isLive(h, nowSec)).map((h) => h.slug));
   if (licensed.size) log(`\nholding ${licensed.size} live license(s) — those re-read free`);
 
-  const decisions = decide(appraised, budget, licensed, opts.policy ?? DEFAULT_POLICY, opts.decideContext);
+  // gateBase lets decide() resolve a slug-only candidate to the SAME url the pay step below uses,
+  // so domain policy is evaluated against the host that actually gets paid (never Candidate.host).
+  const decisions = decide(appraised, budget, licensed, opts.policy ?? DEFAULT_POLICY, {
+    ...opts.decideContext,
+    gateBase: opts.decideContext?.gateBase ?? base,
+  });
   log(`\ndecisions:`);
   for (const d of decisions) log(`  [${d.action.toUpperCase()}] ${d.slug} — ${d.reason}`);
 
@@ -209,12 +220,26 @@ export async function run(
     }
 
     if (d.action !== "pay") continue;
-    const result = await buyer.fetch(url, "citation");
+    // The pay-time ceiling is the TIGHTER of two independent bounds:
+    //   · toll-moved  — the total this candidate was quoted at in step 2, plus the configured
+    //     tolerance. Catches a gate that quotes low at appraisal and charges more at pay time
+    //     (a budget check alone cannot: the inflated price still "fits").
+    //   · budget      — what is actually left. decide() plans against the AUTHOR-leg price, which
+    //     under-counts a fee'd toll, so its plan can exceed budget.
+    // Whichever is smaller wins; exceeding it aborts the pay having spent nothing.
+    const remainingAtomic = BigInt(Math.max(0, Math.round((budget - spent) * 1_000_000)));
+    const quotedAtomic = quotedTotals.get(d.slug);
+    const bps = BigInt(cfg.WAYFARER_TOLL_TOLERANCE_BPS);
+    const tollCeiling = quotedAtomic === undefined ? undefined : quotedAtomic + (quotedAtomic * bps) / 10_000n;
+    const ceiling = tollCeiling === undefined ? remainingAtomic : (tollCeiling < remainingAtomic ? tollCeiling : remainingAtomic);
+    const result = await buyer.fetch(url, "citation", { maxTotalAtomic: ceiling.toString() });
     if (!result.ok) {
       log(`  ✗ payment failed for ${d.slug}: ${result.error}`);
       continue;
     }
-    spent += result.paidUsdc ?? d.price;
+    // Debit the TRUE total across all legs (costUsdc), not the author leg (paidUsdc) — else a
+    // fee'd toll under-counts spend and the loop keeps buying past budget.
+    spent += result.costUsdc ?? result.paidUsdc ?? d.price;
 
     let licenseId: string | undefined;
     if (result.license) {

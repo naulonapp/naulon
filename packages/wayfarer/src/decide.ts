@@ -61,11 +61,111 @@ export interface DecideContext {
    * runs), added to this run's per-host count when enforcing `perDomainCap`.
    */
   priorDomainCounts?: Record<string, number>;
+  /**
+   * The configured gate base URL. Supplied so `decide()` can resolve a slug-only candidate to the
+   * SAME url the pay step will use (`c.url ?? articleUrl(gateBase, c.slug)`), and evaluate domain
+   * policy against that real target. Without it a slug-only candidate has no derivable host and is
+   * treated as unknown — which an allowlist correctly denies by default.
+   */
+  gateBase?: string;
 }
 
 /** Normalize a host for policy matching: lower-cased, trimmed; `undefined` stays `undefined`. */
 function normHost(host: string | undefined): string | undefined {
   return host?.trim().toLowerCase() || undefined;
+}
+
+/**
+ * The hostname money will actually go to, mirroring the pay step's own resolution
+ * (`c.url ?? articleUrl(gateBase, c.slug)`). This — not the discovery source's `Candidate.host`
+ * field — is what domain policy is evaluated against, so an allow/deny decision can never be made
+ * about a different host than the one that gets paid. Returns undefined when no url is derivable
+ * (an allowlist then denies by default).
+ */
+export function payHostOf(url: string | undefined, gateBase: string | undefined, slug: string): string | undefined {
+  const candidates = [url, gateBase && slug ? `${gateBase.replace(/\/+$/, "")}/${slug}` : undefined];
+  for (const u of candidates) {
+    if (!u) continue;
+    try {
+      return new URL(u).hostname.toLowerCase();
+    } catch {
+      /* not a parseable absolute URL — fall through to the next candidate */
+    }
+  }
+  return undefined;
+}
+
+/** The shared spend gate's verdict. `approve` means "real, but needs a human" — distinct from
+ *  `skip` so callers can surface a human-approval affordance rather than a flat refusal. */
+export type SpendVerdict = { ok: true } | { ok: false; action: "skip" | "approve"; reason: string };
+
+/**
+ * THE operator-policy gate — the single source of truth for "may I pay this host, at this price,
+ * right now". Every spending path calls this: `decide()` for the composite research run, and the
+ * MCP's granular `naulon_pay_and_read`.
+ *
+ * It exists because the checks previously lived ONLY inside `decide()`, so the granular pay tool
+ * — the path the tool descriptions tell agents to prefer — silently ignored the kill-switch,
+ * deny/allow lists, per-domain cap, and approval threshold an operator had configured. Two
+ * implementations of one rule is how that bug happens; there is now one implementation.
+ *
+ * Order is load-bearing and matches the original `decide()` sequence, so the reason a caller
+ * surfaces when several gates apply is unchanged: kill → deny → allow → maxPaid → perDomainCap →
+ * budget → approval. `paidCount` / `remainingUsdc` are optional; omit them when the caller
+ * enforces those with its own accounting and messaging (the MCP session envelope does).
+ */
+export function spendGate(input: {
+  /** Publisher host, already normalized-ish; undefined when unknown (deny-by-default under an allowlist). */
+  host: string | undefined;
+  /** The buyer's TRUE total for this read, in USDC. */
+  priceUsdc: number;
+  policy: DecisionPolicy;
+  /** Pays already made for this host (this run/session + any prior window). */
+  paidForHost?: number;
+  /** Pays already made overall — enables the `maxPaid` gate when provided. */
+  paidCount?: number;
+  /** Budget left in USDC — enables the budget gate when provided. */
+  remainingUsdc?: number;
+}): SpendVerdict {
+  const { policy, priceUsdc } = input;
+  const host = normHost(input.host);
+  if (policy.killSwitch) return { ok: false, action: "skip", reason: "kill-switch engaged — spend halted" };
+
+  const deny = new Set((policy.denyDomains ?? []).map((h) => normHost(h)).filter((h): h is string => !!h));
+  if (host && deny.has(host)) return { ok: false, action: "skip", reason: `host ${host} denied by policy` };
+
+  // NOTE: a DEFINED but empty allowlist denies everything (deny-by-default). That is deliberate —
+  // "I configured an allowlist and it is empty" must not read as "allow all".
+  const allow = policy.allowDomains?.map((h) => normHost(h)).filter((h): h is string => !!h);
+  if (allow && (host === undefined || !allow.includes(host))) {
+    return {
+      ok: false,
+      action: "skip",
+      reason: host === undefined ? "host unknown, not in allowlist" : `host ${host} not in allowlist`,
+    };
+  }
+
+  if (input.paidCount !== undefined && input.paidCount >= policy.maxPaid) {
+    return { ok: false, action: "skip", reason: `hit max-paid cap (${policy.maxPaid})` };
+  }
+  if (policy.perDomainCap !== undefined && host !== undefined && (input.paidForHost ?? 0) >= policy.perDomainCap) {
+    return { ok: false, action: "skip", reason: `per-domain cap (${policy.perDomainCap}) reached for ${host}` };
+  }
+  if (input.remainingUsdc !== undefined && priceUsdc > input.remainingUsdc) {
+    return {
+      ok: false,
+      action: "skip",
+      reason: `price $${priceUsdc.toFixed(6)} exceeds remaining budget $${input.remainingUsdc.toFixed(6)}`,
+    };
+  }
+  if (policy.approvalThresholdUsdc !== undefined && priceUsdc >= policy.approvalThresholdUsdc) {
+    return {
+      ok: false,
+      action: "approve",
+      reason: `toll $${priceUsdc.toFixed(6)} ≥ approval threshold $${policy.approvalThresholdUsdc.toFixed(6)} — needs human approval`,
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -105,8 +205,6 @@ export function decide(
   let remaining = budgetUsdc;
   let paidCount = 0;
 
-  const allow = policy.allowDomains?.map((h) => normHost(h)).filter((h): h is string => !!h);
-  const deny = new Set((policy.denyDomains ?? []).map((h) => normHost(h)).filter((h): h is string => !!h));
   // Per-host pay tally, seeded with prior pays in this rate-cap window.
   const paidByHost = new Map<string, number>(
     Object.entries(context.priorDomainCounts ?? {}).map(([h, n]) => [normHost(h) ?? h, n]),
@@ -115,7 +213,13 @@ export function decide(
   for (const c of rank(candidates)) {
     const price = c.price as number;
     const density = c.relevance / price;
-    const host = normHost(c.host);
+    // SECURITY: the policy host MUST come from the url the pay step will actually fetch — never
+    // from `Candidate.host`, a free-form string the (untrusted) discovery source supplies ALONGSIDE
+    // the url. A malicious feed returning { host: "trusted-publisher.com", url:
+    // "https://attacker.example/toll" } would otherwise pass an allow/deny check on one string while
+    // real USDC went to another. Underivable ⇒ undefined ⇒ "host unknown", which an allowlist
+    // denies by default (see spendGate). `c.host` is now display/telemetry only.
+    const host = payHostOf(c.url, context.gateBase, c.slug);
     const base = { slug: c.slug, title: c.title, url: c.url, relevance: c.relevance, price, density };
     const skip = (reason: string) => decisions.push({ ...base, action: "skip", reason });
 
@@ -130,37 +234,40 @@ export function decide(
       continue;
     }
 
-    // Spend gates.
-    if (policy.killSwitch) {
-      skip("kill-switch engaged — spend halted");
+    // ORIGIN PIN (the run()/research counterpart of the MCP's originPinRefusal). Sits with the
+    // SPEND gates, after the free ones — a held-license re-read costs nothing and stays allowed.
+    //
+    // A discovery source is untrusted: `catalogSource` casts a remote endpoint's JSON straight to
+    // Candidate[], so a compromised catalog can hand back any `url` it likes and money would follow
+    // it. Every shipped discovery knob is singular (RSS_URL > PUBLISHER_URL > CATALOG_URL, one
+    // TOLLGATE_URL), so the default posture is: pay only the configured gate.
+    //
+    // Multi-gate buying is opt-in through the EXISTING `allowDomains` — deliberately NOT a separate
+    // "multiGate" flag, which would be a second way to express "which hosts may I pay" and would
+    // drift from this one. Setting an allowlist IS naming your trust boundary, and spendGate
+    // enforces it below against this same real pay host.
+    const gateHost = payHostOf(undefined, context.gateBase, "_");
+    if (!policy.allowDomains && gateHost !== undefined && host !== gateHost) {
+      skip(
+        host === undefined
+          ? `no resolvable pay URL — refusing (the configured gate is ${gateHost})`
+          : `host ${host} is not the configured gate (${gateHost}); set allowDomains to buy across publishers`,
+      );
       continue;
     }
-    if (host && deny.has(host)) {
-      skip(`host ${host} denied by policy`);
-      continue;
-    }
-    if (allow && (host === undefined || !allow.includes(host))) {
-      skip(host === undefined ? "host unknown, not in allowlist" : `host ${host} not in allowlist`);
-      continue;
-    }
-    if (paidCount >= policy.maxPaid) {
-      skip(`hit max-paid cap (${policy.maxPaid})`);
-      continue;
-    }
-    if (policy.perDomainCap !== undefined && host !== undefined && (paidByHost.get(host) ?? 0) >= policy.perDomainCap) {
-      skip(`per-domain cap (${policy.perDomainCap}) reached for ${host}`);
-      continue;
-    }
-    if (price > remaining) {
-      skip(`price $${price.toFixed(6)} exceeds remaining budget $${remaining.toFixed(6)}`);
-      continue;
-    }
-    if (policy.approvalThresholdUsdc !== undefined && price >= policy.approvalThresholdUsdc) {
-      decisions.push({
-        ...base,
-        action: "approve",
-        reason: `toll $${price.toFixed(6)} ≥ approval threshold $${policy.approvalThresholdUsdc.toFixed(6)} — needs human approval`,
-      });
+
+    // Spend gates — delegated to the ONE shared evaluator (see `spendGate`), so the granular
+    // MCP pay path enforces byte-identical rules instead of a drifting second copy.
+    const verdict = spendGate({
+      host,
+      priceUsdc: price,
+      policy,
+      paidForHost: host === undefined ? 0 : (paidByHost.get(host) ?? 0),
+      paidCount,
+      remainingUsdc: remaining,
+    });
+    if (!verdict.ok) {
+      decisions.push({ ...base, action: verdict.action, reason: verdict.reason });
       continue;
     }
 

@@ -8,9 +8,12 @@ function cand(slug: string, relevance: number, price: number): AppraisedCandidat
   return { slug, title: slug, summary: "", price: usdc(price), relevance, rationale: "" };
 }
 
-/** A candidate pinned to a host — for the domain allow/deny/per-domain-cap policies. */
+/** A candidate pinned to a host — for the domain allow/deny/per-domain-cap policies.
+ *  Sets `url` on that host too, because policy is evaluated against the url that will actually be
+ *  PAID, never the free-form `host` field a discovery source supplies beside it (see the
+ *  host-spoof test below). A real discovery source always carries both. */
 function candOn(host: string, slug: string, relevance: number, price: number): AppraisedCandidate {
-  return { ...cand(slug, relevance, price), host };
+  return { ...cand(slug, relevance, price), host, url: `https://${host}/articles/${slug}` };
 }
 
 test("pays relevant essays within budget, ranked by density", () => {
@@ -132,4 +135,62 @@ test("approval threshold defers a costly toll to 'approve' (no spend, budget int
   assert.equal(cheap.action, "pay");
   assert.equal(dear.action, "approve");
   assert.match(dear.reason, /approval/i);
+});
+
+// Finding-1 regression — domain policy MUST bind to the url that gets paid, never to the
+// free-form `host` field the (untrusted) discovery source supplies alongside it. A malicious feed
+// claiming host:"trusted-publisher.com" while pointing url at an attacker would otherwise pass an
+// allow/deny check on one string while real USDC flowed to another.
+test("domain policy uses the PAY url's host, not a spoofable Candidate.host", () => {
+  const spoofed: AppraisedCandidate = {
+    ...cand("x", 0.9, 0.001),
+    host: "trusted-publisher.com", // what the feed CLAIMS
+    url: "https://attacker.example/articles/x", // where the money would actually go
+  };
+  const [denied] = decide([spoofed], 1, new Set(), { ...DEFAULT_POLICY, denyDomains: ["attacker.example"] });
+  assert.equal(denied!.action, "skip", "the real pay host is denied, despite the trusted-looking host field");
+  assert.match(denied!.reason, /attacker\.example/);
+
+  // And the mirror: an allowlist naming only the CLAIMED host must not let the real host through.
+  const [notAllowed] = decide([spoofed], 1, new Set(), {
+    ...DEFAULT_POLICY,
+    allowDomains: ["trusted-publisher.com"],
+  });
+  assert.equal(notAllowed!.action, "skip", "a spoofed host field cannot satisfy the allowlist");
+});
+
+test("a slug-only candidate resolves its policy host from the configured gateBase", () => {
+  const slugOnly = cand("y", 0.9, 0.001);
+  const [d] = decide([slugOnly], 1, new Set(), { ...DEFAULT_POLICY, denyDomains: ["gate.example"] }, {
+    gateBase: "https://gate.example",
+  });
+  assert.equal(d!.action, "skip", "the gate host the slug resolves to is what policy sees");
+});
+
+// Origin pin for the run()/research path. Default posture: only the configured gate is payable,
+// because a discovery catalog is untrusted and can return any url. Multi-gate is opt-in via the
+// existing allowDomains — no separate flag.
+test("run-path origin pin: an off-gate candidate is refused by default", () => {
+  const offGate: AppraisedCandidate = { ...cand("x", 0.9, 0.001), url: "https://attacker.example/a/x" };
+  const [d] = decide([offGate], 1, new Set(), DEFAULT_POLICY, { gateBase: "https://gate.example" });
+  assert.equal(d!.action, "skip", "only the configured gate is payable by default");
+  assert.match(d!.reason, /not the configured gate/i);
+});
+
+test("run-path origin pin: an on-gate candidate still pays", () => {
+  const onGate: AppraisedCandidate = { ...cand("x", 0.9, 0.001), url: "https://gate.example/a/x" };
+  const [d] = decide([onGate], 1, new Set(), DEFAULT_POLICY, { gateBase: "https://gate.example" });
+  assert.equal(d!.action, "pay");
+});
+
+test("run-path origin pin: allowDomains opts INTO multi-gate (one knob, not two)", () => {
+  const other: AppraisedCandidate = { ...cand("x", 0.9, 0.001), url: "https://partner.example/a/x" };
+  const [allowed] = decide([other], 1, new Set(), { ...DEFAULT_POLICY, allowDomains: ["partner.example"] }, {
+    gateBase: "https://gate.example",
+  });
+  assert.equal(allowed!.action, "pay", "an explicit allowlist is the sanctioned multi-gate boundary");
+  const [denied] = decide([other], 1, new Set(), { ...DEFAULT_POLICY, allowDomains: ["someone-else.example"] }, {
+    gateBase: "https://gate.example",
+  });
+  assert.equal(denied!.action, "skip", "an allowlist that omits the host still refuses");
 });
