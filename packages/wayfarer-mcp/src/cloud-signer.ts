@@ -41,7 +41,8 @@ export class SignerError extends Error {
 }
 
 export interface CloudSignerOpts {
-  /** Cloud base URL, no trailing slash (e.g. https://api.naulon.app). */
+  /** Cloud gate base URL, no trailing slash (e.g. https://gate.naulon.app). This is the
+   *  naulon gate origin that serves the `/_naulon/*` routes — NOT the REST/API edge. */
   endpoint: string;
   /** Per-session bearer token — server-config, never a tool arg. */
   token: string;

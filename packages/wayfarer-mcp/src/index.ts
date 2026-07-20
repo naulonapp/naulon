@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
 /**
  * stdio entry point — an MCP client (Claude Desktop, Cursor, …) spawns this as a
  * child process and speaks JSON-RPC over stdin/stdout.
