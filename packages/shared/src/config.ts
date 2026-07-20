@@ -50,6 +50,7 @@ const DEFAULT_PAYOUTS_PATH = join(REPO_ROOT, "data/payouts.jsonl");
 const DEFAULT_LICENSE_STORE = join(REPO_ROOT, "data/wayfarer-licenses.json");
 const DEFAULT_CREDITS_FIXTURES = join(REPO_ROOT, "examples/meridian/credits.json");
 const DEFAULT_SETTLEMENT_OUTBOX = join(REPO_ROOT, "data/settlement-outbox.jsonl");
+const DEFAULT_SETTLEMENT_DELIVERY_STATE = join(REPO_ROOT, "data/settlement-delivery.jsonl");
 
 // Exported so config validation (e.g. the licensing superRefine) is unit-testable
 // without mutating process.env / the getConfig() singleton.
@@ -182,6 +183,29 @@ export const configSchema = z.object({
   // (e.g. serverless, where a cron drives the drain instead of a live loop).
   SETTLEMENT_DRAIN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(60_000),
 
+  // ── Settlement DELIVERY STATE (the cross-sweep retry plane) ──
+  // Where per-event delivery state (acked / attempts / next attempt / dead-letter)
+  // lives. "file" = process-local JSONL beside the outbox (the self-host, no-creds
+  // default — the gate must stay dark-by-default and creds-free). "supabase" = a
+  // shared table, so a multi-instance fleet agrees on what has been delivered and
+  // the drain selects only DUE work server-side instead of re-filtering the whole
+  // lifetime ledger every tick. Same SettlementDeliveryStore seam either way.
+  SETTLEMENT_DELIVERY_BACKEND: z.enum(["file", "supabase"]).default("file"),
+  SETTLEMENT_DELIVERY_STATE_PATH: z.string().default(DEFAULT_SETTLEMENT_DELIVERY_STATE),
+  // Cross-sweep attempt budget. Distinct from SETTLEMENT_MAX_ATTEMPTS, which is the
+  // ladder WITHIN one sweep: this counts SWEEPS. Once an event has failed this many
+  // sweeps it is DEAD-LETTERED — parked and surfaced to an operator, never dropped.
+  // The money is still owed; a dead letter is a visibility state, not a deletion.
+  SETTLEMENT_MAX_DELIVERY_ATTEMPTS: z.coerce.number().int().positive().default(10),
+  // Exponential cross-sweep backoff: next = now + min(base * 2^(attempts-1), cap).
+  // 1m → 2m → 4m → … capped at 6h, so a dead publisher is retried ~10 times over
+  // roughly two days before it parks, instead of being re-POSTed every 60s forever.
+  SETTLEMENT_RETRY_BASE_MS: z.coerce.number().int().positive().default(60_000),
+  SETTLEMENT_RETRY_BACKOFF_CAP_MS: z.coerce.number().int().positive().default(21_600_000),
+  // Hard cap on how many due events one sweep pulls. Bounds both the RPC and the
+  // work a single tick does; the next tick picks up the remainder.
+  SETTLEMENT_DRAIN_BATCH: z.coerce.number().int().positive().default(500),
+
   // Wayfarer
   BUYER_ADDRESS: z.string().optional(),
   BUYER_PRIVATE_KEY: z.string().optional(),
@@ -290,6 +314,7 @@ export const configSchema = z.object({
   SUPABASE_EVENTS_TABLE: z.string().default("naulon_events"),
   SUPABASE_NONCES_TABLE: z.string().default("naulon_nonces"),
   SUPABASE_PENDING_LEGS_TABLE: z.string().default("naulon_pending_legs"),
+  SUPABASE_SETTLEMENT_DELIVERY_TABLE: z.string().default("naulon_settlement_delivery"),
   SUPABASE_REVOCATIONS_TABLE: z.string().default("naulon_revocations"),
   // Where gated-request OBSERVATIONS go (the audit/observability plane — who was
   // served free / denied / paid). "off" (default) records nothing, so the open
@@ -375,6 +400,7 @@ export const configSchema = z.object({
     cfg.EVENTS_BACKEND === "supabase" ||
     cfg.NONCE_BACKEND === "supabase" ||
     cfg.PENDING_LEGS_BACKEND === "supabase" ||
+    cfg.SETTLEMENT_DELIVERY_BACKEND === "supabase" ||
     cfg.OBSERVATIONS_BACKEND === "supabase";
   if (usesSupabase) {
     for (const key of ["SUPABASE_URL", "SUPABASE_SERVICE_KEY"] as const) {

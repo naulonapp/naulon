@@ -61,6 +61,19 @@ import { envPublisherResolver } from "./publisher.ts";
 // `createApp` can run the settlement drain over a chosen scope (secret/origin) —
 // the optional parameter the single-tenant default never needs. See settlementSink.
 export { drainSettlements, type DrainScope } from "./settlementSink.ts";
+// The delivery-state seam behind the drain: per-event ack / attempt / dead-letter state,
+// kept out of the append-only settlement ledger. A downstream fleet consumes this to
+// surface DEAD-LETTERED settlements to an operator and revive them — the money is parked
+// and visible, never dropped, so a control plane needs a read + a revive.
+export {
+  getSettlementDeliveryStore,
+  setSettlementDeliveryStore,
+  memorySettlementDeliveryStore,
+  backoffMs,
+  type SettlementDeliveryStore,
+  type DeliveryState,
+  type FailureInput,
+} from "./settlementDelivery.ts";
 // The deferred extra-leg drain (O5/O1): a downstream fleet runs this per-publisher to
 // settle the buyer-authorized extra legs the gate verified-but-deferred on the request
 // path. Scoped by `publisherId` for multi-tenant isolation. See pendingLegs / x402.
