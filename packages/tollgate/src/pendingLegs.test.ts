@@ -62,3 +62,46 @@ test("pending returns oldest-first (drain order)", async () => {
   ]);
   assert.deepEqual((await sink.pending(5_000)).map((l) => l.id), ["early", "mid", "late"]);
 });
+
+// ── The claim seam (broadcast-before-CAS fix) ───────────────────────────────────────────────────
+// `markSettled` alone made settle exactly-once for the COUNTER, never for the BROADCAST: the drain
+// settled on-chain and compare-and-set after, so a crash in between left a leg whose money had
+// moved marked unsettled, to be re-broadcast every sweep until its authorization expired. Claiming
+// before the broadcast is what makes the ambiguous window visible and bounded.
+
+test("claim is an atomic compare-and-set — one winner while the lease is live", async () => {
+  const sink = memoryPendingLegSink([leg("c1")]);
+  assert.equal(await sink.claim!("c1", 5_000, 1_000), true, "first drain wins the claim");
+  assert.equal(await sink.claim!("c1", 5_000, 1_000), false, "a concurrent drain must not also broadcast");
+});
+
+test("a lapsed claim becomes claimable again — a crashed drain cannot strand a leg", async () => {
+  const sink = memoryPendingLegSink([leg("c2")]);
+  await sink.claim!("c2", 5_000, 1_000);
+  assert.equal(await sink.claim!("c2", 9_000, 4_999), false, "still inside the lease");
+  assert.equal(await sink.claim!("c2", 9_000, 5_001), true, "lease lapsed → retryable");
+});
+
+test("a settled leg can never be claimed", async () => {
+  const sink = memoryPendingLegSink([leg("c3")]);
+  await sink.markSettled("c3", "ref");
+  assert.equal(await sink.claim!("c3", 5_000, 1_000), false);
+  assert.equal(await sink.claim!("missing", 5_000, 1_000), false, "unknown id → not ours");
+});
+
+test("release returns a leg immediately, without waiting out the lease", async () => {
+  const sink = memoryPendingLegSink([leg("c4")]);
+  await sink.claim!("c4", 5_000, 1_000);
+  await sink.release!("c4");
+  assert.equal(await sink.claim!("c4", 5_000, 1_000), true, "released → claimable at once");
+});
+
+test("claiming does NOT settle: the leg is still pending until markSettled", async () => {
+  // The crash scenario, stated as an invariant. A claim means "an attempt is in flight", never
+  // "the money moved" — conflating them would mark unpaid legs settled, which is far worse than
+  // the defect being fixed.
+  const sink = memoryPendingLegSink([leg("c5")]);
+  await sink.claim!("c5", 5_000, 1_000);
+  assert.deepEqual((await sink.pending(1_000)).map((l) => l.id), ["c5"], "claimed ≠ settled");
+  assert.equal(await sink.markSettled("c5", "ref"), true, "the claim holder can still settle it");
+});
