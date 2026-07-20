@@ -17,6 +17,9 @@ import { test } from "node:test";
 const dir = mkdtempSync(join(tmpdir(), "naulon-drain-"));
 process.env.EVENTS_PATH = join(dir, "events.jsonl");
 process.env.SETTLEMENT_OUTBOX_PATH = join(dir, "outbox.jsonl");
+// Delivery state defaults to <repo>/data/settlement-delivery.jsonl; point it at the temp
+// dir so the suite never writes into the working tree.
+process.env.SETTLEMENT_DELIVERY_STATE_PATH = join(dir, "delivery.jsonl");
 process.env.EVENTS_BACKEND = "jsonl";
 // Leave CREDITS_SETTLEMENT_SECRET / ORIGIN_URL unset so the global fallback is
 // dark — proving the passed scope, not ambient config, drives delivery.
@@ -78,7 +81,7 @@ test("drain scoped to a publisher delivers only that publisher's events, signed 
   const summary = await drainSettlements({ secret: secretA, originUrl: originA, publisherId: "publisher-a" });
 
   // Exactly publisher-a's two events, both to publisher-a's origin.
-  assert.deepEqual(summary, { acked: 2, pending: 0 });
+  assert.deepEqual(summary, { acked: 2, pending: 0, deadLettered: 0 });
   assert.equal(calls.length, 2);
   for (const c of calls) {
     assert.equal(c.url, `${originA}/api/credits/settlement`);
@@ -100,7 +103,7 @@ test("a publisher's body is the canonical settlement payload for its event", asy
 test("dark scope (no secret, no global secret) is a no-op", async () => {
   const calls = captureFetch();
   const summary = await drainSettlements({ publisherId: "publisher-a" });
-  assert.deepEqual(summary, { acked: 0, pending: 0 });
+  assert.deepEqual(summary, { acked: 0, pending: 0, deadLettered: 0 });
   assert.equal(calls.length, 0);
 });
 
@@ -148,7 +151,7 @@ test("a 401 that clears on the re-signed retry still settles (clock skew is tran
     publisherId: "publisher-auth1",
   });
 
-  assert.deepEqual(summary, { acked: 1, pending: 0 }, "the retry with a fresh timestamp got through");
+  assert.deepEqual(summary, { acked: 1, pending: 0, deadLettered: 0 }, "the retry with a fresh timestamp got through");
   assert.equal(f.count(), 2, "exactly one retry — not the whole ladder");
 });
 
@@ -162,6 +165,6 @@ test("a repeated 401 stops the ladder instead of burning every attempt (wrong se
     publisherId: "publisher-auth2",
   });
 
-  assert.deepEqual(summary, { acked: 0, pending: 1 }, "unacked — the money is still owed, nothing is dropped");
+  assert.deepEqual(summary, { acked: 0, pending: 1, deadLettered: 0 }, "unacked — the money is still owed, nothing is dropped");
   assert.equal(f.count(), 2, "gave the fresh-timestamp re-sign exactly one chance, then stopped");
 });
