@@ -121,3 +121,47 @@ test("an event with no stamped chain falls back to activeNetwork (single-tenant 
   await drainSettlements({ secret: "s", originUrl: "https://d.example", publisherId: "publisher-d" });
   assert.equal(JSON.parse(calls[0]!.body).chainId, ARC_TESTNET.chainId);
 });
+
+// ── 401 classification: clock skew vs a wrong secret ───────────────────────────
+// A 401 means one of two things and only one is transient: clock skew (every attempt re-signs
+// with a fresh timestamp, so a retry fixes it) or a wrong settlement secret (no number of
+// retries will ever fix it). Treating both as transient burned the whole ladder every sweep,
+// forever, and hid a config error behind what read as a flaky origin.
+
+/** 401 the first N attempts, then 200 — the clock-skew shape. */
+function flakyAuthFetch(failures: number): { count: () => number } {
+  let n = 0;
+  globalThis.fetch = (async () => {
+    n++;
+    return new Response(null, { status: n <= failures ? 401 : 200 });
+  }) as unknown as typeof fetch;
+  return { count: () => n };
+}
+
+test("a 401 that clears on the re-signed retry still settles (clock skew is transient)", async () => {
+  await sink.record(evt("auth1", "publisher-auth1"));
+  const f = flakyAuthFetch(1); // first attempt 401, second 200
+
+  const summary = await drainSettlements({
+    secret: "s",
+    originUrl: "https://auth1.example",
+    publisherId: "publisher-auth1",
+  });
+
+  assert.deepEqual(summary, { acked: 1, pending: 0 }, "the retry with a fresh timestamp got through");
+  assert.equal(f.count(), 2, "exactly one retry — not the whole ladder");
+});
+
+test("a repeated 401 stops the ladder instead of burning every attempt (wrong secret)", async () => {
+  await sink.record(evt("auth2", "publisher-auth2"));
+  const f = flakyAuthFetch(Number.MAX_SAFE_INTEGER); // 401 forever
+
+  const summary = await drainSettlements({
+    secret: "wrong-secret",
+    originUrl: "https://auth2.example",
+    publisherId: "publisher-auth2",
+  });
+
+  assert.deepEqual(summary, { acked: 0, pending: 1 }, "unacked — the money is still owed, nothing is dropped");
+  assert.equal(f.count(), 2, "gave the fresh-timestamp re-sign exactly one chance, then stopped");
+});
