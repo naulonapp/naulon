@@ -63,11 +63,38 @@ export interface PendingLegSink {
    *  (unsettled → settled); false if it was already settled — the compare-and-set that
    *  makes settle exactly-once across concurrent drains (O1). */
   markSettled(id: string, settlementRef: string): Promise<boolean>;
+  /**
+   * Atomically CLAIM a leg for a settle attempt, before anything is broadcast. Returns true
+   * IFF this call won the claim; false if another drain holds a live claim or the leg is
+   * already settled.
+   *
+   * Why this exists (the broadcast-before-CAS defect): the drain used to settle on-chain and
+   * only then compare-and-set. A crash or a failed PATCH in between left `settled=false` for a
+   * leg whose money HAD moved — so every later sweep re-broadcast it, the token contract
+   * rejected the spent authorization, the leg counted `failed`, and it churned until
+   * `validBefore` elapsed and then vanished. Real money moved and the ledger said it never did.
+   *
+   * A DB write and an on-chain broadcast can never be one atomic act, so the window cannot be
+   * closed — only made explicit and recoverable. Claiming first inverts which way it fails: a
+   * crash now leaves a leg visibly CLAIMED (an attempt whose outcome is unknown) instead of
+   * invisibly pending, and `claimedUntil` bounds how long that lasts.
+   *
+   * `claimUntil` is an epoch-ms lease. When it lapses the leg becomes claimable again, so a
+   * process that died mid-attempt cannot strand a leg forever.
+   *
+   * OPTIONAL: a sink that does not implement it is driven exactly as before (the drain
+   * degrades to the old ordering rather than refusing to run) — this is an additive seam, so
+   * an out-of-tree sink keeps working.
+   */
+  claim?(id: string, claimUntil: number, now: number): Promise<boolean>;
+  /** Release a claim after an attempt that provably did NOT move money, so the leg retries on
+   *  the next pass instead of waiting out its lease. Never called when the outcome is unknown. */
+  release?(id: string): Promise<void>;
 }
 
 /** In-memory sink — dev + tests. The Map is the durable store for the process. */
 export function memoryPendingLegSink(seed: PendingLeg[] = []): PendingLegSink {
-  const legs = new Map<string, { leg: PendingLeg; settled: boolean; ref?: string }>();
+  const legs = new Map<string, { leg: PendingLeg; settled: boolean; ref?: string; claimedUntil?: number }>();
   for (const l of seed) legs.set(l.id, { leg: l, settled: false });
   return {
     async record(leg) {
@@ -86,6 +113,17 @@ export function memoryPendingLegSink(seed: PendingLeg[] = []): PendingLegSink {
       e.settled = true;
       e.ref = settlementRef;
       return true;
+    },
+    async claim(id, claimUntil, now) {
+      const e = legs.get(id);
+      if (!e || e.settled) return false;
+      if (e.claimedUntil !== undefined && e.claimedUntil > now) return false; // a live claim elsewhere
+      e.claimedUntil = claimUntil;
+      return true;
+    },
+    async release(id) {
+      const e = legs.get(id);
+      if (e) delete e.claimedUntil;
     },
   };
 }
@@ -117,8 +155,12 @@ export function supabasePendingLegSink(): PendingLegSink {
     },
     async pending(now, publisherId) {
       const scope = publisherId === undefined ? "" : `&publisher=eq.${encodeURIComponent(publisherId)}`;
+      // Claimed-and-still-leased legs are excluded: another drain is mid-attempt on them, and
+      // re-broadcasting an in-flight authorization is exactly what this design avoids. A lapsed
+      // lease (or a null one) is fair game again.
+      const claimable = `&or=(claimed_until.is.null,claimed_until.lt.${now})`;
       const rows = (await supabaseRest(
-        `/rest/v1/${table}?select=data&settled=is.false&valid_before=gt.${now}&order=valid_before.asc${scope}`,
+        `/rest/v1/${table}?select=data&settled=is.false&valid_before=gt.${now}${claimable}&order=valid_before.asc${scope}`,
       )) as Array<{ data: PendingLeg }>;
       return rows.map((r) => r.data);
     },
@@ -134,6 +176,26 @@ export function supabasePendingLegSink(): PendingLegSink {
         },
       )) as unknown[];
       return rows.length > 0;
+    },
+    async claim(id, claimUntil, now) {
+      // Conditional PATCH, same compare-and-set shape as markSettled: the row flips only if it is
+      // unsettled AND not under a live claim. The DB decides the winner, so two drains on two
+      // boxes cannot both broadcast the same authorization.
+      const rows = (await supabaseRest(
+        `/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&settled=is.false&or=(claimed_until.is.null,claimed_until.lt.${now})`,
+        {
+          method: "PATCH",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify({ claimed_until: claimUntil }),
+        },
+      )) as unknown[];
+      return rows.length > 0;
+    },
+    async release(id) {
+      await supabaseRest(`/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&settled=is.false`, {
+        method: "PATCH",
+        body: JSON.stringify({ claimed_until: null }),
+      });
     },
   };
 }

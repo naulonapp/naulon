@@ -420,7 +420,28 @@ function legValidBefore(payload: unknown, now: number): number {
 
 /** Settle ONE pending leg via the active mode. Returns the settlement ref on success,
  *  undefined on failure (the leg stays pending for the next pass). */
-async function settleOneLeg(leg: PendingLeg, now: number): Promise<string | undefined> {
+/**
+ * What a settle ATTEMPT established. Three-way, not two, because "this authorization was already
+ * consumed on-chain" is neither success nor failure — it is the discovery that a PREVIOUS attempt
+ * moved the money and we never got to record it. Collapsing it into `failed` (as the old
+ * `string | undefined` did) is what let a settled leg churn until its authorization expired and
+ * then disappear, with real money moved and the ledger saying otherwise.
+ */
+type SettleAttempt =
+  | { kind: "settled"; ref: string }
+  | { kind: "already_settled" }
+  | { kind: "failed" };
+
+/** Does a facilitator/relayer refusal mean the authorization was ALREADY consumed on-chain?
+ *  Conservative by construction: an unrecognised reason falls through to `failed`, which is the
+ *  old behavior (retry). A false positive here would mark an unpaid leg settled, so the patterns
+ *  match only refusals that specifically name nonce/authorization reuse. */
+function isAlreadyConsumed(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return /\b(?:nonce|authorization)\b[^.]*\b(?:already\s+used|used|consumed|reused|replay)|already\s+used\s*\(replay\)|authorization_already_used|invalid_nonce/i.test(reason);
+}
+
+async function settleOneLeg(leg: PendingLeg, now: number): Promise<SettleAttempt> {
   if (cfg.PAYMENT_MODE === "gateway") {
     // Resolve from the leg's OWN advertised network so a deferred re-settle lands on
     // the chain it was authorized for, even across a multi-network fleet.
@@ -432,19 +453,29 @@ async function settleOneLeg(leg: PendingLeg, now: number): Promise<string | unde
     try {
       const facilitator = await getFacilitator(net);
       const s = await facilitator.settle(leg.payload, leg.requirements);
-      if (!s.success) console.error(`[tollgate] pending leg ${leg.id} (${leg.payTo}) settle failed: ${s.errorReason}`);
-      return s.success ? s.transaction : undefined;
+      if (s.success && s.transaction) return { kind: "settled", ref: s.transaction };
+      if (isAlreadyConsumed(s.errorReason)) {
+        console.warn(`[tollgate] pending leg ${leg.id} (${leg.payTo}) was already settled on-chain — reconciling`);
+        return { kind: "already_settled" };
+      }
+      console.error(`[tollgate] pending leg ${leg.id} (${leg.payTo}) settle failed: ${s.errorReason}`);
+      return { kind: "failed" };
     } catch (err) {
+      // A throw is genuinely unknown — the request may or may not have reached the chain. Report
+      // `failed` (so the claim is NOT released) and let the lease decide when to look again.
       console.error(`[tollgate] pending leg ${leg.id} (${leg.payTo}) settle threw:`, err);
-      return undefined;
+      return { kind: "failed" };
     }
   }
   // Mock: consume the leg's own nonce now (the deferred equivalent of the gate's inline
   // consume). A replayed/expired nonce → not settled, stays pending.
   const nonce = (leg.payload as { nonce?: string })?.nonce;
-  if (!nonce) return undefined;
+  if (!nonce) return { kind: "failed" };
   const c = await consumeNonce(nonce, bindingOf(leg.requirements), now);
-  return c.ok ? mockRef(leg.requirements) : undefined;
+  if (c.ok) return { kind: "settled", ref: mockRef(leg.requirements) };
+  // In mock, this leg's own nonce having been consumed means a prior attempt settled it — the
+  // same reconciliation the real rails get from the token contract.
+  return isAlreadyConsumed(c.error) ? { kind: "already_settled" } : { kind: "failed" };
 }
 
 /** Relay a deferred leg through the Arc Memo predeploy (the drain's memo-network path).
@@ -454,19 +485,19 @@ async function relayPendingLeg(
   leg: PendingLeg,
   net: ReturnType<typeof activeNetwork>,
   now: number,
-): Promise<string | undefined> {
+): Promise<SettleAttempt> {
   const relayerKey = relayerKeyFor(net);
   if (!relayerKey) {
     const msg = net.testnet
       ? "RELAYER_PRIVATE_KEY required for memo settlement"
       : "RELAYER_PRIVATE_KEY_MAINNET required for mainnet memo settlement";
     console.error(`[tollgate] pending leg ${leg.id}: ${msg}`);
-    return undefined;
+    return { kind: "failed" };
   }
   const payload = leg.payload as { authorization?: MemoAuthorization; signature?: `0x${string}` };
   if (!payload?.authorization || !payload?.signature) {
     console.error(`[tollgate] pending leg ${leg.id} (${leg.payTo}): malformed memo payload`);
-    return undefined;
+    return { kind: "failed" };
   }
   const key = (relayerKey.startsWith("0x") ? relayerKey : `0x${relayerKey}`) as `0x${string}`;
   const relayer = await relayerAddress(key);
@@ -483,8 +514,13 @@ async function relayPendingLeg(
     nowMs: now,
     usdcNameOverride: cfg.USDC_EIP712_NAME,
   });
-  if (!r.success) console.error(`[tollgate] pending leg ${leg.id} (${leg.payTo}) relay failed: ${r.errorReason}`);
-  return r.success ? r.transaction : undefined;
+  if (r.success && r.transaction) return { kind: "settled", ref: r.transaction };
+  if (isAlreadyConsumed(r.errorReason)) {
+    console.warn(`[tollgate] pending leg ${leg.id} (${leg.payTo}) was already relayed on-chain — reconciling`);
+    return { kind: "already_settled" };
+  }
+  console.error(`[tollgate] pending leg ${leg.id} (${leg.payTo}) relay failed: ${r.errorReason}`);
+  return { kind: "failed" };
 }
 
 /** Scope for a pending-leg drain pass. `publisherId` drains one publisher's legs only (the
@@ -501,11 +537,29 @@ export interface DrainLegResult {
   failed: number;
 }
 
+/** How long a claim is held before another drain may retry the leg. Comfortably longer than a
+ *  settle round-trip, short enough that a crashed process does not strand a leg for its whole
+ *  validity window. */
+const CLAIM_LEASE_MS = 2 * 60_000;
+
 /**
- * Settle buyer-authorized extra legs still inside their validity window (O5). Idempotent
- * (O1): `markSettled` is an atomic compare-and-set, so two concurrent drains (or a drain
- * racing a retry) settle a leg exactly once. Custody-free: every settle moves the buyer's
- * own EIP-3009 authorization buyer→payTo directly; the gate never holds funds.
+ * Settle buyer-authorized extra legs still inside their validity window (O5). Custody-free:
+ * every settle moves the buyer's own EIP-3009 authorization buyer→payTo directly; the gate never
+ * holds funds.
+ *
+ * ORDERING (this is the load-bearing part): CLAIM → broadcast → record. The drain used to
+ * broadcast first and compare-and-set after, which reads as idempotent but is not — the CAS
+ * dedupes COUNTING, not BROADCASTING. A crash or a failed PATCH between the two left a leg whose
+ * money had moved marked `settled=false`, so every later sweep re-broadcast it, the token
+ * contract rejected the spent authorization, it counted `failed`, and it churned until
+ * `validBefore` elapsed and then fell out of the pending set entirely.
+ *
+ * A DB write and an on-chain broadcast cannot be made one atomic act, so the window is not
+ * closable — only invertible. Claiming first means a crash leaves a leg visibly CLAIMED (an
+ * attempt of unknown outcome, bounded by {@link CLAIM_LEASE_MS}) rather than invisibly pending,
+ * and a retry that finds the authorization already consumed RECONCILES it to settled instead of
+ * reporting failure forever. Those two together are what make "settled exactly once" true of the
+ * money and not merely of the counter.
  */
 export async function drainPendingLegs(
   scope: DrainLegScope = {},
@@ -516,14 +570,32 @@ export async function drainPendingLegs(
   let settled = 0;
   let failed = 0;
   for (const leg of legs) {
-    const ref = await settleOneLeg(leg, now);
-    if (!ref) {
+    // CLAIM FIRST — before a single byte is broadcast. A sink predating this seam has no claim();
+    // it degrades to the old ordering rather than refusing to drain (additive seam, out-of-tree
+    // sinks keep working), which is strictly no worse than before.
+    if (sink.claim && !(await sink.claim(leg.id, now + CLAIM_LEASE_MS, now))) {
+      continue; // another drain holds a live claim — not ours to broadcast, and not a failure
+    }
+
+    const attempt = await settleOneLeg(leg, now);
+
+    if (attempt.kind === "failed") {
       failed += 1;
+      // Do NOT release. The attempt's outcome is unknown (a throw may still have reached the
+      // chain), and releasing would invite an immediate re-broadcast of a possibly-live
+      // authorization. The lease expiring is the deliberate, bounded retry signal.
       continue;
     }
-    // Atomic: only the call that flips unsettled→settled counts. A concurrent drain that
-    // settled the same authorization loses here (→ false) and isn't double-counted; the
-    // on-chain nonce/deposit prevents a double charge regardless.
+
+    // Reconciliation: the authorization was already consumed on-chain, so a previous attempt DID
+    // move the money and only the record was lost. Mark it settled — the whole point is that this
+    // fact stops being invisible. No transaction id is recoverable after the fact, so the ref
+    // names why, rather than fabricating a hash.
+    const ref = attempt.kind === "settled" ? attempt.ref : "reconciled:authorization-already-consumed";
+
+    // Atomic: only the call that flips unsettled→settled counts. A concurrent drain that settled
+    // the same authorization loses here (→ false) and isn't double-counted; the on-chain nonce
+    // prevents a double charge regardless.
     if (await sink.markSettled(leg.id, ref)) settled += 1;
   }
   return { settled, failed };
