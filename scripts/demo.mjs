@@ -31,6 +31,9 @@ rmSync("data/wayfarer-licenses.json", { force: true });
 const env = {
   ...process.env,
   ORIGIN_URL: `http://localhost:${ORIGIN_PORT}`,
+  // Discovery has no bundled-demo fallback; the agent discovers from this origin's
+  // /catalog. Explicit here so the self-contained demo needs no external config.
+  CATALOG_URL: `http://localhost:${ORIGIN_PORT}/catalog`,
   ARTICLE_PATH_PREFIXES: "essays",
   TOLLGATE_PORT: String(TOLLGATE_PORT),
   TOLLGATE_URL: `http://localhost:${TOLLGATE_PORT}`,
@@ -39,8 +42,21 @@ const env = {
   LICENSE_SIGNING_KEY: process.env.LICENSE_SIGNING_KEY ?? demoKey,
 };
 
-// 1. stub origin (stands in for a publisher)
+// The demo catalog — free teasers the agent discovers, then pays to read.
+const CATALOG = [
+  { slug: "on-stillness", title: "On Stillness", summary: "On attention, silence, and the discipline of staying with one thing." },
+  { slug: "the-naulon", title: "The Naulon", summary: "The fare paid to cross — payment, passage, and what we owe for what we take." },
+  { slug: "the-river-and-the-name", title: "The River and the Name", summary: "Identity, change, and whether a thing survives the renaming of itself." },
+];
+
+// 1. stub origin (stands in for a publisher): /catalog for discovery, HTML body
+//    for any essay path the tollgate proxies once paid.
 const origin = createServer((q, s) => {
+  if ((q.url ?? "/").split("?")[0] === "/catalog") {
+    s.writeHead(200, { "content-type": "application/json" });
+    s.end(JSON.stringify(CATALOG));
+    return;
+  }
   s.writeHead(200, { "content-type": "text/html" });
   s.end(`<article>Essay at ${q.url}</article>`);
 }).listen(ORIGIN_PORT);

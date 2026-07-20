@@ -61,6 +61,20 @@ const freeGate = (_req: IncomingMessage, res: ServerResponse): void => {
   res.end("free content");
 };
 
+/** The catalog the research e2e discovers from — discovery has no bundled-demo
+ *  fallback, so the spawned binary needs a real CATALOG_URL. `the-naulon` is the
+ *  on-topic essay for the "passage" topic. */
+const catalogGate = (_req: IncomingMessage, res: ServerResponse): void => {
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(
+    JSON.stringify([
+      { slug: "on-stillness", title: "On Stillness", summary: "On attention, silence, and the discipline of staying with one thing." },
+      { slug: "the-naulon", title: "The Naulon", summary: "The fare paid to cross — payment, passage, and what we owe for what we take." },
+      { slug: "the-river-and-the-name", title: "The River and the Name", summary: "Identity, change, and whether a thing survives the renaming of itself." },
+    ]),
+  );
+};
+
 /** Stand up a throwaway gate on an ephemeral port; returns its URL + a teardown. */
 async function startGate(handler: (req: IncomingMessage, res: ServerResponse) => void) {
   const server = createServer(handler);
@@ -77,8 +91,8 @@ async function startGate(handler: (req: IncomingMessage, res: ServerResponse) =>
 }
 
 /** Spawn the real stdio binary with env overrides and return a connected client.
- *  OPENAI_API_KEY is blanked so appraise stays offline; the source envs are
- *  omitted so the brain falls back to the bundled demo catalog. */
+ *  OPENAI_API_KEY is blanked so appraise stays offline. Discovery has no bundled
+ *  fallback, so any test that discovers must pass CATALOG_URL (see catalogGate). */
 async function connect(env: Record<string, string>) {
   const transport = new StdioClientTransport({
     command: "npx",
@@ -143,8 +157,10 @@ test("e2e (real stdio binary): pay debits the envelope, accumulates, and refuses
 
 test("e2e (real stdio binary): naulon_research clamps a requested budget down to the session remaining (never up)", async () => {
   const gate = await startGate(freeGate);
+  const catalog = await startGate(catalogGate);
   const { client, close } = await connect({
     TOLLGATE_URL: gate.url,
+    CATALOG_URL: `${catalog.url}/catalog`,
     WAYFARER_BUDGET_USDC: "0.05",
     WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-e2e-research-${process.pid}.json`),
   });
@@ -159,5 +175,6 @@ test("e2e (real stdio binary): naulon_research clamps a requested budget down to
   } finally {
     await close();
     await gate.close();
+    await catalog.close();
   }
 });

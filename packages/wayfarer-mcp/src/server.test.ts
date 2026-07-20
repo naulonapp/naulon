@@ -4,11 +4,12 @@
  * `@naulon/wayfarer` brain is reachable, and each §3.1 tool is both LISTABLE (tool
  * discovery) and CALLABLE.
  *
- * The offline-capable tools (discover, appraise) are exercised end-to-end with no
- * network. The gate-facing tools (quote, pay_and_read, read_held, research) are
- * exercised against a tiny in-test stub gate (quote/research) or via their
- * no-license early-return (read_held); the full PAID happy-path against a real
- * running tollgate is BUY-1.5's `live` bar, not a unit test.
+ * `appraise` runs offline (no network). `discover` reads a tiny in-test catalog
+ * HTTP server (`withCatalog`) — discovery has no bundled-demo fallback, so it
+ * always exercises the real catalogSource path. The gate-facing tools (quote,
+ * pay_and_read, read_held, research) run against a tiny in-test stub gate
+ * (quote/research) or via their no-license early-return (read_held); the full
+ * PAID happy-path against a real running tollgate is BUY-1.5's `live` bar.
  */
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -62,9 +63,36 @@ async function withEnv<T>(overrides: Record<string, string | undefined>, fn: () 
   }
 }
 
-/** Force wayfarer's offline demo source (no RSS/PUBLISHER/CATALOG → bundled demo). */
-function withDemoSource<T>(fn: () => Promise<T>): Promise<T> {
-  return withEnv({ RSS_URL: undefined, PUBLISHER_URL: undefined, CATALOG_URL: undefined }, fn);
+/** The catalog these tests discover from. Discovery has no bundled-demo fallback,
+ *  so every research/discover test must supply a real source. Slugs mirror
+ *  examples/meridian/credits.json; `the-naulon` is the on-topic essay. */
+const CATALOG_ESSAYS = [
+  { slug: "on-stillness", title: "On Stillness", summary: "On attention, silence, and the discipline of staying with one thing." },
+  { slug: "the-naulon", title: "The Naulon", summary: "The fare paid to cross — payment, passage, and what we owe for what we take." },
+  { slug: "the-river-and-the-name", title: "The River and the Name", summary: "Identity, change, and whether a thing survives the renaming of itself." },
+];
+
+/** Stand up a throwaway catalog HTTP server, point CATALOG_URL at it, and tear it
+ *  down. Replaces the old bundled-demo fallback: the agent discovers over the real
+ *  catalogSource path — the same path prod runs — instead of fabricated fixtures. */
+async function withCatalog<T>(fn: () => Promise<T>): Promise<T> {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(CATALOG_ESSAYS));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    return await withEnv(
+      { RSS_URL: undefined, PUBLISHER_URL: undefined, CATALOG_URL: `http://127.0.0.1:${port}/catalog` },
+      fn,
+    );
+  } finally {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      server.closeAllConnections?.();
+    });
+  }
 }
 
 /** Stand up a throwaway HTTP gate on an ephemeral port, point TOLLGATE_URL at it,
@@ -160,8 +188,8 @@ test("the server lists naulon_discover with a non-empty description", async () =
   assert.ok((discover.description ?? "").length > 0, "naulon_discover has a description");
 });
 
-test("naulon_discover returns free demo teasers (no config, no payment)", async () => {
-  await withDemoSource(async () => {
+test("naulon_discover returns free catalog teasers (no payment)", async () => {
+  await withCatalog(async () => {
     const client = await connectedClient();
     const res = await client.callTool({
       name: "naulon_discover",
@@ -175,7 +203,7 @@ test("naulon_discover returns free demo teasers (no config, no payment)", async 
     assert.ok(structured.candidates.length > 0, "returns at least one teaser");
     assert.ok(
       structured.candidates.some((c) => c.slug === "the-naulon"),
-      "includes the bundled demo slug",
+      "includes the on-topic catalog slug",
     );
     for (const c of structured.candidates) {
       assert.equal(typeof c.title, "string");
@@ -469,7 +497,7 @@ test("naulon_research clamps a requested budget down to the remaining session bu
     res.end("free");
   };
   await withStubGate(handler, async () => {
-    await withDemoSource(async () => {
+    await withCatalog(async () => {
       await withEnv(
         {
           WAYFARER_BUDGET_USDC: "0.05",
@@ -501,7 +529,7 @@ test("naulon_research composes the pipeline and returns a structured result (off
   };
 
   await withStubGate(handler, async () => {
-    await withDemoSource(async () => {
+    await withCatalog(async () => {
       await withEnv(
         {
           WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-research-${process.pid}.json`),
@@ -535,7 +563,7 @@ test("BUY-3: a WAYFARER_KILL_SWITCH env halts naulon_research spend (server-conf
   // A gate that WOULD charge (every essay is priced + payable) — so absent the
   // kill-switch the agent pays. The env-configured policy must veto every pay.
   await withStubGate(payGate("1000"), async () => {
-    await withDemoSource(async () => {
+    await withCatalog(async () => {
       await withEnv(
         {
           WAYFARER_BUDGET_USDC: "0.1",
@@ -588,7 +616,7 @@ test("BUY-4.0: an injected budgetUsdc overrides the env ceiling for this session
 
 test("BUY-4.0: an injected killSwitch policy halts spend even with no env kill-switch", async () => {
   await withStubGate(payGate("1000"), async () => {
-    await withDemoSource(async () => {
+    await withCatalog(async () => {
       // Env has NO kill-switch — absent the injected policy this run would pay.
       await withEnv(
         {
@@ -755,7 +783,7 @@ test("BUY-4.4: a budget-refused naulon_pay_and_read audits a `skip` decision (ac
 
 test("BUY-4.4: naulon_research hands the auditSink one event per decision; a kill-switch run audits `skip`s carrying the halt reason", async () => {
   await withStubGate(payGate("1000"), async () => {
-    await withDemoSource(async () => {
+    await withCatalog(async () => {
       await withEnv(
         {
           WAYFARER_BUDGET_USDC: "0.1",
@@ -796,7 +824,7 @@ test("BUY-4.2: naulon_research probes the injected tollgateUrl, not the env gate
   const envGate = await standGate(free);
   const fleetGate = await standGate(free);
   try {
-    await withDemoSource(async () => {
+    await withCatalog(async () => {
       await withEnv({ TOLLGATE_URL: envGate.url, OPENAI_API_KEY: undefined }, async () => {
         const client = await connectedClientWith({ tollgateUrl: fleetGate.url });
         const r = (await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } }))
