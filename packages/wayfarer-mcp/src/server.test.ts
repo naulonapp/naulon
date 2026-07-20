@@ -188,6 +188,20 @@ test("the server lists naulon_discover with a non-empty description", async () =
   assert.ok((discover.description ?? "").length > 0, "naulon_discover has a description");
 });
 
+test("exposes cross-client slash-command prompts that steer the tools", async () => {
+  const client = await connectedClient();
+  const { prompts } = await client.listPrompts();
+  const names = new Set(prompts.map((p) => p.name));
+  for (const name of ["research", "discover", "verify"]) {
+    assert.ok(names.has(name), `prompt "${name}" is registered`);
+  }
+  // The topic argument is substituted into the returned steering message.
+  const got = await client.getPrompt({ name: "research", arguments: { topic: "passage rites" } });
+  const text = got.messages.map((m) => (m.content.type === "text" ? m.content.text : "")).join("\n");
+  assert.ok(text.includes("passage rites"), "the prompt weaves the topic argument into its message");
+  assert.ok(text.includes("naulon_discover"), "the prompt steers the model through the free-first loop");
+});
+
 test("naulon_discover returns free catalog teasers (no payment)", async () => {
   await withCatalog(async () => {
     const client = await connectedClient();

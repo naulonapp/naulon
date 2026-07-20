@@ -1009,5 +1009,83 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       }),
   );
 
+  // ── Prompts (cross-client slash commands) ───────────────────────────────────
+  // MCP prompts are the client-agnostic UX layer: any prompts-capable host (Claude
+  // Code / Desktop as `/mcp__<server>__<name>`, Cursor, VS Code, Cline, …) surfaces
+  // these as first-class, argument-taking slash commands — zero per-user config. They
+  // only orchestrate the tools THIS server exposes (the free-first quote→pay→ground
+  // loop); the cloud layers its own `naulon_ask` prompt where that tool lives. Each
+  // returns a single user message that steers the host model through the tools; the
+  // model still sees every price and spends only when a paying tool is called.
+  server.registerPrompt(
+    "research",
+    {
+      title: "Research a topic (naulon)",
+      description:
+        "Discover naulon-tolled sources for a topic, see prices before paying, then return a grounded, cited answer within budget.",
+      argsSchema: { topic: z.string().describe("The topic to research.") },
+    },
+    ({ topic }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text:
+              `Research "${topic}" using naulon's tolled sources.\n\n` +
+              `1. Call naulon_discover("${topic}") — free — to list candidate essays.\n` +
+              `2. Use naulon_appraise and naulon_quote to judge relevance and see exact prices. Nothing is spent until a paying tool runs.\n` +
+              `3. Pay only the most relevant sources with naulon_pay_and_read, or call naulon_research to run the whole discover→quote→pay→ground loop within the session budget.\n\n` +
+              `Return a grounded answer with numbered citations and report exactly what was spent. Distinguish naulon-cited evidence from your own general knowledge.`,
+          },
+        },
+      ],
+    }),
+  );
+  server.registerPrompt(
+    "discover",
+    {
+      title: "Discover sources (naulon, free)",
+      description: "List naulon-tolled sources for a topic — free teasers only, no payment.",
+      argsSchema: { topic: z.string().describe("The topic to find sources for.") },
+    },
+    ({ topic }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text:
+              `Call naulon_discover("${topic}") and present the candidate essays as a ranked list — title, one-line summary, teaser price, and citation price. ` +
+              `This is FREE: do not pay for anything. If a grounded answer is wanted next, use the "research" prompt or naulon_research.`,
+          },
+        },
+      ],
+    }),
+  );
+  server.registerPrompt(
+    "verify",
+    {
+      title: "Fact-check a claim (naulon)",
+      description: "Check whether a claim is supported by naulon-tolled sources, citing what it paid for.",
+      argsSchema: { claim: z.string().describe("The claim to fact-check.") },
+    },
+    ({ claim }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text:
+              `Fact-check the claim: "${claim}".\n\n` +
+              `Use naulon_discover to find relevant tolled sources, then naulon_appraise / naulon_quote (free) to see relevance and price. ` +
+              `Only if grounding needs it, pay the most relevant sources with naulon_pay_and_read (or run naulon_research) within budget.\n\n` +
+              `State whether the claim is SUPPORTED, REFUTED, or UNVERIFIABLE, cite the paid sources by title, and report the spend. Keep naulon-cited evidence separate from your own general knowledge.`,
+          },
+        },
+      ],
+    }),
+  );
+
   return server;
 }
