@@ -59,6 +59,13 @@ export type { RailSigners } from "./rail.ts";
 export { decide, DEFAULT_POLICY, spendGate } from "./decide.ts";
 export type { DecisionPolicy, DecideContext, SpendVerdict } from "./decide.ts";
 
+// ── origin policy (whose origin may money touch) ─────────────────────────────
+// The one answer to that question; `spendGate` above stays the one answer to "how
+// much". `PayableTarget` is mintable only by `authorizeOrigin`, so a pay path that
+// skips the check fails to typecheck rather than failing in production.
+export { authorizeOrigin } from "./origin-policy.ts";
+export type { OriginRequest, OriginVerdict, PayableTarget } from "./origin-policy.ts";
+
 // ── cross-source allocation (buyer-side citation-reward policy) ──────────────
 export { allocateByContribution } from "./allocation.ts";
 export type { SourceAllocation } from "./allocation.ts";
