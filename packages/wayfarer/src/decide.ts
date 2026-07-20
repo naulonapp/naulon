@@ -12,6 +12,7 @@
  * case) — it maximizes total relevance bought per dollar without the overhead of
  * solving a knapsack for sub-cent items.
  */
+import { authorizeOrigin } from "./origin-policy.ts";
 import type { AppraisedCandidate, Decision } from "./types.ts";
 
 export interface DecisionPolicy {
@@ -82,17 +83,23 @@ function normHost(host: string | undefined): string | undefined {
  * about a different host than the one that gets paid. Returns undefined when no url is derivable
  * (an allowlist then denies by default).
  */
-export function payHostOf(url: string | undefined, gateBase: string | undefined, slug: string): string | undefined {
+export function payUrlOf(url: string | undefined, gateBase: string | undefined, slug: string): string | undefined {
   const candidates = [url, gateBase && slug ? `${gateBase.replace(/\/+$/, "")}/${slug}` : undefined];
   for (const u of candidates) {
     if (!u) continue;
     try {
-      return new URL(u).hostname.toLowerCase();
+      new URL(u);
+      return u;
     } catch {
       /* not a parseable absolute URL — fall through to the next candidate */
     }
   }
   return undefined;
+}
+
+export function payHostOf(url: string | undefined, gateBase: string | undefined, slug: string): string | undefined {
+  const resolved = payUrlOf(url, gateBase, slug);
+  return resolved === undefined ? undefined : new URL(resolved).hostname.toLowerCase();
 }
 
 /** The shared spend gate's verdict. `approve` means "real, but needs a human" — distinct from
@@ -234,26 +241,35 @@ export function decide(
       continue;
     }
 
-    // ORIGIN PIN (the run()/research counterpart of the MCP's originPinRefusal). Sits with the
-    // SPEND gates, after the free ones — a held-license re-read costs nothing and stays allowed.
+    // ORIGIN — delegated to `authorizeOrigin`, the ONE answer to "whose origin may money touch"
+    // (see origin-policy.ts). Sits with the SPEND gates, after the free ones: a held-license
+    // re-read costs nothing and stays allowed.
     //
-    // A discovery source is untrusted: `catalogSource` casts a remote endpoint's JSON straight to
+    // A discovery source is untrusted — `catalogSource` casts a remote endpoint's JSON straight to
     // Candidate[], so a compromised catalog can hand back any `url` it likes and money would follow
-    // it. Every shipped discovery knob is singular (RSS_URL > PUBLISHER_URL > CATALOG_URL, one
-    // TOLLGATE_URL), so the default posture is: pay only the configured gate.
-    //
-    // Multi-gate buying is opt-in through the EXISTING `allowDomains` — deliberately NOT a separate
-    // "multiGate" flag, which would be a second way to express "which hosts may I pay" and would
-    // drift from this one. Setting an allowlist IS naming your trust boundary, and spendGate
-    // enforces it below against this same real pay host.
+    // it. The refusal PROSE below is this path's own (a research skip reason reads differently from
+    // a tool refusal); the DECISION is shared, which is the part that must never diverge.
+    const payUrl = payUrlOf(c.url, context.gateBase, c.slug);
     const gateHost = payHostOf(undefined, context.gateBase, "_");
-    if (!policy.allowDomains && gateHost !== undefined && host !== gateHost) {
-      skip(
-        host === undefined
-          ? `no resolvable pay URL — refusing (the configured gate is ${gateHost})`
-          : `host ${host} is not the configured gate (${gateHost}); set allowDomains to buy across publishers`,
-      );
-      continue;
+    if (payUrl === undefined) {
+      if (gateHost !== undefined && !policy.allowDomains) {
+        skip(`no resolvable pay URL — refusing (the configured gate is ${gateHost})`);
+        continue;
+      }
+    } else {
+      const origin = authorizeOrigin({
+        target: payUrl,
+        gate: context.gateBase,
+        allowDomains: policy.allowDomains,
+      });
+      if (!origin.ok) {
+        skip(
+          origin.code === "off-gate"
+            ? `host ${host} is not the configured gate (${gateHost}); set allowDomains to buy across publishers`
+            : origin.refusal,
+        );
+        continue;
+      }
     }
 
     // Spend gates — delegated to the ONE shared evaluator (see `spendGate`), so the granular

@@ -11,18 +11,19 @@
  * function that mints a `PayableTarget`, and the pay/probe entrypoints accept nothing
  * else — so a caller that skips the check does not compile.
  *
- * Two levels, deliberately distinct (the distinction predates this module and is
- * correct — see the header on `originPinRefusal`):
+ * Scope, deliberately narrow: this module owns ENDPOINT IDENTITY — host:port must equal
+ * the configured gate, because a different port is a different service and must not
+ * satisfy the pin. That is the whole of its authority.
  *
- *   • ENDPOINT IDENTITY — host:port must equal the configured gate. A different port is
- *     a different service, so it must not satisfy the pin.
- *   • DOMAIN POLICY — an allowlist names domains ("inneraxiom.com"), never host:port.
- *     Setting one IS naming your trust boundary, which is why it is also what widens
- *     the pin: the fleet case (many publisher origins, no single gate) is the same
- *     statement of trust, not a second flag that could disagree with the first.
+ * It does NOT own domain policy. An allowlist names domains ("inneraxiom.com"), and
+ * which of them are payable — along with deny lists, per-domain caps, the kill switch
+ * and human approval — belongs to `spendGate`, the one shared evaluator. Stating an
+ * allowlist therefore REPLACES the gate pin rather than stacking with it: the operator
+ * has named a boundary, so identity steps aside and spendGate adjudicates. Checking it
+ * in both places would recreate the very divergence this module exists to end.
  *
- * This module answers only "whose origin". It never answers "how much" — price, caps,
- * kill-switch and human approval stay in `spendGate`, the one shared evaluator.
+ * So: "whose origin, by identity" here; "which domains, at what price" there. Neither
+ * answers the other's question, and neither has a second implementation.
  */
 
 declare const payable: unique symbol;
@@ -49,23 +50,22 @@ export interface OriginRequest {
   allowDomains?: readonly string[] | undefined;
 }
 
+/**
+ * Why a target was refused. Callers render their OWN prose from this — the research
+ * path's skip reason and an MCP tool's refusal address different readers, and forcing
+ * one wording on both would be a cosmetic unification of the wrong thing. The DECISION
+ * is what must not diverge; the sentence may.
+ */
+export type OriginRefusalCode = "invalid-target" | "invalid-gate" | "off-gate";
+
 export type OriginVerdict =
   | { ok: true; target: PayableTarget }
-  | { ok: false; refusal: string };
+  | { ok: false; code: OriginRefusalCode; refusal: string };
 
 /** Lowercased host INCLUDING port — endpoint identity. */
 function hostOf(u: string): string | null {
   try {
     return new URL(u).host.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-/** Lowercased hostname EXCLUDING port — what domain policy matches on. */
-function hostnameOf(u: string): string | null {
-  try {
-    return new URL(u).hostname.toLowerCase();
   } catch {
     return null;
   }
@@ -81,39 +81,44 @@ export function authorizeOrigin(req: OriginRequest): OriginVerdict {
   const { target, gate, allowDomains } = req;
 
   const host = hostOf(target);
-  if (host === null) return { ok: false, refusal: `"${target}" is not a valid URL.` };
+  if (host === null) return { ok: false, code: "invalid-target", refusal: `"${target}" is not a valid URL.` };
 
   // The gate satisfies the pin on endpoint identity, when one is configured.
   if (gate !== undefined) {
     const gateHost = hostOf(gate);
     if (gateHost === null) {
-      return { ok: false, refusal: `the server's configured gate ("${gate}") is not a valid URL — fix TOLLGATE_URL.` };
+      return {
+        ok: false,
+        code: "invalid-gate",
+        refusal: `the server's configured gate ("${gate}") is not a valid URL — fix TOLLGATE_URL.`,
+      };
     }
     if (host === gateHost) return { ok: true, target: target as PayableTarget };
   }
 
-  // Otherwise the only way through is a stated domain policy.
-  if (allowDomains !== undefined) {
-    const hostname = hostnameOf(target);
-    if (hostname !== null && allowDomains.some((d) => d.toLowerCase() === hostname)) {
-      return { ok: true, target: target as PayableTarget };
-    }
-    return {
-      ok: false,
-      refusal:
-        `refusing to touch ${host}: it is not on this server's allowed domains` +
-        (gate === undefined ? "." : ` and is not the configured gate (${hostOf(gate)}).`),
-    };
-  }
+  // A stated domain boundary REPLACES the gate pin rather than stacking with it. Which
+  // domains are payable is `spendGate`'s question, and it already answers it; answering it
+  // here as well would be the second copy this module exists to prevent. So when the
+  // operator has named a boundary, identity defers and spendGate adjudicates.
+  //
+  // An empty array counts as "stated" for the same reason: spendGate reads an empty
+  // allowlist as deny-by-default, so deferring is strictly equivalent and keeps one owner.
+  if (allowDomains !== undefined) return { ok: true, target: target as PayableTarget };
 
-  if (gate === undefined) {
-    return {
-      ok: false,
-      refusal: `refusing to touch ${host}: no configured gate and no allowed domains — nothing is payable.`,
-    };
-  }
+  // No gate configured and no allowlist stated ⇒ there is no identity boundary to apply,
+  // so defer rather than invent one. Refusing here would read as safer and is not: it
+  // would break the deny-list and per-domain-cap paths, which legitimately run with no
+  // gateBase and rely on spendGate alone.
+  //
+  // "A deployment that enables buying must configure a gate" is a real requirement, but it
+  // is a CONFIG-time one — a process that boots without it should fail to start, not
+  // discover it per-candidate at pay time. That check belongs in the server's config
+  // validation, not here.
+  if (gate === undefined) return { ok: true, target: target as PayableTarget };
+
   return {
     ok: false,
+    code: "off-gate",
     refusal:
       `refusing to touch ${host}: this server only quotes and pays at its configured gate (${hostOf(gate)}). ` +
       `Pass the slug instead of an off-gate url. The gate is server-config and cannot be changed from a tool.`,

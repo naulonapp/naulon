@@ -63,56 +63,51 @@ test("an unparseable gate names the config key to fix", () => {
   assert.match(refusal(authorizeOrigin({ target: `${GATE}/x`, gate: "://broken" })), /is not a valid URL — fix TOLLGATE_URL/);
 });
 
-// ── allowlist: the ONE way to widen ──────────────────────────────────────────
+// ── a stated allowlist replaces the pin and defers to spendGate ──────────────
+//
+// These assert a DEFERRAL, not an approval. `authorizeOrigin` deciding which domains are
+// payable would be a second copy of spendGate's job — the divergence this module exists
+// to end. So once an allowlist is stated, identity steps aside; spendGate's own tests
+// (decide.test.ts) cover which hosts actually get paid.
 
-test("an allowlisted host is authorized even though it is not the gate", () => {
+test("a stated allowlist defers off-gate identity to spendGate", () => {
   ok(authorizeOrigin({ target: "https://inneraxiom.com/articles/x", gate: GATE, allowDomains: ["inneraxiom.com"] }));
 });
 
-test("an allowlist still refuses a host that is not on it", () => {
-  assert.match(
-    refusal(authorizeOrigin({ target: "https://evil.example/x", gate: GATE, allowDomains: ["inneraxiom.com"] })),
-    /evil\.example/,
-  );
+test("deferral is not adjudication — an off-list host also passes identity", () => {
+  // spendGate refuses this one. If authorizeOrigin refused it too, the allow/deny rules
+  // would exist twice and could drift; that is precisely what happened before.
+  ok(authorizeOrigin({ target: "https://evil.example/x", gate: GATE, allowDomains: ["inneraxiom.com"] }));
 });
 
 test("setting an allowlist does not silently drop the gate itself", () => {
   ok(authorizeOrigin({ target: `${GATE}/x`, gate: GATE, allowDomains: ["inneraxiom.com"] }));
 });
 
-test("the allowlist matches HOSTNAME, ignoring port — it names domains, not endpoints", () => {
-  // decide.ts:103-104: "an allow/deny list names domains ('evil.example'), never host:port".
-  ok(authorizeOrigin({ target: "https://inneraxiom.com:8443/x", gate: GATE, allowDomains: ["inneraxiom.com"] }));
+test("an EMPTY allowlist is a stated boundary, and defers like any other", () => {
+  // `![]` is false, so an empty array already bypassed the pin before this refactor.
+  // Deferring preserves that exactly — and spendGate reads an empty allowlist as
+  // deny-by-default, so nothing becomes payable that was not payable before.
+  ok(authorizeOrigin({ target: "https://inneraxiom.com/x", gate: GATE, allowDomains: [] }));
 });
 
-test("allowlist entries are matched case-insensitively", () => {
-  ok(authorizeOrigin({ target: "https://InnerAxiom.com/x", gate: GATE, allowDomains: ["INNERAXIOM.COM"] }));
-});
-
-test("an allowlist entry does NOT imply its subdomains", () => {
-  assert.match(
-    refusal(authorizeOrigin({ target: "https://evil.inneraxiom.com/x", gate: GATE, allowDomains: ["inneraxiom.com"] })),
-    /evil\.inneraxiom\.com/,
-  );
-});
-
-test("an EMPTY allowlist fails closed — it is not read as 'no policy'", () => {
-  // The dangerous misreading: `allowDomains: []` meaning "unrestricted". An operator who
-  // computed an empty tenant set must get refusals, not an open wallet.
-  assert.match(refusal(authorizeOrigin({ target: "https://inneraxiom.com/x", gate: GATE, allowDomains: [] })), /inneraxiom\.com/);
-});
-
-test("with an empty allowlist the gate itself is still authorized", () => {
-  ok(authorizeOrigin({ target: `${GATE}/x`, gate: GATE, allowDomains: [] }));
+test("an invalid target is still rejected even when an allowlist is stated", () => {
+  // Deferral applies to identity, never to parseability — spendGate is handed a host, so
+  // an unparseable target must die here rather than arrive as `undefined`.
+  assert.match(refusal(authorizeOrigin({ target: "nope", gate: GATE, allowDomains: ["x.example"] })), /not a valid URL/);
 });
 
 // ── no gate configured ───────────────────────────────────────────────────────
 
-test("with no gate and no allowlist, everything is refused — fail closed", () => {
-  assert.match(refusal(authorizeOrigin({ target: "https://anything.example/x" })), /no configured gate/);
+test("with no gate and no allowlist, identity defers — there is no boundary to apply", () => {
+  // Deliberately NOT a refusal. The deny-list and per-domain-cap paths run with no
+  // gateBase and rely on spendGate alone; refusing here would break them while only
+  // LOOKING safer. Requiring a gate when buying is enabled is a config-time check —
+  // the process should fail to boot, not fail per-candidate at pay time.
+  ok(authorizeOrigin({ target: "https://anything.example/x" }));
 });
 
-test("with no gate, an allowlisted host is still authorized", () => {
+test("with no gate, a stated allowlist is the whole boundary", () => {
   // The hosted fleet case: the cloud names its tenant set and has no single gate.
   ok(authorizeOrigin({ target: "https://inneraxiom.com/x", allowDomains: ["inneraxiom.com"] }));
 });
