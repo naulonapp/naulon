@@ -117,23 +117,52 @@ test("an unparseable configured gate names TOLLGATE_URL as the thing to fix", as
   assert.match(q.note ?? "", /is not a valid URL — fix TOLLGATE_URL/);
 });
 
-test("DRIFT — the MCP pin ignores policy.allowDomains, unlike decide.ts:250", async () => {
-  // decide.ts:250 turns its host pin OFF when an allowlist is set, delegating to
-  // spendGate: `if (!policy.allowDomains && gateHost !== undefined && host !== gateHost)`.
-  // The MCP pin has no such branch — it is unconditional host:port equality. This is the
-  // gap that makes a directory-supplied publisher URL (inneraxiom.com) unpayable over the
-  // hosted MCP no matter how the gate is configured.
-  //
-  // When the shared origin policy lands, this expectation INVERTS: an explicitly allowed
-  // host must become payable.
-  const q = await quoteUrl("https://inneraxiom.com/articles/x", {
-    policy: { ...DEFAULT_POLICY, allowDomains: ["inneraxiom.com"] },
+test("an explicitly allowed domain is payable off-gate — the allowlist REPLACES the pin", async () => {
+  // Was the DRIFT characterization: the MCP pin used unconditional host:port equality and
+  // ignored policy.allowDomains, so a directory-supplied publisher URL (inneraxiom.com) was
+  // unpayable over the hosted MCP no matter how the gate was configured. `authorizeOrigin`
+  // now defers to spendGate when the operator has stated a domain boundary, matching
+  // decide.ts. This expectation is the inversion that unification was for.
+  const q = await quoteUrl("https://allowed.example/articles/x", {
+    policy: { ...DEFAULT_POLICY, allowDomains: ["allowed.example"] },
   });
-  assert.match(
+  assert.doesNotMatch(
     q.note ?? "",
-    /refusing to touch inneraxiom\.com/,
-    "TODAY: an explicitly allowed domain is still refused by the MCP pin",
+    /refusing to touch/,
+    "a stated allowlist replaces endpoint identity; spendGate adjudicates the domain",
   );
+});
+
+test("a domain OUTSIDE a stated allowlist is still refused, by policy rather than by identity", async () => {
+  // The allowlist replacing the pin must not mean "anything goes once an allowlist exists".
+  // Identity steps aside, spendGate takes over — and it denies a host it never named.
+  const q = await quoteUrl("https://evil.example/articles/x", {
+    policy: { ...DEFAULT_POLICY, allowDomains: ["allowed.example"] },
+  });
+  assert.match(q.note ?? "", /not in allowlist/);
+  assert.equal(q.gated, false);
+});
+
+test("an EMPTY allowlist denies everything and never probes — deny-by-default, not allow-all", async () => {
+  // The sharp edge of "a stated allowlist replaces the pin": an empty array is STATED, so
+  // identity defers — and on the quote path there was no spendGate to defer TO. Without one,
+  // `allowDomains: []` would turn the free probe into an open SSRF surface, which is the exact
+  // hole the origin pin exists to close. Quote must consult spendGate, not just the pin.
+  const q = await quoteUrl("https://evil.example/articles/x", {
+    policy: { ...DEFAULT_POLICY, allowDomains: [] },
+  });
+  assert.match(q.note ?? "", /not in allowlist/);
+  assert.doesNotMatch(q.note ?? "", /Probed /, "a policy refusal must happen BEFORE any socket is opened");
+});
+
+test("the kill switch stops the free probe too, not only the pay", async () => {
+  // Same root cause as the empty-allowlist case: quote reaching the network while spend is
+  // halted is a request the operator has said not to make.
+  const q = await quoteUrl("https://gate.example/essays/x", {
+    policy: { ...DEFAULT_POLICY, killSwitch: true },
+  });
+  assert.match(q.note ?? "", /kill-switch engaged/);
+  assert.doesNotMatch(q.note ?? "", /Probed /);
 });
 
 test("omitting url falls back to the configured gate and is never self-refused", async () => {

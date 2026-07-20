@@ -40,6 +40,7 @@ import { z } from "zod";
 import {
   appraise,
   articleUrl,
+  authorizeOrigin,
   buildPopProof,
   decodeHeld,
   DEFAULT_POLICY,
@@ -111,31 +112,38 @@ function hostnameOf(u: string): string | null {
 }
 
 /**
- * BUY-1.3 — the ORIGIN PIN. `url` is a MODEL-supplied tool arg and nothing used to check it, so a
- * prompt-injected model (a poisoned discover teaser is enough) could aim quote/pay at an attacker
- * origin whose 402 names the attacker's OWN payTo — and the buyer would sign a real USDC
- * authorization to it. The module header already promised "payment only ever flows to the
- * configured gate"; this is where that becomes true rather than aspirational.
+ * BUY-1.3 — the ORIGIN PIN, now the SHARED decision. `url` is a MODEL-supplied tool arg and nothing
+ * used to check it, so a prompt-injected model (a poisoned discover teaser is enough) could aim
+ * quote/pay at an attacker origin whose 402 names the attacker's OWN payTo — and the buyer would
+ * sign a real USDC authorization to it.
  *
- * This is endpoint IDENTITY (host:port must equal the configured gate), deliberately separate from
- * operator DOMAIN POLICY (kill-switch / allow / deny / caps / approval), which lives in the one
- * shared `spendGate` in decide.ts that both this path and naulon_research call. Applied to the
- * free probe too: an off-gate probe is both an SSRF surface and an attacker-authored price.
+ * Two questions, two owners, neither reimplemented here:
+ *   - `authorizeOrigin` — endpoint IDENTITY. host:port must equal the configured gate, UNLESS the
+ *     operator stated a domain boundary, in which case identity steps aside (matching decide.ts,
+ *     which this used to have drifted from).
+ *   - `spendGate` — operator DOMAIN POLICY (kill-switch / allow / deny / caps).
+ *
+ * Both run on the FREE probe as well as the pay. That is not belt-and-braces: once an allowlist can
+ * replace the identity pin, identity alone no longer bounds what quote may fetch, and an empty
+ * allowlist (`[]` — stated, deny-by-default) would leave the probe an open SSRF surface. Whatever
+ * spendGate would refuse to pay for, quote must refuse to reach.
+ *
+ * `priceUsdc: 0` because there is no price yet at origin time — the kill-switch, deny-list and
+ * allowlist gates are all price-independent and run first. The price-dependent gates (approval
+ * threshold, budget, caps) stay where they are, applied on the pay path once the toll is known.
  *
  * Returns a human-readable refusal, or null when the target is clear to proceed.
  */
-function originPinRefusal(target: string, gate: string): string | null {
-  const host = hostOf(target);
-  if (!host) return `"${target}" is not a valid URL.`;
-  const gateHost = hostOf(gate);
-  if (!gateHost) return `the server's configured gate ("${gate}") is not a valid URL — fix TOLLGATE_URL.`;
-  if (host !== gateHost) {
-    return (
-      `refusing to touch ${host}: this server only quotes and pays at its configured gate (${gateHost}). ` +
-      `Pass the slug instead of an off-gate url. The gate is server-config and cannot be changed from a tool.`
-    );
-  }
-  return null;
+function originRefusal(target: string, gate: string, policy: DecisionPolicy): string | null {
+  const verdict = authorizeOrigin({
+    target,
+    gate,
+    ...(policy.allowDomains ? { allowDomains: policy.allowDomains } : {}),
+  });
+  if (!verdict.ok) return verdict.refusal;
+
+  const gated = spendGate({ host: hostnameOf(target) ?? undefined, priceUsdc: 0, policy });
+  return gated.ok ? null : gated.reason;
 }
 
 /** The pay-time spend ceiling (atomic micro-USDC, integer) the buyer must not exceed:
@@ -536,9 +544,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     },
     async ({ slug, url }) => {
       const target = url ?? slugUrl(slug);
-      // Origin pin even on the free probe: an off-gate url is an SSRF surface and would
+      // Origin + policy even on the free probe: an unauthorized url is an SSRF surface and would
       // return an attacker-authored price/payTo the model might then act on.
-      const refusal = originPinRefusal(target, gateBase());
+      const refusal = originRefusal(target, gateBase(), policyFromConfig());
       if (refusal) {
         return structured({ gated: false, note: refusal, ...envelope() });
       }
@@ -640,7 +648,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // costs nothing and reaches no attacker origin. Operator policy is applied below, once the
       // toll is known (the approval threshold is price-dependent).
       const policy = policyFromConfig();
-      const refusal = originPinRefusal(target, gateBase());
+      const refusal = originRefusal(target, gateBase(), policy);
       if (refusal) {
         emitAudit({ slug, action: "skip", reason: refusal, agentId: policy.agentId });
         return structured({ ok: false, error: refusal, errorCode: "rejected", retryable: false, ...envelope() });
