@@ -50,14 +50,45 @@ export function jsonlSink(path?: string): EventSink {
 }
 
 /**
+ * Rows per `readAll` page. PostgREST caps every response at its own `db-max-rows`
+ * (1000 in prod), so asking for more than that is pointless — but asking for LESS
+ * would be wrong too, since the cap is what the page loop is defending against.
+ */
+const PAGE_ROWS = 1000;
+
+/**
+ * Ceiling on a single `readAll` result. Not a limit anyone should hit: it is a
+ * loud tripwire for a runaway ledger or a server that ignores `offset`, chosen so
+ * that crossing it is a real operational event rather than routine. Overridable
+ * so the guard itself can be exercised, and so a deployment that genuinely
+ * outgrows it raises the bound deliberately instead of editing this file.
+ */
+const DEFAULT_MAX_LEDGER_ROWS = 500_000;
+
+/** Knobs for {@link supabaseSink}. Every field is optional; defaults are prod's. */
+export interface SupabaseSinkOptions {
+  /** Loud-failure ceiling on one `readAll`. Default {@link DEFAULT_MAX_LEDGER_ROWS}. */
+  maxLedgerRows?: number;
+}
+
+/**
  * Supabase-backed sink. Each event is stored as one row: its `id` (primary key,
  * so a retried write is idempotent), its `at` timestamp (indexed, for ordering),
  * and the whole `AttributedEvent` as a jsonb `data` column — so `readAll` hands
  * back the exact shape the writer stored, with no field-by-field mapping to drift.
  * This is the backend to use on serverless/multi-instance hosts with no shared disk.
+ *
+ * `readAll` PAGINATES. It must: PostgREST truncates any unbounded select at
+ * `db-max-rows` and reports no error when it does, and this function is the read
+ * primitive under earnings, author earnings, author receipts, the dashboard and
+ * operator rollups, pulse, settlement-fact webhooks and the settlement drain. An
+ * unpaginated read therefore did not merely starve the sweep — past the cap, with
+ * `order=at.asc`, every one of those planes would have gone on reporting the
+ * OLDEST 1000 events forever and silently stopped counting new money.
  */
-export function supabaseSink(): EventSink {
+export function supabaseSink(opts: SupabaseSinkOptions = {}): EventSink {
   const table = getConfig().SUPABASE_EVENTS_TABLE;
+  const maxLedgerRows = opts.maxLedgerRows ?? DEFAULT_MAX_LEDGER_ROWS;
   return {
     async record(event) {
       await supabaseRest(`/rest/v1/${table}?on_conflict=id`, {
@@ -71,10 +102,34 @@ export function supabaseSink(): EventSink {
     },
     async readAll(publisherId?) {
       const scope = publisherId === undefined ? "" : `&publisher=eq.${encodeURIComponent(publisherId)}`;
-      const rows = (await supabaseRest(
-        `/rest/v1/${table}?select=data&order=at.asc${scope}`,
-      )) as Array<{ data: AttributedEvent }>;
-      return rows.map((r) => r.data);
+      const out: AttributedEvent[] = [];
+      let offset = 0;
+      // Page until the server hands back nothing. Terminating on an EMPTY page
+      // (never on a SHORT one) is what makes this independent of the server's own
+      // `db-max-rows`: prod PostgREST runs 1000, but a deployment with a lower cap
+      // returns a short first page, and reading that as "done" is exactly the
+      // silent truncation this loop exists to kill. Advance by what actually came
+      // back, not by what was asked for, for the same reason.
+      for (;;) {
+        const rows = (await supabaseRest(
+          `/rest/v1/${table}?select=data&order=at.asc,id.asc${scope}&limit=${PAGE_ROWS}&offset=${offset}`,
+        )) as Array<{ data: AttributedEvent }>;
+        if (rows.length === 0) break;
+        for (const r of rows) out.push(r.data);
+        offset += rows.length;
+        // A ledger this large means either a real operational problem or a server
+        // ignoring `offset` (which would spin forever). Fail LOUD — the whole point
+        // of this function is that it must never quietly return a prefix.
+        if (out.length > maxLedgerRows) {
+          throw new Error(
+            `eventsink.readAll: ledger exceeded ${maxLedgerRows} rows for publisher=` +
+              `${publisherId ?? "<all>"} — refusing to return a partial ledger. Earnings, author ` +
+              `receipts and the settlement drain all ride this path, so a truncated result would ` +
+              `silently under-report money. Scope the read or raise the bound deliberately.`,
+          );
+        }
+      }
+      return out;
     },
     async get(id) {
       // Primary-key lookup — never reads the whole table.

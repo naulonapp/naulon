@@ -11,8 +11,16 @@
  *     never blocks the response on a retry chain — one bounded fetch, that's it.
  *
  *   - DRAIN (drainSettlements, run on boot + on an interval): the at-least-once
- *     engine. Re-reads the event ledger, skips anything IA has acked, and
- *     re-sends the rest with a bounded, re-signed, backed-off retry.
+ *     engine. Asks the SettlementDeliveryStore for the events that are DUE — never
+ *     the whole ledger — and re-sends each with a bounded, re-signed, backed-off
+ *     retry, persisting the outcome so the next sweep knows what happened.
+ *
+ * Delivery STATE (acked / attempts / next attempt / dead-letter) lives in
+ * settlementDelivery.ts, keyed by event id, deliberately separate from the
+ * append-only settlement ledger: the ledger records that money MOVED and must never
+ * be mutated; whether we have successfully REPORTED it is a different lifecycle.
+ * Retry is bounded and ends in a dead letter that is parked and visible — never an
+ * age cutoff, because silently abandoning owed money is worse than retrying.
  *
  * Idempotent on IA's side by eventId (= event.id), so a duplicate is a no-op
  * ({"deduped":true}) — losing local state can only cost a redundant POST, never
@@ -26,8 +34,7 @@ import {
   signSettlement,
   type AttributedEvent,
 } from "@naulon/shared";
-import { readAll } from "./eventLog.ts";
-import { isAcked, markAcked } from "./settlementOutbox.ts";
+import { getSettlementDeliveryStore } from "./settlementDelivery.ts";
 
 /** Classify the origin's response so the retry loop knows whether to try again. */
 type Outcome =
@@ -73,21 +80,26 @@ async function attempt(event: AttributedEvent, secret: string, originUrl: string
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Deliver one event with a bounded, re-signed, backed-off retry. Returns true
- * once IA has acked it (and records the ack). Used by the drain; the hot path
- * uses a single `attempt` instead so it never stalls the response.
+ * Deliver one event with a bounded, re-signed, backed-off retry WITHIN this sweep.
+ * Returns ok once the publisher has acked it, or the reason it didn't. Recording the
+ * outcome is the caller's job (the delivery store owns ack/attempt/dead-letter state);
+ * the hot path uses a single `attempt` instead so it never stalls the response.
  */
-async function deliver(event: AttributedEvent, secret: string, originUrl: string): Promise<boolean> {
+async function deliver(
+  event: AttributedEvent,
+  secret: string,
+  originUrl: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const max = getConfig().SETTLEMENT_MAX_ATTEMPTS;
   for (let i = 0; i < max; i++) {
     const out = await attempt(event, secret, originUrl);
-    if (out.ok) {
-      await markAcked(event.id);
-      return true;
-    }
+    if (out.ok) return { ok: true };
     if (!out.retry) {
       console.error(`[tollgate] settlement ${event.id} permanently rejected (${out.reason})`);
-      return false; // a 400 won't fix itself — stop, don't burn the budget
+      // A 400 won't fix itself — stop, don't burn this sweep's budget. It still counts
+      // as a failed sweep, so the cross-sweep ladder eventually dead-letters it and an
+      // operator sees a permanently-malformed payload instead of it churning silently.
+      return { ok: false, error: `permanent: ${out.reason}` };
     }
     // A 401 means clock skew OR a wrong secret, and only the first is transient. Every `attempt`
     // re-signs with a FRESH timestamp, so a second consecutive 401 rules clock skew out: the
@@ -99,11 +111,11 @@ async function deliver(event: AttributedEvent, secret: string, originUrl: string
           `settlement secret is almost certainly wrong (rotated on one side only), not clock skew. ` +
           `The event stays unacked and will be retried; fix the secret.`,
       );
-      return false;
+      return { ok: false, error: "repeated 401 — settlement secret is almost certainly wrong" };
     }
     if (i < max - 1) await sleep(250 * 2 ** i); // 250ms, 500, 1s, 2s…
   }
-  return false;
+  return { ok: false, error: "attempt budget exhausted (origin unreachable or erroring)" };
 }
 
 /**
@@ -121,11 +133,15 @@ export async function emitSettlement(
   originUrl: string,
 ): Promise<void> {
   if (!secret) return; // dark — no creds, no emit
-  if (await isAcked(event.id)) return; // already confirmed (e.g. drain beat us)
+  const store = getSettlementDeliveryStore();
+  if (await store.isAcked(event.id)) return; // already confirmed (e.g. drain beat us)
 
   const out = await attempt(event, secret, originUrl);
-  if (out.ok) await markAcked(event.id);
-  // A miss is expected and fine — the drain guarantees eventual delivery.
+  if (out.ok) await store.markAcked(event.id, event.publisherId, Date.now());
+  // A miss is expected and fine — the drain guarantees eventual delivery. We deliberately
+  // do NOT record a failed attempt here: the hot path's single try is opportunistic, and
+  // charging it against the cross-sweep budget would dead-letter an event that the drain
+  // has not actually given up on yet.
 }
 
 /**
@@ -146,27 +162,66 @@ export interface DrainScope {
 }
 
 /**
- * Sweep the ledger and re-send every event IA hasn't acked. Safe to run
- * concurrently with live emits (acks are idempotent; IA dedupes). Returns a
- * small summary for logging/observability. With a `DrainScope` it runs for one
- * publisher; without, it drains the whole ledger against global config.
+ * Sweep the DUE settlements and re-send them. Safe to run concurrently with live emits
+ * (acks are idempotent; the publisher dedupes on eventId). Returns a small summary for
+ * logging/observability. With a `DrainScope` it runs for one publisher; without, it
+ * drains the whole fleet against global config.
+ *
+ * The sweep reads only DUE work — never the whole lifetime ledger. An event is due when
+ * it has no delivery row yet, or its row is unacked, not dead-lettered, and past its
+ * `nextAttemptAt`. Each failure bumps the persisted attempt count and pushes the next
+ * attempt out exponentially, and once the budget is spent the event dead-letters: parked,
+ * surfaced to an operator, still owed, still revivable. Nothing is ever dropped.
  */
-export async function drainSettlements(scope: DrainScope = {}): Promise<{ acked: number; pending: number }> {
+export async function drainSettlements(scope: DrainScope = {}): Promise<{
+  acked: number;
+  pending: number;
+  deadLettered: number;
+}> {
   const cfg = getConfig();
   const secret = scope.secret ?? cfg.CREDITS_SETTLEMENT_SECRET;
   const originUrl = scope.originUrl ?? cfg.ORIGIN_URL;
-  // Dark publisher (or dark gate): no secret, no emit — matches the hot path.
-  if (!secret) return { acked: 0, pending: 0 };
+  // Dark publisher (or dark gate): no secret, no emit — matches the hot path. Note this
+  // returns BEFORE touching the delivery store, so a creds-free self-host never even
+  // opens it: the dark-by-default property is unchanged.
+  if (!secret) return { acked: 0, pending: 0, deadLettered: 0 };
 
-  const events = await readAll(scope.publisherId);
+  const store = getSettlementDeliveryStore();
+  const events = await store.due({
+    now: Date.now(),
+    publisherId: scope.publisherId,
+    limit: cfg.SETTLEMENT_DRAIN_BATCH,
+  });
+
   let acked = 0;
   let pending = 0;
+  let deadLettered = 0;
   for (const event of events) {
-    if (await isAcked(event.id)) continue;
-    if (await deliver(event, secret, originUrl)) acked++;
-    else pending++;
+    const out = await deliver(event, secret, originUrl);
+    if (out.ok) {
+      await store.markAcked(event.id, event.publisherId, Date.now());
+      acked++;
+      continue;
+    }
+    const state = await store.markFailed({
+      eventId: event.id,
+      publisherId: event.publisherId,
+      now: Date.now(),
+      error: out.error,
+      maxAttempts: cfg.SETTLEMENT_MAX_DELIVERY_ATTEMPTS,
+      baseMs: cfg.SETTLEMENT_RETRY_BASE_MS,
+      capMs: cfg.SETTLEMENT_RETRY_BACKOFF_CAP_MS,
+    });
+    pending++;
+    if (state.deadLetteredAt !== undefined) {
+      deadLettered++;
+      console.error(
+        `[tollgate] settlement ${event.id} DEAD-LETTERED after ${state.attempts} sweeps (${out.error}). ` +
+          `The money is still owed — it is parked for operator review, not dropped.`,
+      );
+    }
   }
-  return { acked, pending };
+  return { acked, pending, deadLettered };
 }
 
 /**
@@ -183,8 +238,11 @@ export function startSettlementDrain(): { stop: () => void } {
 
   const sweep = (): void => {
     void drainSettlements()
-      .then(({ acked, pending }) => {
-        if (acked || pending) console.log(`[tollgate] settlement drain: ${acked} acked, ${pending} pending`);
+      .then(({ acked, pending, deadLettered }) => {
+        if (acked || pending)
+          console.log(
+            `[tollgate] settlement drain: ${acked} acked, ${pending} pending, ${deadLettered} dead-lettered`,
+          );
       })
       .catch((err: unknown) => console.error("[tollgate] settlement drain failed:", err));
   };
