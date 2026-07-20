@@ -1,6 +1,6 @@
 {
   "name": "@naulon/shared",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The naulon contract layer: env config, credits + license types, settlement and attribution wire types, event/observation sinks, and the money primitives (network constants, EIP-3009). Builds on @naulon/sdk and re-exports it, so downstream packages get one import.",
   "license": "MIT",
   "repository": {

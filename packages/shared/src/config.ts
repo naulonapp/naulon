@@ -31,8 +31,13 @@ const REPO_ROOT = findRepoRoot();
 // .env and silently fall back to defaults (mock mode, ephemeral keys).
 // Tests are hermetic — they must not pick up a developer's local .env (which may
 // set PAYMENT_MODE=gateway, real creds, etc.). Everything else loads the root .env.
+// `quiet: true` is REQUIRED, not cosmetic: dotenv >=17 prints an "injected env …"
+// tip banner to STDOUT on every load. Any consumer whose stdout is a protocol
+// channel — notably @naulon/wayfarer-mcp, an MCP stdio server where stdout must
+// carry nothing but JSON-RPC — has its stream corrupted by that banner before the
+// first frame. Loading config must never write to stdout.
 if (process.env.NODE_ENV !== "test") {
-  loadDotenv({ path: join(REPO_ROOT, ".env") });
+  loadDotenv({ path: join(REPO_ROOT, ".env"), quiet: true });
 }
 
 // Anchor the ledger to the repo root, not the current working directory — npm

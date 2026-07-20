@@ -4,8 +4,8 @@
   // SOURCE, not the built dist/. Without this, `tsc`/`npm run lint` on a tree with
   // no (or stale) dist reports phantom "has no exported member" errors — only
   // `make lint`/`make test` were safe (they build sdk first). This makes every
-  // typecheck entry point agree. Only the three dist-pointed packages need it;
-  // tollgate/wayfarer already resolve to src. Emit is unaffected — per-package
+  // typecheck entry point agree. Only the dist-pointed (published) packages need
+  // it; tollgate still resolves to src. Emit is unaffected — per-package
   // builds extend tsconfig.base.json, not this file. Keep in step with real
   // internal imports (grep `from "@naulon/` in packages/*/src) — a wrong path is a
   // loud tsc error, never a silent one.
@@ -13,7 +13,8 @@
     "paths": {
       "@naulon/sdk": ["./packages/sdk/src/index.ts"],
       "@naulon/shared": ["./packages/shared/src/index.ts"],
-      "@naulon/enforce": ["./packages/enforce/src/index.ts"]
+      "@naulon/enforce": ["./packages/enforce/src/index.ts"],
+      "@naulon/wayfarer": ["./packages/wayfarer/src/lib.ts"]
     }
   },
   "include": ["packages/*/src/**/*"]

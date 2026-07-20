@@ -12,15 +12,18 @@ buying loop the CLI agent runs, exposed as callable tools.
 ## Run
 
 ```bash
-npx wayfarer-mcp            # stdio MCP server
+npx -y @naulon/wayfarer-mcp            # stdio MCP server
 ```
+
+The package name is scoped (`@naulon/wayfarer-mcp`); the binary it installs is
+`wayfarer-mcp`.
 
 Register it with your MCP client (example — Claude Desktop `mcpServers`):
 
 ```jsonc
 {
   "mcpServers": {
-    "wayfarer": { "command": "npx", "args": ["wayfarer-mcp"] }
+    "wayfarer": { "command": "npx", "args": ["-y", "@naulon/wayfarer-mcp"] }
   }
 }
 ```

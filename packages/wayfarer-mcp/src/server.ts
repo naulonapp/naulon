@@ -66,7 +66,9 @@ import { activeNetwork, getConfig, supportsMemo, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
-export const SERVER_VERSION = "0.0.1";
+/** Keep in step with this package's package.json `version` — it is what the MCP
+ *  handshake reports as `serverInfo.version`. */
+export const SERVER_VERSION = "0.1.1";
 
 /** Every MCP toll is a citation license — the agent gathers citable sources. */
 const KIND = "citation" as const;
