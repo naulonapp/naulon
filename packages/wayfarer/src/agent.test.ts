@@ -12,7 +12,24 @@ import { test } from "node:test";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { resetConfig } from "@naulon/shared";
 
-import { run } from "./agent.ts";
+import { run, tollgateBase } from "./agent.ts";
+
+/** The discovery catalog these run() tests point CATALOG_URL at. Discovery no
+ *  longer has a bundled-demo fallback, so every run() test must supply a real
+ *  source — exercising the same catalogSource path prod runs. The essays mirror
+ *  examples/meridian/credits.json; `the-naulon` is the on-topic one for
+ *  "payment and passage". */
+const TEST_CATALOG = "http://catalog.test/list";
+const TEST_ESSAYS = [
+  { slug: "on-stillness", title: "On Stillness", summary: "On attention, silence, and the discipline of staying with one thing." },
+  { slug: "the-naulon", title: "The Naulon", summary: "The fare paid to cross — payment, passage, and what we owe for what we take." },
+  { slug: "the-river-and-the-name", title: "The River and the Name", summary: "Identity, change, and whether a thing survives the renaming of itself." },
+];
+
+/** Serve TEST_ESSAYS (bare Candidate[] legacy shape) for a catalog probe, else null. */
+function catalogResponse(url: string): Response | null {
+  return url.startsWith(TEST_CATALOG) ? new Response(JSON.stringify(TEST_ESSAYS), { status: 200 }) : null;
+}
 
 /** Run `fn` with env overrides applied (undefined = unset), bracketing a config
  *  reset so wayfarer's lazily-cached config reloads, and restoring after. */
@@ -35,16 +52,34 @@ async function withEnv<T>(overrides: Record<string, string | undefined>, fn: () 
   }
 }
 
-/** A gate that never gates: every probe returns 200, so nothing is priced or paid. */
+/** A gate that never gates: every probe returns 200, so nothing is priced or paid.
+ *  The catalog probe still gets real JSON so discovery succeeds. */
 async function withNonGatedFetch(fn: () => Promise<void>): Promise<void> {
   const real = globalThis.fetch;
-  globalThis.fetch = (async () => new Response("free", { status: 200 })) as typeof fetch;
+  globalThis.fetch = (async (url: string | URL) =>
+    catalogResponse(String(url)) ?? new Response("free", { status: 200 })) as typeof fetch;
   try {
     await fn();
   } finally {
     globalThis.fetch = real;
   }
 }
+
+test("tollgateBase THROWS when TOLLGATE_URL is unset — no invented localhost target", async () => {
+  await withEnv({ TOLLGATE_URL: undefined }, async () => {
+    assert.throws(
+      () => tollgateBase(),
+      /TOLLGATE_URL is not configured/i,
+      "no configured gate is a config error at the seam, not a fabricated http://localhost:8402",
+    );
+  });
+});
+
+test("tollgateBase returns the configured URL when set", async () => {
+  await withEnv({ TOLLGATE_URL: "https://gate.test" }, async () => {
+    assert.equal(tollgateBase(), "https://gate.test");
+  });
+});
 
 test("run honors an explicit budget override instead of the configured ceiling", async () => {
   // Configured ceiling is 0.5; the run is asked to spend at most 0.01.
@@ -53,7 +88,7 @@ test("run honors an explicit budget override instead of the configured ceiling",
       WAYFARER_BUDGET_USDC: "0.5",
       RSS_URL: undefined,
       PUBLISHER_URL: undefined,
-      CATALOG_URL: undefined,
+      CATALOG_URL: TEST_CATALOG,
       OPENAI_API_KEY: undefined,
       TOLLGATE_URL: "http://gate.invalid",
     },
@@ -86,6 +121,8 @@ function withStubGate(amountAtomic: string, fn: () => Promise<void>): Promise<vo
   const real = globalThis.fetch;
   globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
     const u = String(url);
+    const cat = catalogResponse(u);
+    if (cat) return cat;
     if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
     if (init?.headers?.["payment-signature"]) {
       return new Response("the toll is the fare paid to cross", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
@@ -108,7 +145,7 @@ test("run discovers, prices, decides, pays for and cites a relevant source under
       WAYFARER_BUDGET_USDC: "0.1",
       RSS_URL: undefined,
       PUBLISHER_URL: undefined,
-      CATALOG_URL: undefined,
+      CATALOG_URL: TEST_CATALOG,
       OPENAI_API_KEY: undefined,
       TOLLGATE_URL: "http://gate.test",
       WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-run-${process.pid}.json`),
@@ -207,7 +244,7 @@ test("BUY-4.3 P2: an injected session signer pays through run() — no BUYER_PRI
       BUYER_PRIVATE_KEY: undefined, // the whole point: the process holds no key
       RSS_URL: undefined,
       PUBLISHER_URL: undefined,
-      CATALOG_URL: undefined,
+      CATALOG_URL: TEST_CATALOG,
       OPENAI_API_KEY: undefined,
       TOLLGATE_URL: "http://gate.test",
       WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-signer-${process.pid}.json`),
@@ -258,7 +295,7 @@ test("RAS-B: injected railSigners rail-pick PER-402 in run() — a memo-network 
       BUYER_PRIVATE_KEY: undefined,
       RSS_URL: undefined,
       PUBLISHER_URL: undefined,
-      CATALOG_URL: undefined,
+      CATALOG_URL: TEST_CATALOG,
       OPENAI_API_KEY: undefined,
       TOLLGATE_URL: "http://gate.test",
       WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-rail-${process.pid}.json`),
@@ -267,6 +304,8 @@ test("RAS-B: injected railSigners rail-pick PER-402 in run() — a memo-network 
       const real = globalThis.fetch;
       globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
         const u = String(url);
+        const cat = catalogResponse(u);
+        if (cat) return cat;
         if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
         if (init?.headers?.["payment-signature"]) {
           return new Response("the fare is paid", { status: 200 });
@@ -308,7 +347,7 @@ test("BUY-3.1: a kill-switch policy threads through run() — the real pipeline 
       WAYFARER_BUDGET_USDC: "0.1",
       RSS_URL: undefined,
       PUBLISHER_URL: undefined,
-      CATALOG_URL: undefined,
+      CATALOG_URL: TEST_CATALOG,
       OPENAI_API_KEY: undefined,
       TOLLGATE_URL: "http://gate.test",
       WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-kill-${process.pid}.json`),
@@ -346,6 +385,8 @@ test("RAS-A2b: on a gateway (memo-less) network run() routes the injected signer
   const real = globalThis.fetch;
   globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
     const u = String(url);
+    const cat = catalogResponse(u);
+    if (cat) return cat;
     if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
     if (init?.headers?.["payment-signature"]) {
       paidHeader = init.headers["payment-signature"];
@@ -380,7 +421,7 @@ test("RAS-A2b: on a gateway (memo-less) network run() routes the injected signer
         BUYER_PRIVATE_KEY: undefined,
         RSS_URL: undefined,
         PUBLISHER_URL: undefined,
-        CATALOG_URL: undefined,
+        CATALOG_URL: TEST_CATALOG,
         OPENAI_API_KEY: undefined,
         TOLLGATE_URL: "http://gate.test",
         WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-gw-signer-${process.pid}.json`),

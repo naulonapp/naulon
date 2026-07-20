@@ -26,8 +26,13 @@ import type { AgentWallet } from "./wallet.ts";
 export type Logger = (line: string) => void;
 
 export function tollgateBase(): string {
-  const cfg = getConfig();
-  return cfg.TOLLGATE_URL ?? `http://localhost:${cfg.TOLLGATE_PORT}`;
+  const url = getConfig().TOLLGATE_URL;
+  // No fail-open: an unset gate is a config error surfaced here, not a fabricated
+  // http://localhost target that refuses later with a confusing "unreachable host".
+  // Callers prefer an injected per-session `opts.tollgateUrl`; this is only reached
+  // when neither is set.
+  if (!url) throw new Error("TOLLGATE_URL is not configured");
+  return url;
 }
 
 export function articleUrl(base: string, slug: string): string {

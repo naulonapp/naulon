@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { catalogSource } from "./discovery.ts";
+import { catalogSource, rssSource } from "./discovery.ts";
 
 function stubFetch(handler: (url: string) => Response): { calls: string[]; restore: () => void } {
   const real = globalThis.fetch;
@@ -57,6 +57,67 @@ test("catalogSource carries indicative price fields through when present", async
     const [c] = await catalogSource("https://x.test/api/catalog").discover("topic");
     assert.equal(c!.priceUsdc, 0.02);
     assert.equal(c!.citationPriceUsdc, 0.1);
+  } finally {
+    f.restore();
+  }
+});
+
+// ── No fail-open: a failed fetch is an error, never fabricated fixtures ─────────
+
+test("catalogSource THROWS on a failed fetch — never substitutes demo fixtures", async () => {
+  const f = stubFetch(() => new Response("nope", { status: 502 }));
+  try {
+    await assert.rejects(
+      () => catalogSource("https://x.test/api/catalog").discover("topic"),
+      /catalog fetch failed/i,
+      "a 502 must throw, not resolve to bundled demo data wearing the shape of a real catalog",
+    );
+  } finally {
+    f.restore();
+  }
+});
+
+test("catalogSource THROWS on a mid-pagination failure — never silently truncates", async () => {
+  const f = stubFetch((url) =>
+    url.includes("cursor=p2")
+      ? new Response("nope", { status: 500 })
+      : json({ entries: [{ slug: "a", title: "A", summary: "" }], nextCursor: "p2" }),
+  );
+  try {
+    await assert.rejects(
+      () => catalogSource("https://x.test/api/catalog").discover("topic"),
+      /catalog fetch failed/i,
+      "a failure after page 1 must throw, not return the partial first page as if complete",
+    );
+  } finally {
+    f.restore();
+  }
+});
+
+test("rssSource THROWS on a failed fetch — never substitutes demo fixtures", async () => {
+  const f = stubFetch(() => new Response("nope", { status: 503 }));
+  try {
+    await assert.rejects(
+      () => rssSource("https://x.test/rss.xml").discover("topic"),
+      /rss fetch failed/i,
+    );
+  } finally {
+    f.restore();
+  }
+});
+
+test("rssSource returns [] (honest empty) when a valid feed parses to zero candidates", async () => {
+  // A clean 200 that parses empty is honest-empty, NOT an error and NOT demo:
+  // parseRss is lenient, so [] means "no items" and the pipeline finds nothing.
+  const f = stubFetch(() =>
+    new Response(`<?xml version="1.0"?><rss><channel></channel></rss>`, {
+      status: 200,
+      headers: { "content-type": "application/xml" },
+    }),
+  );
+  try {
+    const cands = await rssSource("https://x.test/rss.xml").discover("topic");
+    assert.deepEqual(cands, [], "an empty feed yields [], never the bundled demo catalog");
   } finally {
     f.restore();
   }

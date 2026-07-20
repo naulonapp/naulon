@@ -253,13 +253,15 @@ export const configSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   // USDC the agent deposits into the Gateway Wallet at the start of a run.
   DEPOSIT_AMOUNT_USDC: z.string().default("1"),
-  // The tollgate the agent pays. Defaults to the local tollgate.
+  // The tollgate the agent pays. Required at use — tollgateBase() throws when unset
+  // (no localhost fallback); the cloud injects a per-session gate instead.
   TOLLGATE_URL: z.string().url().optional(),
   // Where the agent discovers candidate essays (a catalog of {slug,title,summary}).
   CATALOG_URL: z.string().url().optional(),
   // RSS/sitemap discovery. If set, the agent discovers from the publisher's live
-  // feed instead of a CATALOG_URL. Precedence: RSS_URL > PUBLISHER_URL > CATALOG_URL
-  // > bundled demo. rssSource reads ${PUBLISHER_URL}/rss.xml unless RSS_URL overrides.
+  // feed instead of a CATALOG_URL. Precedence: RSS_URL > PUBLISHER_URL > CATALOG_URL,
+  // then selectSource() throws — there is no bundled-demo fallback. rssSource reads
+  // ${PUBLISHER_URL}/rss.xml unless RSS_URL overrides.
   PUBLISHER_URL: z.string().url().optional(),
   RSS_URL: z.string().url().optional(),
   // Optional — fills slug coverage RSS truncates (latest-N). Unused until sitemap
