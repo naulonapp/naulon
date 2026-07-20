@@ -29,11 +29,11 @@ import {
 import { readAll } from "./eventLog.ts";
 import { isAcked, markAcked } from "./settlementOutbox.ts";
 
-/** Classify IA's response so the retry loop knows whether to try again. */
+/** Classify the origin's response so the retry loop knows whether to try again. */
 type Outcome =
   | { ok: true } // 2xx — stored or deduped
   | { ok: false; retry: false; reason: string } // permanent (400) — don't hammer
-  | { ok: false; retry: true; reason: string }; // transient (network/5xx/401-clock/404-dark)
+  | { ok: false; retry: true; status?: number; reason: string }; // transient (network/5xx/401/404-dark)
 
 /** One signed POST attempt, timestamped fresh (IA rejects clock skew > 300s). */
 async function attempt(event: AttributedEvent, secret: string, originUrl: string): Promise<Outcome> {
@@ -60,8 +60,9 @@ async function attempt(event: AttributedEvent, secret: string, originUrl: string
     });
     if (res.ok) return { ok: true }; // 200 stored or deduped
     if (res.status === 400) return { ok: false, retry: false, reason: "400 malformed payload" };
-    // 401 (clock/secret), 404 (credits_api flag dark), 5xx → transient.
-    return { ok: false, retry: true, reason: String(res.status) };
+    // 401 (clock/secret), 404 (credits_api flag dark), 5xx → transient. The status rides along so
+    // `deliver` can tell a repeated 401 (a wrong secret — see below) from a genuinely flaky origin.
+    return { ok: false, retry: true, status: res.status, reason: String(res.status) };
   } catch (err) {
     return { ok: false, retry: true, reason: `network: ${String(err)}` };
   } finally {
@@ -87,6 +88,18 @@ async function deliver(event: AttributedEvent, secret: string, originUrl: string
     if (!out.retry) {
       console.error(`[tollgate] settlement ${event.id} permanently rejected (${out.reason})`);
       return false; // a 400 won't fix itself — stop, don't burn the budget
+    }
+    // A 401 means clock skew OR a wrong secret, and only the first is transient. Every `attempt`
+    // re-signs with a FRESH timestamp, so a second consecutive 401 rules clock skew out: the
+    // secret is wrong. Keep burning the ladder and every later sweep hides a config error behind
+    // what looks like a flaky origin — so stop and say which one it is.
+    if (out.status === 401 && i > 0) {
+      console.error(
+        `[tollgate] settlement ${event.id}: repeated 401 after a re-signed attempt — the ` +
+          `settlement secret is almost certainly wrong (rotated on one side only), not clock skew. ` +
+          `The event stays unacked and will be retried; fix the secret.`,
+      );
+      return false;
     }
     if (i < max - 1) await sleep(250 * 2 ** i); // 250ms, 500, 1s, 2s…
   }
