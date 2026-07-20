@@ -16,6 +16,9 @@
  * constants — no new per-publisher seam.
  */
 import { activeNetwork, toAtomicUsdc, type PublisherConfig, type SettlementNetwork } from "@naulon/shared";
+// The manifest MUST advertise the same validity window the real 402 does, so import it rather than
+// re-declaring it (see the note at the old constant's site below).
+import { MAX_TIMEOUT_SECONDS } from "./build402.ts";
 
 /** Well-known path for the toll manifest. */
 export const X402_MANIFEST_PATH = "/.well-known/x402";
@@ -68,8 +71,14 @@ export interface X402Manifest {
   catalog?: { url: string };
 }
 
-/** Same validity window the 402 advertises (x402.ts MAX_TIMEOUT_SECONDS). */
-const MAX_TIMEOUT_SECONDS = 345_600;
+// (MAX_TIMEOUT_SECONDS is imported from build402.ts above.)
+//
+// This was a SECOND hardcoded `345_600` (4 days) — the exact value `X402_MAX_TIMEOUT_SECONDS` was
+// changed to eliminate. Its zod schema now hard-floors at >= 604_900 specifically so "a future edit
+// can't silently re-arm the 4d footgun this fix removed" — but this copy was never updated, so
+// `/.well-known/x402`, the documented discovery entry point, kept advertising 4 days while the gate
+// actually issued up to 8. Any non-SDK buyer planning its validity budget from the manifest got the
+// footgun back at the discovery layer. One source of truth now; the drift cannot recur.
 
 /** Build the discovery manifest for the publisher this gate fronts. */
 export function buildX402Manifest(

@@ -52,13 +52,20 @@ export type FetchErrorCode =
   | "origin_error"
   // A hosted session-signer refusal (never reached the gate — nothing was paid):
   | "needs_topup" // the grant is exhausted / unset — funding the session is the remedy
-  | "grant_expired"; // the grant WINDOW lapsed though funds remain — renewing is the remedy
+  | "grant_expired" // the grant WINDOW lapsed though funds remain — renewing is the remedy
+  | "settlement_ambiguous"; // a failure AFTER the payment-signature was transmitted — money may
+  //                           have moved; a blind retry could double-charge, so NOT retryable
 
 export interface Fetched {
   ok: boolean;
   content?: string;
   settlementRef?: string;
+  /** The author-leg amount paid, in USDC (back-compat — only the primary leg). */
   paidUsdc?: number;
+  /** The buyer's TRUE outflow authorized for this read, in USDC — the sum across every
+   *  settlement leg (== quotedTotalAtomic of the quote actually signed). Callers debit
+   *  budgets on THIS, not paidUsdc, so a fee'd toll is never under-counted. */
+  costUsdc?: number;
   /** Citation License (compact JWS) the gate handed back on a paid read. */
   license?: string;
   error?: string;
@@ -99,7 +106,11 @@ export interface Buyer {
  * Integer math only (AGENTS.md: money is integer micro-USDC, never floats).
  */
 export function quotedTotalAtomic(quoted: Quoted): bigint {
-  if (quoted.legs && quoted.legs.length > 0) {
+  // Threshold MUST match assemblePayment (> 1): the signer only pays the `legs` array
+  // when there are 2+ legs, otherwise it signs `requirements.amount`. Summing a lone leg
+  // here would check a different number than gets signed — a gate could advertise a real
+  // price in requirements and one fake-cheap leg to slip past the ceiling. Check == sign.
+  if (quoted.legs && quoted.legs.length > 1) {
     return quoted.legs.reduce((sum, leg) => sum + BigInt(leg.amount), 0n);
   }
   return BigInt(quoted.amountAtomic);
@@ -252,7 +263,10 @@ export async function probe(
         nonce: req.extra?.nonce,
         requirements: req,
         ...(decoded.resource !== undefined ? { resource: decoded.resource } : {}),
-        ...(legs && legs.length > 0 ? { legs } : {}),
+        // Only a real multi-leg (>1) quote carries `legs`; an honest gate emits naulonLegs
+        // solely for 2+ legs (build402). A lone-leg array is anomalous — dropping it keeps
+        // the invariant "legs present ⟺ signed as an array" that the ceiling check relies on.
+        ...(legs && legs.length > 1 ? { legs } : {}),
       },
     };
   }

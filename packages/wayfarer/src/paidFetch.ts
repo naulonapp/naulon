@@ -10,6 +10,7 @@ import {
   classifySignerRefusal,
   probe,
   probeFailure,
+  quotedTotalAtomic,
   tollMovedOrNull,
   type Fetched,
   type PayGuard,
@@ -84,7 +85,27 @@ export async function runPaidFetch(
     }
   }
   const license = res.headers.get("x-naulon-license") ?? undefined;
-  return { ok: true, content: await res.text(), settlementRef, paidUsdc: quoted.priceUsdc, license };
+  // The gate settles the payment BEFORE it writes the 200 body, so by here the money has
+  // already moved. If reading the body throws (a mid-stream socket reset — a routine fetch
+  // failure), it is NOT safe to retry: a fresh pay would mint a second valid authorization
+  // and double-charge. Surface a distinct, non-retryable `settlement_ambiguous` instead of
+  // letting the raw rejection escape (the host loop only ever inspects a resolved Fetched).
+  let content: string;
+  try {
+    content = await res.text();
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      errorCode: "settlement_ambiguous",
+      retryable: false,
+      error: `paid read: payment was sent and likely settled, but reading the response body failed (${error}). Do NOT blind-retry — verify via settlementRef / a held license before paying again.`,
+    };
+  }
+  // costUsdc is the TRUE total the buyer authorized (all legs), so callers debit budgets on
+  // it — not paidUsdc (author leg only), which under-counts a fee'd toll.
+  const costUsdc = Number(quotedTotalAtomic(quoted)) / 1_000_000;
+  return { ok: true, content, settlementRef, paidUsdc: quoted.priceUsdc, costUsdc, license };
 }
 
 // Re-export the two classifiers so a rail's `onSignError` can build the same typed result the

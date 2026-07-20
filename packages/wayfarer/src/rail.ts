@@ -56,8 +56,10 @@ export function railBuyer(signers: RailSigners): Buyer {
           if (!signers.gateway) {
             throw new Error("no gateway signer for a Circle Gateway 402 (this tenant settles on a memo-less chain)");
           }
-          const requirements = quoted.requirements as BatchingRequirements;
-          const payload = await gatewayLegPayload(signers.gateway, requirements, quoted.resource, 2);
+          // gatewayLegPayload owns the N-leg + GatewayWalletBatched guards, so the mixed-fleet
+          // rail gets the same loud, actionable refusals gatewayBuyer gives (it previously had
+          // neither, silently dropping extra legs until the gate rejected on leg-count mismatch).
+          const payload = await gatewayLegPayload(signers.gateway, quoted, 2);
           return Buffer.from(JSON.stringify(payload)).toString("base64");
         }
         if (!signers.memo) {

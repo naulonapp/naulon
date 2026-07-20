@@ -57,6 +57,7 @@ import {
   rereadWithLicense,
   run,
   selectBuyer,
+  spendGate,
   tollgateBase,
   verifyAgainst,
 } from "@naulon/wayfarer";
@@ -75,13 +76,64 @@ const KIND = "citation" as const;
  *  costs the buyer more than the advertised price — the budget must debit the total. */
 function trueTotalUsdc(quoted: { priceUsdc: number; legs?: { amount: string }[] }): number {
   const legs = quoted.legs;
-  return legs?.length ? legs.reduce((sum, leg) => sum + Number(leg.amount), 0) / 1_000_000 : quoted.priceUsdc;
+  // `> 1` MUST match quotedTotalAtomic / assemblePayment: the buyer signs the legs array
+  // only for 2+ legs, else it pays priceUsdc (the author leg). Gating the budget on a lone
+  // leg would debit a number the buyer never signs — the same ceiling/sign split-brain.
+  return legs && legs.length > 1 ? legs.reduce((sum, leg) => sum + Number(leg.amount), 0) / 1_000_000 : quoted.priceUsdc;
 }
 
 /** Round a USDC figure to whole micro-USDC for display, dropping float dust (e.g.
  *  0.30000000000000004 → 0.3) so reported budgets read cleanly. */
 function round6(usdcAmount: number): number {
   return Math.round(usdcAmount * 1_000_000) / 1_000_000;
+}
+
+/** Lowercased host INCLUDING port — endpoint identity, used for the gate origin pin
+ *  (a different port is a different service, so it must not satisfy the pin). */
+function hostOf(u: string): string | null {
+  try {
+    return new URL(u).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** Lowercased hostname EXCLUDING port — what operator domain policy matches on, since an
+ *  allow/deny list names domains ("evil.example"), never host:port. Also the perDomainCap key. */
+function hostnameOf(u: string): string | null {
+  try {
+    return new URL(u).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * BUY-1.3 — the ORIGIN PIN. `url` is a MODEL-supplied tool arg and nothing used to check it, so a
+ * prompt-injected model (a poisoned discover teaser is enough) could aim quote/pay at an attacker
+ * origin whose 402 names the attacker's OWN payTo — and the buyer would sign a real USDC
+ * authorization to it. The module header already promised "payment only ever flows to the
+ * configured gate"; this is where that becomes true rather than aspirational.
+ *
+ * This is endpoint IDENTITY (host:port must equal the configured gate), deliberately separate from
+ * operator DOMAIN POLICY (kill-switch / allow / deny / caps / approval), which lives in the one
+ * shared `spendGate` in decide.ts that both this path and naulon_research call. Applied to the
+ * free probe too: an off-gate probe is both an SSRF surface and an attacker-authored price.
+ *
+ * Returns a human-readable refusal, or null when the target is clear to proceed.
+ */
+function originPinRefusal(target: string, gate: string): string | null {
+  const host = hostOf(target);
+  if (!host) return `"${target}" is not a valid URL.`;
+  const gateHost = hostOf(gate);
+  if (!gateHost) return `the server's configured gate ("${gate}") is not a valid URL — fix TOLLGATE_URL.`;
+  if (host !== gateHost) {
+    return (
+      `refusing to touch ${host}: this server only quotes and pays at its configured gate (${gateHost}). ` +
+      `Pass the slug instead of an off-gate url. The gate is server-config and cannot be changed from a tool.`
+    );
+  }
+  return null;
 }
 
 /** The pay-time spend ceiling (atomic micro-USDC, integer) the buyer must not exceed:
@@ -228,6 +280,26 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // server instance's lifetime — one stdio/HTTP session = one budget envelope. The
   // model sees what remains and can plan within it; it can never raise the ceiling.
   let spentUsdc = 0;
+  // Per-session pays per publisher host — the granular path's half of `perDomainCap` (decide()
+  // enforces it for naulon_research against its own run-scoped counts).
+  const paidByHost = new Map<string, number>();
+  // ── Spend lock ──────────────────────────────────────────────────────────────
+  // The budget check and its debit are separated by network I/O (probe → sign → paid GET), and an
+  // MCP client may issue tool calls CONCURRENTLY (a normal parallel tool_use block). Without
+  // serialization two pays both read the same `remainingUsdc()`, both pass, and both spend — the
+  // ceiling is breached by design-by-accident. The same interleaving loses held licenses, since
+  // the persist is a read-modify-write of one store. One lock fixes both: every spending path
+  // runs to completion (check → pay → debit → persist) before the next begins.
+  let spendChain: Promise<unknown> = Promise.resolve();
+  function withSpendLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = spendChain.then(fn, fn);
+    // Never let a rejection poison the chain — the next waiter must still run.
+    spendChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
   // Where a needs_topup / grant_expired refusal points the agent to fund/renew (default: the
   // portal wallet path). Server-config, resolved once — never a tool arg.
   const buyerWalletUrl = opts.buyerWalletUrl ?? "/buyer/wallet";
@@ -462,6 +534,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     },
     async ({ slug, url }) => {
       const target = url ?? slugUrl(slug);
+      // Origin pin even on the free probe: an off-gate url is an SSRF surface and would
+      // return an attacker-authored price/payTo the model might then act on.
+      const refusal = originPinRefusal(target, gateBase());
+      if (refusal) {
+        return structured({ gated: false, note: refusal, ...envelope() });
+      }
       const outcome = await probe(target, KIND, payerAddress());
       if (outcome.status !== "gated") {
         return structured({
@@ -547,7 +625,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
     },
-    async ({ slug, url }) => {
+    async ({ slug, url }) =>
+      withSpendLock(async () => {
       // Quote first and gate on the SESSION BUDGET before any spend. The price is the
       // buyer's true total across legs; refusing here is the budget ceiling (the
       // on-chain insufficient-funds + toll-moved-at-pay tolerance are BUY-1.4).
@@ -555,6 +634,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // buyer pays any publisher's URL shape (/articles/, custom domain) without a
       // reconstructed /essays/ template. Absent, fall back to the template.
       const target = url ?? slugUrl(slug);
+      // Endpoint identity first — refused targets are never even fetched, so an off-gate url
+      // costs nothing and reaches no attacker origin. Operator policy is applied below, once the
+      // toll is known (the approval threshold is price-dependent).
+      const policy = policyFromConfig();
+      const refusal = originPinRefusal(target, gateBase());
+      if (refusal) {
+        emitAudit({ slug, action: "skip", reason: refusal, agentId: policy.agentId });
+        return structured({ ok: false, error: refusal, errorCode: "rejected", retryable: false, ...envelope() });
+      }
       const outcome = await probe(target, KIND, payerAddress());
       if (outcome.status !== "gated") {
         const failure = probeFailure(outcome, target);
@@ -574,6 +662,25 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       }
       const quoted = outcome.quoted;
       const cost = round6(trueTotalUsdc(quoted));
+      // Operator policy — the ONE shared evaluator `decide()` uses, so this granular path and
+      // naulon_research enforce byte-identical rules (kill-switch, deny/allow, per-domain cap,
+      // approval threshold). `paidCount`/`remainingUsdc` are omitted: the session envelope below
+      // owns budget accounting with its own message, and maxPaid is a per-run planning cap.
+      const payHost = hostnameOf(target);
+      const verdict = spendGate({
+        host: payHost ?? undefined,
+        priceUsdc: cost,
+        policy,
+        paidForHost: payHost ? (paidByHost.get(payHost) ?? 0) : 0,
+      });
+      if (!verdict.ok) {
+        const reason =
+          verdict.action === "approve"
+            ? `${verdict.reason} — NOT auto-paid. Nothing was spent.`
+            : `${verdict.reason} — nothing was spent.`;
+        emitAudit({ slug, action: verdict.action, reason, priceUsdc: quoted.priceUsdc, agentId: policy.agentId });
+        return structured({ ok: false, error: reason, errorCode: "rejected", retryable: false, ...envelope() });
+      }
       if (cost > remainingUsdc()) {
         emitAudit({
           slug,
@@ -632,9 +739,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           ...envelope(),
         });
       }
-      // Debit the true total the buyer authorized (the quote we gated on). result.paidUsdc
+      // Debit the true total the buyer ACTUALLY authorized (result.costUsdc, computed by the
+      // buyer from the quote it signed at pay time), falling back to our pre-pay `cost`. Using
+      // costUsdc closes the gap where a pay-time re-quote within tolerance paid more than the
+      // pre-pay quote we gated on — the ledger would otherwise understate real spend. result.paidUsdc
       // is only the author leg, so it would under-count a fee'd toll against the budget.
-      spentUsdc = round6(spentUsdc + cost);
+      spentUsdc = round6(spentUsdc + (result.costUsdc ?? cost));
+      if (payHost) paidByHost.set(payHost, (paidByHost.get(payHost) ?? 0) + 1);
 
       let licenseId: string | undefined;
       let licenseVerified: boolean | undefined;
@@ -642,11 +753,20 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         const decoded = decodeHeld(result.license);
         if (decoded) {
           licenseId = decoded.jti;
-          const held = await heldStore.load();
-          // Capture the url actually paid so a later read_held re-fetches THIS link
-          // verbatim, not a reconstructed /essays/<slug> template that 404s off-shape.
-          held.set(decoded.slug, { ...decoded, jws: result.license, url: target });
-          await heldStore.save(held);
+          // BEST-EFFORT, exactly like emitAudit: the money has ALREADY moved by here. A hosted
+          // store (DB/KV) that throws on a transient failure must never turn a successful paid
+          // read into an error — that would lose the content + receipt the buyer just paid for
+          // and push the agent to pay again. Persisting the license is a caching nicety; the
+          // paid read is the product.
+          try {
+            const held = await heldStore.load();
+            // Capture the url actually paid so a later read_held re-fetches THIS link
+            // verbatim, not a reconstructed /essays/<slug> template that 404s off-shape.
+            held.set(decoded.slug, { ...decoded, jws: result.license, url: target });
+            await heldStore.save(held);
+          } catch {
+            /* swallow — a held-license persist failure must never fail an already-paid read */
+          }
         }
         const jwks = await fetchJwks(gateBase());
         if (jwks) licenseVerified = verifyAgainst(result.license, jwks);
@@ -669,12 +789,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         content: result.content,
         settlementRef: result.settlementRef,
         paidUsdc: result.paidUsdc,
-        costUsdc: cost,
+        // Report the total ACTUALLY authorized (what the budget was debited), not the pre-pay quote.
+        costUsdc: result.costUsdc ?? cost,
         ...(licenseId ? { licenseId } : {}),
         ...(licenseVerified === undefined ? {} : { licenseVerified }),
         ...envelope(),
       });
-    },
+      }),
   );
 
   // ── naulon_read_held (free) ──────────────────────────────────────────────────
@@ -786,7 +907,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
     },
-    async ({ topic, budgetUsdc }) => {
+    async ({ topic, budgetUsdc }) =>
+      withSpendLock(async () => {
       const log: string[] = [];
       // Clamp the requested budget to what the session has left: the model can spend
       // less than the ceiling, never more. Passing the clamp into run() overrides its
@@ -860,7 +982,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         })),
         log,
       });
-    },
+      }),
   );
 
   return server;

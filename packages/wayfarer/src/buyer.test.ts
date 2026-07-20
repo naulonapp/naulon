@@ -159,6 +159,36 @@ test("quotedTotalAtomic uses the single author amount, or the SUM of every leg",
   assert.equal(quotedTotalAtomic(FEE), 10500n, "N-leg quote = author + operator legs summed");
 });
 
+// A3-1 regression — the ceiling-check total and the SIGNED total must be the same number.
+// assemblePayment only signs the `legs` array when length > 1; for a lone leg it signs
+// `requirements`. If quotedTotalAtomic (the maxTotalAtomic guard) instead summed a lone
+// leg, a gate could advertise a real price in requirements.amount and a fake-cheap
+// single leg — the ceiling would pass on the cheap number while the buyer signs and pays
+// the real one (pay-1000x-your-ceiling, defeating the guard on every rail).
+const LONE_CHEAP_LEG: Quoted = {
+  ...SINGLE,
+  amountAtomic: "10000",
+  requirements: { ...SINGLE.requirements, amount: "10000" },
+  legs: [{ role: "author", payTo: AUTHOR, amount: "1", nonce: "a" }], // anomalous 1-elem array, $0.000001
+};
+
+async function signedTotalAtomic(q: Quoted): Promise<bigint> {
+  const sig = await assemblePayment(q, (req) => ({ amount: req.amount }));
+  const parsed = JSON.parse(Buffer.from(sig, "base64").toString("utf8"));
+  const payloads = Array.isArray(parsed) ? parsed : [parsed];
+  return payloads.reduce((s: bigint, p: { amount: string }) => s + BigInt(p.amount), 0n);
+}
+
+test("quotedTotalAtomic ALWAYS equals what assemblePayment signs (no ceiling/sign split-brain)", async () => {
+  for (const q of [SINGLE, FEE, LONE_CHEAP_LEG]) {
+    assert.equal(
+      quotedTotalAtomic(q),
+      await signedTotalAtomic(q),
+      "the number checked against the ceiling must equal the number actually signed",
+    );
+  }
+});
+
 test("tollMovedOrNull passes a quote at/under the ceiling and aborts one over it", () => {
   assert.equal(tollMovedOrNull(SINGLE, undefined), null, "no guard → never aborts");
   assert.equal(tollMovedOrNull(SINGLE, { maxTotalAtomic: "10000" }), null, "exactly at the ceiling is fine");

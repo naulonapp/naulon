@@ -1141,3 +1141,106 @@ test("RAS-A2b: on a gateway (memo-less) network buildServer routes the injected 
     await gate.close();
   }
 });
+
+// ── δ (A2-2 / A2-3) — the granular pay path must be gated too ────────────────────────────────
+// Both holes lived in the same place: naulon_quote / naulon_pay_and_read ran with NO policy and
+// NO origin check, while only naulon_research went through decide(). The tool descriptions tell
+// agents to PREFER the granular path, so these were the recommended workflow, not an edge case.
+
+test("A2-3: naulon_pay_and_read REFUSES an off-gate url and spends nothing", async () => {
+  // A poisoned discover teaser (or direct prompt injection) is enough to hand the model a url.
+  // Off-gate ⇒ the attacker authors the 402, naming their OWN payTo — a real USDC authorization.
+  await withStubGate(payGate("1000"), async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({
+      name: "naulon_pay_and_read",
+      arguments: { slug: "zeybek", url: "http://attacker.example/articles/zeybek" },
+    });
+    const r = res.structuredContent as { ok: boolean; error?: string; spentSessionUsdc: number };
+    assert.equal(r.ok, false, "an off-gate url must never be paid");
+    assert.match(r.error ?? "", /configured gate/i, "the refusal names the gate pin");
+    assert.equal(r.spentSessionUsdc, 0, "nothing was spent");
+  });
+});
+
+test("A2-3: naulon_quote refuses an off-gate url (no SSRF probe, no attacker-authored price)", async () => {
+  await withStubGate(payGate("1000"), async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({
+      name: "naulon_quote",
+      arguments: { slug: "zeybek", url: "http://attacker.example/articles/zeybek" },
+    });
+    const r = res.structuredContent as { gated: boolean; note?: string };
+    assert.equal(r.gated, false, "an off-gate target is never quoted as payable");
+    assert.match(r.note ?? "", /configured gate/i);
+  });
+});
+
+test("A2-2: an injected killSwitch halts naulon_pay_and_read, not just naulon_research", async () => {
+  await withStubGate(payGate("1000"), async () => {
+    const client = await connectedClientWith({ policy: { ...DEFAULT_POLICY, killSwitch: true }, budgetUsdc: 1 });
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } });
+    const r = res.structuredContent as { ok: boolean; error?: string; spentSessionUsdc: number };
+    assert.equal(r.ok, false, "the operator's kill switch must bind on every spending path");
+    // Canonical wording comes from the ONE shared spendGate, identical to what decide() reports.
+    assert.match(r.error ?? "", /kill-switch engaged/i);
+    assert.equal(r.spentSessionUsdc, 0, "nothing was spent");
+  });
+});
+
+test("A2-2: a denyDomains entry blocks the granular pay path", async () => {
+  await withStubGate(payGate("1000"), async () => {
+    const client = await connectedClientWith({
+      policy: { ...DEFAULT_POLICY, denyDomains: ["127.0.0.1"] },
+      budgetUsdc: 1,
+    });
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } });
+    const r = res.structuredContent as { ok: boolean; error?: string; spentSessionUsdc: number };
+    assert.equal(r.ok, false, "a denied host must not be paid from the granular tool");
+    assert.match(r.error ?? "", /denied by policy/i);
+    assert.equal(r.spentSessionUsdc, 0);
+  });
+});
+
+test("A2-2: approvalThresholdUsdc gates an expensive toll behind human approval (nothing spent)", async () => {
+  await withStubGate(payGate("1000"), async () => {
+    // Toll is $0.001; threshold $0.0005 ⇒ must NOT auto-pay.
+    const client = await connectedClientWith({
+      policy: { ...DEFAULT_POLICY, approvalThresholdUsdc: 0.0005 },
+      budgetUsdc: 1,
+    });
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } });
+    const r = res.structuredContent as { ok: boolean; error?: string; spentSessionUsdc: number };
+    assert.equal(r.ok, false, "a toll at/above the approval threshold is not auto-paid");
+    assert.match(r.error ?? "", /approval/i);
+    assert.equal(r.spentSessionUsdc, 0);
+  });
+});
+
+// ── β (A2-4 / A2-7) — the spend lock ─────────────────────────────────────────────────────────
+// The budget check and its debit are separated by network I/O, and an MCP client may issue tool
+// calls concurrently. Unserialized, two pays both read the same remaining budget, both pass the
+// check, and both spend — breaching a ceiling that is supposed to be un-raisable.
+
+test("A2-4: two CONCURRENT pays cannot breach the session ceiling", async () => {
+  await withStubGate(payGate("1000"), async () => {
+    // Ceiling $0.0015 fits exactly ONE $0.001 toll, never two.
+    const client = await connectedClientWith({ budgetUsdc: 0.0015 });
+    const [a, b] = await Promise.all([
+      client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "a" } }),
+      client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "b" } }),
+    ]);
+    const ra = a.structuredContent as { ok: boolean; spentSessionUsdc: number };
+    const rb = b.structuredContent as { ok: boolean; spentSessionUsdc: number };
+    const okCount = [ra.ok, rb.ok].filter(Boolean).length;
+    assert.equal(okCount, 1, "exactly one concurrent pay may succeed under a one-toll ceiling");
+    const finalSpent = Math.max(ra.spentSessionUsdc, rb.spentSessionUsdc);
+    assert.ok(finalSpent <= 0.0015, `spend ${finalSpent} must never exceed the $0.0015 ceiling`);
+  });
+});
+
+// A2-7 (held-license lost update) is fixed by the SAME lock proven above: the store's
+// read-modify-write (load → set → save) now runs inside the locked pay_and_read region, so two
+// pays can no longer both load a pre-update snapshot. There is no dedicated test here because the
+// stub `payGate` issues no `x-naulon-license` header, leaving the persist path unreachable from
+// these fixtures — a real coverage gap. Closing it needs a stub that mints a decodable license JWS.

@@ -13,6 +13,7 @@ import {
   probe,
   probeFailure,
   probePrice,
+  quotedTotalAtomic,
   tollMovedOrNull,
   type Buyer,
   type Fetched,
@@ -70,7 +71,22 @@ export function mockBuyer(): Buyer {
         }
       }
       const license = res.headers.get("x-naulon-license") ?? undefined;
-      return { ok: true, content: await res.text(), settlementRef, paidUsdc: quoted.priceUsdc, license };
+      // Mirror paidFetch: a body-read throw after the 200 is settlement-ambiguous, not a
+      // safe retry. costUsdc carries the true total (all legs) for correct budget debit.
+      let content: string;
+      try {
+        content = await res.text();
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          errorCode: "settlement_ambiguous",
+          retryable: false,
+          error: `paid read: payment sent but reading the response body failed (${error}). Do NOT blind-retry.`,
+        };
+      }
+      const costUsdc = Number(quotedTotalAtomic(quoted)) / 1_000_000;
+      return { ok: true, content, settlementRef, paidUsdc: quoted.priceUsdc, costUsdc, license };
     },
   };
 }

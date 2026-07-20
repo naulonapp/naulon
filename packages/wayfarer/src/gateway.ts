@@ -85,14 +85,34 @@ function envAccountKey(): `0x${string}` {
  *  never drifts from the rail. SDK loaded lazily so the mock path never pulls it in. */
 export async function gatewayLegPayload(
   signer: GatewaySigner,
-  requirements: BatchingRequirements,
-  resource: unknown,
+  quoted: Quoted,
   x402Version: number,
 ): Promise<Record<string, unknown>> {
+  // Both pre-sign guards live HERE, not in the callers. They used to sit in gatewayBuyer only,
+  // while railBuyer (the mixed-fleet path) called this helper directly and got neither — the
+  // classic drifted-sibling shape. Taking the whole `quoted` instead of bare requirements makes
+  // them unbypassable: a caller cannot reach the signer without passing through both.
+  //
+  // 1. The Circle SDK's batched pay signs ONE leg. An N-leg (operator-fee) quote would be silently
+  //    underpaid — refuse loudly and point at the memo rail (N-leg-capable).
+  if (quoted.legs && quoted.legs.length > 1) {
+    throw new Error(
+      `gateway (Circle SDK) mode cannot pay a ${quoted.legs.length}-leg toll (operator fee): ` +
+        `the SDK signs only the author leg. Use the memo (Arc) rail for multi-leg settlement.`,
+    );
+  }
+  const requirements = quoted.requirements as BatchingRequirements;
+  // 2. Refuse to sign a Circle envelope for a 402 that is not actually a Gateway batching option.
+  if (requirements.extra?.name !== "GatewayWalletBatched") {
+    throw new Error(
+      "gateway mode expects a Circle Gateway batching option (extra.name 'GatewayWalletBatched'); " +
+        "the gate advertised a non-gateway 402. Check PAYMENT_MODE / the settlement network.",
+    );
+  }
   const { BatchEvmScheme } = await import("@circle-fin/x402-batching/client");
   const scheme = new BatchEvmScheme(signer);
   const signed = await scheme.createPaymentPayload(x402Version, requirements as never);
-  return { ...signed, resource, accepted: requirements };
+  return { ...signed, resource: quoted.resource, accepted: requirements };
 }
 
 export function gatewayBuyer(signer?: GatewaySigner): Buyer {
@@ -116,6 +136,11 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
       // injected-signer (cloud) path is a no-op. The env/CLI path keeps the SDK deposit for
       // backwards compatibility — it needs the raw key, which only exists on that path.
       if (signer) return;
+      // Resolve the env-key address here so `address` is honest from init onward, matching
+      // memoBuyer (which resolves eagerly at construction). Without this the env/CLI path
+      // reported the "0x" placeholder until the first pay — agent.ts logs `wallet ${address}`
+      // BEFORE init(), so an operator saw `wallet 0x` instead of the real derived address.
+      await getSigner();
       const { GatewayClient } = await import("@circle-fin/x402-batching/client");
       const client = new GatewayClient({ chain: activeNetwork().chainName, privateKey: envAccountKey() });
       console.log(`  depositing ${cfg.DEPOSIT_AMOUNT_USDC} USDC into the Gateway Wallet...`);
@@ -138,23 +163,10 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
         address,
         guard,
         async (quoted) => {
-          // The Circle SDK's batched pay signs ONE leg. An N-leg (operator-fee) quote would be
-          // silently underpaid — refuse loudly and point at the memo rail (N-leg-capable). Gateway
-          // N-leg is a documented follow-up (per-leg signing outside a single createPaymentPayload).
-          if (quoted.legs && quoted.legs.length > 1) {
-            throw new Error(
-              `gateway (Circle SDK) mode cannot pay a ${quoted.legs.length}-leg toll (operator fee): ` +
-                `the SDK signs only the author leg. Use the memo (Arc) rail for multi-leg settlement.`,
-            );
-          }
-          const requirements = quoted.requirements as BatchingRequirements;
-          if (requirements.extra?.name !== "GatewayWalletBatched") {
-            throw new Error(
-              "gateway mode expects a Circle Gateway batching option (extra.name 'GatewayWalletBatched'); " +
-                "the gate advertised a non-gateway 402. Check PAYMENT_MODE / the settlement network.",
-            );
-          }
-          const payload = await gatewayLegPayload(await getSigner(), requirements, quoted.resource, 2);
+          // Both pre-sign guards (N-leg refusal + GatewayWalletBatched check) now live inside
+          // gatewayLegPayload, so this rail and railBuyer enforce them identically. They still
+          // throw into onSignError below, keeping a typed Fetched.
+          const payload = await gatewayLegPayload(await getSigner(), quoted, 2);
           return Buffer.from(JSON.stringify(payload)).toString("base64");
         },
         (error) => {
