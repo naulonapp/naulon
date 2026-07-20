@@ -96,13 +96,13 @@ Restart Claude Desktop. Prompts appear in the `+` / slash-command menu.
 
 ### VS Code (native MCP / Copilot agent)
 
-`.vscode/mcp.json` (workspace). VS Code uses the `servers` key and an explicit
-`type`:
+`.vscode/mcp.json` (workspace). VS Code uses the `servers` key (not
+`mcpServers`); the `type` is inferred as stdio from `command`, so it's optional:
 
 ```jsonc
 {
   "servers": {
-    "naulon": { "type": "stdio", "command": "npx", "args": ["-y", "@naulon/wayfarer-mcp"] }
+    "naulon": { "command": "npx", "args": ["-y", "@naulon/wayfarer-mcp"] }
   }
 }
 ```
