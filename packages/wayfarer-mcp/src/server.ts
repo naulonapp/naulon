@@ -507,8 +507,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "Probe the real x402 toll for a source WITHOUT paying — the free 402 price check. Returns " +
         "the author price, the buyer's true total (when the publisher adds extra settlement legs such " +
         "as an operator fee, the total is higher than the author price), and the settlement terms. " +
-        "If the source is not gated, returns gated:false (it is a free read — just fetch it). Quote " +
-        "before paying so you can plan spend against real prices.",
+        "If the source is not gated, returns gated:false (it is a free read — just fetch it). If the " +
+        "server refuses to reach the url (off-gate identity, or operator policy such as a kill-switch " +
+        "or deny-list), returns refused:true with the reason in note — do NOT fetch it; it is neither " +
+        "payable nor free. Quote before paying so you can plan spend against real prices.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug from naulon_discover."),
         url: z
@@ -520,7 +522,17 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           ),
       },
       outputSchema: {
-        gated: z.boolean().describe("True if the source requires payment; false if it is a free read."),
+        gated: z
+          .boolean()
+          .optional()
+          .describe("True if the source requires payment; false if it is a free read. Absent on a refusal (see refused)."),
+        refused: z
+          .boolean()
+          .optional()
+          .describe(
+            "True if the server refused to reach this url — off-gate identity or operator policy (kill-switch / deny). " +
+              "The reason is in note; do NOT fetch it. Mutually exclusive with a gated/free result.",
+          ),
         priceUsdc: z.number().optional().describe("The author leg price in USDC."),
         totalUsdc: z.number().optional().describe("The buyer's true total across all settlement legs — what the budget is debited."),
         affordable: z
@@ -548,7 +560,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // return an attacker-authored price/payTo the model might then act on.
       const refusal = originRefusal(target, gateBase(), policyFromConfig());
       if (refusal) {
-        return structured({ gated: false, note: refusal, ...envelope() });
+        // A refusal is neither payable nor free: signal refused (not gated:false, which the tool
+        // contract defines as "free read — just fetch it" and a buyer would act on).
+        return structured({ refused: true, note: refusal, ...envelope() });
       }
       const outcome = await probe(target, KIND, payerAddress());
       if (outcome.status !== "gated") {

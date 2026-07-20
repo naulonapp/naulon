@@ -1191,16 +1191,34 @@ test("A2-3: naulon_pay_and_read REFUSES an off-gate url and spends nothing", asy
   });
 });
 
-test("A2-3: naulon_quote refuses an off-gate url (no SSRF probe, no attacker-authored price)", async () => {
+test("A2-3: naulon_quote refuses an off-gate url as refused:true, NOT gated:false (no free-read shape)", async () => {
   await withStubGate(payGate("1000"), async () => {
     const client = await connectedClient();
     const res = await client.callTool({
       name: "naulon_quote",
       arguments: { slug: "zeybek", url: "http://attacker.example/articles/zeybek" },
     });
-    const r = res.structuredContent as { gated: boolean; note?: string };
-    assert.equal(r.gated, false, "an off-gate target is never quoted as payable");
-    assert.match(r.note ?? "", /configured gate/i);
+    const r = res.structuredContent as { gated?: boolean; refused?: boolean; note?: string };
+    // A refusal must NOT wear gated:false — the tool description says gated:false means
+    // "free read, just fetch it", so a buyer agent would fetch the very off-gate url we refused.
+    assert.equal(r.refused, true, "the refusal carries an explicit refused:true signal");
+    assert.equal(r.gated, undefined, "gated is absent — a refusal is neither payable nor a free read");
+    assert.match(r.note ?? "", /configured gate/i, "the reason is surfaced");
+  });
+});
+
+test("A2-3: a policy-denied host is quoted as refused:true, not a free read", async () => {
+  await withStubGate(payGate("1000"), async () => {
+    // On-gate host, but operator policy denies it — spendGate refuses even the free probe.
+    const client = await connectedClientWith({
+      policy: { ...DEFAULT_POLICY, denyDomains: ["127.0.0.1"] },
+      budgetUsdc: 1,
+    });
+    const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
+    const r = res.structuredContent as { gated?: boolean; refused?: boolean; note?: string };
+    assert.equal(r.refused, true, "a policy denial is a refusal, surfaced through the same signal");
+    assert.equal(r.gated, undefined, "not gated:false — a buyer must not read a denied host as free");
+    assert.match(r.note ?? "", /denied by policy/i);
   });
 });
 

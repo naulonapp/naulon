@@ -55,7 +55,7 @@ async function withEnv<T>(overrides: Record<string, string | undefined>, fn: () 
  *  is about the pin's REFUSAL, which happens before any socket is opened. */
 const GATE = "https://gate.example";
 
-type QuoteResult = { gated: boolean; note?: string };
+type QuoteResult = { gated?: boolean; refused?: boolean; note?: string };
 type PayResult = { ok: boolean; error?: string; spentSessionUsdc: number };
 
 async function quoteUrl(url: string, opts?: BuildServerOptions): Promise<QuoteResult> {
@@ -74,7 +74,8 @@ test("quote refuses an off-gate url before touching the network", async () => {
   const q = await quoteUrl("https://evil.example/essays/x");
   assert.match(q.note ?? "", /refusing to touch evil\.example/);
   assert.match(q.note ?? "", /only quotes and pays at its configured gate \(gate\.example\)/);
-  assert.equal(q.gated, false, "a refusal is not reported as a gated read");
+  assert.equal(q.refused, true, "a refusal is signalled as refused, never gated:false");
+  assert.equal(q.gated, undefined, "a refusal is not reported as a gated (or free) read");
 });
 
 test("pay refuses an off-gate url and spends nothing", async () => {
@@ -140,7 +141,8 @@ test("a domain OUTSIDE a stated allowlist is still refused, by policy rather tha
     policy: { ...DEFAULT_POLICY, allowDomains: ["allowed.example"] },
   });
   assert.match(q.note ?? "", /not in allowlist/);
-  assert.equal(q.gated, false);
+  assert.equal(q.refused, true, "a policy refusal is signalled as refused, never gated:false");
+  assert.equal(q.gated, undefined, "a denied host is neither payable nor a free read");
 });
 
 test("an EMPTY allowlist denies everything and never probes — deny-by-default, not allow-all", async () => {
