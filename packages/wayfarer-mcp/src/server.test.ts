@@ -152,6 +152,17 @@ function payGate(amountAtomic: string) {
   };
 }
 
+/** A gate that 402s EVERY request, including one carrying a payment-signature — so the
+ *  buyer's paid GET never settles and $0 ever moves, no matter what decide() planned.
+ *  Stands in for any post-signature failure (rejected / insufficient funds /
+ *  settlement_ambiguous): from the buyer's perspective they all resolve `{ ok: false }`. */
+function failingPayGate(amountAtomic: string) {
+  return (_req: IncomingMessage, res: ServerResponse): void => {
+    res.writeHead(402, { "payment-required": paymentRequired(amountAtomic), "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "payment required" }));
+  };
+}
+
 /** A base64 x402 PAYMENT-REQUIRED header advertising a single author leg. */
 function paymentRequired(amountAtomic: string): string {
   const body = {
@@ -1523,6 +1534,74 @@ test("B3: a per-domain cap paid via naulon_pay_and_read carries into naulon_rese
           "the per-domain cap already spent via naulon_pay_and_read must carry into naulon_research's decide() for the same session",
         );
         assert.match(second!.reason, /per-domain cap/i);
+      },
+    );
+  } finally {
+    await Promise.all([gate.close(), catalog.close()]);
+  }
+});
+
+// `result.decisions` is filled by decide() BEFORE the obtain loop runs the actual pays, so a
+// "pay" decision whose buyer.fetch call then FAILS never gets its `action` revised — the post-run
+// loop that folds pays into the session `paidByHost` map must not mistake that PLAN for a
+// confirmed settlement, or a single failed pay poisons the per-domain cap for the rest of the
+// session (not fail-open, but still a real regression of the B3 carry-through above).
+test("B3 follow-up: a FAILED pay must NOT burn the session per-domain cap for the rest of the session", async () => {
+  // This gate 402s every request, even one carrying a payment-signature — the paid GET never
+  // settles and $0 ever moves, however confidently decide() planned to pay.
+  const gate = await standGate(failingPayGate("5000"));
+  const catalog = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify([
+        {
+          slug: "second-toll",
+          title: "Passage, Once More",
+          summary: "payment and passage — a second essay from the same host",
+          url: `${gate.url}/articles/second-toll`,
+        },
+      ]),
+    );
+  });
+  try {
+    await withEnv(
+      {
+        WAYFARER_PER_DOMAIN_CAP: "1",
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        CATALOG_URL: catalog.url,
+        OPENAI_API_KEY: undefined,
+      },
+      async () => {
+        const client = await connectedClientWith({ signer: mockSigner, tollgateUrl: gate.url, budgetUsdc: 1 });
+
+        const research = (
+          await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } })
+        ).structuredContent as { spent: number; decisions: Array<{ slug: string; action: string }> };
+
+        const decided = research.decisions.find((d) => d.slug === "second-toll");
+        assert.ok(
+          decided,
+          `expected the essay to be discovered and decided on, got: ${JSON.stringify(research.decisions)}`,
+        );
+        assert.equal(decided!.action, "pay", "decide() planned to pay — this is the PLAN, not the outcome");
+        assert.equal(research.spent, 0, "the paid GET never settled at the gate — nothing was actually spent");
+
+        // The failed pay above must NOT have burned host X's per-domain cap for the rest of the
+        // session: a SUBSEQUENT pay attempt to the SAME host must still be allowed to try (and
+        // fail for the gate's own reason, never for a cap the failed pay never should have hit).
+        const second = (
+          await client.callTool({
+            name: "naulon_pay_and_read",
+            arguments: { slug: "first-toll", url: `${gate.url}/articles/first-toll` },
+          })
+        ).structuredContent as { ok: boolean; error?: string };
+        assert.equal(second.ok, false, "the gate still 402s every payment attempt, so this pay fails too");
+        assert.doesNotMatch(
+          second.error ?? "",
+          /per-domain cap/i,
+          `a pay that never settled must not have burned the per-domain cap, got: ${second.error}`,
+        );
       },
     );
   } finally {

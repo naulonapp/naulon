@@ -981,12 +981,24 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ...(opts.popWallet ? { popWallet: opts.popWallet } : {}),
       });
       spentUsdc = round6(spentUsdc + result.spent);
-      // B3: fold this run's actual pays back into the session counter, resolving each host via
-      // the SAME `payHostOf` decide() itself counts by (never `Decision.url` blindly, never a
-      // second resolver) — so a later naulon_pay_and_read or naulon_research call in this session
-      // sees them too.
+      // `result.decisions` is decide()'s PLAN, filled in BEFORE the obtain loop runs the actual
+      // pays — a "pay" decision whose buyer.fetch() then fails (rejected, insufficient funds,
+      // toll-moved, settlement_ambiguous, …) never gets its `action` revised, so counting it here
+      // would burn the session per-domain cap for a read that never settled and $0 spent (B3
+      // follow-up). `result.sources` is the outcome, not the plan: agent.ts only pushes a Source
+      // for a "pay" decision AFTER `buyer.fetch()` resolves `ok: true` (see agent.ts's obtain
+      // loop) — a failed pay `continue`s without ever reaching that push. So a slug present here
+      // under a "pay" decision is, by construction, a CONFIRMED settlement, never a free "cache"
+      // re-read (those are pushed under `d.action === "cache"`, filtered out below) and never a
+      // failed attempt. Built BEFORE the increment loop so both loops below share the one Map.
+      const sourceBySlug = new Map(result.sources.map((s) => [s.slug, s]));
+      // B3: fold this run's actual SETTLED pays back into the session counter, resolving each
+      // host via the SAME `payHostOf` decide() itself counts by (never `Decision.url` blindly,
+      // never a second resolver) — so a later naulon_pay_and_read or naulon_research call in this
+      // session sees them too. Gated on `sourceBySlug.has(d.slug)` (confirmed settlement), not
+      // merely `d.action === "pay"` (the plan) — a pay that never settled must never burn the cap.
       for (const d of result.decisions) {
-        if (d.action !== "pay") continue;
+        if (d.action !== "pay" || !sourceBySlug.has(d.slug)) continue;
         const host = payHostOf(d.url, gateBase(), d.slug);
         if (host) paidByHost.set(host, (paidByHost.get(host) ?? 0) + 1);
       }
@@ -994,7 +1006,6 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // internally, so we replay its decisions here post-run — enriching a `pay` with the
       // settlement detail from the matching cited source. agentId is a policy tag (audit
       // attribution), read once for the whole run.
-      const sourceBySlug = new Map(result.sources.map((s) => [s.slug, s]));
       const runAgentId = policyFromConfig().agentId;
       for (const d of result.decisions) {
         const src = d.action === "pay" ? sourceBySlug.get(d.slug) : undefined;
