@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
+import { FLEET_DIRECTORY_URL } from "./fleet.ts";
 
 // Find the repo root by walking UP from the cwd until we hit the workspace root
 // (marked by package-lock.json). We anchor on cwd, not import.meta.url, because
@@ -256,8 +257,10 @@ export const configSchema = z.object({
   // The tollgate the agent pays. Required at use — tollgateBase() throws when unset
   // (no localhost fallback); the cloud injects a per-session gate instead.
   TOLLGATE_URL: z.string().url().optional(),
-  // Where the agent discovers candidate essays (a catalog of {slug,title,summary}).
-  CATALOG_URL: z.string().url().optional(),
+  // Where the agent discovers candidate essays (a catalog of {slug,title,summary}). Defaults
+  // to the live naulon fleet directory — @naulon/wayfarer-mcp is naulon's branded client, so
+  // zero-config discovery resolves here out of the box (turnkey), overridable for self-host.
+  CATALOG_URL: z.string().url().default(FLEET_DIRECTORY_URL),
   // RSS/sitemap discovery. If set, the agent discovers from the publisher's live
   // feed instead of a CATALOG_URL. Precedence: RSS_URL > PUBLISHER_URL > CATALOG_URL,
   // then selectSource() throws — there is no bundled-demo fallback. rssSource reads
