@@ -957,6 +957,37 @@ test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /
   }
 });
 
+// ── FU-A1b — naulon_read_held's PoP-proof signing can throw too, and must not
+// crash the tool call. buildPopProof calls wallet.signMessage — on the hosted
+// path that's cloudPopSigner.signMessage (cloud-signer.ts), a real network POST
+// to /_naulon/buyer-wallet/sign-pop that throws SignerError on any non-2xx. Before
+// this fix that throw propagated uncaught out of the tool handler; the MCP SDK's
+// outer catch (server/mcp.js) turns ANY thrown error into a generic isError:true
+// text blob, discarding the tool's declared { ok, error } output shape every
+// other refusal in this tool already uses (see "no held license" above).
+test("FU-A1b: naulon_read_held's PoP-proof signing THROWING returns a typed error, not a crash", async () => {
+  const exp = Math.floor(Date.now() / 1000) + 3600; // live
+  const store = memoryHeldStore([["popslug", { ...heldLicense("popslug", exp), pop: true }]]);
+  const client = await connectedClientWith({
+    heldStore: store,
+    popWallet: {
+      address: "0x4444444444444444444444444444444444444444",
+      mock: false,
+      signMessage: async () => {
+        // Mirrors cloudPopSigner.signMessage (cloud-signer.ts) throwing SignerError
+        // on a non-2xx /_naulon/buyer-wallet/sign-pop reply.
+        throw new Error("sign-pop failed: 503");
+      },
+    },
+  });
+
+  const res = await client.callTool({ name: "naulon_read_held", arguments: { slug: "popslug" } });
+  assert.notEqual(res.isError, true, "a PoP-sign failure is a typed refusal, not an SDK-level tool crash");
+  const r = res.structuredContent as { ok: boolean; error?: string } | undefined;
+  assert.equal(r?.ok, false, "PoP-sign failure ⇒ not ok");
+  assert.match(r?.error ?? "", /sign|proof/i, "the error explains the re-read couldn't be proven/signed");
+});
+
 // ── B1 (CRITICAL) — a held license must never leak to a same-slug candidate at a
 // DIFFERENT publisher ────────────────────────────────────────────────────────────
 // The held store is keyed by SLUG ALONE (licenseStore.ts). Two publishers can both
