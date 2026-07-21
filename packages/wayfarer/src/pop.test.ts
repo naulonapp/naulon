@@ -19,11 +19,6 @@ const HELD: HeldLicense = {
   jws: "header.payload.sig",
 };
 
-test("returns null when the wallet cannot sign — caller must fall back to paying", async () => {
-  const noSign: AgentWallet = { address: "0xabc", mock: true };
-  assert.equal(await buildPopProof(HELD, noSign, 1_700_000_000_000), null);
-});
-
 test("emits a three-part <ts>.<nonce>.<sig> proof", async () => {
   const wallet: AgentWallet = {
     address: "0xabc",

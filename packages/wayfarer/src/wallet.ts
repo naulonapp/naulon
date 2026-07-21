@@ -14,12 +14,8 @@ import { getConfig } from "@naulon/shared";
 export interface AgentWallet {
   address: string;
   mock: boolean;
-  /**
-   * Sign an EIP-191 personal_sign message (a holder-of-key proof). Present
-   * whenever a private key is available (always, on the dev path). Absent only
-   * when BUYER_ADDRESS is set without a key — then PoP re-reads can't be proven.
-   */
-  signMessage?: (message: string) => Promise<string>;
+  /** Sign an EIP-191 personal_sign message (a holder-of-key proof). */
+  signMessage: (message: string) => Promise<string>;
 }
 
 /**
