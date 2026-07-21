@@ -94,6 +94,23 @@ test("catalogSource THROWS on a mid-pagination failure — never silently trunca
   }
 });
 
+test("catalogSource THROWS on a page whose entries array is missing — never spreads undefined", async () => {
+  const f = stubFetch((url) =>
+    url.includes("cursor=p2")
+      ? json({ nextCursor: "p3" }) // malformed: entries omitted
+      : json({ entries: [{ slug: "a", title: "A", summary: "" }], nextCursor: "p2" }),
+  );
+  try {
+    await assert.rejects(
+      () => catalogSource("https://x.test/api/catalog").discover("topic"),
+      /missing an entries array/,
+      "a page missing entries must throw a descriptive error, not crash with a raw TypeError",
+    );
+  } finally {
+    f.restore();
+  }
+});
+
 test("rssSource THROWS on a failed fetch — never substitutes demo fixtures", async () => {
   const f = stubFetch(() => new Response("nope", { status: 503 }));
   try {

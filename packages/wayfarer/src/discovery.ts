@@ -46,6 +46,9 @@ export function catalogSource(url: string): DiscoverySource {
         if (!res.ok) throw new Error(`catalog fetch failed (${res.status}) for ${u.toString()}`);
         const json = (await res.json()) as Candidate[] | { entries: Candidate[]; nextCursor?: string };
         if (Array.isArray(json)) return [...out, ...json]; // legacy shape: single page
+        if (!Array.isArray(json.entries)) {
+          throw new Error(`catalog page missing an entries array for ${u.toString()}`);
+        }
         out.push(...json.entries);
         cursor = json.nextCursor;
         if (!cursor) break;
