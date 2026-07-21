@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { resetConfig } from "@naulon/shared";
+import { loadSigningKey, mintLicense, resetConfig } from "@naulon/shared";
 
 import { run, tollgateBase } from "./agent.ts";
 import { memoryHeldStore } from "./licenseStore.ts";
@@ -603,6 +603,38 @@ test("H-OSS-1: run() refuses a deny-listed host even when an operator allowlist 
 // typed failure instead of throwing, AND a just-paid license is saved incrementally
 // (not only once after the loop) as a second line of defense.
 
+/** A real, decodable Citation License JWS for `slug` (mirrors licenseStore.test.ts's
+ *  `token()`) — decodeHeld() parses claims (jti/exp/aud/naulon.slug) without
+ *  verifying the signature, but it DOES require a well-formed JWT; an opaque
+ *  placeholder string like "lic.jws" decodes to garbage and is silently dropped,
+ *  which would make the A1 assertion below vacuous (it'd pass even if the
+ *  incremental-save fix were never applied). */
+function paidLicense(slug: string): string {
+  const now = Date.now();
+  return mintLicense(
+    {
+      event: {
+        id: `id-${slug}`,
+        slug,
+        kind: "citation",
+        amount: 0.001 as never,
+        payees: [{ authorId: "a", wallet: "0x1111111111111111111111111111111111111111" as never, share: 1 }],
+        payerAddress: "0x2222222222222222222222222222222222222222" as never,
+        settlementRef: "ref",
+        at: now,
+      },
+      issuer: "naulon:test",
+      audience: "naulon:test",
+      ttlSeconds: 600,
+      payeesMode: "full",
+      title: `Title ${slug}`,
+      network: { chainId: 5042002, usdc: "0x36", gateway: "g" },
+    },
+    loadSigningKey(),
+    now,
+  );
+}
+
 test("A1: a held license whose re-read throws (network reject) is logged-and-skipped — run() resolves, cites what it DID pay for, and the paid license persists", async () => {
   const CATALOG = "http://catalog.test/a1";
   const GATE = "http://gate.test";
@@ -639,7 +671,10 @@ test("A1: a held license whose re-read throws (network reject) is logged-and-ski
           throw new TypeError("fetch failed: connection reset");
         }
         if (init?.headers?.["payment-signature"]) {
-          return new Response("the paid content", { status: 200, headers: { "x-naulon-license": "lic.paid.jws" } });
+          return new Response("the paid content", {
+            status: 200,
+            headers: { "x-naulon-license": paidLicense(PAID_SLUG) },
+          });
         }
         const header = Buffer.from(
           JSON.stringify({

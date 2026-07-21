@@ -256,6 +256,12 @@ export async function run(
     if (d.action === "cache") {
       const h = held.get(d.slug);
       if (!h) continue;
+      // Re-read at the license's OWN paid url — NEVER the untrusted candidate `d.url`
+      // (discover() can hand back anything). Mirrors naulon_read_held's
+      // `license.url ?? slugUrl(slug)` (wayfarer-mcp/server.ts) — the held store is
+      // keyed by slug alone, so a same-slug candidate from a DIFFERENT (still
+      // allow-listed) publisher must never receive this license/PoP proof (B1).
+      const target = h.url ?? articleUrl(base, d.slug);
       // Holder-of-key license: sign a fresh proof-of-possession so the gate knows
       // we still hold the payer wallet, not just a captured token.
       let proof: string | undefined;
@@ -266,7 +272,7 @@ export async function run(
           continue;
         }
       }
-      const reread = await rereadWithLicense(url, "citation", h.jws, buyer.address, proof);
+      const reread = await rereadWithLicense(target, "citation", h.jws, buyer.address, proof);
       if (reread.ok) {
         sources.push({ slug: d.slug, title: d.title, content: reread.content ?? "", paidUsdc: 0, licenseId: h.jti });
         log(`  🎫 re-read ${d.slug} FREE with held license (${h.jti.slice(0, 8)})${h.pop ? " 🔑 proof-of-possession" : ""}`);
@@ -307,6 +313,10 @@ export async function run(
         // held record (a slug-only re-read can then target the real link, not a template).
         held.set(d.slug, { ...decoded, jws: result.license, url });
         licenseId = decoded.jti;
+        // Save NOW, not only once after the loop (A1): a later candidate's re-read
+        // throwing (or any other mid-loop failure) must never discard a license this
+        // run already paid for. Idempotent — the final save below is a safety net.
+        await heldStore.save(held);
       }
       const mark =
         verified === true ? " → 🎫 license verified" : verified === false ? " → ⚠ license UNVERIFIED" : " → 🎫 license";

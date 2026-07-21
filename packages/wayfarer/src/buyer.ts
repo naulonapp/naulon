@@ -373,7 +373,21 @@ export async function rereadWithLicense(
     "x-naulon-license": license,
   };
   if (proof) headers["x-naulon-proof"] = proof;
-  const res = await agentFetch(url, { headers });
+  let res: Response;
+  try {
+    res = await agentFetch(url, { headers });
+  } catch (err) {
+    // A DNS/connection failure must not propagate as an unhandled rejection (A1) —
+    // mirrors probe()'s network-catch below. run()'s cache branch treats this like any
+    // other re-read failure: logged-and-skipped, never fatal to the whole run(), so one
+    // flaky held essay can't discard licenses already paid for earlier in the loop.
+    return {
+      ok: false,
+      errorCode: "origin_error",
+      retryable: true,
+      error: `re-read unreachable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
   if (!res.ok) return { ok: false, error: `re-read returned ${res.status}` };
   return { ok: true, content: await res.text(), paidUsdc: 0, license };
 }
