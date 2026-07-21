@@ -61,6 +61,22 @@ test("signs the canonical popMessage the gate will reconstruct", async () => {
   );
 });
 
+// ── FU-A1b — a signer that THROWS must degrade to the same "can't sign" null as
+// a signer that's simply absent, not propagate the throw. `wallet.signMessage` is
+// a real network op on the hosted path (cloudPopSigner POSTs to
+// /_naulon/buyer-wallet/sign-pop and throws SignerError on any non-2xx) — a
+// transient blip there must be as recoverable as no key being configured at all.
+test("returns null when the wallet's signMessage THROWS (signer network/auth failure) — caller must fall back to paying", async () => {
+  const throwingWallet: AgentWallet = {
+    address: "0xabc",
+    mock: false,
+    signMessage: async () => {
+      throw new Error("sign-pop failed: 503");
+    },
+  };
+  assert.equal(await buildPopProof(HELD, throwingWallet, 1_700_000_000_000), null);
+});
+
 test("each proof carries a fresh single-use nonce", async () => {
   const wallet: AgentWallet = { address: "0xabc", mock: true, signMessage: async () => "0xSIG" };
   const a = await buildPopProof(HELD, wallet, 1_700_000_000_000);

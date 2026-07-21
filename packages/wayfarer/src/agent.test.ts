@@ -14,6 +14,7 @@ import { jwksOf, loadSigningKey, mintLicense, resetConfig, type JwkSet } from "@
 
 import { licenseIdentityFor, run, tollgateBase, verifyAgainst } from "./agent.ts";
 import { memoryHeldStore } from "./licenseStore.ts";
+import type { AgentWallet } from "./wallet.ts";
 
 /** The discovery catalog these run() tests point CATALOG_URL at. Discovery no
  *  longer has a bundled-demo fallback, so every run() test must supply a real
@@ -783,6 +784,126 @@ test("A1: a held license whose re-read throws (network reject) is logged-and-ski
         assert.ok(
           held.get(PAID_SLUG),
           "A's just-paid license was persisted to the injected store despite B's later re-read throwing",
+        );
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+// ── FU-A1b — a PoP-proof SIGNING failure in the held-license re-read path must
+// not crash the whole run either. `run()`'s cache branch calls `buildPopProof`,
+// which calls `wallet.signMessage` — on the hosted path that's
+// `cloudPopSigner.signMessage` (wayfarer-mcp/cloud-signer.ts), a real network POST
+// to `/_naulon/buyer-wallet/sign-pop` that THROWS a `SignerError` on any non-2xx.
+// Before this fix, that throw propagated uncaught through `buildPopProof` → run()'s
+// cache branch → run() itself — the exact A1 failure class, just one call earlier
+// (signing the proof instead of re-reading with it).
+//
+// This test doubles as FU-A1a coverage: PAID_SLUG's decision is ranked (and
+// therefore processed inside run()'s obtain loop) BEFORE HELD_SLUG's, so if the
+// incremental `heldStore.save` added in the B1/A1 commit were ever removed,
+// HELD_SLUG's later PoP-sign throw would discard PAID_SLUG's freshly-paid license
+// from the final save — this test would catch that regression too.
+test("FU-A1b: a held license whose PoP-proof signing THROWS is logged-and-skipped — run() resolves, cites what it DID pay for, and the paid license persists", async () => {
+  const CATALOG = "http://catalog.test/a1b";
+  const GATE = "http://gate.test";
+  const PAID_SLUG = "paid-essay";
+  const HELD_SLUG = "held-essay";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: GATE,
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-a1b-${process.pid}.json`),
+    },
+    async () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: PAID_SLUG, title: "Paid Essay", summary: "payment and passage — worth paying for" },
+              { slug: HELD_SLUG, title: "Held Essay", summary: "payment and passage — already held" },
+            ]),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        // The held candidate's cache-branch re-read GET must NEVER be reached — the
+        // PoP-signing throw happens in buildPopProof, before rereadWithLicense is
+        // ever called. If this branch fires, the fix didn't actually short-circuit
+        // the re-read on a signing failure.
+        if (init?.headers?.["x-naulon-license"]) {
+          throw new Error("FU-A1b: re-read must not be attempted when PoP-signing throws");
+        }
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the paid content", {
+            status: 200,
+            headers: { "x-naulon-license": paidLicense(PAID_SLUG) },
+          });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+
+      try {
+        const exp = Math.floor(Date.now() / 1000) + 3600; // live
+        const store = memoryHeldStore([
+          [
+            HELD_SLUG,
+            {
+              slug: HELD_SLUG,
+              title: "Held Essay",
+              jti: "jti-held",
+              exp,
+              aud: "gate://test",
+              pop: true, // holder-of-key bound — a re-read requires a signed PoP proof
+              jws: "held.jws.sig",
+              url: `${GATE}/essays/${HELD_SLUG}`,
+            },
+          ],
+        ]);
+
+        const throwingPopWallet: AgentWallet = {
+          address: "0x3333333333333333333333333333333333333333",
+          mock: false,
+          signMessage: async () => {
+            // Mirrors cloudPopSigner.signMessage (wayfarer-mcp/cloud-signer.ts)
+            // throwing SignerError on a non-2xx /_naulon/buyer-wallet/sign-pop reply.
+            throw new Error("sign-pop failed: 503");
+          },
+        };
+
+        // Before the fix this `await` REJECTS (the throw from popWallet.signMessage
+        // propagates uncaught through buildPopProof → run()'s cache branch).
+        const result = await run("payment and passage", () => {}, {
+          heldStore: store,
+          popWallet: throwingPopWallet,
+        });
+
+        assert.ok(
+          result.sources.some((s) => s.slug === PAID_SLUG),
+          "run() still cites the essay it successfully paid for, despite the held essay's PoP-sign throwing",
+        );
+        assert.ok(
+          !result.sources.some((s) => s.slug === HELD_SLUG),
+          "the essay whose PoP-sign threw is NOT cited — logged-and-skipped, not fatal",
+        );
+
+        const held = await store.load();
+        assert.ok(
+          held.get(PAID_SLUG),
+          "the earlier pay's license was persisted to the injected store despite the later PoP-sign throwing (FU-A1a coverage)",
         );
       } finally {
         globalThis.fetch = real;
