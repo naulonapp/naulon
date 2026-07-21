@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { usdc } from "@naulon/shared";
-import { decide, DEFAULT_POLICY } from "./decide.ts";
+import { decide, DEFAULT_POLICY, payUrlOf } from "./decide.ts";
 import type { AppraisedCandidate } from "./types.ts";
 
 function cand(slug: string, relevance: number, price: number): AppraisedCandidate {
@@ -157,6 +157,19 @@ test("domain policy uses the PAY url's host, not a spoofable Candidate.host", ()
     allowDomains: ["trusted-publisher.com"],
   });
   assert.equal(notAllowed!.action, "skip", "a spoofed host field cannot satisfy the allowlist");
+});
+
+test("payUrlOf's slug fallback resolves the real article path, not a bare gateBase+slug", () => {
+  // The pay step actually fetches `${base}/essays/${slug}` (see agent.ts's articleUrl()) — the
+  // slug-only fallback here must mirror that shape so a future consumer of the full URL (not
+  // just its host) never gets sent to a path that doesn't exist.
+  const resolved = payUrlOf(undefined, "https://gate.example", "the-naulon");
+  assert.equal(resolved, "https://gate.example/essays/the-naulon");
+});
+
+test("payUrlOf's slug fallback strips a trailing slash off gateBase and percent-encodes the slug", () => {
+  const resolved = payUrlOf(undefined, "https://gate.example/", "a slug/with-specials");
+  assert.equal(resolved, "https://gate.example/essays/a%20slug%2Fwith-specials");
 });
 
 test("a slug-only candidate resolves its policy host from the configured gateBase", () => {
