@@ -90,5 +90,10 @@ export function selectSource(): DiscoverySource {
   const rss = rssUrlFromConfig();
   if (rss) return rssSource(rss);
   if (cfg.CATALOG_URL) return catalogSource(cfg.CATALOG_URL);
-  throw new Error("no discovery source configured — set RSS_URL, PUBLISHER_URL, or CATALOG_URL");
+  throw new Error(
+    "no discovery source configured — naulon has no catalog to search yet. " +
+      "Point it at a publisher by setting RSS_URL, PUBLISHER_URL, or CATALOG_URL, " +
+      "or connect a hosted naulon endpoint with an agent token for a turnkey corpus. " +
+      "There is no bundled demo catalog — discovery never fabricates sources.",
+  );
 }

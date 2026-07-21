@@ -1,6 +1,6 @@
 {
   "name": "@naulon/wayfarer-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Model Context Protocol server that lets any LLM discover, quote, pay, and cite naulon-tolled sources — BYO wallet, local stdio, the wayfarer brain in-process.",
   "license": "MIT",
   "repository": {
@@ -32,7 +32,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@naulon/shared": "^0.1.2",
-    "@naulon/wayfarer": "^0.1.1",
+    "@naulon/wayfarer": "^0.1.2",
     "zod": "^4.4.3"
   },
   "engines": {
