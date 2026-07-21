@@ -659,6 +659,119 @@ test("H-OSS-1: run() refuses a deny-listed host even when an operator allowlist 
   );
 });
 
+// ── WP-2 T2 (corrected) — run()'s autoTrustDiscoveredDomains ────────────────────
+// wayfarer-mcp's naulon_research can't build a policy from candidates before calling run()
+// (discovery happens INSIDE run()), so it can only pass the INTENT. These prove run() itself:
+// derives allowDomains from ITS OWN discovery when the flag is set (fleet publisher domains
+// become payable, not off-gate-skipped), and that omitting the flag preserves the existing
+// strict pin (H-OSS-1 above) — the flag, not an ambient default, is what gates the trust.
+
+test("WP-2 T2: run() with autoTrustDiscoveredDomains authorizes an off-gate candidate from THIS RUN'S OWN discovery", async () => {
+  const CATALOG = "http://catalog.test/fleet-default";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test", // the directory host — never itself gated
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-fleet-default-${process.pid}.json`),
+    },
+    async () => {
+      const fetched: string[] = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              // Shape of a real gate.naulon.app/directory entry: a candidate whose real link is
+              // a DIFFERENT (off-gate) publisher origin — never the directory host itself.
+              {
+                slug: "the-naulon",
+                title: "The Naulon",
+                summary: "payment and passage — the fare paid to cross",
+                url: "http://publisher.test/articles/the-naulon",
+              },
+            ]),
+            { status: 200 },
+          );
+        }
+        fetched.push(u);
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the fare is paid", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {}, { autoTrustDiscoveredDomains: true });
+        assert.ok(
+          fetched.some((u) => u.startsWith("http://publisher.test")),
+          `the off-gate publisher domain THIS RUN discovered must be priced — got ${JSON.stringify(fetched)}`,
+        );
+        assert.ok(
+          result.decisions.some((d) => d.slug === "the-naulon" && d.action === "pay"),
+          `expected the fleet-discovered publisher domain to be PAID, not off-gate skipped — got ${JSON.stringify(result.decisions)}`,
+        );
+        assert.ok(result.sources.some((s) => s.slug === "the-naulon"), "the paid fleet publisher source is cited");
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+test("WP-2 T2 negative: run() WITHOUT autoTrustDiscoveredDomains still off-gate-skips the same candidate", async () => {
+  // Proves the flag — not an ambient default — is what gates the trust: the identical
+  // discovery/gate shape as the positive test above, but the flag is simply omitted.
+  const CATALOG = "http://catalog.test/fleet-default-off";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-fleet-default-off-${process.pid}.json`),
+    },
+    async () => {
+      const fetched: string[] = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: "the-naulon", title: "The Naulon", summary: "payment and passage", url: "http://publisher.test/articles/the-naulon" },
+            ]),
+            { status: 200 },
+          );
+        }
+        fetched.push(u);
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402 });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {});
+        assert.ok(
+          !fetched.some((u) => u.startsWith("http://publisher.test")),
+          `without the flag, the off-gate publisher domain must NEVER be fetched — got ${JSON.stringify(fetched)}`,
+        );
+        assert.ok(!result.decisions.some((d) => d.slug === "the-naulon"), "the off-gate candidate never reaches decide()");
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
 // ── A1 — a held-license re-read that throws must not crash the whole run ───────
 // rereadWithLicense used to let a bare agentFetch reject propagate unhandled, and
 // run()'s cache branch had no try/catch around the call — so ONE held essay whose

@@ -21,7 +21,7 @@ import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { resetConfig } from "@naulon/shared";
+import { FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
 import { DEFAULT_POLICY, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
 import { buildServer, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
@@ -136,6 +136,32 @@ async function standGate(
         server.closeAllConnections?.();
       }),
   };
+}
+
+/**
+ * WP-2 T2 — stub `globalThis.fetch` so a request to the LITERAL fleet directory URL (the
+ * default CATALOG_URL — WP-2 T1) resolves to `entries` locally, and any OTHER request to the
+ * fleet host itself (e.g. the JWKS lookup `run()` makes against the resolved gate base) 404s
+ * hermetically instead of reaching the real internet. Every other URL (the publisher stub
+ * gates below, real local HTTP servers) passes through to the real fetch untouched. This is
+ * the only way to exercise `isFleetDefaultDiscovery()`'s literal URL-equality gate without a
+ * live network dependency — mirrors discovery.test.ts's `stubFetch` technique, applied here.
+ */
+function stubFleetDirectory(entries: unknown[]): { restore: () => void } {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : String(input);
+    if (url.startsWith(FLEET_DIRECTORY_URL)) {
+      return new Response(JSON.stringify(entries), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.startsWith(FLEET_ORIGIN)) {
+      // No universal fleet pay-gate lives at gate.naulon.app (WP-2) — a real deployment
+      // 404s/502s here too; degrade the same way, hermetically, instead of hitting the net.
+      return new Response(null, { status: 404 });
+    }
+    return real(input as Parameters<typeof fetch>[0], init);
+  }) as typeof fetch;
+  return { restore: () => { globalThis.fetch = real; } };
 }
 
 /** A gate that 402s a probe (no payment-signature) and serves content once a
@@ -1636,3 +1662,139 @@ test("A2-4: two CONCURRENT pays cannot breach the session ceiling", async () => 
 // pays can no longer both load a pre-update snapshot. There is no dedicated test here because the
 // stub `payGate` issues no `x-naulon-license` header, leaving the persist path unreachable from
 // these fixtures — a real coverage gap. Closing it needs a stub that mints a decodable license JWS.
+
+// ── WP-2 T2 (corrected) — fleet-default discovery authorizes the directory's OWN publisher
+// domains via allowDomains (never a single universal gate). WP-1's priceRefusal / decide()
+// origin gate would otherwise off-gate-skip every discovered essay, since gate.naulon.app is
+// not itself a pay-gate. The fleet-default e2e (Task 5) re-proves this against the LIVE fleet;
+// these are the hermetic unit proofs (stubFleetDirectory intercepts only the literal fleet host,
+// every publisher gate below is a REAL local HTTP server).
+
+test("WP-2 T2: fleet-default discovery makes the directory's OWN publisher domain payable via naulon_research (not off-gate skipped)", async () => {
+  await withEnv(
+    { CATALOG_URL: undefined, RSS_URL: undefined, PUBLISHER_URL: undefined, TOLLGATE_URL: undefined, WAYFARER_ALLOW_DOMAINS: undefined },
+    async () => {
+      const gate = await standGate(payGate("1000"));
+      const stub = stubFleetDirectory([
+        { slug: "the-naulon", title: "The Naulon", summary: "the fare paid to cross — payment, passage, and what we owe", url: `${gate.url}/articles/the-naulon` },
+      ]);
+      try {
+        const client = await connectedClient();
+        const res = await client.callTool({
+          name: "naulon_research",
+          arguments: { topic: "payment and passage", budgetUsdc: 0.01 },
+        });
+        const structured = res.structuredContent as { decisions: { slug: string; action: string; reason: string }[]; log: string[] };
+        const text = JSON.stringify(structured);
+        assert.doesNotMatch(
+          text,
+          /is not the configured gate|off-gate/i,
+          "fleet-default discovery must make the directory's own publisher domain payable, not off-gate skipped",
+        );
+        const decision = structured.decisions.find((d) => d.slug === "the-naulon");
+        assert.ok(decision, `expected a decision for the-naulon — got ${JSON.stringify(structured.decisions)}`);
+        assert.equal(decision!.action, "pay", `expected PAY, got: ${JSON.stringify(decision)}`);
+      } finally {
+        stub.restore();
+        await gate.close();
+      }
+    },
+  );
+});
+
+test("WP-2 T2 negative: an explicit CATALOG_URL is NOT fleet-default — naulon_research still off-gate-skips a directory-discovered publisher domain", async () => {
+  const publisher = await standGate(payGate("1000"));
+  const directory = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify([
+        { slug: "the-naulon", title: "The Naulon", summary: "the fare paid to cross — payment, passage, and what we owe", url: `${publisher.url}/articles/the-naulon` },
+      ]),
+    );
+  });
+  try {
+    await withEnv(
+      {
+        CATALOG_URL: `${directory.url}/directory`,
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        TOLLGATE_URL: "http://gate.invalid",
+        WAYFARER_ALLOW_DOMAINS: undefined,
+      },
+      async () => {
+        const client = await connectedClient();
+        const res = await client.callTool({
+          name: "naulon_research",
+          arguments: { topic: "payment and passage", budgetUsdc: 0.01 },
+        });
+        const structured = res.structuredContent as { decisions: { slug: string }[]; log: string[] };
+        assert.ok(
+          !structured.decisions.some((d) => d.slug === "the-naulon"),
+          "a self-hosted CATALOG_URL must keep the strict single-gate pin — the off-gate candidate must be refused at price, never reach decide()",
+        );
+        assert.ok(
+          structured.log.some((l) => /configured gate/i.test(l)),
+          `the off-gate refusal reason must be visible in the log — got ${JSON.stringify(structured.log)}`,
+        );
+      },
+    );
+  } finally {
+    await publisher.close();
+    await directory.close();
+  }
+});
+
+test("WP-2 T2 granular + L-OSS-3: naulon_pay_and_read's fleet-default allow is scoped to THIS session's last naulon_discover, and still covers the gate host itself once stated", async () => {
+  await withEnv(
+    { CATALOG_URL: undefined, RSS_URL: undefined, PUBLISHER_URL: undefined, TOLLGATE_URL: undefined, WAYFARER_ALLOW_DOMAINS: undefined },
+    async () => {
+      const gate = await standGate(payGate("1000"));
+      const stub = stubFleetDirectory([
+        { slug: "the-naulon", title: "The Naulon", summary: "the fare paid to cross", url: `${gate.url}/articles/the-naulon` },
+      ]);
+      try {
+        const client = await connectedClient();
+
+        // Before any naulon_discover call this session, the off-gate publisher host is NOT yet
+        // trusted — proves the allow is scoped to actual discovery, not a blanket fleet-wide trust
+        // (and, with no allowDomains stated at all yet, the plain gate-identity pin still governs).
+        const before = await client.callTool({
+          name: "naulon_pay_and_read",
+          arguments: { slug: "the-naulon", url: `${gate.url}/articles/the-naulon` },
+        });
+        const beforeStructured = before.structuredContent as { ok: boolean; error?: string };
+        assert.equal(beforeStructured.ok, false, "an undiscovered off-gate host must not be payable yet");
+        assert.match(beforeStructured.error ?? "", /configured gate/i);
+
+        // naulon_discover populates this session's last-discovery host set (just the publisher
+        // host — the gate itself was never among the discovered candidates)...
+        const discovered = await client.callTool({ name: "naulon_discover", arguments: { topic: "payment and passage" } });
+        const candidates = (discovered.structuredContent as { candidates: { slug: string }[] }).candidates;
+        assert.ok(candidates.some((c) => c.slug === "the-naulon"), "sanity: the fleet directory returned the off-gate candidate");
+
+        // ...so the SAME off-gate host is now payable.
+        const after = await client.callTool({
+          name: "naulon_pay_and_read",
+          arguments: { slug: "the-naulon", url: `${gate.url}/articles/the-naulon` },
+        });
+        const afterStructured = after.structuredContent as { ok: boolean; error?: string };
+        assert.equal(afterStructured.ok, true, `expected the fleet-discovered publisher domain to be payable — got ${JSON.stringify(afterStructured)}`);
+
+        // L-OSS-3: allowDomains is now STATED (just the publisher host, from lastDiscoveredHosts)
+        // — without unioning in the gate's own host, a plain slug-only quote (resolves to the
+        // fleet/gate host itself, which was never among the discovered candidates) would now be
+        // silently off-gate-skipped by spendGate's allowlist, having lost the identity-pin match
+        // that covered it before any allowlist was stated. Proves it still doesn't.
+        const gateHostQuote = await client.callTool({ name: "naulon_quote", arguments: { slug: "some-other-essay" } });
+        const gateHostStructured = gateHostQuote.structuredContent as { refused?: boolean; note?: string };
+        assert.ok(
+          !gateHostStructured.refused,
+          `L-OSS-3: a slug-only target on the gate host must not be off-gate refused even once an allowlist is stated — got ${JSON.stringify(gateHostStructured)}`,
+        );
+      } finally {
+        stub.restore();
+        await gate.close();
+      }
+    },
+  );
+});

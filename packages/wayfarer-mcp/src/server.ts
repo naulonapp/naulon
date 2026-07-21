@@ -65,7 +65,7 @@ import {
   verifyAgainst,
 } from "@naulon/wayfarer";
 import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners } from "@naulon/wayfarer";
-import { activeNetwork, getConfig, supportsMemo, usdc } from "@naulon/shared";
+import { activeNetwork, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, supportsMemo, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
@@ -298,6 +298,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // from that run's `pay` decisions afterward (B3) — so a cap hit through either tool carries to
   // the other, for the life of this session. Never a second, run-scoped counter.
   const paidByHost = new Map<string, number>();
+  // WP-2 T2: the distinct hostnames THIS session's most recent naulon_discover call
+  // actually returned. Fleet-default auto-trust for the GRANULAR pay path (naulon_quote /
+  // naulon_pay_and_read) is keyed off this — unlike naulon_research, which discovers
+  // INSIDE run() and derives its own allowDomains fresh each call (RunOptions.
+  // autoTrustDiscoveredDomains), these two tools receive a slug/url the model already
+  // has from an EARLIER naulon_discover call, so "this session's last discovery" is the
+  // only discovery signal available to them. Reset (not merged) on every naulon_discover
+  // call — a stale prior topic's hosts must not linger and widen the allowlist.
+  let lastDiscoveredHosts: string[] = [];
   // ── Spend lock ──────────────────────────────────────────────────────────────
   // The budget check and its debit are separated by network I/O (probe → sign → paid GET), and an
   // MCP client may issue tool calls CONCURRENTLY (a normal parallel tool_use block). Without
@@ -353,7 +362,23 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // This session's gate: the injected fleet tenant (BUY-4.2) wins over env TOLLGATE_URL.
   // A function so the env default stays fresh per call when no override is supplied.
   // Resolved server-side, never from a tool arg — the model can't aim a payment off it.
-  const gateBase = (): string => opts.tollgateUrl ?? tollgateBase();
+  //
+  // WP-2: there is NO universal fleet pay-gate (gate.naulon.app/articles/* → 502 — each
+  // publisher tolls at its own origin), so fleet-default zero-config deliberately leaves
+  // TOLLGATE_URL unset. `tollgateBase()` throws in that case (by design — a self-host with
+  // no gate configured at all is a real config error). So: an explicit TOLLGATE_URL (hosted
+  // override or env) always wins; absent that, fall back to FLEET_ORIGIN ONLY when discovery
+  // is the untouched fleet default (never for a self-hosted CATALOG_URL) — this is a
+  // placeholder identity for logging/JWKS/slug-fallback purposes only, since every fleet
+  // candidate carries its own real `url` (see isFleetDefaultDiscovery). Anything else
+  // (self-host with no gate at all) still throws, unchanged.
+  const gateBase = (): string => {
+    if (opts.tollgateUrl) return opts.tollgateUrl;
+    const cfg = getConfig();
+    if (cfg.TOLLGATE_URL) return cfg.TOLLGATE_URL;
+    if (isFleetDefaultDiscovery(cfg)) return FLEET_ORIGIN;
+    return tollgateBase();
+  };
   const slugUrl = (slug: string): string => articleUrl(gateBase(), slug);
   // A non-gated quote must say WHY it isn't gated: a genuine free (2xx) read is very
   // different from a 404 (wrong path — usually the /essays/<slug> fallback missing a
@@ -391,6 +416,27 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       ...(cfg.WAYFARER_APPROVAL_USDC !== undefined ? { approvalThresholdUsdc: cfg.WAYFARER_APPROVAL_USDC } : {}),
       killSwitch: cfg.WAYFARER_KILL_SWITCH,
     };
+  };
+  // WP-2 T2 (corrected) — fleet-default auto-trust for the GRANULAR pay path (naulon_quote /
+  // naulon_pay_and_read). Unlike naulon_research (which discovers INSIDE run() and derives its
+  // own fresh allowDomains via RunOptions.autoTrustDiscoveredDomains), these tools act on a
+  // slug/url the model already holds from an EARLIER naulon_discover call in this session — so
+  // the fleet-default allowance here is keyed off `lastDiscoveredHosts` (that call's own
+  // hostnames), plus the gate's own host (L-OSS-3 — a slug-only target's resolved pay-URL lands
+  // on the gate host, and once allowDomains is stated the plain identity pin no longer covers
+  // it). Gated identically to isFleetDefaultDiscovery + no explicit WAYFARER_ALLOW_DOMAINS; an
+  // injected `opts.policy` or an explicit allowlist always wins (never overridden). Deliberately
+  // a no-op until `lastDiscoveredHosts` is non-empty (an ACTUAL naulon_discover call happened
+  // this session) — every fresh session (fleet-default is now the zero-config DEFAULT, so this
+  // is the common case) keeps the exact prior behavior (no allowDomains, plain gate-identity
+  // pin) until discovery actually occurs; stating an allowlist for no reason would silently swap
+  // the off-gate refusal from an identity-pin reason to an allowlist reason for every caller.
+  const policyForGranularPay = (): DecisionPolicy => {
+    const base = policyFromConfig();
+    if (base.allowDomains) return base;
+    if (!isFleetDefaultDiscovery(getConfig()) || lastDiscoveredHosts.length === 0) return base;
+    const fleetAllow = [...new Set([hostnameOf(gateBase()) ?? undefined, ...lastDiscoveredHosts].filter((h): h is string => !!h))];
+    return fleetAllow.length ? { ...base, allowDomains: fleetAllow } : base;
   };
   const remainingUsdc = (): number => round6(Math.max(0, ceilingUsdc() - spentUsdc));
   /** The session-budget fields every spend-aware tool echoes so the host LLM always
@@ -450,6 +496,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     },
     async ({ topic }) => {
       const candidates = await discover(topic);
+      // WP-2 T2: remember THIS call's distinct hostnames (reset, not merged — a stale prior
+      // topic's hosts must not linger) for the granular pay path's fleet-default allowance
+      // (see policyForGranularPay). Never widens anything for a non-fleet-default deployment.
+      lastDiscoveredHosts = [
+        ...new Set(candidates.map((c) => (c.url ? hostnameOf(c.url) : null)).filter((h): h is string => h !== null)),
+      ];
       return structured({ candidates });
     },
   );
@@ -563,8 +615,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     async ({ slug, url }) => {
       const target = url ?? slugUrl(slug);
       // Origin + policy even on the free probe: an unauthorized url is an SSRF surface and would
-      // return an attacker-authored price/payTo the model might then act on.
-      const refusal = originRefusal(target, gateBase(), policyFromConfig());
+      // return an attacker-authored price/payTo the model might then act on. policyForGranularPay
+      // (WP-2 T2) is the SAME fleet-default allowance naulon_pay_and_read applies below, so a
+      // fleet-discovered publisher domain can be quoted, not just paid.
+      const refusal = originRefusal(target, gateBase(), policyForGranularPay());
       if (refusal) {
         // A refusal is neither payable nor free: signal refused (not gated:false, which the tool
         // contract defines as "free read — just fetch it" and a buyer would act on).
@@ -680,8 +734,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       const target = url ?? slugUrl(slug);
       // Endpoint identity first — refused targets are never even fetched, so an off-gate url
       // costs nothing and reaches no attacker origin. Operator policy is applied below, once the
-      // toll is known (the approval threshold is price-dependent).
-      const policy = policyFromConfig();
+      // toll is known (the approval threshold is price-dependent). policyForGranularPay (WP-2 T2)
+      // folds in the fleet-default allowance (this session's last naulon_discover hosts) so a
+      // directory-discovered publisher domain is payable, not off-gate-skipped.
+      const policy = policyForGranularPay();
       const refusal = originRefusal(target, gateBase(), policy);
       if (refusal) {
         emitAudit({ slug, action: "skip", reason: refusal, agentId: policy.agentId });
@@ -958,6 +1014,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // less than the ceiling, never more. Passing the clamp into run() overrides its
       // config ceiling for this run only.
       const effective = round6(Math.min(budgetUsdc ?? ceilingUsdc(), remainingUsdc()));
+      const cfg = getConfig();
       const result = await run(topic, (line) => log.push(line), {
         budgetUsdc: effective,
         policy: policyFromConfig(),
@@ -966,7 +1023,17 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         // via pay_and_read carries into this run instead of decide() starting every call at 0.
         // One counter for the whole session — never a second, run-scoped one.
         decideContext: { priorDomainCounts: Object.fromEntries(paidByHost) },
-        ...(opts.tollgateUrl ? { tollgateUrl: opts.tollgateUrl } : {}),
+        // gateBase() (not opts.tollgateUrl directly): resolves the injected per-session override,
+        // else env TOLLGATE_URL, else — ONLY for fleet-default discovery — FLEET_ORIGIN, so run()
+        // never crashes on an eagerly-evaluated tollgateBase() call when the fleet's zero-config
+        // path deliberately leaves TOLLGATE_URL unset (there is no universal fleet pay-gate).
+        tollgateUrl: gateBase(),
+        // WP-2 T2 (corrected — see oss-fix-architecture.md §G6): discovery happens INSIDE run(),
+        // so this server can only pass the INTENT, not candidates, to policyFromConfig. run()
+        // itself derives the effective allowDomains from ITS OWN discovery when this is true. Gated
+        // exactly like policyForGranularPay: fleet-default discovery AND no operator-stated
+        // WAYFARER_ALLOW_DOMAINS — a self-hosted CATALOG_URL is never auto-trusted.
+        autoTrustDiscoveredDomains: isFleetDefaultDiscovery(cfg) && !cfg.WAYFARER_ALLOW_DOMAINS,
         // Hosted path: pay from the buyer's custody-free session wallet, not the env key
         // (mirrors naulon_pay_and_read). Both rail signers win — run() then rail-picks PER-402
         // (mixed fleet), same as the pay_and_read buyer above; a single cloud signer keeps the

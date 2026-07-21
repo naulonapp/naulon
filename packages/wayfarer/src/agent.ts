@@ -142,6 +142,32 @@ export interface RunOptions {
    * omitted ⇒ `getWallet()` (the env/dev wallet, unchanged OSS path).
    */
   popWallet?: AgentWallet;
+  /**
+   * Fleet-default ONLY (WP-2 T2, corrected — see oss-fix-architecture.md §G6). Discovery
+   * happens INSIDE `run()`, so the caller (wayfarer-mcp's `naulon_research`) cannot pass
+   * discovered candidate hostnames into a policy built BEFORE this call — it can only pass
+   * the INTENT. When true, and `policy.allowDomains` is not already stated, `run()` derives
+   * the effective `allowDomains` from THIS run's own discovery: the distinct hostnames of the
+   * candidates the (trusted) fleet directory just returned, plus the gate's own host (L-OSS-3
+   * — a slug-only candidate's resolved pay-URL lands on the gate host, so it must not be
+   * silently skipped even before any off-gate candidate has been priced). The derived policy
+   * feeds BOTH the price-loop's `priceRefusal` gate and `decide()` — one derivation, never two.
+   * `wayfarer-mcp/server.ts` sets this flag ONLY for `isFleetDefaultDiscovery(cfg)` — a
+   * user-supplied `CATALOG_URL` is NEVER auto-trusted, keeping the strict single-gate pin.
+   * Server/config-supplied, never LLM-controlled — same principle as `budgetUsdc`/`policy`.
+   */
+  autoTrustDiscoveredDomains?: boolean;
+}
+
+/** Lowercased hostname (no port) — what domain policy (`allowDomains`) matches on, mirroring
+ *  `payHostOf`/decide.ts's own host resolution. Returns undefined for an unparseable URL. */
+function hostnameOf(u: string | undefined): string | undefined {
+  if (!u) return undefined;
+  try {
+    return new URL(u).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -222,6 +248,24 @@ export async function run(
   const candidates = await discover(topic);
   log(`\ndiscovered ${candidates.length} candidate essays`);
 
+  // Fleet-default auto-trust (WP-2 T2, corrected): see RunOptions.autoTrustDiscoveredDomains.
+  // Merged into the SAME policy used by both the price loop below and decide() — one
+  // derivation, not two. A no-op (effectivePolicy === policy) unless the caller opted in AND
+  // left allowDomains unstated, so every existing caller/test is unaffected.
+  const effectivePolicy: DecisionPolicy =
+    opts.autoTrustDiscoveredDomains && !policy.allowDomains
+      ? {
+          ...policy,
+          allowDomains: [
+            ...new Set(
+              [hostnameOf(base), ...candidates.map((c) => hostnameOf(c.url))].filter(
+                (h): h is string => h !== undefined,
+              ),
+            ),
+          ],
+        }
+      : policy;
+
   // 2. price (free x402 probes — no payment yet)
   const priced: PricedCandidate[] = [];
   // The TRUE total (all legs, atomic micro-USDC) each candidate was quoted at here. The pay step
@@ -231,7 +275,7 @@ export async function run(
   for (const c of candidates) {
     // SSRF gate (H-OSS-1) — see priceRefusal: refused candidates are dropped here,
     // BEFORE buyer.price() ever reaches the network.
-    const refusal = priceRefusal(c.url, base, c.slug, policy);
+    const refusal = priceRefusal(c.url, base, c.slug, effectivePolicy);
     if (refusal) {
       log(`  ⛔ ${c.slug}: refusing to price — ${refusal}`);
       continue;
@@ -258,7 +302,7 @@ export async function run(
 
   // gateBase lets decide() resolve a slug-only candidate to the SAME url the pay step below uses,
   // so domain policy is evaluated against the host that actually gets paid (never Candidate.host).
-  const decisions = decide(appraised, budget, licensed, policy, {
+  const decisions = decide(appraised, budget, licensed, effectivePolicy, {
     ...opts.decideContext,
     gateBase: opts.decideContext?.gateBase ?? base,
   });
