@@ -632,13 +632,24 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         remainingUsdc: z.number().describe("Budget left for this session (after this call)."),
         error: z.string().optional(),
         errorCode: z
-          .enum(["not_gated", "not_found", "toll_moved", "insufficient_funds", "expired", "rejected", "origin_error", "needs_topup", "grant_expired"])
+          .enum([
+            "not_gated",
+            "not_found",
+            "toll_moved",
+            "insufficient_funds",
+            "expired",
+            "rejected",
+            "origin_error",
+            "needs_topup",
+            "grant_expired",
+            "settlement_ambiguous",
+          ])
           .optional()
-          .describe("Typed failure reason when ok:false — lets you decide whether to retry. not_found = the probed URL 404'd (pass the canonical url; it is not a free read). needs_topup = the funding session is exhausted/unset — fund it at topUpUrl. grant_expired = the funding window lapsed (funds intact) — renew at topUpUrl."),
+          .describe("Typed failure reason when ok:false — lets you decide whether to retry. not_found = the probed URL 404'd (pass the canonical url; it is not a free read). needs_topup = the funding session is exhausted/unset — fund it at topUpUrl. grant_expired = the funding window lapsed (funds intact) — renew at topUpUrl. settlement_ambiguous = the payment-signature was sent and may have settled, but reading the response failed — do NOT blind-retry (a fresh pay could double-charge); verify via settlementRef or a held license first."),
         retryable: z
           .boolean()
           .optional()
-          .describe("True if re-quoting/retrying may succeed (toll moved, expired, rejected); false for a hard stop (insufficient funds, needs_topup, grant_expired — the wallet needs funding or renewal, not a retry)."),
+          .describe("True if re-quoting/retrying may succeed (toll moved, expired, rejected); false for a hard stop (insufficient funds, needs_topup, grant_expired — the wallet needs funding or renewal, not a retry; settlement_ambiguous — a retry could double-charge)."),
         topUpUrl: z
           .string()
           .optional()

@@ -505,6 +505,37 @@ test("naulon_pay_and_read surfaces an insufficient-funds rejection as a non-retr
   });
 });
 
+test("B2: naulon_pay_and_read surfaces settlement_ambiguous (paid, body-read failed) typed, not an opaque isError", async () => {
+  // The gate SETTLES the payment before writing its 200 body (paidFetch.ts / pay.ts): once the
+  // buyer has sent the payment-signature, a body-read failure means money may already have moved,
+  // so it is surfaced as the distinct, non-retryable `settlement_ambiguous` FetchErrorCode — never
+  // a safe-to-retry generic failure. Reproduce the body-read failure with a LYING content-length
+  // (declares far more bytes than are actually sent): Node's fetch/undici throws reading the body
+  // ("terminated") exactly like a mid-stream socket reset would.
+  const handler = (req: IncomingMessage, res: ServerResponse): void => {
+    if (req.headers["payment-signature"]) {
+      res.writeHead(200, { "content-type": "text/plain", "content-length": "999999" });
+      res.write("short");
+      res.end();
+      return;
+    }
+    res.writeHead(402, { "payment-required": paymentRequired("5000"), "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "payment required" }));
+  };
+
+  await withStubGate(handler, async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1" }, async () => {
+      const client = await connectedClient();
+      const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+      assert.notEqual(res.isError, true, "the SDK's own output-schema check must not drop this as an opaque isError text");
+      const r = res.structuredContent as { ok: boolean; errorCode?: string; retryable?: boolean };
+      assert.equal(r.ok, false, "the read is not ok — the body never arrived");
+      assert.equal(r.errorCode, "settlement_ambiguous", "the typed reason survives the output enum");
+      assert.equal(r.retryable, false, "a blind retry after a settlement-ambiguous failure could double-charge");
+    });
+  });
+});
+
 test("naulon_research clamps a requested budget down to the remaining session budget (never up)", async () => {
   const handler = (_req: IncomingMessage, res: ServerResponse): void => {
     res.writeHead(200, { "content-type": "text/plain" });
