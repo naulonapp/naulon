@@ -13,6 +13,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { resetConfig } from "@naulon/shared";
 
 import { run, tollgateBase } from "./agent.ts";
+import { memoryHeldStore } from "./licenseStore.ts";
 
 /** The discovery catalog these run() tests point CATALOG_URL at. Discovery no
  *  longer has a bundled-demo fallback, so every run() test must supply a real
@@ -585,6 +586,104 @@ test("H-OSS-1: run() refuses a deny-listed host even when an operator allowlist 
         assert.ok(
           !result.decisions.some((d) => d.slug === "trap"),
           "the refused candidate is dropped at the price gate — it never reaches decide()",
+        );
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+// ── A1 — a held-license re-read that throws must not crash the whole run ───────
+// rereadWithLicense used to let a bare agentFetch reject propagate unhandled, and
+// run()'s cache branch had no try/catch around the call — so ONE held essay whose
+// re-read hit a network error (DNS flake, connection reset) crashed the entire
+// run(), discarding every license already paid for earlier in the SAME loop (the
+// final `heldStore.save(held)` never ran). The fix: rereadWithLicense returns a
+// typed failure instead of throwing, AND a just-paid license is saved incrementally
+// (not only once after the loop) as a second line of defense.
+
+test("A1: a held license whose re-read throws (network reject) is logged-and-skipped — run() resolves, cites what it DID pay for, and the paid license persists", async () => {
+  const CATALOG = "http://catalog.test/a1";
+  const GATE = "http://gate.test";
+  const PAID_SLUG = "paid-essay";
+  const HELD_SLUG = "held-essay";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: GATE,
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-a1-${process.pid}.json`),
+    },
+    async () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: PAID_SLUG, title: "Paid Essay", summary: "payment and passage — worth paying for" },
+              { slug: HELD_SLUG, title: "Held Essay", summary: "payment and passage — already held" },
+            ]),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        // The vulnerable re-read: this candidate's cache-branch GET carries the held
+        // license header. Simulate a network-level failure (DNS/connection reset) —
+        // exactly what rereadWithLicense must catch and turn into a typed failure.
+        if (init?.headers?.["x-naulon-license"]) {
+          throw new TypeError("fetch failed: connection reset");
+        }
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the paid content", { status: 200, headers: { "x-naulon-license": "lic.paid.jws" } });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+
+      try {
+        const exp = Math.floor(Date.now() / 1000) + 3600; // live
+        const store = memoryHeldStore([
+          [
+            HELD_SLUG,
+            {
+              slug: HELD_SLUG,
+              title: "Held Essay",
+              jti: "jti-held",
+              exp,
+              aud: "gate://test",
+              pop: false,
+              jws: "held.jws.sig",
+              url: `${GATE}/essays/${HELD_SLUG}`,
+            },
+          ],
+        ]);
+
+        // Before the fix this `await` REJECTS (the throw from the stub propagates
+        // uncaught through rereadWithLicense → run()'s cache branch → run() itself).
+        const result = await run("payment and passage", () => {}, { heldStore: store });
+
+        assert.ok(
+          result.sources.some((s) => s.slug === PAID_SLUG),
+          "run() still cites the essay it successfully paid for, despite the held essay's re-read throwing",
+        );
+        assert.ok(
+          !result.sources.some((s) => s.slug === HELD_SLUG),
+          "the essay whose re-read threw is NOT cited — logged-and-skipped, not fatal",
+        );
+
+        const held = await store.load();
+        assert.ok(
+          held.get(PAID_SLUG),
+          "A's just-paid license was persisted to the injected store despite B's later re-read throwing",
         );
       } finally {
         globalThis.fetch = real;

@@ -925,6 +925,109 @@ test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /
   }
 });
 
+// ── B1 (CRITICAL) — a held license must never leak to a same-slug candidate at a
+// DIFFERENT publisher ────────────────────────────────────────────────────────────
+// The held store is keyed by SLUG ALONE (licenseStore.ts). Two publishers can both
+// be legitimately trusted (both in WAYFARER_ALLOW_DOMAINS — no SSRF/allowlist
+// refusal applies to either) yet still be DIFFERENT origins. If naulon_research's
+// composite loop re-reads a cache decision at the DISCOVERED candidate's own url
+// (untrusted — discover() can hand back anything) instead of the url the license
+// was actually PAID at, a same-slug candidate served from pubB gets pubA's
+// license/PoP-proof headers on the wire — a credential leak across publisher
+// origins, independent of whether pubB's response ultimately honors them.
+test("B1: a held license (issued by pubA) never leaks to a same-slug candidate discovered at pubB, even though both are allow-listed", async () => {
+  const PUB_A = "http://pub-a.test";
+  const PUB_B = "http://pub-b.test";
+  const CATALOG = "http://catalog.test/b1";
+  const slug = "shared-slug";
+
+  const hitsA: Array<Record<string, string>> = [];
+  const hitsB: Array<Record<string, string>> = [];
+
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+    const u = String(url);
+    const headers = init?.headers ?? {};
+    if (u.startsWith(CATALOG)) {
+      return new Response(
+        JSON.stringify([
+          { slug, title: "Shared Slug", summary: "payment and passage", url: `${PUB_B}/essays/${slug}` },
+        ]),
+        { status: 200 },
+      );
+    }
+    if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+    if (u.startsWith(PUB_A)) {
+      hitsA.push(headers as Record<string, string>);
+      return new Response("pubA content", { status: 200 });
+    }
+    if (u.startsWith(PUB_B)) {
+      hitsB.push(headers as Record<string, string>);
+      // Whatever the response, the REQUEST itself already carried (or didn't carry)
+      // the credential — that's the leak surface under test, not pubB's reply.
+      return new Response(JSON.stringify({ error: "payment required" }), {
+        status: 402,
+        headers: { "payment-required": paymentRequired("1000") },
+      });
+    }
+    return new Response(null, { status: 404 });
+  }) as typeof globalThis.fetch;
+
+  try {
+    await withEnv(
+      {
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        CATALOG_URL: CATALOG,
+        OPENAI_API_KEY: undefined,
+        TOLLGATE_URL: PUB_A,
+        WAYFARER_ALLOW_DOMAINS: "pub-a.test,pub-b.test",
+        WAYFARER_BUDGET_USDC: "0.1",
+      },
+      async () => {
+        const exp = Math.floor(Date.now() / 1000) + 3600; // live
+        const held: HeldLicense = {
+          slug,
+          title: "Shared Slug",
+          jti: `jti-${slug}`,
+          exp,
+          aud: "gate://pub-a",
+          pop: true,
+          jws: "held.jws.sig",
+          url: `${PUB_A}/essays/${slug}`,
+        };
+        const store = memoryHeldStore([[slug, held]]);
+        const client = await connectedClientWith({
+          heldStore: store,
+          popWallet: {
+            address: "0x1111111111111111111111111111111111111111",
+            mock: false,
+            signMessage: async () => "0xproofsig",
+          },
+        });
+
+        const r = (await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } }))
+          .structuredContent as { decisions: Array<{ slug: string; action: string }> };
+        assert.ok(
+          r.decisions.some((d) => d.slug === slug && d.action === "cache"),
+          `expected a "cache" decision for the shared slug, got ${JSON.stringify(r.decisions)}`,
+        );
+
+        assert.ok(
+          !hitsB.some((h) => h["x-naulon-license"] || h["x-naulon-proof"]),
+          "pubB (the untrusted same-slug candidate) must NEVER receive pubA's license/PoP proof",
+        );
+        assert.ok(
+          hitsA.some((h) => h["x-naulon-license"]),
+          "pubA (the url the license was actually paid at) receives the free re-read WITH its own license",
+        );
+      },
+    );
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("C3 — hosted signer present but no popWallet + mock dev key ⇒ loud warn", async () => {
   const warnings: string[] = [];
   const orig = console.warn;
