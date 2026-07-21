@@ -58,6 +58,7 @@ import {
   quotedTotalAtomic,
   railBuyer,
   rereadWithLicense,
+  resolvedDiscoverySourceUrl,
   run,
   selectBuyer,
   spendGate,
@@ -503,6 +504,55 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ...new Set(candidates.map((c) => (c.url ? hostnameOf(c.url) : null)).filter((h): h is string => h !== null)),
       ];
       return structured({ candidates });
+    },
+  );
+
+  // ── naulon_status (free — the "run first" tool) ─────────────────────────────
+  server.registerTool(
+    "naulon_status",
+    {
+      title: "Check wallet, discovery, and gate status",
+      description:
+        "Run this FIRST, before anything else. Reports the buyer wallet address, where discovery " +
+        "is configured to look, and — plain-language — what to do next to get a paid read working " +
+        "(e.g. fund the wallet, or point discovery/the gate at your own publisher). Free, read-only, " +
+        "no network calls beyond resolving local config.",
+      inputSchema: {},
+      outputSchema: {
+        wallet: z.string().describe("The buyer wallet address (0x…40 hex) that pays every toll."),
+        tollgate: z
+          .string()
+          .optional()
+          .describe(
+            "The single configured pay-gate (TOLLGATE_URL), when self-hosting one. Absent for the fleet " +
+              "default — there is NO universal fleet pay-gate; each discovered publisher tolls at its own origin.",
+          ),
+        discovery: z.string().describe("Where naulon_discover looks for candidates (RSS_URL > PUBLISHER_URL/rss.xml > CATALOG_URL)."),
+        ready: z.boolean().describe("True once a wallet address is resolvable — does NOT mean it is funded."),
+        nextStep: z.string().describe("Plain-language guidance for what to do next, given the current config."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      const cfg = getConfig();
+      const wallet = getWallet().address;
+      const fleetDefault = isFleetDefaultDiscovery(cfg);
+      // Amendment (wp2-brief): never imply a single universal pay-gate exists for the fleet
+      // default — discovery is fleet-WIDE, but payment is authorized per-publisher (the trusted
+      // directory's own discovered domains, spendGate-capped — WP-2 T2), not one gate.
+      const nextStep = fleetDefault
+        ? `Fund this wallet (${wallet}) with testnet USDC — e.g. faucet.circle.com/Arc-Testnet — or connect a token. ` +
+          `Discovery is fleet-wide (the naulon directory); payment is authorized per-publisher for whatever it ` +
+          `discovers (each publisher's own toll, capped by your spend policy) — there is no single pay-gate to configure.`
+        : `Confirm your configured gate (TOLLGATE_URL${cfg.TOLLGATE_URL ? ` = ${cfg.TOLLGATE_URL}` : " is not set yet"}) ` +
+          `is reachable and that this wallet (${wallet}) is funded to pay it.`;
+      return structured({
+        wallet,
+        ...(cfg.TOLLGATE_URL ? { tollgate: cfg.TOLLGATE_URL } : {}),
+        discovery: resolvedDiscoverySourceUrl(),
+        ready: Boolean(wallet),
+        nextStep,
+      });
     },
   );
 

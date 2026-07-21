@@ -213,6 +213,7 @@ const TOOL_NAMES = [
   "naulon_pay_and_read",
   "naulon_read_held",
   "naulon_research",
+  "naulon_status",
 ];
 
 // ── BUY-1.1 (carried) ────────────────────────────────────────────────────────
@@ -263,6 +264,47 @@ test("naulon_discover returns free catalog teasers (no payment)", async () => {
   });
 });
 
+// ── WP-2 T3 — naulon_status: the "run first" tool ─────────────────────────────
+
+test("naulon_status reports wallet, discovery source, and a plain next step", async () => {
+  const client = await connectedClient();
+  const res = await client.callTool({ name: "naulon_status", arguments: {} });
+  const s = res.structuredContent as { wallet: string; discovery: string; tollgate?: string; ready: boolean; nextStep: string };
+  assert.match(s.wallet, /^0x[0-9a-fA-F]{40}$/);
+  assert.equal(s.discovery, "https://gate.naulon.app/directory", "zero-config discovery defaults to the fleet directory");
+  assert.ok(typeof s.nextStep === "string" && s.nextStep.length > 0);
+});
+
+test("naulon_status.nextStep for fleet-default: no single pay-gate implied — discovery is fleet-wide, payment is per-publisher", async () => {
+  await withEnv(
+    { CATALOG_URL: undefined, RSS_URL: undefined, PUBLISHER_URL: undefined, TOLLGATE_URL: undefined },
+    async () => {
+      const client = await connectedClient();
+      const res = await client.callTool({ name: "naulon_status", arguments: {} });
+      const s = res.structuredContent as { tollgate?: string; nextStep: string };
+      assert.doesNotMatch(
+        s.nextStep,
+        /the configured gate|TOLLGATE_URL is/i,
+        "fleet-default nextStep must never imply a single universal pay-gate exists",
+      );
+      assert.ok(
+        s.tollgate === undefined || !/^https?:\/\//.test(s.tollgate) || s.tollgate.length === 0,
+        `fleet-default has no single tollgate URL to report — got ${JSON.stringify(s.tollgate)}`,
+      );
+    },
+  );
+});
+
+test("naulon_status.nextStep for self-host: points at confirming the operator's own configured gate", async () => {
+  await withEnv({ CATALOG_URL: "https://my.example/catalog", TOLLGATE_URL: "https://my.example/gate" }, async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({ name: "naulon_status", arguments: {} });
+    const s = res.structuredContent as { tollgate?: string; nextStep: string };
+    assert.equal(s.tollgate, "https://my.example/gate");
+    assert.match(s.nextStep, /gate/i, "self-host nextStep should point at the operator's own gate");
+  });
+});
+
 // ── BUY-1.2 — the full §3.1 tool surface ──────────────────────────────────────
 
 test("registers the full §3.1 tool surface with schemas and honest read-only hints", async () => {
@@ -279,7 +321,7 @@ test("registers the full §3.1 tool surface with schemas and honest read-only hi
 
   // The free, side-effect-free tools are flagged read-only; the two that can SPEND
   // money must not be (the host must see they mutate state / move funds).
-  for (const name of ["naulon_discover", "naulon_appraise", "naulon_quote", "naulon_read_held"]) {
+  for (const name of ["naulon_discover", "naulon_appraise", "naulon_quote", "naulon_read_held", "naulon_status"]) {
     assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, `${name} is read-only`);
   }
   for (const name of ["naulon_pay_and_read", "naulon_research"]) {

@@ -24,6 +24,7 @@ export { tollgateBase, articleUrl, fetchJwks, verifyAgainst, licenseIdentityFor 
 
 // ── discover ────────────────────────────────────────────────────────────────
 export { discover } from "./discover.ts";
+export { resolvedDiscoverySourceUrl } from "./discovery.ts";
 
 // ── appraise ────────────────────────────────────────────────────────────────
 export { appraise } from "./appraise.ts";

@@ -6,7 +6,51 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { catalogSource, rssSource } from "./discovery.ts";
+import { resetConfig } from "@naulon/shared";
+import { catalogSource, resolvedDiscoverySourceUrl, rssSource } from "./discovery.ts";
+
+async function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
+  const saved: Record<string, string | undefined> = {};
+  for (const key of Object.keys(overrides)) saved[key] = process.env[key];
+  for (const [key, val] of Object.entries(overrides)) {
+    if (val === undefined) delete process.env[key];
+    else process.env[key] = val;
+  }
+  resetConfig();
+  try {
+    return await fn();
+  } finally {
+    for (const [key, val] of Object.entries(saved)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+    resetConfig();
+  }
+}
+
+// ── WP-2 T3 — resolvedDiscoverySourceUrl (DRY): the single owner of selectSource()'s own
+// RSS_URL > PUBLISHER_URL/rss.xml > CATALOG_URL precedence, reused by naulon_status.
+
+test("resolvedDiscoverySourceUrl: RSS_URL wins over everything", async () => {
+  await withEnv(
+    { RSS_URL: "https://my.example/feed.xml", PUBLISHER_URL: "https://my.example", CATALOG_URL: undefined },
+    async () => {
+      assert.equal(resolvedDiscoverySourceUrl(), "https://my.example/feed.xml");
+    },
+  );
+});
+
+test("resolvedDiscoverySourceUrl: PUBLISHER_URL derives ${url}/rss.xml when RSS_URL is unset", async () => {
+  await withEnv({ RSS_URL: undefined, PUBLISHER_URL: "https://my.example", CATALOG_URL: undefined }, async () => {
+    assert.equal(resolvedDiscoverySourceUrl(), "https://my.example/rss.xml");
+  });
+});
+
+test("resolvedDiscoverySourceUrl: falls back to CATALOG_URL (the fleet directory, zero-config)", async () => {
+  await withEnv({ RSS_URL: undefined, PUBLISHER_URL: undefined, CATALOG_URL: undefined }, async () => {
+    assert.equal(resolvedDiscoverySourceUrl(), "https://gate.naulon.app/directory");
+  });
+});
 
 function stubFetch(handler: (url: string) => Response): { calls: string[]; restore: () => void } {
   const real = globalThis.fetch;
