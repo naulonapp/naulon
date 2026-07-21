@@ -1903,6 +1903,74 @@ test("WP-2 T2 granular + L-OSS-3: naulon_pay_and_read's fleet-default allow is s
   );
 });
 
+test("WP-2 T2 granular negative: a self-hosted CATALOG_URL's naulon_discover results are NOT auto-trusted for naulon_quote/naulon_pay_and_read, even after lastDiscoveredHosts is populated", async () => {
+  const gate = await standGate(payGate("1000"));
+  const publisher = await standGate(payGate("1000"));
+  const directory = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify([
+        { slug: "the-naulon", title: "The Naulon", summary: "the fare paid to cross — payment, passage, and what we owe", url: `${publisher.url}/articles/the-naulon` },
+      ]),
+    );
+  });
+  try {
+    await withEnv(
+      {
+        CATALOG_URL: `${directory.url}/directory`,
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        TOLLGATE_URL: gate.url,
+        WAYFARER_ALLOW_DOMAINS: undefined,
+      },
+      async () => {
+        const client = await connectedClient();
+
+        // naulon_discover reads this SELF-HOSTED catalog (a custom CATALOG_URL, NOT the literal
+        // fleet directory) and populates lastDiscoveredHosts with the off-gate publisher host —
+        // exactly the precondition policyForGranularPay's fleet-default branch checks first.
+        const discovered = await client.callTool({ name: "naulon_discover", arguments: { topic: "payment and passage" } });
+        const candidates = (discovered.structuredContent as { candidates: { slug: string; url?: string }[] }).candidates;
+        assert.ok(
+          candidates.some((c) => c.slug === "the-naulon"),
+          `sanity: the self-hosted catalog returned the off-gate candidate — got ${JSON.stringify(candidates)}`,
+        );
+
+        // Because isFleetDefaultDiscovery(getConfig()) is FALSE here (a custom CATALOG_URL), the
+        // granular pay path must NOT fold lastDiscoveredHosts into allowDomains — the off-gate
+        // publisher host stays refused by the plain identity pin, same as if naulon_discover had
+        // never run this session. This is the property WP-2's `!isFleetDefaultDiscovery(...) ||`
+        // guard clause exists to hold; removing it would auto-trust a poisoned self-hosted catalog.
+        const quote = await client.callTool({
+          name: "naulon_quote",
+          arguments: { slug: "the-naulon", url: `${publisher.url}/articles/the-naulon` },
+        });
+        const quoteStructured = quote.structuredContent as { refused?: boolean; note?: string; gated?: boolean };
+        assert.equal(
+          quoteStructured.refused,
+          true,
+          `a self-hosted catalog's discovered domain must not be auto-trusted for naulon_quote — got ${JSON.stringify(quoteStructured)}`,
+        );
+        assert.match(quoteStructured.note ?? "", /configured gate/i);
+
+        const paid = await client.callTool({
+          name: "naulon_pay_and_read",
+          arguments: { slug: "the-naulon", url: `${publisher.url}/articles/the-naulon` },
+        });
+        const paidStructured = paid.structuredContent as { ok: boolean; error?: string };
+        assert.equal(
+          paidStructured.ok,
+          false,
+          `a self-hosted catalog's discovered domain must not be auto-trusted for naulon_pay_and_read — got ${JSON.stringify(paidStructured)}`,
+        );
+        assert.match(paidStructured.error ?? "", /configured gate/i);
+      },
+    );
+  } finally {
+    await Promise.all([gate.close(), publisher.close(), directory.close()]);
+  }
+});
+
 // ── WP-3a — hosted OSS tools inert-but-honest (hostedInertSteer) ───────────────────────────
 // Decision (WP-0): on the hosted fleet endpoint, naulon_ask is the SOLE fleet-buy path — the 4
 // granular OSS tools below are inert BY DESIGN there and must fail HONESTLY (steer the caller to
