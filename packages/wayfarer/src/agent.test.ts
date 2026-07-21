@@ -10,9 +10,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { loadSigningKey, mintLicense, resetConfig } from "@naulon/shared";
+import { jwksOf, loadSigningKey, mintLicense, resetConfig, type JwkSet } from "@naulon/shared";
 
-import { run, tollgateBase } from "./agent.ts";
+import { run, tollgateBase, verifyAgainst } from "./agent.ts";
 import { memoryHeldStore } from "./licenseStore.ts";
 
 /** The discovery catalog these run() tests point CATALOG_URL at. Discovery no
@@ -789,4 +789,57 @@ test("A1: a held license whose re-read throws (network reject) is logged-and-ski
       }
     },
   );
+});
+
+// ── A4 — verifyAgainst must check the GATE's canonical iss/aud, not the token's
+// own claims. It used to decode the JWS and pass its OWN iss/aud back in as the
+// "expected" value, so `claims.iss !== expected` was always false by construction —
+// ANY validly-signed token verified regardless of who it was actually minted for.
+// The fix takes the expected {issuer, audience} as an explicit caller-supplied arg.
+
+function mintForIdentity(issuer: string, audience: string): { jws: string; jwks: JwkSet } {
+  const key = loadSigningKey();
+  const now = Date.now();
+  const jws = mintLicense(
+    {
+      event: {
+        id: "id-a4",
+        slug: "a4-essay",
+        kind: "citation",
+        amount: 0.001 as never,
+        payees: [{ authorId: "a", wallet: "0x1111111111111111111111111111111111111111" as never, share: 1 }],
+        payerAddress: "0x2222222222222222222222222222222222222222" as never,
+        settlementRef: "ref",
+        at: now,
+      },
+      issuer,
+      audience,
+      ttlSeconds: 600,
+      payeesMode: "full",
+      title: "A4 essay",
+      network: { chainId: 5042002, usdc: "0x36", gateway: "g" },
+    },
+    key,
+    now,
+  );
+  return { jws, jwks: jwksOf([key]) };
+}
+
+test("A4: verifyAgainst rejects a token minted for the WRONG audience, checked against the gate's canonical identity", () => {
+  const CANONICAL = "naulon:gate.test";
+  const { jws, jwks } = mintForIdentity(CANONICAL, "naulon:attacker.test");
+  // Before the fix, verifyAgainst decoded the JWS's own iss/aud and compared it
+  // to itself (always true). Now the caller supplies the expected identity, and
+  // a wrong-aud token must fail even though its own signature is perfectly valid.
+  assert.equal(
+    verifyAgainst(jws, jwks, { issuer: CANONICAL, audience: CANONICAL }),
+    false,
+    "a token whose aud does not match the gate's canonical identity must not verify",
+  );
+});
+
+test("A4: verifyAgainst accepts a token minted for the canonical gate identity", () => {
+  const CANONICAL = "naulon:gate.test";
+  const { jws, jwks } = mintForIdentity(CANONICAL, CANONICAL);
+  assert.equal(verifyAgainst(jws, jwks, { issuer: CANONICAL, audience: CANONICAL }), true);
 });

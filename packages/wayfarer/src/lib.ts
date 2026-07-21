@@ -17,9 +17,10 @@ export { run } from "./agent.ts";
 export type { Logger, RunOptions } from "./agent.ts";
 
 // Pipeline primitives a second consumer (the MCP server) reuses to resolve an
-// article URL from a slug against the configured gate, and to verify a captured
+// article URL from a slug against the configured gate, to derive the gate's
+// canonical license identity from a paid-into URL, and to verify a captured
 // license against the gate's JWKS — single-sourced here so the two can't drift.
-export { tollgateBase, articleUrl, fetchJwks, verifyAgainst } from "./agent.ts";
+export { tollgateBase, articleUrl, fetchJwks, verifyAgainst, licenseIdentityFor } from "./agent.ts";
 
 // ── discover ────────────────────────────────────────────────────────────────
 export { discover } from "./discover.ts";

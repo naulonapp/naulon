@@ -52,22 +52,42 @@ export async function fetchJwks(base: string): Promise<JwkSet | null> {
   }
 }
 
-/** Verify a captured license against the gate's JWKS. null when JWKS unavailable. */
-export function verifyAgainst(jws: string, jwks: JwkSet): boolean {
+/**
+ * Verify a captured license against the gate's JWKS AND an explicit expected
+ * {issuer, audience} — the caller's job, never the token's own claims (A4). The
+ * previous implementation decoded the JWS and passed its OWN iss/aud back in as
+ * "expected", so `claims.iss !== expected` was always false by construction: any
+ * validly-signed token verified regardless of who it was actually minted for.
+ */
+export function verifyAgainst(jws: string, jwks: JwkSet, expected: { issuer: string; audience: string }): boolean {
   try {
-    const claims = JSON.parse(Buffer.from(jws.split(".")[1] ?? "", "base64url").toString("utf8")) as {
-      iss?: string;
-      aud?: string;
-    };
     const r = verifyLicense(jws, {
       now: Date.now(),
-      expectedIssuer: claims.iss ?? "",
-      expectedAudience: claims.aud ?? "",
+      expectedIssuer: expected.issuer,
+      expectedAudience: expected.audience,
       jwks,
     });
     return r.ok;
   } catch {
     return false;
+  }
+}
+
+/**
+ * The gate's canonical license identity for a URL, per the mint convention (tollgate
+ * publisher.ts / settle.ts): `iss == aud == naulon:${host}` by default, operator-
+ * overridable via LICENSE_ISSUER. A buyer can't know a custom LICENSE_ISSUER value
+ * without fetching the gate's discoverability doc (out of scope this wave — YAGNI);
+ * the default-convention host derivation is the honest, non-fabricated best effort.
+ * Returns undefined when `url` isn't a parseable absolute URL — callers must treat
+ * that as "identity unknown" (log as unverified/unchecked), never compare against a
+ * fabricated value.
+ */
+export function licenseIdentityFor(url: string): string | undefined {
+  try {
+    return `naulon:${new URL(url).hostname.toLowerCase()}`;
+  } catch {
+    return undefined;
   }
 }
 
@@ -307,7 +327,11 @@ export async function run(
     let licenseId: string | undefined;
     if (result.license) {
       const decoded = decodeHeld(result.license);
-      const verified = jwks ? verifyAgainst(result.license, jwks) : null;
+      // The canonical identity of the gate this read just settled into — derived from
+      // `url` (the paid target), never from the token's own claims (A4). When it can't
+      // be derived, `verified` stays null (unchecked) rather than fabricating a match.
+      const identity = licenseIdentityFor(url);
+      const verified = jwks && identity ? verifyAgainst(result.license, jwks, { issuer: identity, audience: identity }) : null;
       if (decoded) {
         // Persist the url actually paid alongside the license, so it travels with the
         // held record (a slug-only re-read can then target the real link, not a template).

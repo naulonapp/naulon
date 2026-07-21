@@ -50,6 +50,7 @@ import {
   gatewayBuyer,
   getWallet,
   isLive,
+  licenseIdentityFor,
   memoBuyer,
   probe,
   probeFailure,
@@ -626,7 +627,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         licenseVerified: z
           .boolean()
           .optional()
-          .describe("True/false if the license signature was checked against the gate's JWKS; omitted if JWKS unavailable."),
+          .describe(
+            "True/false if the license was checked against the gate's JWKS and canonical iss/aud identity; " +
+              "omitted if the JWKS or the gate's canonical identity is unavailable (never a fabricated match).",
+          ),
         ceilingUsdc: z.number().describe("The server-configured spend ceiling for this session."),
         spentSessionUsdc: z.number().describe("Total spent in this MCP session (after this call)."),
         remainingUsdc: z.number().describe("Budget left for this session (after this call)."),
@@ -800,7 +804,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           }
         }
         const jwks = await fetchJwks(gateBase());
-        if (jwks) licenseVerified = verifyAgainst(result.license, jwks);
+        // The canonical identity of the gate this read just settled into — derived from
+        // `target` (the paid url), never from the token's own claims (A4). Cosmetic/log
+        // field only: it does not gate the payment or the license persist above, both of
+        // which already happened by this point regardless of licenseVerified's value.
+        const identity = licenseIdentityFor(target);
+        if (jwks && identity) licenseVerified = verifyAgainst(result.license, jwks, { issuer: identity, audience: identity });
       }
 
       emitAudit({
