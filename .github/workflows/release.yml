@@ -2,10 +2,15 @@ name: Release (npm)
 
 # Publishes the publisher-facing @naulon/* packages to npm on a version tag.
 # Ordered by the real dependency graph — sdk (clean base) → shared (imports sdk)
-# → enforce (imports shared). @naulon/tollgate is NOT published here: the gate
-# ships as a Docker image (see the OSS distribution decision), not npm.
+# → enforce (imports shared) → wayfarer (imports shared) → wayfarer-mcp (imports
+# shared + wayfarer). @naulon/tollgate is NOT published here: the gate ships as a
+# Docker image (see the OSS distribution decision), not npm.
 #
-# Trigger: push a tag like `v0.1.0`, or run manually (workflow_dispatch).
+# Every publish is IDEMPOTENT: a version already on the registry is skipped, so a
+# tag can ship only the packages whose version actually changed without failing on
+# the ones already published (e.g. re-tagging when only wayfarer-mcp bumped).
+#
+# Trigger: push a tag like `v0.2.0`, or run manually (workflow_dispatch).
 # Auth: repo secret NPM_TOKEN (an npm automation token with publish rights on the
 # @naulon scope). setup-node wires it into ~/.npmrc via NODE_AUTH_TOKEN — the token
 # is never echoed. Provenance is on (public repo → verifiable supply-chain link).
@@ -36,26 +41,39 @@ jobs:
 
       # Build in dependency order so each package's dist/ resolves the one below it.
       # (prepublishOnly rebuilds too, but building up front fails fast on a bad tree.)
-      - name: Build sdk → shared → enforce
+      - name: Build sdk → shared → enforce → wayfarer → wayfarer-mcp
         run: |
           npm run build -w @naulon/sdk
           npm run build -w @naulon/shared
           npm run build -w @naulon/enforce
+          npm run build -w @naulon/wayfarer
+          npm run build -w @naulon/wayfarer-mcp
 
-      # Publish in the same order. --access public is required for a first-time
-      # scoped publish. Each package's prepublishOnly re-runs its build (harmless).
-      - name: Publish @naulon/sdk
-        run: npm publish -w @naulon/sdk --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish @naulon/shared
-        run: npm publish -w @naulon/shared --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish @naulon/enforce
-        run: npm publish -w @naulon/enforce --access public --provenance
+      # Idempotent publish, in dependency order. --access public is required for a
+      # first-time scoped publish. Each package's prepublishOnly re-runs its build
+      # (harmless). A version already on the registry is skipped, not re-published —
+      # so the run never fails on an unchanged package.
+      - name: Publish changed @naulon packages
+        run: |
+          set -euo pipefail
+          publish() {
+            local pkg="$1"
+            local ver
+            ver=$(node -p "require('./packages/${pkg}/package.json').version")
+            local name
+            name=$(node -p "require('./packages/${pkg}/package.json').name")
+            if npm view "${name}@${ver}" version >/dev/null 2>&1; then
+              echo "→ ${name}@${ver} already published, skipping"
+            else
+              echo "→ publishing ${name}@${ver}"
+              npm publish -w "${name}" --access public --provenance
+            fi
+          }
+          publish sdk
+          publish shared
+          publish enforce
+          publish wayfarer
+          publish wayfarer-mcp
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -65,9 +83,11 @@ jobs:
       - name: Pack the published tarballs
         run: |
           mkdir -p _release
-          npm pack -w @naulon/sdk     --pack-destination _release
-          npm pack -w @naulon/shared  --pack-destination _release
-          npm pack -w @naulon/enforce --pack-destination _release
+          npm pack -w @naulon/sdk         --pack-destination _release
+          npm pack -w @naulon/shared      --pack-destination _release
+          npm pack -w @naulon/enforce     --pack-destination _release
+          npm pack -w @naulon/wayfarer    --pack-destination _release
+          npm pack -w @naulon/wayfarer-mcp --pack-destination _release
 
       - name: GitHub Release (attach tarballs)
         if: startsWith(github.ref, 'refs/tags/')
