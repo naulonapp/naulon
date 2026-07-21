@@ -224,8 +224,10 @@ export const configSchema = z.object({
   WAYFARER_MIN_VALIDITY_SECONDS: z.coerce.number().int().positive().default(60),
   // BUY-3 policy engine (server-config, never LLM-controlled). All optional — unset
   // ⇒ DEFAULT_POLICY. The MCP folds these into the DecisionPolicy it hands run().
-  //   *_DOMAINS: comma-separated publisher hosts. ALLOW is an allowlist (deny-by-
-  //   default for anything not listed); DENY always wins. CAP: max pays per host.
+  //   *_DOMAINS: comma-separated publisher hosts, applied to EVERY paid tool
+  //   (quote/pay_and_read/research), not just research. ALLOW is an allowlist (deny-
+  //   by-default for anything not listed) and REPLACES the single-gate identity pin —
+  //   so one server can buy across many publishers; DENY always wins. CAP: max pays per host.
   //   APPROVAL_USDC: a toll at/above this becomes an "approve" (human gate), not a
   //   pay. KILL_SWITCH: halt all new spend (free re-reads of held licenses still ok).
   // Parse to a non-empty host list, or `undefined` when blank/malformed (e.g. ","):
