@@ -275,6 +275,17 @@ export interface BuildServerOptions {
    * the hosted path the cloud injects its portal wallet URL; the stdio funnel leaves it at the
    * `/buyer/wallet` default. Server-config, never a tool arg. */
   buyerWalletUrl?: string;
+  /**
+   * WP-3a — when set (non-empty), this mount's 4 config-dependent tools (naulon_discover,
+   * naulon_quote, naulon_pay_and_read, naulon_research) are inert BY DESIGN: each short-circuits
+   * BEFORE touching discover()/gateBase()/any tollgate, returning a CONTROLLED refusal (never a
+   * throw, never a fabricated success) whose message is this string verbatim. This is how the
+   * hosted fleet endpoint (WP-3c sets this only on its ask-only mount) stays HONEST about
+   * naulon_ask being the sole fleet-buy path there, instead of surfacing a raw config error for
+   * tools that were never meant to run on that mount. `naulon_status` and `naulon_ask` are never
+   * steered — only these 4. Absent/empty (every stdio/self-host caller, unchanged): a no-op.
+   */
+  hostedInertSteer?: string;
 }
 
 /**
@@ -328,6 +339,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // Where a needs_topup / grant_expired refusal points the agent to fund/renew (default: the
   // portal wallet path). Server-config, resolved once — never a tool arg.
   const buyerWalletUrl = opts.buyerWalletUrl ?? "/buyer/wallet";
+  // WP-3a — resolved once, mirroring every other opt above. Absent/empty on every stdio/self-host
+  // caller (the unchanged default); the 4 guarded handlers below check this BEFORE anything else.
+  const hostedInertSteer = opts.hostedInertSteer;
   // Hosted-wallet opt-in (BUY-2): when the cloud env is configured, tolls are signed by naulon's
   // grant-checked /sign-memo BFF (the custody-free session key), so this process holds NO private
   // key. Unset ⇒ the OSS default (BYO BUYER_PRIVATE_KEY via selectBuyer). Server-config, not a tool
@@ -492,10 +506,19 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             }),
           )
           .describe("Free teasers; the agent has paid for nothing at this stage."),
+        refused: z
+          .boolean()
+          .optional()
+          .describe("True if the server refused to run discovery at all (e.g. a hosted ask-only mount) — see note. Never set alongside real candidates."),
+        note: z.string().optional().describe("Present when refused — explains why, and where to go instead."),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ topic }) => {
+      // WP-3a — a hosted ask-only mount (WP-3c) is inert-but-honest for this tool: refuse BEFORE
+      // ever calling discover() (no config read, no network) rather than throwing a raw config
+      // error or fabricating candidates.
+      if (hostedInertSteer) return structured({ candidates: [], refused: true, note: hostedInertSteer });
       const candidates = await discover(topic);
       // WP-2 T2: remember THIS call's distinct hostnames (reset, not merged — a stale prior
       // topic's hosts must not linger) for the granular pay path's fleet-default allowance
@@ -663,6 +686,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ slug, url }) => {
+      // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
+      // resolving gateBase() or probing, using the SAME refused/note shape the origin refusal
+      // below already returns.
+      if (hostedInertSteer) return structured({ refused: true, note: hostedInertSteer, ...envelope() });
       const target = url ?? slugUrl(slug);
       // Origin + policy even on the free probe: an unauthorized url is an SSRF surface and would
       // return an attacker-authored price/payTo the model might then act on. policyForGranularPay
@@ -773,8 +800,14 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
     },
-    async ({ slug, url }) =>
-      withSpendLock(async () => {
+    async ({ slug, url }) => {
+      // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
+      // joining the spend lock or resolving gateBase(), using the SAME ok:false/errorCode shape
+      // the origin refusal below already returns. Nothing is spent.
+      if (hostedInertSteer) {
+        return structured({ ok: false, error: hostedInertSteer, errorCode: "rejected", retryable: false, ...envelope() });
+      }
+      return withSpendLock(async () => {
       // Quote first and gate on the SESSION BUDGET before any spend. The price is the
       // buyer's true total across legs; refusing here is the budget ceiling (the
       // on-chain insufficient-funds + toll-moved-at-pay tolerance are BUY-1.4).
@@ -945,7 +978,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ...(licenseVerified === undefined ? {} : { licenseVerified }),
         ...envelope(),
       });
-      }),
+      });
+    },
   );
 
   // ── naulon_read_held (free) ──────────────────────────────────────────────────
@@ -1057,8 +1091,25 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
     },
-    async ({ topic, budgetUsdc }) =>
-      withSpendLock(async () => {
+    async ({ topic, budgetUsdc }) => {
+      // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
+      // joining the spend lock, calling discover(), or resolving gateBase() inside run(). This
+      // tool's outputSchema has no dedicated ok/error field, so the refusal is carried in the
+      // SAME already-required fields every real run reports (answer, log) — zero spend, zero
+      // decisions, nothing invented.
+      if (hostedInertSteer) {
+        return structured({
+          topic,
+          budget: 0,
+          spent: 0,
+          ...envelope(),
+          answer: hostedInertSteer,
+          decisions: [],
+          sources: [],
+          log: [hostedInertSteer],
+        });
+      }
+      return withSpendLock(async () => {
       const log: string[] = [];
       // Clamp the requested budget to what the session has left: the model can spend
       // less than the ceiling, never more. Passing the clamp into run() overrides its
@@ -1168,7 +1219,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         })),
         log,
       });
-      }),
+      });
+    },
   );
 
   // ── Prompts (cross-client slash commands) ───────────────────────────────────

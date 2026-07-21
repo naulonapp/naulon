@@ -164,6 +164,25 @@ function stubFleetDirectory(entries: unknown[]): { restore: () => void } {
   return { restore: () => { globalThis.fetch = real; } };
 }
 
+/**
+ * WP-3a — replace `globalThis.fetch` with one that THROWS synchronously on any call at all, so a
+ * test can prove a guarded tool never reaches discover()/gateBase()/the network — if the guard
+ * were missing or misplaced, the very first network attempt inside discover()/probe() would
+ * surface this poison error instead of the intended steer, failing the test loudly. Caller
+ * restores in a `finally`.
+ */
+function poisonFetch(): { restore: () => void } {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("poisoned fetch — a hostedInertSteer-guarded tool must never reach the network");
+  }) as typeof fetch;
+  return {
+    restore: () => {
+      globalThis.fetch = real;
+    },
+  };
+}
+
 /** A gate that 402s a probe (no payment-signature) and serves content once a
  *  payment-signature is presented — enough for the mock buyer to complete a pay. */
 function payGate(amountAtomic: string) {
@@ -1882,4 +1901,127 @@ test("WP-2 T2 granular + L-OSS-3: naulon_pay_and_read's fleet-default allow is s
       }
     },
   );
+});
+
+// ── WP-3a — hosted OSS tools inert-but-honest (hostedInertSteer) ───────────────────────────
+// Decision (WP-0): on the hosted fleet endpoint, naulon_ask is the SOLE fleet-buy path — the 4
+// granular OSS tools below are inert BY DESIGN there and must fail HONESTLY (steer the caller to
+// naulon_ask) rather than throw a raw config error or fabricate a success. `hostedInertSteer` is
+// the opt-in switch (unset by every caller above, including every existing test); WP-3c (cloud)
+// sets it only on its ask-only mount. Each guard runs BEFORE discover()/gateBase()/any tollgate
+// call — proven here with `poisonFetch()`, which would surface loudly if a guard were skipped.
+
+const WP3A_STEER =
+  "This hosted endpoint serves fleet buying via naulon_ask; the granular discover/quote/pay/research tools run on stdio/self-host.";
+
+test("WP-3a: naulon_discover short-circuits with the steer refusal, never touching discover()/the network", async () => {
+  const poison = poisonFetch();
+  try {
+    const client = await connectedClientWith({ hostedInertSteer: WP3A_STEER });
+    const res = await client.callTool({ name: "naulon_discover", arguments: { topic: "passage" } });
+    assert.notEqual(res.isError, true, "a hosted-inert steer is a typed refusal, not a thrown MCP error");
+    const structured = res.structuredContent as { candidates: unknown[]; refused?: boolean; note?: string };
+    assert.deepEqual(structured.candidates, [], "no candidates are fabricated — an honest empty result");
+    assert.equal(structured.refused, true);
+    assert.equal(structured.note, WP3A_STEER);
+  } finally {
+    poison.restore();
+  }
+});
+
+test("WP-3a: naulon_quote short-circuits with the steer refusal, never touching gateBase()/the network", async () => {
+  const poison = poisonFetch();
+  try {
+    const client = await connectedClientWith({ hostedInertSteer: WP3A_STEER });
+    const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "x" } });
+    assert.notEqual(res.isError, true, "a hosted-inert steer is a typed refusal, not a thrown MCP error");
+    const structured = res.structuredContent as { refused?: boolean; note?: string; gated?: boolean };
+    assert.equal(structured.refused, true);
+    assert.equal(structured.note, WP3A_STEER);
+    assert.equal(structured.gated, undefined, "never a fabricated gated:true/false — this is a refusal, not a quote");
+  } finally {
+    poison.restore();
+  }
+});
+
+test("WP-3a: naulon_pay_and_read short-circuits with the steer refusal, spending nothing", async () => {
+  const poison = poisonFetch();
+  try {
+    const client = await connectedClientWith({ hostedInertSteer: WP3A_STEER });
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+    assert.notEqual(res.isError, true, "a hosted-inert steer is a typed refusal, not a thrown MCP error");
+    const structured = res.structuredContent as {
+      ok: boolean;
+      error?: string;
+      errorCode?: string;
+      retryable?: boolean;
+      spentSessionUsdc: number;
+    };
+    assert.equal(structured.ok, false);
+    assert.equal(structured.error, WP3A_STEER);
+    assert.equal(structured.errorCode, "rejected");
+    assert.equal(structured.retryable, false);
+    assert.equal(structured.spentSessionUsdc, 0, "nothing was spent — the guard runs before any pay path");
+  } finally {
+    poison.restore();
+  }
+});
+
+test("WP-3a: naulon_research short-circuits with the steer refusal, deciding nothing and spending nothing", async () => {
+  const poison = poisonFetch();
+  try {
+    const client = await connectedClientWith({ hostedInertSteer: WP3A_STEER });
+    const res = await client.callTool({ name: "naulon_research", arguments: { topic: "passage" } });
+    assert.notEqual(res.isError, true, "a hosted-inert steer is a typed refusal, not a thrown MCP error");
+    const structured = res.structuredContent as {
+      topic: string;
+      spent: number;
+      answer: string;
+      decisions: unknown[];
+      sources: unknown[];
+      log: string[];
+    };
+    assert.equal(structured.topic, "passage");
+    assert.equal(structured.spent, 0);
+    assert.equal(structured.answer, WP3A_STEER);
+    assert.deepEqual(structured.decisions, []);
+    assert.deepEqual(structured.sources, []);
+    assert.ok(structured.log.includes(WP3A_STEER));
+  } finally {
+    poison.restore();
+  }
+});
+
+// Positive control: with the opt UNSET (the default — every caller above), the 4 tools' normal
+// path is completely unchanged, proven end-to-end (real discover → real quote → real pay), not
+// merely "doesn't throw".
+test("WP-3a positive control: hostedInertSteer UNSET leaves the 4 tools' normal discover/quote/pay path unchanged", async () => {
+  await withStubGate(payGate("1000"), async () => {
+    await withCatalog(async () => {
+      await withEnv(
+        {
+          WAYFARER_BUDGET_USDC: "1",
+          WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-wp3a-control-${process.pid}.json`),
+          OPENAI_API_KEY: undefined,
+        },
+        async () => {
+          const client = await connectedClient(); // no opts ⇒ hostedInertSteer absent, same as every existing caller
+
+          const discovered = await client.callTool({ name: "naulon_discover", arguments: { topic: "payment and passage" } });
+          const candidates = (discovered.structuredContent as { candidates: { slug: string }[] }).candidates;
+          assert.ok(candidates.some((c) => c.slug === "the-naulon"), "discover still returns real candidates when unset");
+
+          const quoted = await client.callTool({ name: "naulon_quote", arguments: { slug: "the-naulon" } });
+          const q = quoted.structuredContent as { gated?: boolean; refused?: boolean };
+          assert.equal(q.refused, undefined, "quote is not steer-refused when the opt is unset");
+          assert.equal(q.gated, true, "quote still reaches the real gate when unset");
+
+          const paid = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "the-naulon" } });
+          const p = paid.structuredContent as { ok: boolean; content?: string };
+          assert.equal(p.ok, true, "pay_and_read still completes a real pay when unset");
+          assert.equal(p.content, "paid content");
+        },
+      );
+    });
+  });
 });
