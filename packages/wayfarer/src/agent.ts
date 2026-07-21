@@ -85,7 +85,7 @@ export function verifyAgainst(jws: string, jwks: JwkSet, expected: { issuer: str
  */
 export function licenseIdentityFor(url: string): string | undefined {
   try {
-    return `naulon:${new URL(url).hostname.toLowerCase()}`;
+    return `naulon:${new URL(url).host.toLowerCase()}`;
   } catch {
     return undefined;
   }

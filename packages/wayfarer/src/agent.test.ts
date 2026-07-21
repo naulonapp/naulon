@@ -12,7 +12,7 @@ import { test } from "node:test";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { jwksOf, loadSigningKey, mintLicense, resetConfig, type JwkSet } from "@naulon/shared";
 
-import { run, tollgateBase, verifyAgainst } from "./agent.ts";
+import { licenseIdentityFor, run, tollgateBase, verifyAgainst } from "./agent.ts";
 import { memoryHeldStore } from "./licenseStore.ts";
 
 /** The discovery catalog these run() tests point CATALOG_URL at. Discovery no
@@ -842,4 +842,27 @@ test("A4: verifyAgainst accepts a token minted for the canonical gate identity",
   const CANONICAL = "naulon:gate.test";
   const { jws, jwks } = mintForIdentity(CANONICAL, CANONICAL);
   assert.equal(verifyAgainst(jws, jwks, { issuer: CANONICAL, audience: CANONICAL }), true);
+});
+
+// ── A4 follow-up — licenseIdentityFor must derive the SAME identity the gate
+// mints for a non-default port. The gate mints `naulon:${host}` from the
+// request `host` header / `new URL(url).host` — which INCLUDES the port
+// (tollgate/src/app.ts, publisher.ts:61). A buyer hitting a gate on a
+// non-default port (the wayfarer test harness's own `http://127.0.0.1:${port}`,
+// or any local/self-host deployment not behind a reverse proxy on 80/443) must
+// derive that same `naulon:host:port` identity — not the bare hostname with the
+// port silently stripped, which would make every valid license look forged.
+test("A4 follow-up: licenseIdentityFor includes the port, matching the gate's naulon:${host} mint convention", () => {
+  const urlWithPort = "http://127.0.0.1:4021/essays/some-essay";
+  const GATE_IDENTITY = "naulon:127.0.0.1:4021"; // what the gate actually mints for this host:port
+  const { jws, jwks } = mintForIdentity(GATE_IDENTITY, GATE_IDENTITY);
+
+  const derived = licenseIdentityFor(urlWithPort);
+  assert.equal(derived, GATE_IDENTITY, "derived identity must retain the port, not just the hostname");
+
+  assert.equal(
+    verifyAgainst(jws, jwks, { issuer: derived ?? "", audience: derived ?? "" }),
+    true,
+    "a license minted for naulon:host:port must verify when the buyer derives its expected identity from the same host:port URL",
+  );
 });
