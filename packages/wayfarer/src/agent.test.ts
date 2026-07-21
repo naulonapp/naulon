@@ -447,3 +447,148 @@ test("RAS-A2b: on a gateway (memo-less) network run() routes the injected signer
     globalThis.fetch = real;
   }
 });
+
+// ── H-OSS-1 — the SSRF gate on run()'s price loop ───────────────────────────────
+// discover() is explicitly untrusted (decide.ts: "a poisoned discover teaser is
+// enough") — a compromised catalog/feed candidate can carry ANY url. Before this
+// fix, run()'s price loop called buyer.price(c.url) for EVERY discovered candidate,
+// unconditionally, before decide() ever ran an origin/policy check — an attacker
+// url reached the network (cloud metadata endpoints, internal services) regardless
+// of the operator's gate/allowlist/denylist. These assert the fetch-count-0
+// invariant directly: a stub `globalThis.fetch` records every URL actually hit, and
+// the off-gate/deny-listed candidate must never appear in it, while an on-gate
+// candidate in the SAME run still gets priced normally.
+
+test("H-OSS-1: run() refuses to price/fetch an off-gate candidate url (no policy stated) — never reaches the network", async () => {
+  const CATALOG = "http://catalog.test/ssrf-plain";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-ssrf-plain-${process.pid}.json`),
+    },
+    async () => {
+      const fetched: string[] = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              // Poisoned teaser: an off-gate url a compromised catalog handed back.
+              { slug: "trap", title: "Trap", summary: "payment and passage", url: "http://evil.example/steal" },
+              // A genuine on-gate candidate (slug-only, resolves to the configured gate).
+              { slug: "on-stillness", title: "On Stillness", summary: "payment and passage, on staying" },
+            ]),
+            { status: 200 },
+          );
+        }
+        fetched.push(u);
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the fare is paid", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {});
+        assert.ok(
+          !fetched.some((u) => u.startsWith("http://evil.example")),
+          `off-gate candidate must NEVER be fetched/priced (SSRF) — got ${JSON.stringify(fetched)}`,
+        );
+        assert.ok(
+          fetched.some((u) => u.includes("gate.test")),
+          "the on-gate candidate in the SAME run must still be priced normally",
+        );
+        assert.ok(
+          result.decisions.some((d) => d.slug === "on-stillness"),
+          "the on-gate candidate reaches decide() and gets a real decision",
+        );
+        assert.ok(
+          !result.decisions.some((d) => d.slug === "trap"),
+          "the refused candidate is dropped at the price gate — it never reaches decide()",
+        );
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+test("H-OSS-1: run() refuses a deny-listed host even when an operator allowlist REPLACES the gate pin (WP-2 fleet-allowlist shape)", async () => {
+  // authorizeOrigin defers identity entirely once policy.allowDomains is stated — so this
+  // proves the SECOND gate (the host-only spendGate call) actually runs and enforces the
+  // allowlist itself; without it, a fleet-default allowlist (WP-2) would leave pricing wide
+  // open again despite the identity pin appearing to be "handled".
+  const CATALOG = "http://catalog.test/ssrf-allowlist";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-ssrf-allow-${process.pid}.json`),
+    },
+    async () => {
+      const fetched: string[] = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: "trap", title: "Trap", summary: "payment and passage", url: "http://evil.example/steal" },
+              { slug: "on-stillness", title: "On Stillness", summary: "payment and passage, on staying" },
+            ]),
+            { status: 200 },
+          );
+        }
+        fetched.push(u);
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the fare is paid", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {}, {
+          policy: { relevanceFloor: 0, maxPaid: 5, allowDomains: ["gate.test"] },
+        });
+        assert.ok(
+          !fetched.some((u) => u.startsWith("http://evil.example")),
+          `deny-listed (not-allowlisted) candidate must NEVER be fetched/priced — got ${JSON.stringify(fetched)}`,
+        );
+        assert.ok(
+          fetched.some((u) => u.includes("gate.test")),
+          "the allowlisted on-gate candidate in the SAME run must still be priced normally",
+        );
+        assert.ok(
+          result.decisions.some((d) => d.slug === "on-stillness"),
+          "the allowlisted candidate reaches decide() and gets a real decision",
+        );
+        assert.ok(
+          !result.decisions.some((d) => d.slug === "trap"),
+          "the refused candidate is dropped at the price gate — it never reaches decide()",
+        );
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});

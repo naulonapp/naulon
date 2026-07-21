@@ -12,9 +12,10 @@ import { quotedTotalAtomic, rereadWithLicense, selectBuyer } from "./buyer.ts";
 import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
 import { memoBuyer, type MemoSigner } from "./memo.ts";
 import { railBuyer, type RailSigners } from "./rail.ts";
-import { decide, DEFAULT_POLICY } from "./decide.ts";
+import { decide, DEFAULT_POLICY, payHostOf, payUrlOf, spendGate } from "./decide.ts";
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
+import { authorizeOrigin } from "./origin-policy.ts";
 import { decodeHeld, fileHeldStore, isLive } from "./licenseStore.ts";
 import type { HeldStore } from "./licenseStore.ts";
 import { buildPopProof } from "./pop.ts";
@@ -123,6 +124,49 @@ export interface RunOptions {
   popWallet?: AgentWallet;
 }
 
+/**
+ * The price-loop origin/domain gate (H-OSS-1 — the SSRF fix). `discover()` is
+ * explicitly untrusted (a poisoned catalog/feed candidate can carry ANY `url`), and
+ * `buyer.price()` in the loop below is a real network GET — reached BEFORE decide()
+ * ever runs an origin check. Mirrors the granular MCP tools' `originRefusal`
+ * (wayfarer-mcp/server.ts): `authorizeOrigin` for endpoint identity — OR the
+ * operator-stated `allowDomains` boundary, which REPLACES identity rather than
+ * stacking with it — then the ONE shared `spendGate` for the price-independent
+ * domain policy (deny-list / allow-list). `priceUsdc: 0` because there is no price
+ * yet, same reasoning as the MCP's free-probe gate: whatever spendGate would refuse
+ * to pay for, this loop must refuse to even price.
+ *
+ * `killSwitch` is deliberately excluded from the policy handed to `spendGate` here
+ * (via a cloned copy) — it is evaluated for REAL, unmodified, inside decide()'s own
+ * spendGate call once appraisal has run. `DecisionPolicy.killSwitch` is documented
+ * to halt SPEND only ("free re-reads still allowed"), the same carve-out decide()
+ * already gives a held-license cache hit. A price probe is a free, unpaid read — not
+ * spend — so it stays outside the kill-switch, exactly like a cache re-read. Letting
+ * kill-switch drop candidates HERE would silently empty `priced` before appraise/
+ * decide ever run, losing the auditable "kill-switch halted this" decision log
+ * (BUY-3.3 / BUY-4.4). Deny-list / allow-list / off-gate identity are a DIFFERENT
+ * question — "may this origin be reached at all" — and stay fully enforced
+ * regardless of kill-switch.
+ */
+function priceRefusal(candidateUrl: string | undefined, gate: string, slug: string, policy: DecisionPolicy): string | null {
+  const target = payUrlOf(candidateUrl, gate, slug);
+  if (target === undefined) return `no resolvable pay URL — refusing (the configured gate is ${gate})`;
+
+  const origin = authorizeOrigin({
+    target,
+    gate,
+    ...(policy.allowDomains ? { allowDomains: policy.allowDomains } : {}),
+  });
+  if (!origin.ok) return origin.refusal;
+
+  const gated = spendGate({
+    host: payHostOf(candidateUrl, gate, slug),
+    priceUsdc: 0,
+    policy: { ...policy, killSwitch: false },
+  });
+  return gated.ok ? null : gated.reason;
+}
+
 export async function run(
   topic: string,
   log: Logger = () => {},
@@ -131,6 +175,7 @@ export async function run(
   const cfg = getConfig();
   const budget = opts.budgetUsdc ?? cfg.WAYFARER_BUDGET_USDC;
   const base = opts.tollgateUrl ?? tollgateBase();
+  const policy = opts.policy ?? DEFAULT_POLICY;
   // Hosted path: sign each leg via the injected cloud session key (custody-free); the
   // env BUYER_PRIVATE_KEY is never read. Route the injected signer to the active network's
   // rail — memo-LESS networks (Base + every Gateway chain) settle via gatewayBuyer (the Circle
@@ -164,6 +209,13 @@ export async function run(
   // pay time is aborted — the BUY-1.4 guarantee. Budget-remaining alone cannot detect that.
   const quotedTotals = new Map<string, bigint>();
   for (const c of candidates) {
+    // SSRF gate (H-OSS-1) — see priceRefusal: refused candidates are dropped here,
+    // BEFORE buyer.price() ever reaches the network.
+    const refusal = priceRefusal(c.url, base, c.slug, policy);
+    if (refusal) {
+      log(`  ⛔ ${c.slug}: refusing to price — ${refusal}`);
+      continue;
+    }
     const quoted = await buyer.price(c.url ?? articleUrl(base, c.slug), "citation");
     if (quoted) {
       priced.push({ ...c, price: usdc(quoted.priceUsdc) });
@@ -186,7 +238,7 @@ export async function run(
 
   // gateBase lets decide() resolve a slug-only candidate to the SAME url the pay step below uses,
   // so domain policy is evaluated against the host that actually gets paid (never Candidate.host).
-  const decisions = decide(appraised, budget, licensed, opts.policy ?? DEFAULT_POLICY, {
+  const decisions = decide(appraised, budget, licensed, policy, {
     ...opts.decideContext,
     gateBase: opts.decideContext?.gateBase ?? base,
   });
