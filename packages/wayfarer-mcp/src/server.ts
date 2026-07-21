@@ -699,15 +699,22 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       const quoted = outcome.quoted;
       const cost = round6(trueTotalUsdc(quoted));
       // Operator policy — the ONE shared evaluator `decide()` uses, so this granular path and
-      // naulon_research enforce byte-identical rules (kill-switch, deny/allow, per-domain cap,
-      // approval threshold). `paidCount`/`remainingUsdc` are omitted: the session envelope below
-      // owns budget accounting with its own message, and maxPaid is a per-run planning cap.
+      // naulon_research enforce byte-identical rules IN THE SAME ORDER (kill-switch, deny/allow,
+      // per-domain cap, budget, approval threshold — decide.ts's order is load-bearing). `remainingUsdc`
+      // MUST be passed: decide()'s spendGate checks budget BEFORE the approval threshold, so omitting
+      // it here let a toll that was BOTH over budget and over the approval threshold fall through to
+      // the approval branch and misreport as "needs human approval" — implying approving it would let
+      // it proceed, which it would not (the toll is over budget regardless). `paidCount` (the maxPaid
+      // gate) stays omitted on purpose — maxPaid is a PER-RUN planning cap for naulon_research's own
+      // loop, not a session-wide cap on this granular tool; passing it would newly enforce a 5-pay
+      // ceiling across the whole MCP session, which nothing here asked for.
       const payHost = hostnameOf(target);
       const verdict = spendGate({
         host: payHost ?? undefined,
         priceUsdc: cost,
         policy,
         paidForHost: payHost ? (paidByHost.get(payHost) ?? 0) : 0,
+        remainingUsdc: remainingUsdc(),
       });
       if (!verdict.ok) {
         const reason =
@@ -717,23 +724,11 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         emitAudit({ slug, action: verdict.action, reason, priceUsdc: quoted.priceUsdc, agentId: policy.agentId });
         return structured({ ok: false, error: reason, errorCode: "rejected", retryable: false, ...envelope() });
       }
-      if (cost > remainingUsdc()) {
-        emitAudit({
-          slug,
-          action: "skip",
-          reason: `over budget: toll $${cost} exceeds $${remainingUsdc()} remaining (ceiling $${round6(ceilingUsdc())}) — nothing spent`,
-          priceUsdc: quoted.priceUsdc,
-          agentId: policyFromConfig().agentId,
-        });
-        return structured({
-          ok: false,
-          error:
-            `Toll is $${cost} but only $${remainingUsdc()} remains in the session budget ` +
-            `($${round6(ceilingUsdc())} ceiling, $${round6(spentUsdc)} already spent). The ceiling is ` +
-            `server-configured and cannot be raised from a tool. Nothing was spent.`,
-          ...envelope(),
-        });
-      }
+      // NOTE: a redundant `cost > remainingUsdc()` re-check used to live here, AFTER spendGate. It is
+      // now unreachable by construction — spendGate is given the same `cost` and the same
+      // `remainingUsdc()` above, so if this line is reached the budget gate has already passed. Two
+      // implementations of one rule is exactly how the "misreports as approval" bug above happened;
+      // it is not re-introduced.
 
       // Hosted path: sign each leg via the cloud session key. With BOTH rail signers (RAS-B mixed
       // fleet) railBuyer picks the rail from the TENANT's advertised 402 — a gateway 402 signs the

@@ -411,8 +411,9 @@ test("naulon_pay_and_read refuses a toll over the remaining budget and spends no
       const payRes = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
       const p = payRes.structuredContent as PayResult;
       assert.equal(p.ok, false, "the over-budget pay is refused");
-      assert.match(p.error ?? "", /budget/i, "the error explains it is a budget refusal");
-      assert.match(p.error ?? "", /cannot be raised/i, "the error states the ceiling is not tool-raisable");
+      // B4: the refusal reason now comes from the ONE shared spendGate (byte-identical to
+      // decide()'s wording) instead of a second, duplicate over-budget check with its own prose.
+      assert.match(p.error ?? "", /exceeds remaining budget/i, "the error explains it is a budget refusal");
       assert.equal(p.spentSessionUsdc, 0, "nothing was spent");
       assert.equal(p.remainingUsdc, 0.001, "the full budget still remains");
     });
@@ -1408,6 +1409,26 @@ test("A2-2: approvalThresholdUsdc gates an expensive toll behind human approval 
     assert.equal(r.ok, false, "a toll at/above the approval threshold is not auto-paid");
     assert.match(r.error ?? "", /approval/i);
     assert.equal(r.spentSessionUsdc, 0);
+  });
+});
+
+test("B4: an over-budget toll that ALSO exceeds the approval threshold refuses for budget, not approval", async () => {
+  // decide()'s spendGate checks budget BEFORE the approval threshold when both are supplied
+  // (decide.ts order: kill → deny → allow → maxPaid → perDomainCap → budget → approval). The
+  // granular pay_and_read path must report the SAME fundamental cause: a toll that is both over
+  // budget and over the approval threshold is not "needs approval" (approving it would not let it
+  // proceed — it is over budget regardless), it is over budget.
+  await withStubGate(payGate("600000"), async () => {
+    // $0.60 toll: exceeds the $0.30 remaining budget AND the $0.50 approval threshold.
+    await withEnv({ WAYFARER_BUDGET_USDC: "0.30", WAYFARER_APPROVAL_USDC: "0.50" }, async () => {
+      const client = await connectedClient();
+      const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+      const r = res.structuredContent as { ok: boolean; error?: string; spentSessionUsdc: number };
+      assert.equal(r.ok, false, "the over-budget-and-over-threshold toll is refused");
+      assert.match(r.error ?? "", /exceeds remaining budget/i, "the fundamental cause is the budget, matching decide()'s wording");
+      assert.doesNotMatch(r.error ?? "", /approval threshold/i, "must not misreport as merely needing approval");
+      assert.equal(r.spentSessionUsdc, 0, "nothing was spent");
+    });
   });
 });
 

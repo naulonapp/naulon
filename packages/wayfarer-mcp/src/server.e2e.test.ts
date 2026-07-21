@@ -143,8 +143,9 @@ test("e2e (real stdio binary): pay debits the envelope, accumulates, and refuses
 
     const p3 = await structured<Pay>(client, "naulon_pay_and_read", { slug: "c" });
     assert.equal(p3.ok, false, "the third pay exceeds the remaining 0.002 and is refused");
-    assert.match(p3.error ?? "", /budget/i, "the error explains it is a budget refusal");
-    assert.match(p3.error ?? "", /cannot be raised/i, "the error states the ceiling is not tool-raisable");
+    // B4: the refusal reason now comes from the ONE shared spendGate (byte-identical to decide()'s
+    // wording) instead of a second, duplicate over-budget check with its own prose.
+    assert.match(p3.error ?? "", /exceeds remaining budget/i, "the error explains it is a budget refusal");
     assert.equal(p3.spentSessionUsdc, 0.01, "the refused pay debits nothing");
 
     const q2 = await structured<Quote>(client, "naulon_quote", { slug: "c" });
