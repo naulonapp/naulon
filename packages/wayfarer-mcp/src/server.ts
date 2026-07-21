@@ -69,7 +69,7 @@ import { cloudSignerFromEnv } from "./cloud-signer.ts";
 export const SERVER_NAME = "naulon-wayfarer-mcp";
 /** Keep in step with this package's package.json `version` — it is what the MCP
  *  handshake reports as `serverInfo.version`. */
-export const SERVER_VERSION = "0.2.0";
+export const SERVER_VERSION = "0.2.1";
 
 /** Every MCP toll is a citation license — the agent gathers citable sources. */
 const KIND = "citation" as const;
@@ -414,10 +414,11 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     {
       title: "Discover tollable sources",
       description:
-        "Find candidate essays for a topic from the configured publisher (live RSS feed, a " +
-        "catalog endpoint, or the bundled demo). Returns FREE public teasers only — slug, title, " +
-        "and summary — with no content and no payment. Call this first to see what is available " +
-        "before appraising, quoting, or paying.",
+        "Find candidate essays for a topic from the configured publisher (a live RSS feed or a " +
+        "catalog endpoint — set RSS_URL, PUBLISHER_URL, or CATALOG_URL, or use the hosted endpoint). " +
+        "Returns FREE public teasers only — slug, title, and summary — with no content and no payment. " +
+        "Call this first to see what is available before appraising, quoting, or paying. If no source " +
+        "is configured it refuses with setup guidance rather than inventing sources.",
       inputSchema: {
         topic: z.string().min(1).describe("The research topic to find candidate sources for."),
       },

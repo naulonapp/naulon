@@ -21,9 +21,17 @@ npx -y @naulon/wayfarer-mcp        # runs the stdio MCP server
 ```
 
 The package is scoped (`@naulon/wayfarer-mcp`); the binary it installs is
-`wayfarer-mcp`. It runs **offline against mock settlement by default** — safe to
-try with zero config, no wallet, no spend. To pay real tolls, see
-[Configuration](#configuration).
+`wayfarer-mcp`. Zero-config, it starts and mocks **settlement** (no wallet, no
+spend) — but mock settlement is not a mock catalog: `discover` / `research` /
+`verify` need a real place to look, so with nothing configured they refuse
+(they never fabricate sources). To actually find and read something, pick one:
+
+- **Turnkey (hosted):** point a client at the hosted endpoint with an agent
+  token — real corpus, no local wallet. See [Hosted endpoint](#hosted-endpoint-no-local-wallet).
+- **Bring your own publisher:** set `RSS_URL`, `PUBLISHER_URL`, or `CATALOG_URL`
+  to a site's feed/catalog, plus `TOLLGATE_URL` to pay. See [Configuration](#configuration).
+- **Full loop offline:** run the repo's `make demo` (or `make dev`) to drive the
+  whole discover → toll → pay → settle loop against a local stub publisher.
 
 The canonical registration, which every client below is a variant of:
 

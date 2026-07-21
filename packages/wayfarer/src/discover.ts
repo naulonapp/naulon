@@ -2,8 +2,9 @@
  * Discovery entry point — find candidate essays for a topic. The agent reads
  * only the free, public teaser (title + summary) here; it hasn't paid yet.
  *
- * The source is chosen from config (RSS feed, catalog endpoint, or the bundled
- * demo); see discovery.ts for the seam and the selection precedence.
+ * The source is chosen from config (RSS feed or catalog endpoint); see
+ * discovery.ts for the seam and the selection precedence. With none configured
+ * it refuses — there is no bundled demo, and it never fabricates fixtures.
  */
 import type { Candidate } from "./types.ts";
 import { selectSource } from "./discovery.ts";
