@@ -240,6 +240,49 @@ test("exposes cross-client slash-command prompts that steer the tools", async ()
   assert.ok(text.includes("naulon_discover"), "the prompt steers the model through the free-first loop");
 });
 
+// ── WP-2 T4 — self-healing prompt copy ─────────────────────────────────────────
+// A discovery dead-end used to leave the model stuck (or worse, printing raw env-var names at a
+// non-technical user). Every prompt must now route a failure to naulon_status and relay its
+// nextStep in plain language instead.
+
+test("verify prompt routes failures to naulon_status, never raw env-var names", async () => {
+  const client = await connectedClient();
+  const p = await client.getPrompt({ name: "verify", arguments: { claim: "x" } });
+  const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+  assert.match(text, /naulon_status/);
+  assert.doesNotMatch(text, /set RSS_URL/i);
+});
+
+test("research prompt routes failures to naulon_status, never raw env-var names", async () => {
+  const client = await connectedClient();
+  const p = await client.getPrompt({ name: "research", arguments: { topic: "x" } });
+  const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+  assert.match(text, /naulon_status/);
+  assert.doesNotMatch(text, /set RSS_URL|set CATALOG_URL|set PUBLISHER_URL/i);
+});
+
+test("discover prompt routes failures to naulon_status, never raw env-var names", async () => {
+  const client = await connectedClient();
+  const p = await client.getPrompt({ name: "discover", arguments: { topic: "x" } });
+  const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+  assert.match(text, /naulon_status/);
+  assert.doesNotMatch(text, /set RSS_URL|set CATALOG_URL|set PUBLISHER_URL/i);
+});
+
+test("every prompt offers a retry and labels the model's own knowledge as NOT naulon-cited", async () => {
+  const client = await connectedClient();
+  for (const [name, args] of [
+    ["research", { topic: "x" }],
+    ["discover", { topic: "x" }],
+    ["verify", { claim: "x" }],
+  ] as const) {
+    const p = await client.getPrompt({ name, arguments: args });
+    const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+    assert.match(text, /retry/i, `${name} prompt should offer to retry after a failure`);
+    assert.match(text, /not naulon-cited/i, `${name} prompt should label the model's own knowledge as NOT naulon-cited`);
+  }
+});
+
 test("naulon_discover returns free catalog teasers (no payment)", async () => {
   await withCatalog(async () => {
     const client = await connectedClient();

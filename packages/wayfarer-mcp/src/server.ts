@@ -1179,6 +1179,19 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // loop); the cloud layers its own `naulon_ask` prompt where that tool lives. Each
   // returns a single user message that steers the host model through the tools; the
   // model still sees every price and spends only when a paying tool is called.
+  //
+  // WP-2 T4 — self-healing: before this, a discovery dead-end (no source configured, or an
+  // empty/failing result) left the model either stuck or — worse — printing a raw env-var name
+  // ("set RSS_URL") at a non-technical user who has no idea what that means. Every prompt now
+  // appends the SAME recovery instruction: on empty/failed discovery, call naulon_status and
+  // relay its plain-language `nextStep` (fund the wallet it shows, or connect a token), then
+  // offer to retry. One shared instruction, not three drifting copies.
+  const SELF_HEAL_PROMPT_TAIL =
+    `\n\nIf naulon_discover comes back empty, or any tool call fails, call naulon_status and relay ` +
+    `its "nextStep" guidance in your own plain language (e.g. fund the wallet address it shows, or ` +
+    `connect a token) — never print a raw environment-variable name to the user. Then offer to retry. ` +
+    `If you fall back to your own general knowledge instead of a naulon-tolled source, say so ` +
+    `explicitly and label it clearly as NOT naulon-cited.`;
   server.registerPrompt(
     "research",
     {
@@ -1198,7 +1211,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               `1. Call naulon_discover("${topic}") — free — to list candidate essays.\n` +
               `2. Use naulon_appraise and naulon_quote to judge relevance and see exact prices. Nothing is spent until a paying tool runs.\n` +
               `3. Pay only the most relevant sources with naulon_pay_and_read, or call naulon_research to run the whole discover→quote→pay→ground loop within the session budget.\n\n` +
-              `Return a grounded answer with numbered citations and report exactly what was spent. Distinguish naulon-cited evidence from your own general knowledge.`,
+              `Return a grounded answer with numbered citations and report exactly what was spent. Distinguish naulon-cited evidence from your own general knowledge.` +
+              SELF_HEAL_PROMPT_TAIL,
           },
         },
       ],
@@ -1219,7 +1233,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             type: "text",
             text:
               `Call naulon_discover("${topic}") and present the candidate essays as a ranked list — title, one-line summary, teaser price, and citation price. ` +
-              `This is FREE: do not pay for anything. If a grounded answer is wanted next, use the "research" prompt or naulon_research.`,
+              `This is FREE: do not pay for anything. If a grounded answer is wanted next, use the "research" prompt or naulon_research.` +
+              SELF_HEAL_PROMPT_TAIL,
           },
         },
       ],
@@ -1242,7 +1257,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               `Fact-check the claim: "${claim}".\n\n` +
               `Use naulon_discover to find relevant tolled sources, then naulon_appraise / naulon_quote (free) to see relevance and price. ` +
               `Only if grounding needs it, pay the most relevant sources with naulon_pay_and_read (or run naulon_research) within budget.\n\n` +
-              `State whether the claim is SUPPORTED, REFUTED, or UNVERIFIABLE, cite the paid sources by title, and report the spend. Keep naulon-cited evidence separate from your own general knowledge.`,
+              `State whether the claim is SUPPORTED, REFUTED, or UNVERIFIABLE, cite the paid sources by title, and report the spend. Keep naulon-cited evidence separate from your own general knowledge.` +
+              SELF_HEAL_PROMPT_TAIL,
           },
         },
       ],
