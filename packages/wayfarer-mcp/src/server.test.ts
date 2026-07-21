@@ -1432,6 +1432,73 @@ test("B4: an over-budget toll that ALSO exceeds the approval threshold refuses f
   });
 });
 
+// ── B3 (G6a) — session per-host pay counts carry into naulon_research's decide() ──────────────
+// `paidByHost` (declared once per server session, above) previously fed only the granular
+// naulon_pay_and_read path's own perDomainCap half; naulon_research's composite run() seeded
+// decide()'s per-host tally EMPTY every call, so a cap already hit via naulon_pay_and_read was
+// invisible to a naulon_research call in the SAME session — the cap reset to 0 each run.
+
+test("B3: a per-domain cap paid via naulon_pay_and_read carries into naulon_research's decide() for the same host", async () => {
+  // One gate stands in for "host X" for both the granular pay and the composite research run.
+  const gate = await standGate(payGate("5000"));
+  // A second, independent stub serves naulon_research's discovery feed — the SAME essay's second
+  // installment, sitting at host X (the gate above), so decide() must resolve it to the identical
+  // host the granular pay already spent against.
+  const catalog = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify([
+        {
+          slug: "second-toll",
+          title: "Passage, Once More",
+          summary: "payment and passage — a second essay from the same host",
+          url: `${gate.url}/articles/second-toll`,
+        },
+      ]),
+    );
+  });
+  try {
+    await withEnv(
+      {
+        WAYFARER_PER_DOMAIN_CAP: "1",
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        CATALOG_URL: catalog.url,
+        OPENAI_API_KEY: undefined,
+      },
+      async () => {
+        const client = await connectedClientWith({ signer: mockSigner, tollgateUrl: gate.url, budgetUsdc: 1 });
+
+        const first = (
+          await client.callTool({
+            name: "naulon_pay_and_read",
+            arguments: { slug: "first-toll", url: `${gate.url}/articles/first-toll` },
+          })
+        ).structuredContent as { ok: boolean; error?: string };
+        assert.equal(first.ok, true, `expected the first pay to host X to succeed, got: ${first.error ?? ""}`);
+
+        const research = (
+          await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } })
+        ).structuredContent as { decisions: Array<{ slug: string; action: string; reason: string }> };
+
+        const second = research.decisions.find((d) => d.slug === "second-toll");
+        assert.ok(
+          second,
+          `expected the same-host essay to be discovered and decided on, got: ${JSON.stringify(research.decisions)}`,
+        );
+        assert.equal(
+          second!.action,
+          "skip",
+          "the per-domain cap already spent via naulon_pay_and_read must carry into naulon_research's decide() for the same session",
+        );
+        assert.match(second!.reason, /per-domain cap/i);
+      },
+    );
+  } finally {
+    await Promise.all([gate.close(), catalog.close()]);
+  }
+});
+
 // ── β (A2-4 / A2-7) — the spend lock ─────────────────────────────────────────────────────────
 // The budget check and its debit are separated by network I/O, and an MCP client may issue tool
 // calls concurrently. Unserialized, two pays both read the same remaining budget, both pass the

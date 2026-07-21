@@ -52,6 +52,7 @@ import {
   isLive,
   licenseIdentityFor,
   memoBuyer,
+  payHostOf,
   probe,
   probeFailure,
   quotedTotalAtomic,
@@ -291,8 +292,11 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // server instance's lifetime — one stdio/HTTP session = one budget envelope. The
   // model sees what remains and can plan within it; it can never raise the ceiling.
   let spentUsdc = 0;
-  // Per-session pays per publisher host — the granular path's half of `perDomainCap` (decide()
-  // enforces it for naulon_research against its own run-scoped counts).
+  // Per-session pays per publisher host — the ONE `perDomainCap` counter shared by BOTH spending
+  // paths. naulon_pay_and_read increments it directly (below); naulon_research seeds decide()'s own
+  // per-host tally from it (`decideContext.priorDomainCounts`) before each run and increments it
+  // from that run's `pay` decisions afterward (B3) — so a cap hit through either tool carries to
+  // the other, for the life of this session. Never a second, run-scoped counter.
   const paidByHost = new Map<string, number>();
   // ── Spend lock ──────────────────────────────────────────────────────────────
   // The budget check and its debit are separated by network I/O (probe → sign → paid GET), and an
@@ -957,6 +961,11 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       const result = await run(topic, (line) => log.push(line), {
         budgetUsdc: effective,
         policy: policyFromConfig(),
+        // B3: seed decide()'s per-host tally from the SAME session `paidByHost` the granular
+        // naulon_pay_and_read path maintains (declared once above), so a perDomainCap already hit
+        // via pay_and_read carries into this run instead of decide() starting every call at 0.
+        // One counter for the whole session — never a second, run-scoped one.
+        decideContext: { priorDomainCounts: Object.fromEntries(paidByHost) },
         ...(opts.tollgateUrl ? { tollgateUrl: opts.tollgateUrl } : {}),
         // Hosted path: pay from the buyer's custody-free session wallet, not the env key
         // (mirrors naulon_pay_and_read). Both rail signers win — run() then rail-picks PER-402
@@ -972,6 +981,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ...(opts.popWallet ? { popWallet: opts.popWallet } : {}),
       });
       spentUsdc = round6(spentUsdc + result.spent);
+      // B3: fold this run's actual pays back into the session counter, resolving each host via
+      // the SAME `payHostOf` decide() itself counts by (never `Decision.url` blindly, never a
+      // second resolver) — so a later naulon_pay_and_read or naulon_research call in this session
+      // sees them too.
+      for (const d of result.decisions) {
+        if (d.action !== "pay") continue;
+        const host = payHostOf(d.url, gateBase(), d.slug);
+        if (host) paidByHost.set(host, (paidByHost.get(host) ?? 0) + 1);
+      }
       // BUY-4.4: audit each decision the run made. run() owns the decide()/pay loop
       // internally, so we replay its decisions here post-run — enriching a `pay` with the
       // settlement detail from the matching cited source. agentId is a policy tag (audit

@@ -57,7 +57,7 @@ export { railBuyer } from "./rail.ts";
 export type { RailSigners } from "./rail.ts";
 
 // ── decide (policy) ─────────────────────────────────────────────────────────
-export { decide, DEFAULT_POLICY, spendGate } from "./decide.ts";
+export { decide, DEFAULT_POLICY, payHostOf, spendGate } from "./decide.ts";
 export type { DecisionPolicy, DecideContext, SpendVerdict } from "./decide.ts";
 
 // ── origin policy (whose origin may money touch) ─────────────────────────────
