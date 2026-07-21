@@ -212,16 +212,28 @@ export type ProbeOutcome =
   | { status: "unreachable"; httpStatus: number }
   | { status: "malformed"; reason: string };
 
+/** Comfortably exceeds any real toll (a $1,000,000 read is 1e12 atomic units) while
+ *  staying well under Number.MAX_SAFE_INTEGER's 16 digits, so every digit string this
+ *  cap admits converts through `Number()` to an EXACT, finite integer — no precision
+ *  loss, no overflow. This is the magnitude half of the A2-follow-up bound (see below). */
+const MAX_ATOMIC_DIGITS = 15;
+
 /** A toll `amount` is valid only as a non-negative integer string of atomic (micro-USDC)
- *  units — `^\d+$` rejects a negative sign, a decimal point, non-digit garbage, and the
- *  empty string. Used to validate a 402's advertised amount BEFORE it is ever turned into
- *  a price: discovery (and the gates it points at) is untrusted, so a malicious/broken
- *  gate could otherwise 402 with `amount: "-100"` or `"abc"`, and the first caller to run
- *  that through `usdc()` (shared/src/types.ts, which throws on non-finite/negative) would
- *  crash — inside `run()`'s price loop (agent.ts) that abort discards every OTHER
- *  candidate's price too, an attacker-controlled batch DoS from one bad gate. */
+ *  units, bounded to a sane magnitude — rejecting a negative sign, a decimal point,
+ *  non-digit garbage, the empty string, AND an absurdly long digit run. Used to validate
+ *  a 402's advertised amount BEFORE it is ever turned into a price: discovery (and the
+ *  gates it points at) is untrusted, so a malicious/broken gate could otherwise 402 with
+ *  `amount: "-100"`, `"abc"`, or (A2 follow-up) `"9".repeat(310)` — `^\d+$` alone accepts
+ *  that last one, and `Number(amount)` silently overflows to `Infinity`. Whichever shape
+ *  slips through, the first caller to run the bad value through `usdc()`
+ *  (shared/src/types.ts, which throws on non-finite/negative) would crash — inside
+ *  `run()`'s price loop (agent.ts) that abort discards every OTHER candidate's price too,
+ *  an attacker-controlled batch DoS from one bad gate. The digit-length cap and the
+ *  finite check are both load-bearing: the cap keeps `Number(s)` an exact safe integer,
+ *  and the finite check is the belt-and-suspenders backstop against any value that would
+ *  otherwise become non-finite at `Number(s)`. */
 function isNonNegativeIntegerAtomic(s: string): boolean {
-  return /^\d+$/.test(s);
+  return /^\d+$/.test(s) && s.length <= MAX_ATOMIC_DIGITS && Number.isFinite(Number(s));
 }
 
 /** Shared price probe — classify the gate's response by HTTP status, decoding the 402

@@ -354,6 +354,31 @@ test("probe flags a 402 with a non-numeric toll amount as malformed (never reach
   });
 });
 
+// A2 follow-up — `^\d+$` alone accepts an arbitrarily long digit string. A 402 with
+// `amount: "9".repeat(310)` passes the regex, then `Number(amount)` overflows to
+// `Infinity`, which `probe()` used to hand back as a "gated" quote with
+// `priceUsdc: Infinity`. The FIRST caller to run that through `usdc()` (which throws on
+// non-finite) crashes — the exact same batch-DoS class A2 closed, via a shape the regex
+// didn't reject. The amount must be bounded so an overflowing value is malformed, not gated.
+test("probe flags a 402 with an overflowing (all-digit) toll amount as malformed, not gated to Infinity", async () => {
+  const overflow = "9".repeat(310);
+  assert.equal(Number(overflow), Infinity, "sanity: this digit string does overflow to Infinity");
+  await withFetch(stub402(paymentRequiredHeader({ withOperatorLeg: false, amount: overflow })), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "an overflow-to-Infinity amount must never reach usdc() as a gated quote");
+  });
+});
+
+test("probe flags a 402 with a toll amount just past the digit-length cap as malformed", async () => {
+  // 16 nines is comfortably past any real toll and past Number.MAX_SAFE_INTEGER's digit
+  // count — the boundary just beyond the cap, still finite but absurd.
+  const tooLong = "9".repeat(16);
+  await withFetch(stub402(paymentRequiredHeader({ withOperatorLeg: false, amount: tooLong })), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "a digit string past the magnitude cap must not be treated as a real toll");
+  });
+});
+
 test("probePrice stays back-compatible: the gated quote for a 402, null for anything else", async () => {
   await withFetch(stubStatus(402, { header: paymentRequiredHeader({ withOperatorLeg: false }) }), async () => {
     assert.ok(await probePrice("https://x.test/essays/a", "read", "tester"), "402 → quote");

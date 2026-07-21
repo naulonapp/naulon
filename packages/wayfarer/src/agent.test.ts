@@ -179,6 +179,11 @@ test("run discovers, prices, decides, pays for and cites a relevant source under
 // (shared/src/types.ts) THROWS on a non-finite/negative value — aborting the whole
 // price loop and silently discarding every other, perfectly-good candidate's price.
 // One bad gate must never take down pricing for the rest of the batch.
+//
+// A2 follow-up — the same batch-DoS class survives a shape the original regex
+// (`^\d+$` alone) let through: an all-digit amount long enough that `Number(amount)`
+// overflows to `Infinity` (e.g. "9".repeat(310)). `overflow-toll` below pins that
+// case alongside the original non-numeric one.
 test("run does not throw when a gate 402s one candidate with a malformed toll amount (A2) — prices only the valid one", async () => {
   const CATALOG = "http://catalog.test/list-a2";
   await withEnv(
@@ -199,6 +204,7 @@ test("run does not throw when a gate 402s one candidate with a malformed toll am
           return new Response(
             JSON.stringify([
               { slug: "bad-toll", title: "Bad Toll", summary: "a gate with a malformed 402 amount, about payment and passage" },
+              { slug: "overflow-toll", title: "Overflow Toll", summary: "a gate with an overflowing 402 amount, about payment and passage" },
               { slug: "good-toll", title: "Good Toll", summary: "a gate with a valid 402 amount, about payment and passage" },
             ]),
             { status: 200 },
@@ -208,9 +214,9 @@ test("run does not throw when a gate 402s one candidate with a malformed toll am
         if (init?.headers?.["payment-signature"]) {
           return new Response("the toll is the fare paid to cross", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
         }
-        // The attacker-controlled candidate's gate 402s with a non-numeric amount;
-        // the well-behaved one 402s normally.
-        const amount = u.includes("bad-toll") ? "abc" : "1000";
+        // The attacker-controlled candidates' gates 402 with a non-numeric amount and an
+        // overflow-to-Infinity amount, respectively; the well-behaved one 402s normally.
+        const amount = u.includes("bad-toll") ? "abc" : u.includes("overflow-toll") ? "9".repeat(310) : "1000";
         const header = Buffer.from(
           JSON.stringify({
             accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount, maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
@@ -223,6 +229,7 @@ test("run does not throw when a gate 402s one candidate with a malformed toll am
         const decisionSlugs = result.decisions.map((d) => d.slug);
         assert.ok(decisionSlugs.includes("good-toll"), "the well-behaved candidate is still priced, appraised and decided");
         assert.ok(!decisionSlugs.includes("bad-toll"), "the malformed-toll candidate is dropped at price — never reaches decide()");
+        assert.ok(!decisionSlugs.includes("overflow-toll"), "the overflow-to-Infinity candidate is dropped at price — never reaches decide()");
       } finally {
         globalThis.fetch = real;
       }
