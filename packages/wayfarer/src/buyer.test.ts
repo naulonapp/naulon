@@ -30,13 +30,15 @@ const OPERATOR = "0x3333333333333333333333333333333333333333";
 const NET = "arc-testnet";
 const ASSET = "0xUSDC";
 
-/** A PAYMENT-REQUIRED header exactly as tollgate `build402` emits it (mock mode). */
-function paymentRequiredHeader(opts: { withOperatorLeg: boolean }): string {
+/** A PAYMENT-REQUIRED header exactly as tollgate `build402` emits it (mock mode).
+ *  `amount` defaults to a stock "10000" (author leg) — override to pin an
+ *  attacker-controlled/malformed toll amount without inventing a second header helper. */
+function paymentRequiredHeader(opts: { withOperatorLeg: boolean; amount?: string }): string {
   const authorReq = {
     network: NET,
     asset: ASSET,
     payTo: AUTHOR,
-    amount: "10000",
+    amount: opts.amount ?? "10000",
     maxTimeoutSeconds: 691200,
     extra: { nonce: "author-nonce" },
   };
@@ -328,6 +330,27 @@ test("probe flags a 402 with an undecodable header as malformed (no throw)", asy
   await withFetch(stubStatus(402, { header: "@@@not-base64-json@@@" }), async () => {
     const o = await probe("https://x.test/essays/a", "read", "tester");
     assert.equal(o.status, "malformed");
+  });
+});
+
+// A2 — an attacker-controlled/untrusted gate (discovery is untrusted) can 402 with a
+// bogus toll `amount`. Before this fix, probe() decoded it unvalidated into
+// `priceUsdc: Number(req.amount) / 1e6`, and the FIRST caller to run that through
+// `usdc()` (shared/src/types.ts) threw on non-finite/negative — which, inside run()'s
+// price loop (agent.ts), aborted the whole loop and discarded every other candidate's
+// price (attacker-controlled batch DoS). The toll amount must be validated at the
+// source, in probe(), so every consumer inherits a safe value.
+test("probe flags a 402 with a negative toll amount as malformed (never reaches usdc() unvalidated)", async () => {
+  await withFetch(stub402(paymentRequiredHeader({ withOperatorLeg: false, amount: "-100" })), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "a negative toll amount is not a valid price — never silently gated");
+  });
+});
+
+test("probe flags a 402 with a non-numeric toll amount as malformed (never reaches usdc() unvalidated)", async () => {
+  await withFetch(stub402(paymentRequiredHeader({ withOperatorLeg: false, amount: "abc" })), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "a non-numeric toll amount is not a valid price — never silently gated");
   });
 });
 

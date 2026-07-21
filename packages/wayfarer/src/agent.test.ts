@@ -173,6 +173,63 @@ test("run discovers, prices, decides, pays for and cites a relevant source under
   );
 });
 
+// A2 — discovery (and the gates it points at) is untrusted: a candidate essay's
+// tollgate can 402 with a malformed/negative amount. Before the fix, run()'s price
+// loop pushed `usdc(quoted.priceUsdc)` unvalidated (buyer.ts probe()), and usdc()
+// (shared/src/types.ts) THROWS on a non-finite/negative value — aborting the whole
+// price loop and silently discarding every other, perfectly-good candidate's price.
+// One bad gate must never take down pricing for the rest of the batch.
+test("run does not throw when a gate 402s one candidate with a malformed toll amount (A2) — prices only the valid one", async () => {
+  const CATALOG = "http://catalog.test/list-a2";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-a2-${process.pid}.json`),
+    },
+    async () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: "bad-toll", title: "Bad Toll", summary: "a gate with a malformed 402 amount, about payment and passage" },
+              { slug: "good-toll", title: "Good Toll", summary: "a gate with a valid 402 amount, about payment and passage" },
+            ]),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the toll is the fare paid to cross", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+        }
+        // The attacker-controlled candidate's gate 402s with a non-numeric amount;
+        // the well-behaved one 402s normally.
+        const amount = u.includes("bad-toll") ? "abc" : "1000";
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount, maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {});
+        const decisionSlugs = result.decisions.map((d) => d.slug);
+        assert.ok(decisionSlugs.includes("good-toll"), "the well-behaved candidate is still priced, appraised and decided");
+        assert.ok(!decisionSlugs.includes("bad-toll"), "the malformed-toll candidate is dropped at price — never reaches decide()");
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
 test("URL-centric: run uses a candidate's canonical url verbatim, never a reconstructed /essays/ path", async () => {
   const CATALOG = "http://catalog.test/list";
   await withEnv(

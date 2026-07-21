@@ -212,6 +212,18 @@ export type ProbeOutcome =
   | { status: "unreachable"; httpStatus: number }
   | { status: "malformed"; reason: string };
 
+/** A toll `amount` is valid only as a non-negative integer string of atomic (micro-USDC)
+ *  units — `^\d+$` rejects a negative sign, a decimal point, non-digit garbage, and the
+ *  empty string. Used to validate a 402's advertised amount BEFORE it is ever turned into
+ *  a price: discovery (and the gates it points at) is untrusted, so a malicious/broken
+ *  gate could otherwise 402 with `amount: "-100"` or `"abc"`, and the first caller to run
+ *  that through `usdc()` (shared/src/types.ts, which throws on non-finite/negative) would
+ *  crash — inside `run()`'s price loop (agent.ts) that abort discards every OTHER
+ *  candidate's price too, an attacker-controlled batch DoS from one bad gate. */
+function isNonNegativeIntegerAtomic(s: string): boolean {
+  return /^\d+$/.test(s);
+}
+
 /** Shared price probe — classify the gate's response by HTTP status, decoding the 402
  *  PAYMENT-REQUIRED header only for a real toll. Never throws: a broken 402 body or a
  *  network failure is returned as a typed outcome, not an exception. */
@@ -251,6 +263,14 @@ export async function probe(
     }
     const req = decoded.accepts?.[0];
     if (!req) return { status: "malformed", reason: "a 402 with no payment options (empty accepts)" };
+    // A2 — validate the toll amount at the SOURCE, before anything downstream (priceUsdc,
+    // usdc(), the price loop) ever sees it. This is the ONE place that matters: every
+    // consumer of a `probe()`/`probePrice()` gated outcome — run()'s price loop,
+    // naulon_quote, naulon_pay_and_read — inherits the guarantee from here; no call site
+    // needs its own check.
+    if (!isNonNegativeIntegerAtomic(req.amount)) {
+      return { status: "malformed", reason: "a 402 whose toll amount is not a non-negative integer" };
+    }
     // The author leg is what the agent appraises (the content's price), so `priceUsdc`
     // stays the author amount even when an additive fee leg makes the buyer's TOTAL
     // higher. `legs` (when present) is the full set the buyer must sign — see assemblePayment.
