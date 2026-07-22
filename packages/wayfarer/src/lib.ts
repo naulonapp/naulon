@@ -52,8 +52,8 @@ export {
   classifyGatewaySettlement,
 } from "./gateway.ts";
 export type { GatewaySigner, GatewayDepositOpts, GatewaySettlementState } from "./gateway.ts";
-export { memoBuyer, signMemoPayment } from "./memo.ts";
-export type { MemoSigner } from "./memo.ts";
+export { memoBuyer, signMemoPayment, assembleMemoPayment } from "./memo.ts";
+export type { MemoSigner, MemoTypedData } from "./memo.ts";
 export { railBuyer } from "./rail.ts";
 export type { RailSigners } from "./rail.ts";
 

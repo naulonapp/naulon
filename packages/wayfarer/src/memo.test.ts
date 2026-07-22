@@ -289,3 +289,121 @@ test("a socket throw during pay surfaces as a retryable origin_error, not needs_
     globalThis.fetch = real;
   }
 });
+
+// ── #1 — the ATOMIC batch seam (assembleMemoPayment) ────────────────────────────────────────────────
+// A multi-leg toll signed by a BATCH-capable injected signer must sign EVERY leg in ONE call, so the
+// host reserves them atomically (no stranded sibling leg — naulon-cloud 0122). Every other case — a
+// single-leg toll, a signer WITHOUT a batch method (env-key / mock / OSS) — must fall through to the
+// per-leg path, byte-identical to before the seam existed.
+const OP = "0x3333333333333333333333333333333333333333";
+const twoLegQuoted = (): import("./buyer.ts").Quoted => ({
+  priceUsdc: 0.01,
+  amountAtomic: "10000",
+  requirements: { network: net.network, asset: net.usdc, payTo, amount: "10000", maxTimeoutSeconds: 691200 },
+  legs: [
+    { role: "author", payTo, amount: "10000" },
+    { role: "operator", payTo: OP, amount: "500" },
+  ],
+});
+
+test("assembleMemoPayment: a batch-capable signer signs every leg in ONE batch call (not per leg)", async () => {
+  const { assembleMemoPayment } = await import("./memo.ts");
+  type MemoSigner = import("./memo.ts").MemoSigner;
+  const sessionAccount = privateKeyToAccount(generatePrivateKey());
+  let perLegCalls = 0;
+  let batchCalls = 0;
+  let batchSize = 0;
+  const signer: MemoSigner = {
+    address: sessionAccount.address,
+    signTypedData: async (args) => {
+      perLegCalls++;
+      return sessionAccount.signTypedData(args);
+    },
+    signTypedDataBatch: async (list) => {
+      batchCalls++;
+      batchSize = list.length;
+      return Promise.all(list.map((a) => sessionAccount.signTypedData(a)));
+    },
+  };
+  const b64 = await assembleMemoPayment(twoLegQuoted(), 1_700_000_000_000, signer, net);
+  const payloads = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+  assert.equal(batchCalls, 1, "the whole toll is signed in ONE batch call");
+  assert.equal(batchSize, 2, "both legs are handed to the batch signer together");
+  assert.equal(perLegCalls, 0, "the per-leg signer is NOT used when a batch method exists");
+  assert.equal(payloads.length, 2, "author + operator leg framed into the array the gate parses");
+  assert.equal(payloads[0].authorization.to.toLowerCase(), payTo);
+  assert.equal(payloads[0].authorization.value, "10000");
+  assert.equal(payloads[1].authorization.to.toLowerCase(), OP.toLowerCase());
+  assert.equal(payloads[1].authorization.value, "500");
+  assert.notEqual(payloads[0].authorization.nonce, payloads[1].authorization.nonce);
+  // Each framed signature recovers to the session address against the shared descriptor the gate verifies.
+  for (const p of payloads) {
+    const recovered = await recoverTypedDataAddress({
+      domain: usdcDomain(net),
+      types: TRANSFER_WITH_AUTHORIZATION_TYPES,
+      primaryType: "TransferWithAuthorization",
+      message: {
+        from: p.authorization.from, to: p.authorization.to, value: BigInt(p.authorization.value),
+        validAfter: BigInt(p.authorization.validAfter), validBefore: BigInt(p.authorization.validBefore), nonce: p.authorization.nonce,
+      },
+      signature: p.signature,
+    });
+    assert.equal(recovered.toLowerCase(), sessionAccount.address.toLowerCase());
+  }
+});
+
+test("assembleMemoPayment: a signer WITHOUT a batch method falls back to per-leg signing (mock/OSS unchanged)", async () => {
+  const { assembleMemoPayment } = await import("./memo.ts");
+  type MemoSigner = import("./memo.ts").MemoSigner;
+  const sessionAccount = privateKeyToAccount(generatePrivateKey());
+  let perLegCalls = 0;
+  const signer: MemoSigner = {
+    address: sessionAccount.address,
+    signTypedData: async (args) => {
+      perLegCalls++;
+      return sessionAccount.signTypedData(args);
+    },
+  };
+  const b64 = await assembleMemoPayment(twoLegQuoted(), 1_700_000_000_000, signer, net);
+  const payloads = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+  assert.equal(perLegCalls, 2, "no batch method ⇒ each leg signed individually, exactly as before");
+  assert.equal(payloads.length, 2);
+});
+
+test("assembleMemoPayment: a SINGLE-leg toll takes the per-leg bare payload even with a batch signer", async () => {
+  const { assembleMemoPayment } = await import("./memo.ts");
+  type MemoSigner = import("./memo.ts").MemoSigner;
+  const sessionAccount = privateKeyToAccount(generatePrivateKey());
+  let perLegCalls = 0;
+  let batchCalls = 0;
+  const signer: MemoSigner = {
+    address: sessionAccount.address,
+    signTypedData: async (args) => ((perLegCalls++), sessionAccount.signTypedData(args)),
+    signTypedDataBatch: async (list) => ((batchCalls++), Promise.all(list.map((a) => sessionAccount.signTypedData(a)))),
+  };
+  const single: import("./buyer.ts").Quoted = {
+    priceUsdc: 0.01, amountAtomic: "10000", nonce: "0x" + "9".repeat(64),
+    requirements: { network: net.network, asset: net.usdc, payTo, amount: "10000", maxTimeoutSeconds: 691200 },
+  };
+  const b64 = await assembleMemoPayment(single, 1_700_000_000_000, signer, net);
+  const payload = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+  assert.equal(batchCalls, 0, "a single leg never uses the batch path");
+  assert.equal(perLegCalls, 1);
+  assert.ok(!Array.isArray(payload), "a single-author toll stays the BARE payload (byte-identical to before)");
+  assert.equal(payload.authorization.to.toLowerCase(), payTo);
+});
+
+test("assembleMemoPayment: a batch signer returning the wrong signature count fails loud (never a partial payment)", async () => {
+  const { assembleMemoPayment } = await import("./memo.ts");
+  type MemoSigner = import("./memo.ts").MemoSigner;
+  const sessionAccount = privateKeyToAccount(generatePrivateKey());
+  const signer: MemoSigner = {
+    address: sessionAccount.address,
+    signTypedData: (args) => sessionAccount.signTypedData(args),
+    signTypedDataBatch: async (list) => [await sessionAccount.signTypedData(list[0]!)], // returns 1 for 2 legs
+  };
+  await assert.rejects(
+    () => assembleMemoPayment(twoLegQuoted(), 1_700_000_000_000, signer, net),
+    /returned 1 signatures for 2 legs/,
+  );
+});
