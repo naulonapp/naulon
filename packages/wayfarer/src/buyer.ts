@@ -167,12 +167,23 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     case "grant_exceeded":
     case "leg_too_large":
     case "no_session":
+    // The reserve's spend-envelope stops (migrations 0109/0119): the token's cumulative sub-cap and the
+    // account's rolling 24h budget. The GRANT may be healthy, but this authorization can't clear the
+    // envelope — topping the grant / retrying the same amount changes nothing, so they are terminal.
+    case "sub_cap_exceeded":
+    case "daily_budget_exceeded":
       return { errorCode: "needs_topup", retryable: false };
     case "grant_expired":
       return { errorCode: "grant_expired", retryable: false };
     case "bad_from":
     case "chain_mismatch":
     case "payee_not_allowed":
+    // below_floor (the buyer's own spam floor) + nonce_reused (the nonce is committed to a DIFFERENT
+    // authorization) are equally deterministic — retrying the identical authorization only re-refuses.
+    // Left unrecognized they fell through to classifyPaymentError's retryable `rejected`, which is what
+    // made the /ask agent burn its one retry re-signing a doomed pay.
+    case "below_floor":
+    case "nonce_reused":
       return { errorCode: "rejected", retryable: false };
     default:
       return null;
@@ -211,6 +222,30 @@ export type ProbeOutcome =
   | { status: "not_found"; httpStatus: number }
   | { status: "unreachable"; httpStatus: number }
   | { status: "malformed"; reason: string };
+
+/** Comfortably exceeds any real toll (a $1,000,000 read is 1e12 atomic units) while
+ *  staying well under Number.MAX_SAFE_INTEGER's 16 digits, so every digit string this
+ *  cap admits converts through `Number()` to an EXACT, finite integer — no precision
+ *  loss, no overflow. This is the magnitude half of the A2-follow-up bound (see below). */
+const MAX_ATOMIC_DIGITS = 15;
+
+/** A toll `amount` is valid only as a non-negative integer string of atomic (micro-USDC)
+ *  units, bounded to a sane magnitude — rejecting a negative sign, a decimal point,
+ *  non-digit garbage, the empty string, AND an absurdly long digit run. Used to validate
+ *  a 402's advertised amount BEFORE it is ever turned into a price: discovery (and the
+ *  gates it points at) is untrusted, so a malicious/broken gate could otherwise 402 with
+ *  `amount: "-100"`, `"abc"`, or (A2 follow-up) `"9".repeat(310)` — `^\d+$` alone accepts
+ *  that last one, and `Number(amount)` silently overflows to `Infinity`. Whichever shape
+ *  slips through, the first caller to run the bad value through `usdc()`
+ *  (shared/src/types.ts, which throws on non-finite/negative) would crash — inside
+ *  `run()`'s price loop (agent.ts) that abort discards every OTHER candidate's price too,
+ *  an attacker-controlled batch DoS from one bad gate. The digit-length cap and the
+ *  finite check are both load-bearing: the cap keeps `Number(s)` an exact safe integer,
+ *  and the finite check is the belt-and-suspenders backstop against any value that would
+ *  otherwise become non-finite at `Number(s)`. */
+function isNonNegativeIntegerAtomic(s: string): boolean {
+  return /^\d+$/.test(s) && s.length <= MAX_ATOMIC_DIGITS && Number.isFinite(Number(s));
+}
 
 /** Shared price probe — classify the gate's response by HTTP status, decoding the 402
  *  PAYMENT-REQUIRED header only for a real toll. Never throws: a broken 402 body or a
@@ -251,6 +286,14 @@ export async function probe(
     }
     const req = decoded.accepts?.[0];
     if (!req) return { status: "malformed", reason: "a 402 with no payment options (empty accepts)" };
+    // A2 — validate the toll amount at the SOURCE, before anything downstream (priceUsdc,
+    // usdc(), the price loop) ever sees it. This is the ONE place that matters: every
+    // consumer of a `probe()`/`probePrice()` gated outcome — run()'s price loop,
+    // naulon_quote, naulon_pay_and_read — inherits the guarantee from here; no call site
+    // needs its own check.
+    if (!isNonNegativeIntegerAtomic(req.amount)) {
+      return { status: "malformed", reason: "a 402 whose toll amount is not a non-negative integer" };
+    }
     // The author leg is what the agent appraises (the content's price), so `priceUsdc`
     // stays the author amount even when an additive fee leg makes the buyer's TOTAL
     // higher. `legs` (when present) is the full set the buyer must sign — see assemblePayment.
@@ -373,7 +416,21 @@ export async function rereadWithLicense(
     "x-naulon-license": license,
   };
   if (proof) headers["x-naulon-proof"] = proof;
-  const res = await agentFetch(url, { headers });
+  let res: Response;
+  try {
+    res = await agentFetch(url, { headers });
+  } catch (err) {
+    // A DNS/connection failure must not propagate as an unhandled rejection (A1) —
+    // mirrors probe()'s network-catch below. run()'s cache branch treats this like any
+    // other re-read failure: logged-and-skipped, never fatal to the whole run(), so one
+    // flaky held essay can't discard licenses already paid for earlier in the loop.
+    return {
+      ok: false,
+      errorCode: "origin_error",
+      retryable: true,
+      error: `re-read unreachable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
   if (!res.ok) return { ok: false, error: `re-read returned ${res.status}` };
   return { ok: true, content: await res.text(), paidUsdc: 0, license };
 }

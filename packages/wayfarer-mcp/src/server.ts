@@ -50,12 +50,15 @@ import {
   gatewayBuyer,
   getWallet,
   isLive,
+  licenseIdentityFor,
   memoBuyer,
+  payHostOf,
   probe,
   probeFailure,
   quotedTotalAtomic,
   railBuyer,
   rereadWithLicense,
+  resolvedDiscoverySourceUrl,
   run,
   selectBuyer,
   spendGate,
@@ -63,7 +66,7 @@ import {
   verifyAgainst,
 } from "@naulon/wayfarer";
 import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners } from "@naulon/wayfarer";
-import { activeNetwork, getConfig, supportsMemo, usdc } from "@naulon/shared";
+import { activeNetwork, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, supportsMemo, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
@@ -272,6 +275,17 @@ export interface BuildServerOptions {
    * the hosted path the cloud injects its portal wallet URL; the stdio funnel leaves it at the
    * `/buyer/wallet` default. Server-config, never a tool arg. */
   buyerWalletUrl?: string;
+  /**
+   * WP-3a — when set (non-empty), this mount's 4 config-dependent tools (naulon_discover,
+   * naulon_quote, naulon_pay_and_read, naulon_research) are inert BY DESIGN: each short-circuits
+   * BEFORE touching discover()/gateBase()/any tollgate, returning a CONTROLLED refusal (never a
+   * throw, never a fabricated success) whose message is this string verbatim. This is how the
+   * hosted fleet endpoint (WP-3c sets this only on its ask-only mount) stays HONEST about
+   * naulon_ask being the sole fleet-buy path there, instead of surfacing a raw config error for
+   * tools that were never meant to run on that mount. `naulon_status` and `naulon_ask` are never
+   * steered — only these 4. Absent/empty (every stdio/self-host caller, unchanged): a no-op.
+   */
+  hostedInertSteer?: string;
 }
 
 /**
@@ -290,9 +304,21 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // server instance's lifetime — one stdio/HTTP session = one budget envelope. The
   // model sees what remains and can plan within it; it can never raise the ceiling.
   let spentUsdc = 0;
-  // Per-session pays per publisher host — the granular path's half of `perDomainCap` (decide()
-  // enforces it for naulon_research against its own run-scoped counts).
+  // Per-session pays per publisher host — the ONE `perDomainCap` counter shared by BOTH spending
+  // paths. naulon_pay_and_read increments it directly (below); naulon_research seeds decide()'s own
+  // per-host tally from it (`decideContext.priorDomainCounts`) before each run and increments it
+  // from that run's `pay` decisions afterward (B3) — so a cap hit through either tool carries to
+  // the other, for the life of this session. Never a second, run-scoped counter.
   const paidByHost = new Map<string, number>();
+  // WP-2 T2: the distinct hostnames THIS session's most recent naulon_discover call
+  // actually returned. Fleet-default auto-trust for the GRANULAR pay path (naulon_quote /
+  // naulon_pay_and_read) is keyed off this — unlike naulon_research, which discovers
+  // INSIDE run() and derives its own allowDomains fresh each call (RunOptions.
+  // autoTrustDiscoveredDomains), these two tools receive a slug/url the model already
+  // has from an EARLIER naulon_discover call, so "this session's last discovery" is the
+  // only discovery signal available to them. Reset (not merged) on every naulon_discover
+  // call — a stale prior topic's hosts must not linger and widen the allowlist.
+  let lastDiscoveredHosts: string[] = [];
   // ── Spend lock ──────────────────────────────────────────────────────────────
   // The budget check and its debit are separated by network I/O (probe → sign → paid GET), and an
   // MCP client may issue tool calls CONCURRENTLY (a normal parallel tool_use block). Without
@@ -313,6 +339,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // Where a needs_topup / grant_expired refusal points the agent to fund/renew (default: the
   // portal wallet path). Server-config, resolved once — never a tool arg.
   const buyerWalletUrl = opts.buyerWalletUrl ?? "/buyer/wallet";
+  // WP-3a — resolved once, mirroring every other opt above. Absent/empty on every stdio/self-host
+  // caller (the unchanged default); the 4 guarded handlers below check this BEFORE anything else.
+  const hostedInertSteer = opts.hostedInertSteer;
   // Hosted-wallet opt-in (BUY-2): when the cloud env is configured, tolls are signed by naulon's
   // grant-checked /sign-memo BFF (the custody-free session key), so this process holds NO private
   // key. Unset ⇒ the OSS default (BYO BUYER_PRIVATE_KEY via selectBuyer). Server-config, not a tool
@@ -348,7 +377,23 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // This session's gate: the injected fleet tenant (BUY-4.2) wins over env TOLLGATE_URL.
   // A function so the env default stays fresh per call when no override is supplied.
   // Resolved server-side, never from a tool arg — the model can't aim a payment off it.
-  const gateBase = (): string => opts.tollgateUrl ?? tollgateBase();
+  //
+  // WP-2: there is NO universal fleet pay-gate (gate.naulon.app/articles/* → 502 — each
+  // publisher tolls at its own origin), so fleet-default zero-config deliberately leaves
+  // TOLLGATE_URL unset. `tollgateBase()` throws in that case (by design — a self-host with
+  // no gate configured at all is a real config error). So: an explicit TOLLGATE_URL (hosted
+  // override or env) always wins; absent that, fall back to FLEET_ORIGIN ONLY when discovery
+  // is the untouched fleet default (never for a self-hosted CATALOG_URL) — this is a
+  // placeholder identity for logging/JWKS/slug-fallback purposes only, since every fleet
+  // candidate carries its own real `url` (see isFleetDefaultDiscovery). Anything else
+  // (self-host with no gate at all) still throws, unchanged.
+  const gateBase = (): string => {
+    if (opts.tollgateUrl) return opts.tollgateUrl;
+    const cfg = getConfig();
+    if (cfg.TOLLGATE_URL) return cfg.TOLLGATE_URL;
+    if (isFleetDefaultDiscovery(cfg)) return FLEET_ORIGIN;
+    return tollgateBase();
+  };
   const slugUrl = (slug: string): string => articleUrl(gateBase(), slug);
   // A non-gated quote must say WHY it isn't gated: a genuine free (2xx) read is very
   // different from a 404 (wrong path — usually the /essays/<slug> fallback missing a
@@ -386,6 +431,27 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       ...(cfg.WAYFARER_APPROVAL_USDC !== undefined ? { approvalThresholdUsdc: cfg.WAYFARER_APPROVAL_USDC } : {}),
       killSwitch: cfg.WAYFARER_KILL_SWITCH,
     };
+  };
+  // WP-2 T2 (corrected) — fleet-default auto-trust for the GRANULAR pay path (naulon_quote /
+  // naulon_pay_and_read). Unlike naulon_research (which discovers INSIDE run() and derives its
+  // own fresh allowDomains via RunOptions.autoTrustDiscoveredDomains), these tools act on a
+  // slug/url the model already holds from an EARLIER naulon_discover call in this session — so
+  // the fleet-default allowance here is keyed off `lastDiscoveredHosts` (that call's own
+  // hostnames), plus the gate's own host (L-OSS-3 — a slug-only target's resolved pay-URL lands
+  // on the gate host, and once allowDomains is stated the plain identity pin no longer covers
+  // it). Gated identically to isFleetDefaultDiscovery + no explicit WAYFARER_ALLOW_DOMAINS; an
+  // injected `opts.policy` or an explicit allowlist always wins (never overridden). Deliberately
+  // a no-op until `lastDiscoveredHosts` is non-empty (an ACTUAL naulon_discover call happened
+  // this session) — every fresh session (fleet-default is now the zero-config DEFAULT, so this
+  // is the common case) keeps the exact prior behavior (no allowDomains, plain gate-identity
+  // pin) until discovery actually occurs; stating an allowlist for no reason would silently swap
+  // the off-gate refusal from an identity-pin reason to an allowlist reason for every caller.
+  const policyForGranularPay = (): DecisionPolicy => {
+    const base = policyFromConfig();
+    if (base.allowDomains) return base;
+    if (!isFleetDefaultDiscovery(getConfig()) || lastDiscoveredHosts.length === 0) return base;
+    const fleetAllow = [...new Set([hostnameOf(gateBase()) ?? undefined, ...lastDiscoveredHosts].filter((h): h is string => !!h))];
+    return fleetAllow.length ? { ...base, allowDomains: fleetAllow } : base;
   };
   const remainingUsdc = (): number => round6(Math.max(0, ceilingUsdc() - spentUsdc));
   /** The session-budget fields every spend-aware tool echoes so the host LLM always
@@ -440,12 +506,76 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             }),
           )
           .describe("Free teasers; the agent has paid for nothing at this stage."),
+        refused: z
+          .boolean()
+          .optional()
+          .describe("True if the server refused to run discovery at all (e.g. a hosted ask-only mount) — see note. Never set alongside real candidates."),
+        note: z.string().optional().describe("Present when refused — explains why, and where to go instead."),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ topic }) => {
+      // WP-3a — a hosted ask-only mount (WP-3c) is inert-but-honest for this tool: refuse BEFORE
+      // ever calling discover() (no config read, no network) rather than throwing a raw config
+      // error or fabricating candidates.
+      if (hostedInertSteer) return structured({ candidates: [], refused: true, note: hostedInertSteer });
       const candidates = await discover(topic);
+      // WP-2 T2: remember THIS call's distinct hostnames (reset, not merged — a stale prior
+      // topic's hosts must not linger) for the granular pay path's fleet-default allowance
+      // (see policyForGranularPay). Never widens anything for a non-fleet-default deployment.
+      lastDiscoveredHosts = [
+        ...new Set(candidates.map((c) => (c.url ? hostnameOf(c.url) : null)).filter((h): h is string => h !== null)),
+      ];
       return structured({ candidates });
+    },
+  );
+
+  // ── naulon_status (free — the "run first" tool) ─────────────────────────────
+  server.registerTool(
+    "naulon_status",
+    {
+      title: "Check wallet, discovery, and gate status",
+      description:
+        "Run this FIRST, before anything else. Reports the buyer wallet address, where discovery " +
+        "is configured to look, and — plain-language — what to do next to get a paid read working " +
+        "(e.g. fund the wallet, or point discovery/the gate at your own publisher). Free, read-only, " +
+        "no network calls beyond resolving local config.",
+      inputSchema: {},
+      outputSchema: {
+        wallet: z.string().describe("The buyer wallet address (0x…40 hex) that pays every toll."),
+        tollgate: z
+          .string()
+          .optional()
+          .describe(
+            "The single configured pay-gate (TOLLGATE_URL), when self-hosting one. Absent for the fleet " +
+              "default — there is NO universal fleet pay-gate; each discovered publisher tolls at its own origin.",
+          ),
+        discovery: z.string().describe("Where naulon_discover looks for candidates (RSS_URL > PUBLISHER_URL/rss.xml > CATALOG_URL)."),
+        ready: z.boolean().describe("True once a wallet address is resolvable — does NOT mean it is funded."),
+        nextStep: z.string().describe("Plain-language guidance for what to do next, given the current config."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      const cfg = getConfig();
+      const wallet = getWallet().address;
+      const fleetDefault = isFleetDefaultDiscovery(cfg);
+      // Amendment (wp2-brief): never imply a single universal pay-gate exists for the fleet
+      // default — discovery is fleet-WIDE, but payment is authorized per-publisher (the trusted
+      // directory's own discovered domains, spendGate-capped — WP-2 T2), not one gate.
+      const nextStep = fleetDefault
+        ? `Fund this wallet (${wallet}) with testnet USDC — e.g. faucet.circle.com/Arc-Testnet — or connect a token. ` +
+          `Discovery is fleet-wide (the naulon directory); payment is authorized per-publisher for whatever it ` +
+          `discovers (each publisher's own toll, capped by your spend policy) — there is no single pay-gate to configure.`
+        : `Confirm your configured gate (TOLLGATE_URL${cfg.TOLLGATE_URL ? ` = ${cfg.TOLLGATE_URL}` : " is not set yet"}) ` +
+          `is reachable and that this wallet (${wallet}) is funded to pay it.`;
+      return structured({
+        wallet,
+        ...(cfg.TOLLGATE_URL ? { tollgate: cfg.TOLLGATE_URL } : {}),
+        discovery: resolvedDiscoverySourceUrl(),
+        ready: Boolean(wallet),
+        nextStep,
+      });
     },
   );
 
@@ -556,10 +686,16 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ slug, url }) => {
+      // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
+      // resolving gateBase() or probing, using the SAME refused/note shape the origin refusal
+      // below already returns.
+      if (hostedInertSteer) return structured({ refused: true, note: hostedInertSteer, ...envelope() });
       const target = url ?? slugUrl(slug);
       // Origin + policy even on the free probe: an unauthorized url is an SSRF surface and would
-      // return an attacker-authored price/payTo the model might then act on.
-      const refusal = originRefusal(target, gateBase(), policyFromConfig());
+      // return an attacker-authored price/payTo the model might then act on. policyForGranularPay
+      // (WP-2 T2) is the SAME fleet-default allowance naulon_pay_and_read applies below, so a
+      // fleet-discovered publisher domain can be quoted, not just paid.
+      const refusal = originRefusal(target, gateBase(), policyForGranularPay());
       if (refusal) {
         // A refusal is neither payable nor free: signal refused (not gated:false, which the tool
         // contract defines as "free read — just fetch it" and a buyer would act on).
@@ -626,19 +762,33 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         licenseVerified: z
           .boolean()
           .optional()
-          .describe("True/false if the license signature was checked against the gate's JWKS; omitted if JWKS unavailable."),
+          .describe(
+            "True/false if the license was checked against the gate's JWKS and canonical iss/aud identity; " +
+              "omitted if the JWKS or the gate's canonical identity is unavailable (never a fabricated match).",
+          ),
         ceilingUsdc: z.number().describe("The server-configured spend ceiling for this session."),
         spentSessionUsdc: z.number().describe("Total spent in this MCP session (after this call)."),
         remainingUsdc: z.number().describe("Budget left for this session (after this call)."),
         error: z.string().optional(),
         errorCode: z
-          .enum(["not_gated", "not_found", "toll_moved", "insufficient_funds", "expired", "rejected", "origin_error", "needs_topup", "grant_expired"])
+          .enum([
+            "not_gated",
+            "not_found",
+            "toll_moved",
+            "insufficient_funds",
+            "expired",
+            "rejected",
+            "origin_error",
+            "needs_topup",
+            "grant_expired",
+            "settlement_ambiguous",
+          ])
           .optional()
-          .describe("Typed failure reason when ok:false — lets you decide whether to retry. not_found = the probed URL 404'd (pass the canonical url; it is not a free read). needs_topup = the funding session is exhausted/unset — fund it at topUpUrl. grant_expired = the funding window lapsed (funds intact) — renew at topUpUrl."),
+          .describe("Typed failure reason when ok:false — lets you decide whether to retry. not_found = the probed URL 404'd (pass the canonical url; it is not a free read). needs_topup = the funding session is exhausted/unset — fund it at topUpUrl. grant_expired = the funding window lapsed (funds intact) — renew at topUpUrl. settlement_ambiguous = the payment-signature was sent and may have settled, but reading the response failed — do NOT blind-retry (a fresh pay could double-charge); verify via settlementRef or a held license first."),
         retryable: z
           .boolean()
           .optional()
-          .describe("True if re-quoting/retrying may succeed (toll moved, expired, rejected); false for a hard stop (insufficient funds, needs_topup, grant_expired — the wallet needs funding or renewal, not a retry)."),
+          .describe("True if re-quoting/retrying may succeed (toll moved, expired, rejected); false for a hard stop (insufficient funds, needs_topup, grant_expired — the wallet needs funding or renewal, not a retry; settlement_ambiguous — a retry could double-charge)."),
         topUpUrl: z
           .string()
           .optional()
@@ -650,8 +800,14 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
     },
-    async ({ slug, url }) =>
-      withSpendLock(async () => {
+    async ({ slug, url }) => {
+      // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
+      // joining the spend lock or resolving gateBase(), using the SAME ok:false/errorCode shape
+      // the origin refusal below already returns. Nothing is spent.
+      if (hostedInertSteer) {
+        return structured({ ok: false, error: hostedInertSteer, errorCode: "rejected", retryable: false, ...envelope() });
+      }
+      return withSpendLock(async () => {
       // Quote first and gate on the SESSION BUDGET before any spend. The price is the
       // buyer's true total across legs; refusing here is the budget ceiling (the
       // on-chain insufficient-funds + toll-moved-at-pay tolerance are BUY-1.4).
@@ -661,8 +817,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       const target = url ?? slugUrl(slug);
       // Endpoint identity first — refused targets are never even fetched, so an off-gate url
       // costs nothing and reaches no attacker origin. Operator policy is applied below, once the
-      // toll is known (the approval threshold is price-dependent).
-      const policy = policyFromConfig();
+      // toll is known (the approval threshold is price-dependent). policyForGranularPay (WP-2 T2)
+      // folds in the fleet-default allowance (this session's last naulon_discover hosts) so a
+      // directory-discovered publisher domain is payable, not off-gate-skipped.
+      const policy = policyForGranularPay();
       const refusal = originRefusal(target, gateBase(), policy);
       if (refusal) {
         emitAudit({ slug, action: "skip", reason: refusal, agentId: policy.agentId });
@@ -688,15 +846,22 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       const quoted = outcome.quoted;
       const cost = round6(trueTotalUsdc(quoted));
       // Operator policy — the ONE shared evaluator `decide()` uses, so this granular path and
-      // naulon_research enforce byte-identical rules (kill-switch, deny/allow, per-domain cap,
-      // approval threshold). `paidCount`/`remainingUsdc` are omitted: the session envelope below
-      // owns budget accounting with its own message, and maxPaid is a per-run planning cap.
+      // naulon_research enforce byte-identical rules IN THE SAME ORDER (kill-switch, deny/allow,
+      // per-domain cap, budget, approval threshold — decide.ts's order is load-bearing). `remainingUsdc`
+      // MUST be passed: decide()'s spendGate checks budget BEFORE the approval threshold, so omitting
+      // it here let a toll that was BOTH over budget and over the approval threshold fall through to
+      // the approval branch and misreport as "needs human approval" — implying approving it would let
+      // it proceed, which it would not (the toll is over budget regardless). `paidCount` (the maxPaid
+      // gate) stays omitted on purpose — maxPaid is a PER-RUN planning cap for naulon_research's own
+      // loop, not a session-wide cap on this granular tool; passing it would newly enforce a 5-pay
+      // ceiling across the whole MCP session, which nothing here asked for.
       const payHost = hostnameOf(target);
       const verdict = spendGate({
         host: payHost ?? undefined,
         priceUsdc: cost,
         policy,
         paidForHost: payHost ? (paidByHost.get(payHost) ?? 0) : 0,
+        remainingUsdc: remainingUsdc(),
       });
       if (!verdict.ok) {
         const reason =
@@ -706,23 +871,11 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         emitAudit({ slug, action: verdict.action, reason, priceUsdc: quoted.priceUsdc, agentId: policy.agentId });
         return structured({ ok: false, error: reason, errorCode: "rejected", retryable: false, ...envelope() });
       }
-      if (cost > remainingUsdc()) {
-        emitAudit({
-          slug,
-          action: "skip",
-          reason: `over budget: toll $${cost} exceeds $${remainingUsdc()} remaining (ceiling $${round6(ceilingUsdc())}) — nothing spent`,
-          priceUsdc: quoted.priceUsdc,
-          agentId: policyFromConfig().agentId,
-        });
-        return structured({
-          ok: false,
-          error:
-            `Toll is $${cost} but only $${remainingUsdc()} remains in the session budget ` +
-            `($${round6(ceilingUsdc())} ceiling, $${round6(spentUsdc)} already spent). The ceiling is ` +
-            `server-configured and cannot be raised from a tool. Nothing was spent.`,
-          ...envelope(),
-        });
-      }
+      // NOTE: a redundant `cost > remainingUsdc()` re-check used to live here, AFTER spendGate. It is
+      // now unreachable by construction — spendGate is given the same `cost` and the same
+      // `remainingUsdc()` above, so if this line is reached the budget gate has already passed. Two
+      // implementations of one rule is exactly how the "misreports as approval" bug above happened;
+      // it is not re-introduced.
 
       // Hosted path: sign each leg via the cloud session key. With BOTH rail signers (RAS-B mixed
       // fleet) railBuyer picks the rail from the TENANT's advertised 402 — a gateway 402 signs the
@@ -794,7 +947,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           }
         }
         const jwks = await fetchJwks(gateBase());
-        if (jwks) licenseVerified = verifyAgainst(result.license, jwks);
+        // The canonical identity of the gate this read just settled into — derived from
+        // `target` (the paid url), never from the token's own claims (A4). Cosmetic/log
+        // field only: it does not gate the payment or the license persist above, both of
+        // which already happened by this point regardless of licenseVerified's value.
+        const identity = licenseIdentityFor(target);
+        if (jwks && identity) licenseVerified = verifyAgainst(result.license, jwks, { issuer: identity, audience: identity });
       }
 
       emitAudit({
@@ -820,7 +978,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ...(licenseVerified === undefined ? {} : { licenseVerified }),
         ...envelope(),
       });
-      }),
+      });
+    },
   );
 
   // ── naulon_read_held (free) ──────────────────────────────────────────────────
@@ -932,17 +1091,50 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
     },
-    async ({ topic, budgetUsdc }) =>
-      withSpendLock(async () => {
+    async ({ topic, budgetUsdc }) => {
+      // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
+      // joining the spend lock, calling discover(), or resolving gateBase() inside run(). This
+      // tool's outputSchema has no dedicated ok/error field, so the refusal is carried in the
+      // SAME already-required fields every real run reports (answer, log) — zero spend, zero
+      // decisions, nothing invented.
+      if (hostedInertSteer) {
+        return structured({
+          topic,
+          budget: 0,
+          spent: 0,
+          ...envelope(),
+          answer: hostedInertSteer,
+          decisions: [],
+          sources: [],
+          log: [hostedInertSteer],
+        });
+      }
+      return withSpendLock(async () => {
       const log: string[] = [];
       // Clamp the requested budget to what the session has left: the model can spend
       // less than the ceiling, never more. Passing the clamp into run() overrides its
       // config ceiling for this run only.
       const effective = round6(Math.min(budgetUsdc ?? ceilingUsdc(), remainingUsdc()));
+      const cfg = getConfig();
       const result = await run(topic, (line) => log.push(line), {
         budgetUsdc: effective,
         policy: policyFromConfig(),
-        ...(opts.tollgateUrl ? { tollgateUrl: opts.tollgateUrl } : {}),
+        // B3: seed decide()'s per-host tally from the SAME session `paidByHost` the granular
+        // naulon_pay_and_read path maintains (declared once above), so a perDomainCap already hit
+        // via pay_and_read carries into this run instead of decide() starting every call at 0.
+        // One counter for the whole session — never a second, run-scoped one.
+        decideContext: { priorDomainCounts: Object.fromEntries(paidByHost) },
+        // gateBase() (not opts.tollgateUrl directly): resolves the injected per-session override,
+        // else env TOLLGATE_URL, else — ONLY for fleet-default discovery — FLEET_ORIGIN, so run()
+        // never crashes on an eagerly-evaluated tollgateBase() call when the fleet's zero-config
+        // path deliberately leaves TOLLGATE_URL unset (there is no universal fleet pay-gate).
+        tollgateUrl: gateBase(),
+        // WP-2 T2 (corrected — see oss-fix-architecture.md §G6): discovery happens INSIDE run(),
+        // so this server can only pass the INTENT, not candidates, to policyFromConfig. run()
+        // itself derives the effective allowDomains from ITS OWN discovery when this is true. Gated
+        // exactly like policyForGranularPay: fleet-default discovery AND no operator-stated
+        // WAYFARER_ALLOW_DOMAINS — a self-hosted CATALOG_URL is never auto-trusted.
+        autoTrustDiscoveredDomains: isFleetDefaultDiscovery(cfg) && !cfg.WAYFARER_ALLOW_DOMAINS,
         // Hosted path: pay from the buyer's custody-free session wallet, not the env key
         // (mirrors naulon_pay_and_read). Both rail signers win — run() then rail-picks PER-402
         // (mixed fleet), same as the pay_and_read buyer above; a single cloud signer keeps the
@@ -957,11 +1149,31 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ...(opts.popWallet ? { popWallet: opts.popWallet } : {}),
       });
       spentUsdc = round6(spentUsdc + result.spent);
+      // `result.decisions` is decide()'s PLAN, filled in BEFORE the obtain loop runs the actual
+      // pays — a "pay" decision whose buyer.fetch() then fails (rejected, insufficient funds,
+      // toll-moved, settlement_ambiguous, …) never gets its `action` revised, so counting it here
+      // would burn the session per-domain cap for a read that never settled and $0 spent (B3
+      // follow-up). `result.sources` is the outcome, not the plan: agent.ts only pushes a Source
+      // for a "pay" decision AFTER `buyer.fetch()` resolves `ok: true` (see agent.ts's obtain
+      // loop) — a failed pay `continue`s without ever reaching that push. So a slug present here
+      // under a "pay" decision is, by construction, a CONFIRMED settlement, never a free "cache"
+      // re-read (those are pushed under `d.action === "cache"`, filtered out below) and never a
+      // failed attempt. Built BEFORE the increment loop so both loops below share the one Map.
+      const sourceBySlug = new Map(result.sources.map((s) => [s.slug, s]));
+      // B3: fold this run's actual SETTLED pays back into the session counter, resolving each
+      // host via the SAME `payHostOf` decide() itself counts by (never `Decision.url` blindly,
+      // never a second resolver) — so a later naulon_pay_and_read or naulon_research call in this
+      // session sees them too. Gated on `sourceBySlug.has(d.slug)` (confirmed settlement), not
+      // merely `d.action === "pay"` (the plan) — a pay that never settled must never burn the cap.
+      for (const d of result.decisions) {
+        if (d.action !== "pay" || !sourceBySlug.has(d.slug)) continue;
+        const host = payHostOf(d.url, gateBase(), d.slug);
+        if (host) paidByHost.set(host, (paidByHost.get(host) ?? 0) + 1);
+      }
       // BUY-4.4: audit each decision the run made. run() owns the decide()/pay loop
       // internally, so we replay its decisions here post-run — enriching a `pay` with the
       // settlement detail from the matching cited source. agentId is a policy tag (audit
       // attribution), read once for the whole run.
-      const sourceBySlug = new Map(result.sources.map((s) => [s.slug, s]));
       const runAgentId = policyFromConfig().agentId;
       for (const d of result.decisions) {
         const src = d.action === "pay" ? sourceBySlug.get(d.slug) : undefined;
@@ -1007,7 +1219,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         })),
         log,
       });
-      }),
+      });
+    },
   );
 
   // ── Prompts (cross-client slash commands) ───────────────────────────────────
@@ -1018,6 +1231,19 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // loop); the cloud layers its own `naulon_ask` prompt where that tool lives. Each
   // returns a single user message that steers the host model through the tools; the
   // model still sees every price and spends only when a paying tool is called.
+  //
+  // WP-2 T4 — self-healing: before this, a discovery dead-end (no source configured, or an
+  // empty/failing result) left the model either stuck or — worse — printing a raw env-var name
+  // ("set RSS_URL") at a non-technical user who has no idea what that means. Every prompt now
+  // appends the SAME recovery instruction: on empty/failed discovery, call naulon_status and
+  // relay its plain-language `nextStep` (fund the wallet it shows, or connect a token), then
+  // offer to retry. One shared instruction, not three drifting copies.
+  const SELF_HEAL_PROMPT_TAIL =
+    `\n\nIf naulon_discover comes back empty, or any tool call fails, call naulon_status and relay ` +
+    `its "nextStep" guidance in your own plain language (e.g. fund the wallet address it shows, or ` +
+    `connect a token) — never print a raw environment-variable name to the user. Then offer to retry. ` +
+    `If you fall back to your own general knowledge instead of a naulon-tolled source, say so ` +
+    `explicitly and label it clearly as NOT naulon-cited.`;
   server.registerPrompt(
     "research",
     {
@@ -1037,7 +1263,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               `1. Call naulon_discover("${topic}") — free — to list candidate essays.\n` +
               `2. Use naulon_appraise and naulon_quote to judge relevance and see exact prices. Nothing is spent until a paying tool runs.\n` +
               `3. Pay only the most relevant sources with naulon_pay_and_read, or call naulon_research to run the whole discover→quote→pay→ground loop within the session budget.\n\n` +
-              `Return a grounded answer with numbered citations and report exactly what was spent. Distinguish naulon-cited evidence from your own general knowledge.`,
+              `Return a grounded answer with numbered citations and report exactly what was spent. Distinguish naulon-cited evidence from your own general knowledge.` +
+              SELF_HEAL_PROMPT_TAIL,
           },
         },
       ],
@@ -1058,7 +1285,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             type: "text",
             text:
               `Call naulon_discover("${topic}") and present the candidate essays as a ranked list — title, one-line summary, teaser price, and citation price. ` +
-              `This is FREE: do not pay for anything. If a grounded answer is wanted next, use the "research" prompt or naulon_research.`,
+              `This is FREE: do not pay for anything. If a grounded answer is wanted next, use the "research" prompt or naulon_research.` +
+              SELF_HEAL_PROMPT_TAIL,
           },
         },
       ],
@@ -1081,7 +1309,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               `Fact-check the claim: "${claim}".\n\n` +
               `Use naulon_discover to find relevant tolled sources, then naulon_appraise / naulon_quote (free) to see relevance and price. ` +
               `Only if grounding needs it, pay the most relevant sources with naulon_pay_and_read (or run naulon_research) within budget.\n\n` +
-              `State whether the claim is SUPPORTED, REFUTED, or UNVERIFIABLE, cite the paid sources by title, and report the spend. Keep naulon-cited evidence separate from your own general knowledge.`,
+              `State whether the claim is SUPPORTED, REFUTED, or UNVERIFIABLE, cite the paid sources by title, and report the spend. Keep naulon-cited evidence separate from your own general knowledge.` +
+              SELF_HEAL_PROMPT_TAIL,
           },
         },
       ],

@@ -46,6 +46,9 @@ export function catalogSource(url: string): DiscoverySource {
         if (!res.ok) throw new Error(`catalog fetch failed (${res.status}) for ${u.toString()}`);
         const json = (await res.json()) as Candidate[] | { entries: Candidate[]; nextCursor?: string };
         if (Array.isArray(json)) return [...out, ...json]; // legacy shape: single page
+        if (!Array.isArray(json.entries)) {
+          throw new Error(`catalog page missing an entries array for ${u.toString()}`);
+        }
         out.push(...json.entries);
         cursor = json.nextCursor;
         if (!cursor) break;
@@ -82,18 +85,34 @@ function rssUrlFromConfig(): string | undefined {
   return undefined;
 }
 
+/**
+ * WP-2 T3 (DRY) — the discovery source URL currently in effect: RSS_URL > PUBLISHER_URL/rss.xml
+ * > CATALOG_URL. The single owner of this precedence; `selectSource()` (below) and
+ * `wayfarer-mcp`'s `naulon_status` tool both call it, so the ordering is decided in exactly one
+ * place, never duplicated. CATALOG_URL always has a default now (the live fleet directory —
+ * WP-2 T1), so this never needs to signal "unconfigured".
+ */
+export function resolvedDiscoverySourceUrl(): string {
+  return rssUrlFromConfig() ?? getConfig().CATALOG_URL;
+}
+
 /** Pick the discovery source from config (see precedence above). Throws when
  *  none is configured — the agent has nowhere to discover, and inventing a
- *  bundled catalog would be a fail-open. */
+ *  bundled catalog would be a fail-open. In practice CATALOG_URL always defaults
+ *  (WP-2 T1), so this throw is now a defensive guard rather than a reachable path —
+ *  kept for the same "never fail open" reason the rest of this module refuses to
+ *  fabricate a source. */
 export function selectSource(): DiscoverySource {
-  const cfg = getConfig();
   const rss = rssUrlFromConfig();
   if (rss) return rssSource(rss);
-  if (cfg.CATALOG_URL) return catalogSource(cfg.CATALOG_URL);
-  throw new Error(
-    "no discovery source configured — naulon has no catalog to search yet. " +
-      "Point it at a publisher by setting RSS_URL, PUBLISHER_URL, or CATALOG_URL, " +
-      "or connect a hosted naulon endpoint with an agent token for a turnkey corpus. " +
-      "There is no bundled demo catalog — discovery never fabricates sources.",
-  );
+  const url = resolvedDiscoverySourceUrl();
+  if (!url) {
+    throw new Error(
+      "no discovery source configured — naulon has no catalog to search yet. " +
+        "Point it at a publisher by setting RSS_URL, PUBLISHER_URL, or CATALOG_URL, " +
+        "or connect a hosted naulon endpoint with an agent token for a turnkey corpus. " +
+        "There is no bundled demo catalog — discovery never fabricates sources.",
+    );
+  }
+  return catalogSource(url);
 }

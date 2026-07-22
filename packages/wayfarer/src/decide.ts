@@ -84,7 +84,15 @@ function normHost(host: string | undefined): string | undefined {
  * (an allowlist then denies by default).
  */
 export function payUrlOf(url: string | undefined, gateBase: string | undefined, slug: string): string | undefined {
-  const candidates = [url, gateBase && slug ? `${gateBase.replace(/\/+$/, "")}/${slug}` : undefined];
+  // Mirrors agent.ts's articleUrl(base, slug) shape exactly (`${base}/essays/${slug}`, slug
+  // percent-encoded) — inlined rather than imported to avoid a decide.ts <-> agent.ts import
+  // cycle (agent.ts already imports from decide.ts). Only the host is consumed downstream today
+  // (see payHostOf / authorizeOrigin), but this function is exported and its full return value
+  // must never point at a path the pay step wouldn't actually fetch.
+  const candidates = [
+    url,
+    gateBase && slug ? `${gateBase.replace(/\/+$/, "")}/essays/${encodeURIComponent(slug)}` : undefined,
+  ];
   for (const u of candidates) {
     if (!u) continue;
     try {

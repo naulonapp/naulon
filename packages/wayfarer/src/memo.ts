@@ -20,6 +20,7 @@ import {
   usdcDomain,
   TRANSFER_WITH_AUTHORIZATION_TYPES,
   type MemoAuthorization,
+  type SettlementNetwork,
 } from "@naulon/shared";
 import {
   assemblePayment,
@@ -43,19 +44,34 @@ import { runPaidFetch } from "./paidFetch.ts";
  */
 export interface MemoSigner {
   address: `0x${string}`;
-  signTypedData(args: {
-    domain: TypedDataDomain;
-    types: typeof TRANSFER_WITH_AUTHORIZATION_TYPES;
-    primaryType: "TransferWithAuthorization";
-    message: {
-      from: `0x${string}`;
-      to: `0x${string}`;
-      value: bigint;
-      validAfter: bigint;
-      validBefore: bigint;
-      nonce: `0x${string}`;
-    };
-  }): Promise<`0x${string}`>;
+  signTypedData(args: MemoTypedData): Promise<`0x${string}`>;
+  /**
+   * OPTIONAL batch sign — sign EVERY leg of a multi-leg toll (operator fee, co-author split) in ONE
+   * call, so a batch-capable host can RESERVE them atomically (all-or-nothing, no stranded sibling leg —
+   * naulon-cloud migration 0122 / `signSessionMemoBatch`). Returns one signature per input, index-aligned.
+   *
+   * A signer WITHOUT this method (a local env-key `PrivateKeyAccount`, the OSS self-host path, or a mock)
+   * falls back to per-leg signing via {@link assembleMemoPayment} — safe there precisely because those
+   * paths take no host-side reserve (mock) or never carry a multi-leg quote through a hosted grant. Only
+   * an injected cloud signer that reserves needs the atomicity, and only it implements this.
+   */
+  signTypedDataBatch?(argsList: MemoTypedData[]): Promise<`0x${string}`[]>;
+}
+
+/** The EIP-3009 `TransferWithAuthorization` typed data a memo leg signs — one shape for the single and
+ *  batch signer methods so a leg is signed identically however it is batched. */
+export interface MemoTypedData {
+  domain: TypedDataDomain;
+  types: typeof TRANSFER_WITH_AUTHORIZATION_TYPES;
+  primaryType: "TransferWithAuthorization";
+  message: {
+    from: `0x${string}`;
+    to: `0x${string}`;
+    value: bigint;
+    validAfter: bigint;
+    validBefore: bigint;
+    nonce: `0x${string}`;
+  };
 }
 
 function buyerKey(): `0x${string}` {
@@ -91,17 +107,33 @@ export async function memoLegPayload(
   signer?: MemoSigner,
   net = activeNetwork(),
 ): Promise<{ authorization: MemoAuthorization; signature: `0x${string}` }> {
-  const cfg = getConfig();
   // Default path resolves the local key; an injected signer NEVER reads BUYER_PRIVATE_KEY (the whole
   // point of the cloud wallet — the key lives in the grant-checked BFF, not this process).
   const envAccount = signer ? undefined : privateKeyToAccount(buyerKey());
   const from = (signer?.address ?? envAccount!.address) as `0x${string}`;
-  // Stamp validity at PAY time (nowMs is `Date.now()` from fetch, not quote time) with a
-  // MARGIN: floor the window to WAYFARER_MIN_VALIDITY_SECONDS so a gate advertising a
-  // too-short maxTimeoutSeconds can't make the authorization expire before the relay
-  // submits it (the facilitator's `authorization_validity_too_short` — the Keryx ~1-day
-  // lesson; see memory `x402-validity-window-floor`). The window only widens, never
-  // shrinks — a long gate window is honored as-is.
+  const { authorization, typedData } = buildMemoLeg(requirements, nowMs, from, net);
+  const signature = signer ? await signer.signTypedData(typedData) : await envAccount!.signTypedData(typedData);
+  return { authorization, signature };
+}
+
+/**
+ * Build ONE leg's EIP-3009 authorization + the typed data to sign, WITHOUT signing — the pure half of
+ * {@link memoLegPayload}, shared by the per-leg and batch paths so both stamp the identical validity
+ * window and USDC domain. `from` is the already-resolved signer address.
+ *
+ * Stamps validity at PAY time (`nowMs` is `Date.now()` from fetch, not quote time) with a MARGIN: floor
+ * the window to WAYFARER_MIN_VALIDITY_SECONDS so a gate advertising a too-short maxTimeoutSeconds can't
+ * make the authorization expire before the relay submits it (the facilitator's
+ * `authorization_validity_too_short` — the Keryx ~1-day lesson; see memory `x402-validity-window-floor`).
+ * The window only widens, never shrinks — a long gate window is honored as-is.
+ */
+function buildMemoLeg(
+  requirements: LegRequirements,
+  nowMs: number,
+  from: `0x${string}`,
+  net: SettlementNetwork,
+): { authorization: MemoAuthorization; typedData: MemoTypedData } {
+  const cfg = getConfig();
   const window = Math.max(requirements.maxTimeoutSeconds, cfg.WAYFARER_MIN_VALIDITY_SECONDS);
   const authorization: MemoAuthorization = {
     from,
@@ -111,10 +143,10 @@ export async function memoLegPayload(
     validBefore: String(Math.floor(nowMs / 1000) + window),
     nonce: toHex(crypto.getRandomValues(new Uint8Array(32))),
   };
-  const typedData = {
+  const typedData: MemoTypedData = {
     domain: usdcDomain(net, cfg.USDC_EIP712_NAME),
     types: TRANSFER_WITH_AUTHORIZATION_TYPES,
-    primaryType: "TransferWithAuthorization" as const,
+    primaryType: "TransferWithAuthorization",
     message: {
       from: authorization.from,
       to: authorization.to,
@@ -124,8 +156,43 @@ export async function memoLegPayload(
       nonce: authorization.nonce,
     },
   };
-  const signature = signer ? await signer.signTypedData(typedData) : await envAccount!.signTypedData(typedData);
-  return { authorization, signature };
+  return { authorization, typedData };
+}
+
+/**
+ * Assemble the memo rail's base64 `payment-signature`. For a multi-leg toll signed by a BATCH-capable
+ * injected signer, build every leg's authorization, sign them ALL in ONE call (so the host reserves them
+ * atomically — a sibling leg that trips a ceiling can never strand an already-debited author leg), and
+ * frame the leg array (author first) exactly as {@link assemblePayment} does. Every OTHER case — a
+ * single-leg toll, the local env-key signer, or an injected signer WITHOUT a batch method — falls
+ * straight through to the per-leg path, byte-identical to before this seam existed. The multi-leg-only
+ * batch means a non-fee read and every non-hosted path are provably untouched.
+ */
+export async function assembleMemoPayment(
+  quoted: Quoted,
+  nowMs: number,
+  signer?: MemoSigner,
+  net: SettlementNetwork = activeNetwork(),
+): Promise<string> {
+  if (quoted.legs && quoted.legs.length > 1 && signer?.signTypedDataBatch) {
+    // Build every leg first (fresh nonce + validity), then one atomic batch sign. The from is the
+    // injected signer's address — the batch path only exists for a hosted signer, which never reads the
+    // env key. Leg order (author first) is preserved into the framed array, matching assemblePayment.
+    const built = quoted.legs.map((leg) =>
+      buildMemoLeg({ ...quoted.requirements, payTo: leg.payTo, amount: leg.amount }, nowMs, signer.address, net),
+    );
+    const signatures = await signer.signTypedDataBatch(built.map((b) => b.typedData));
+    // A count mismatch means the host signed a different set than we sent — never frame a partial or
+    // misaligned payment. Fail loud; the caller's onSignError turns it into a typed, non-signed result.
+    if (signatures.length !== built.length) {
+      throw new Error(`batch signer returned ${signatures.length} signatures for ${built.length} legs`);
+    }
+    const payloads = built.map((b, i) => ({ authorization: b.authorization, signature: signatures[i]! }));
+    return Buffer.from(JSON.stringify(payloads)).toString("base64");
+  }
+  // Single leg, the env-key signer, or a signer without batch: today's per-leg framing (mock/OSS/gateway
+  // paths are unaffected — assemblePayment signs one leg, or Promise.all's the legs, exactly as before).
+  return assemblePayment(quoted, (req) => memoLegPayload(req, nowMs, signer, net));
 }
 
 export function memoBuyer(signer?: MemoSigner): Buyer {
@@ -149,7 +216,7 @@ export function memoBuyer(signer?: MemoSigner): Buyer {
         kind,
         address,
         guard,
-        (quoted, nowMs) => assemblePayment(quoted, (req) => memoLegPayload(req, nowMs, signer)),
+        (quoted, nowMs) => assembleMemoPayment(quoted, nowMs, signer),
         (error) => {
           const refusal = classifySignerRefusal(error);
           return refusal

@@ -21,7 +21,7 @@ import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { resetConfig } from "@naulon/shared";
+import { FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
 import { DEFAULT_POLICY, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
 import { buildServer, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
@@ -138,6 +138,51 @@ async function standGate(
   };
 }
 
+/**
+ * WP-2 T2 — stub `globalThis.fetch` so a request to the LITERAL fleet directory URL (the
+ * default CATALOG_URL — WP-2 T1) resolves to `entries` locally, and any OTHER request to the
+ * fleet host itself (e.g. the JWKS lookup `run()` makes against the resolved gate base) 404s
+ * hermetically instead of reaching the real internet. Every other URL (the publisher stub
+ * gates below, real local HTTP servers) passes through to the real fetch untouched. This is
+ * the only way to exercise `isFleetDefaultDiscovery()`'s literal URL-equality gate without a
+ * live network dependency — mirrors discovery.test.ts's `stubFetch` technique, applied here.
+ */
+function stubFleetDirectory(entries: unknown[]): { restore: () => void } {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : String(input);
+    if (url.startsWith(FLEET_DIRECTORY_URL)) {
+      return new Response(JSON.stringify(entries), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.startsWith(FLEET_ORIGIN)) {
+      // No universal fleet pay-gate lives at gate.naulon.app (WP-2) — a real deployment
+      // 404s/502s here too; degrade the same way, hermetically, instead of hitting the net.
+      return new Response(null, { status: 404 });
+    }
+    return real(input as Parameters<typeof fetch>[0], init);
+  }) as typeof fetch;
+  return { restore: () => { globalThis.fetch = real; } };
+}
+
+/**
+ * WP-3a — replace `globalThis.fetch` with one that THROWS synchronously on any call at all, so a
+ * test can prove a guarded tool never reaches discover()/gateBase()/the network — if the guard
+ * were missing or misplaced, the very first network attempt inside discover()/probe() would
+ * surface this poison error instead of the intended steer, failing the test loudly. Caller
+ * restores in a `finally`.
+ */
+function poisonFetch(): { restore: () => void } {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("poisoned fetch — a hostedInertSteer-guarded tool must never reach the network");
+  }) as typeof fetch;
+  return {
+    restore: () => {
+      globalThis.fetch = real;
+    },
+  };
+}
+
 /** A gate that 402s a probe (no payment-signature) and serves content once a
  *  payment-signature is presented — enough for the mock buyer to complete a pay. */
 function payGate(amountAtomic: string) {
@@ -149,6 +194,17 @@ function payGate(amountAtomic: string) {
       res.writeHead(402, { "payment-required": paymentRequired(amountAtomic), "content-type": "application/json" });
       res.end(JSON.stringify({ error: "payment required" }));
     }
+  };
+}
+
+/** A gate that 402s EVERY request, including one carrying a payment-signature — so the
+ *  buyer's paid GET never settles and $0 ever moves, no matter what decide() planned.
+ *  Stands in for any post-signature failure (rejected / insufficient funds /
+ *  settlement_ambiguous): from the buyer's perspective they all resolve `{ ok: false }`. */
+function failingPayGate(amountAtomic: string) {
+  return (_req: IncomingMessage, res: ServerResponse): void => {
+    res.writeHead(402, { "payment-required": paymentRequired(amountAtomic), "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "payment required" }));
   };
 }
 
@@ -176,6 +232,7 @@ const TOOL_NAMES = [
   "naulon_pay_and_read",
   "naulon_read_held",
   "naulon_research",
+  "naulon_status",
 ];
 
 // ── BUY-1.1 (carried) ────────────────────────────────────────────────────────
@@ -202,6 +259,49 @@ test("exposes cross-client slash-command prompts that steer the tools", async ()
   assert.ok(text.includes("naulon_discover"), "the prompt steers the model through the free-first loop");
 });
 
+// ── WP-2 T4 — self-healing prompt copy ─────────────────────────────────────────
+// A discovery dead-end used to leave the model stuck (or worse, printing raw env-var names at a
+// non-technical user). Every prompt must now route a failure to naulon_status and relay its
+// nextStep in plain language instead.
+
+test("verify prompt routes failures to naulon_status, never raw env-var names", async () => {
+  const client = await connectedClient();
+  const p = await client.getPrompt({ name: "verify", arguments: { claim: "x" } });
+  const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+  assert.match(text, /naulon_status/);
+  assert.doesNotMatch(text, /set RSS_URL/i);
+});
+
+test("research prompt routes failures to naulon_status, never raw env-var names", async () => {
+  const client = await connectedClient();
+  const p = await client.getPrompt({ name: "research", arguments: { topic: "x" } });
+  const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+  assert.match(text, /naulon_status/);
+  assert.doesNotMatch(text, /set RSS_URL|set CATALOG_URL|set PUBLISHER_URL/i);
+});
+
+test("discover prompt routes failures to naulon_status, never raw env-var names", async () => {
+  const client = await connectedClient();
+  const p = await client.getPrompt({ name: "discover", arguments: { topic: "x" } });
+  const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+  assert.match(text, /naulon_status/);
+  assert.doesNotMatch(text, /set RSS_URL|set CATALOG_URL|set PUBLISHER_URL/i);
+});
+
+test("every prompt offers a retry and labels the model's own knowledge as NOT naulon-cited", async () => {
+  const client = await connectedClient();
+  for (const [name, args] of [
+    ["research", { topic: "x" }],
+    ["discover", { topic: "x" }],
+    ["verify", { claim: "x" }],
+  ] as const) {
+    const p = await client.getPrompt({ name, arguments: args });
+    const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+    assert.match(text, /retry/i, `${name} prompt should offer to retry after a failure`);
+    assert.match(text, /not naulon-cited/i, `${name} prompt should label the model's own knowledge as NOT naulon-cited`);
+  }
+});
+
 test("naulon_discover returns free catalog teasers (no payment)", async () => {
   await withCatalog(async () => {
     const client = await connectedClient();
@@ -226,6 +326,47 @@ test("naulon_discover returns free catalog teasers (no payment)", async () => {
   });
 });
 
+// ── WP-2 T3 — naulon_status: the "run first" tool ─────────────────────────────
+
+test("naulon_status reports wallet, discovery source, and a plain next step", async () => {
+  const client = await connectedClient();
+  const res = await client.callTool({ name: "naulon_status", arguments: {} });
+  const s = res.structuredContent as { wallet: string; discovery: string; tollgate?: string; ready: boolean; nextStep: string };
+  assert.match(s.wallet, /^0x[0-9a-fA-F]{40}$/);
+  assert.equal(s.discovery, "https://gate.naulon.app/directory", "zero-config discovery defaults to the fleet directory");
+  assert.ok(typeof s.nextStep === "string" && s.nextStep.length > 0);
+});
+
+test("naulon_status.nextStep for fleet-default: no single pay-gate implied — discovery is fleet-wide, payment is per-publisher", async () => {
+  await withEnv(
+    { CATALOG_URL: undefined, RSS_URL: undefined, PUBLISHER_URL: undefined, TOLLGATE_URL: undefined },
+    async () => {
+      const client = await connectedClient();
+      const res = await client.callTool({ name: "naulon_status", arguments: {} });
+      const s = res.structuredContent as { tollgate?: string; nextStep: string };
+      assert.doesNotMatch(
+        s.nextStep,
+        /the configured gate|TOLLGATE_URL is/i,
+        "fleet-default nextStep must never imply a single universal pay-gate exists",
+      );
+      assert.ok(
+        s.tollgate === undefined || !/^https?:\/\//.test(s.tollgate) || s.tollgate.length === 0,
+        `fleet-default has no single tollgate URL to report — got ${JSON.stringify(s.tollgate)}`,
+      );
+    },
+  );
+});
+
+test("naulon_status.nextStep for self-host: points at confirming the operator's own configured gate", async () => {
+  await withEnv({ CATALOG_URL: "https://my.example/catalog", TOLLGATE_URL: "https://my.example/gate" }, async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({ name: "naulon_status", arguments: {} });
+    const s = res.structuredContent as { tollgate?: string; nextStep: string };
+    assert.equal(s.tollgate, "https://my.example/gate");
+    assert.match(s.nextStep, /gate/i, "self-host nextStep should point at the operator's own gate");
+  });
+});
+
 // ── BUY-1.2 — the full §3.1 tool surface ──────────────────────────────────────
 
 test("registers the full §3.1 tool surface with schemas and honest read-only hints", async () => {
@@ -242,7 +383,7 @@ test("registers the full §3.1 tool surface with schemas and honest read-only hi
 
   // The free, side-effect-free tools are flagged read-only; the two that can SPEND
   // money must not be (the host must see they mutate state / move funds).
-  for (const name of ["naulon_discover", "naulon_appraise", "naulon_quote", "naulon_read_held"]) {
+  for (const name of ["naulon_discover", "naulon_appraise", "naulon_quote", "naulon_read_held", "naulon_status"]) {
     assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, `${name} is read-only`);
   }
   for (const name of ["naulon_pay_and_read", "naulon_research"]) {
@@ -411,8 +552,9 @@ test("naulon_pay_and_read refuses a toll over the remaining budget and spends no
       const payRes = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
       const p = payRes.structuredContent as PayResult;
       assert.equal(p.ok, false, "the over-budget pay is refused");
-      assert.match(p.error ?? "", /budget/i, "the error explains it is a budget refusal");
-      assert.match(p.error ?? "", /cannot be raised/i, "the error states the ceiling is not tool-raisable");
+      // B4: the refusal reason now comes from the ONE shared spendGate (byte-identical to
+      // decide()'s wording) instead of a second, duplicate over-budget check with its own prose.
+      assert.match(p.error ?? "", /exceeds remaining budget/i, "the error explains it is a budget refusal");
       assert.equal(p.spentSessionUsdc, 0, "nothing was spent");
       assert.equal(p.remainingUsdc, 0.001, "the full budget still remains");
     });
@@ -501,6 +643,37 @@ test("naulon_pay_and_read surfaces an insufficient-funds rejection as a non-retr
       assert.equal(p.errorCode, "insufficient_funds", "classified from the gate's balance reason");
       assert.equal(p.retryable, false, "a hard stop — fund the wallet, don't retry as-is");
       assert.equal(p.spentSessionUsdc, 0, "a failed pay never debits the budget (no partial-pay)");
+    });
+  });
+});
+
+test("B2: naulon_pay_and_read surfaces settlement_ambiguous (paid, body-read failed) typed, not an opaque isError", async () => {
+  // The gate SETTLES the payment before writing its 200 body (paidFetch.ts / pay.ts): once the
+  // buyer has sent the payment-signature, a body-read failure means money may already have moved,
+  // so it is surfaced as the distinct, non-retryable `settlement_ambiguous` FetchErrorCode — never
+  // a safe-to-retry generic failure. Reproduce the body-read failure with a LYING content-length
+  // (declares far more bytes than are actually sent): Node's fetch/undici throws reading the body
+  // ("terminated") exactly like a mid-stream socket reset would.
+  const handler = (req: IncomingMessage, res: ServerResponse): void => {
+    if (req.headers["payment-signature"]) {
+      res.writeHead(200, { "content-type": "text/plain", "content-length": "999999" });
+      res.write("short");
+      res.end();
+      return;
+    }
+    res.writeHead(402, { "payment-required": paymentRequired("5000"), "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "payment required" }));
+  };
+
+  await withStubGate(handler, async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1" }, async () => {
+      const client = await connectedClient();
+      const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+      assert.notEqual(res.isError, true, "the SDK's own output-schema check must not drop this as an opaque isError text");
+      const r = res.structuredContent as { ok: boolean; errorCode?: string; retryable?: boolean };
+      assert.equal(r.ok, false, "the read is not ok — the body never arrived");
+      assert.equal(r.errorCode, "settlement_ambiguous", "the typed reason survives the output enum");
+      assert.equal(r.retryable, false, "a blind retry after a settlement-ambiguous failure could double-charge");
     });
   });
 });
@@ -925,6 +1098,140 @@ test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /
   }
 });
 
+// ── FU-A1b — naulon_read_held's PoP-proof signing can throw too, and must not
+// crash the tool call. buildPopProof calls wallet.signMessage — on the hosted
+// path that's cloudPopSigner.signMessage (cloud-signer.ts), a real network POST
+// to /_naulon/buyer-wallet/sign-pop that throws SignerError on any non-2xx. Before
+// this fix that throw propagated uncaught out of the tool handler; the MCP SDK's
+// outer catch (server/mcp.js) turns ANY thrown error into a generic isError:true
+// text blob, discarding the tool's declared { ok, error } output shape every
+// other refusal in this tool already uses (see "no held license" above).
+test("FU-A1b: naulon_read_held's PoP-proof signing THROWING returns a typed error, not a crash", async () => {
+  const exp = Math.floor(Date.now() / 1000) + 3600; // live
+  const store = memoryHeldStore([["popslug", { ...heldLicense("popslug", exp), pop: true }]]);
+  const client = await connectedClientWith({
+    heldStore: store,
+    popWallet: {
+      address: "0x4444444444444444444444444444444444444444",
+      mock: false,
+      signMessage: async () => {
+        // Mirrors cloudPopSigner.signMessage (cloud-signer.ts) throwing SignerError
+        // on a non-2xx /_naulon/buyer-wallet/sign-pop reply.
+        throw new Error("sign-pop failed: 503");
+      },
+    },
+  });
+
+  const res = await client.callTool({ name: "naulon_read_held", arguments: { slug: "popslug" } });
+  assert.notEqual(res.isError, true, "a PoP-sign failure is a typed refusal, not an SDK-level tool crash");
+  const r = res.structuredContent as { ok: boolean; error?: string } | undefined;
+  assert.equal(r?.ok, false, "PoP-sign failure ⇒ not ok");
+  assert.match(r?.error ?? "", /sign|proof/i, "the error explains the re-read couldn't be proven/signed");
+});
+
+// ── B1 (CRITICAL) — a held license must never leak to a same-slug candidate at a
+// DIFFERENT publisher ────────────────────────────────────────────────────────────
+// The held store is keyed by SLUG ALONE (licenseStore.ts). Two publishers can both
+// be legitimately trusted (both in WAYFARER_ALLOW_DOMAINS — no SSRF/allowlist
+// refusal applies to either) yet still be DIFFERENT origins. If naulon_research's
+// composite loop re-reads a cache decision at the DISCOVERED candidate's own url
+// (untrusted — discover() can hand back anything) instead of the url the license
+// was actually PAID at, a same-slug candidate served from pubB gets pubA's
+// license/PoP-proof headers on the wire — a credential leak across publisher
+// origins, independent of whether pubB's response ultimately honors them.
+test("B1: a held license (issued by pubA) never leaks to a same-slug candidate discovered at pubB, even though both are allow-listed", async () => {
+  const PUB_A = "http://pub-a.test";
+  const PUB_B = "http://pub-b.test";
+  const CATALOG = "http://catalog.test/b1";
+  const slug = "shared-slug";
+
+  const hitsA: Array<Record<string, string>> = [];
+  const hitsB: Array<Record<string, string>> = [];
+
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+    const u = String(url);
+    const headers = init?.headers ?? {};
+    if (u.startsWith(CATALOG)) {
+      return new Response(
+        JSON.stringify([
+          { slug, title: "Shared Slug", summary: "payment and passage", url: `${PUB_B}/essays/${slug}` },
+        ]),
+        { status: 200 },
+      );
+    }
+    if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+    if (u.startsWith(PUB_A)) {
+      hitsA.push(headers as Record<string, string>);
+      return new Response("pubA content", { status: 200 });
+    }
+    if (u.startsWith(PUB_B)) {
+      hitsB.push(headers as Record<string, string>);
+      // Whatever the response, the REQUEST itself already carried (or didn't carry)
+      // the credential — that's the leak surface under test, not pubB's reply.
+      return new Response(JSON.stringify({ error: "payment required" }), {
+        status: 402,
+        headers: { "payment-required": paymentRequired("1000") },
+      });
+    }
+    return new Response(null, { status: 404 });
+  }) as typeof globalThis.fetch;
+
+  try {
+    await withEnv(
+      {
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        CATALOG_URL: CATALOG,
+        OPENAI_API_KEY: undefined,
+        TOLLGATE_URL: PUB_A,
+        WAYFARER_ALLOW_DOMAINS: "pub-a.test,pub-b.test",
+        WAYFARER_BUDGET_USDC: "0.1",
+      },
+      async () => {
+        const exp = Math.floor(Date.now() / 1000) + 3600; // live
+        const held: HeldLicense = {
+          slug,
+          title: "Shared Slug",
+          jti: `jti-${slug}`,
+          exp,
+          aud: "gate://pub-a",
+          pop: true,
+          jws: "held.jws.sig",
+          url: `${PUB_A}/essays/${slug}`,
+        };
+        const store = memoryHeldStore([[slug, held]]);
+        const client = await connectedClientWith({
+          heldStore: store,
+          popWallet: {
+            address: "0x1111111111111111111111111111111111111111",
+            mock: false,
+            signMessage: async () => "0xproofsig",
+          },
+        });
+
+        const r = (await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } }))
+          .structuredContent as { decisions: Array<{ slug: string; action: string }> };
+        assert.ok(
+          r.decisions.some((d) => d.slug === slug && d.action === "cache"),
+          `expected a "cache" decision for the shared slug, got ${JSON.stringify(r.decisions)}`,
+        );
+
+        assert.ok(
+          !hitsB.some((h) => h["x-naulon-license"] || h["x-naulon-proof"]),
+          "pubB (the untrusted same-slug candidate) must NEVER receive pubA's license/PoP proof",
+        );
+        assert.ok(
+          hitsA.some((h) => h["x-naulon-license"]),
+          "pubA (the url the license was actually paid at) receives the free re-read WITH its own license",
+        );
+      },
+    );
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("C3 — hosted signer present but no popWallet + mock dev key ⇒ loud warn", async () => {
   const warnings: string[] = [];
   const orig = console.warn;
@@ -1277,6 +1584,161 @@ test("A2-2: approvalThresholdUsdc gates an expensive toll behind human approval 
   });
 });
 
+test("B4: an over-budget toll that ALSO exceeds the approval threshold refuses for budget, not approval", async () => {
+  // decide()'s spendGate checks budget BEFORE the approval threshold when both are supplied
+  // (decide.ts order: kill → deny → allow → maxPaid → perDomainCap → budget → approval). The
+  // granular pay_and_read path must report the SAME fundamental cause: a toll that is both over
+  // budget and over the approval threshold is not "needs approval" (approving it would not let it
+  // proceed — it is over budget regardless), it is over budget.
+  await withStubGate(payGate("600000"), async () => {
+    // $0.60 toll: exceeds the $0.30 remaining budget AND the $0.50 approval threshold.
+    await withEnv({ WAYFARER_BUDGET_USDC: "0.30", WAYFARER_APPROVAL_USDC: "0.50" }, async () => {
+      const client = await connectedClient();
+      const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+      const r = res.structuredContent as { ok: boolean; error?: string; spentSessionUsdc: number };
+      assert.equal(r.ok, false, "the over-budget-and-over-threshold toll is refused");
+      assert.match(r.error ?? "", /exceeds remaining budget/i, "the fundamental cause is the budget, matching decide()'s wording");
+      assert.doesNotMatch(r.error ?? "", /approval threshold/i, "must not misreport as merely needing approval");
+      assert.equal(r.spentSessionUsdc, 0, "nothing was spent");
+    });
+  });
+});
+
+// ── B3 (G6a) — session per-host pay counts carry into naulon_research's decide() ──────────────
+// `paidByHost` (declared once per server session, above) previously fed only the granular
+// naulon_pay_and_read path's own perDomainCap half; naulon_research's composite run() seeded
+// decide()'s per-host tally EMPTY every call, so a cap already hit via naulon_pay_and_read was
+// invisible to a naulon_research call in the SAME session — the cap reset to 0 each run.
+
+test("B3: a per-domain cap paid via naulon_pay_and_read carries into naulon_research's decide() for the same host", async () => {
+  // One gate stands in for "host X" for both the granular pay and the composite research run.
+  const gate = await standGate(payGate("5000"));
+  // A second, independent stub serves naulon_research's discovery feed — the SAME essay's second
+  // installment, sitting at host X (the gate above), so decide() must resolve it to the identical
+  // host the granular pay already spent against.
+  const catalog = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify([
+        {
+          slug: "second-toll",
+          title: "Passage, Once More",
+          summary: "payment and passage — a second essay from the same host",
+          url: `${gate.url}/articles/second-toll`,
+        },
+      ]),
+    );
+  });
+  try {
+    await withEnv(
+      {
+        WAYFARER_PER_DOMAIN_CAP: "1",
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        CATALOG_URL: catalog.url,
+        OPENAI_API_KEY: undefined,
+      },
+      async () => {
+        const client = await connectedClientWith({ signer: mockSigner, tollgateUrl: gate.url, budgetUsdc: 1 });
+
+        const first = (
+          await client.callTool({
+            name: "naulon_pay_and_read",
+            arguments: { slug: "first-toll", url: `${gate.url}/articles/first-toll` },
+          })
+        ).structuredContent as { ok: boolean; error?: string };
+        assert.equal(first.ok, true, `expected the first pay to host X to succeed, got: ${first.error ?? ""}`);
+
+        const research = (
+          await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } })
+        ).structuredContent as { decisions: Array<{ slug: string; action: string; reason: string }> };
+
+        const second = research.decisions.find((d) => d.slug === "second-toll");
+        assert.ok(
+          second,
+          `expected the same-host essay to be discovered and decided on, got: ${JSON.stringify(research.decisions)}`,
+        );
+        assert.equal(
+          second!.action,
+          "skip",
+          "the per-domain cap already spent via naulon_pay_and_read must carry into naulon_research's decide() for the same session",
+        );
+        assert.match(second!.reason, /per-domain cap/i);
+      },
+    );
+  } finally {
+    await Promise.all([gate.close(), catalog.close()]);
+  }
+});
+
+// `result.decisions` is filled by decide() BEFORE the obtain loop runs the actual pays, so a
+// "pay" decision whose buyer.fetch call then FAILS never gets its `action` revised — the post-run
+// loop that folds pays into the session `paidByHost` map must not mistake that PLAN for a
+// confirmed settlement, or a single failed pay poisons the per-domain cap for the rest of the
+// session (not fail-open, but still a real regression of the B3 carry-through above).
+test("B3 follow-up: a FAILED pay must NOT burn the session per-domain cap for the rest of the session", async () => {
+  // This gate 402s every request, even one carrying a payment-signature — the paid GET never
+  // settles and $0 ever moves, however confidently decide() planned to pay.
+  const gate = await standGate(failingPayGate("5000"));
+  const catalog = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify([
+        {
+          slug: "second-toll",
+          title: "Passage, Once More",
+          summary: "payment and passage — a second essay from the same host",
+          url: `${gate.url}/articles/second-toll`,
+        },
+      ]),
+    );
+  });
+  try {
+    await withEnv(
+      {
+        WAYFARER_PER_DOMAIN_CAP: "1",
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        CATALOG_URL: catalog.url,
+        OPENAI_API_KEY: undefined,
+      },
+      async () => {
+        const client = await connectedClientWith({ signer: mockSigner, tollgateUrl: gate.url, budgetUsdc: 1 });
+
+        const research = (
+          await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } })
+        ).structuredContent as { spent: number; decisions: Array<{ slug: string; action: string }> };
+
+        const decided = research.decisions.find((d) => d.slug === "second-toll");
+        assert.ok(
+          decided,
+          `expected the essay to be discovered and decided on, got: ${JSON.stringify(research.decisions)}`,
+        );
+        assert.equal(decided!.action, "pay", "decide() planned to pay — this is the PLAN, not the outcome");
+        assert.equal(research.spent, 0, "the paid GET never settled at the gate — nothing was actually spent");
+
+        // The failed pay above must NOT have burned host X's per-domain cap for the rest of the
+        // session: a SUBSEQUENT pay attempt to the SAME host must still be allowed to try (and
+        // fail for the gate's own reason, never for a cap the failed pay never should have hit).
+        const second = (
+          await client.callTool({
+            name: "naulon_pay_and_read",
+            arguments: { slug: "first-toll", url: `${gate.url}/articles/first-toll` },
+          })
+        ).structuredContent as { ok: boolean; error?: string };
+        assert.equal(second.ok, false, "the gate still 402s every payment attempt, so this pay fails too");
+        assert.doesNotMatch(
+          second.error ?? "",
+          /per-domain cap/i,
+          `a pay that never settled must not have burned the per-domain cap, got: ${second.error}`,
+        );
+      },
+    );
+  } finally {
+    await Promise.all([gate.close(), catalog.close()]);
+  }
+});
+
 // ── β (A2-4 / A2-7) — the spend lock ─────────────────────────────────────────────────────────
 // The budget check and its debit are separated by network I/O, and an MCP client may issue tool
 // calls concurrently. Unserialized, two pays both read the same remaining budget, both pass the
@@ -1304,3 +1766,330 @@ test("A2-4: two CONCURRENT pays cannot breach the session ceiling", async () => 
 // pays can no longer both load a pre-update snapshot. There is no dedicated test here because the
 // stub `payGate` issues no `x-naulon-license` header, leaving the persist path unreachable from
 // these fixtures — a real coverage gap. Closing it needs a stub that mints a decodable license JWS.
+
+// ── WP-2 T2 (corrected) — fleet-default discovery authorizes the directory's OWN publisher
+// domains via allowDomains (never a single universal gate). WP-1's priceRefusal / decide()
+// origin gate would otherwise off-gate-skip every discovered essay, since gate.naulon.app is
+// not itself a pay-gate. The fleet-default e2e (Task 5) re-proves this against the LIVE fleet;
+// these are the hermetic unit proofs (stubFleetDirectory intercepts only the literal fleet host,
+// every publisher gate below is a REAL local HTTP server).
+
+test("WP-2 T2: fleet-default discovery makes the directory's OWN publisher domain payable via naulon_research (not off-gate skipped)", async () => {
+  await withEnv(
+    { CATALOG_URL: undefined, RSS_URL: undefined, PUBLISHER_URL: undefined, TOLLGATE_URL: undefined, WAYFARER_ALLOW_DOMAINS: undefined },
+    async () => {
+      const gate = await standGate(payGate("1000"));
+      const stub = stubFleetDirectory([
+        { slug: "the-naulon", title: "The Naulon", summary: "the fare paid to cross — payment, passage, and what we owe", url: `${gate.url}/articles/the-naulon` },
+      ]);
+      try {
+        const client = await connectedClient();
+        const res = await client.callTool({
+          name: "naulon_research",
+          arguments: { topic: "payment and passage", budgetUsdc: 0.01 },
+        });
+        const structured = res.structuredContent as { decisions: { slug: string; action: string; reason: string }[]; log: string[] };
+        const text = JSON.stringify(structured);
+        assert.doesNotMatch(
+          text,
+          /is not the configured gate|off-gate/i,
+          "fleet-default discovery must make the directory's own publisher domain payable, not off-gate skipped",
+        );
+        const decision = structured.decisions.find((d) => d.slug === "the-naulon");
+        assert.ok(decision, `expected a decision for the-naulon — got ${JSON.stringify(structured.decisions)}`);
+        assert.equal(decision!.action, "pay", `expected PAY, got: ${JSON.stringify(decision)}`);
+      } finally {
+        stub.restore();
+        await gate.close();
+      }
+    },
+  );
+});
+
+test("WP-2 T2 negative: an explicit CATALOG_URL is NOT fleet-default — naulon_research still off-gate-skips a directory-discovered publisher domain", async () => {
+  const publisher = await standGate(payGate("1000"));
+  const directory = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify([
+        { slug: "the-naulon", title: "The Naulon", summary: "the fare paid to cross — payment, passage, and what we owe", url: `${publisher.url}/articles/the-naulon` },
+      ]),
+    );
+  });
+  try {
+    await withEnv(
+      {
+        CATALOG_URL: `${directory.url}/directory`,
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        TOLLGATE_URL: "http://gate.invalid",
+        WAYFARER_ALLOW_DOMAINS: undefined,
+      },
+      async () => {
+        const client = await connectedClient();
+        const res = await client.callTool({
+          name: "naulon_research",
+          arguments: { topic: "payment and passage", budgetUsdc: 0.01 },
+        });
+        const structured = res.structuredContent as { decisions: { slug: string }[]; log: string[] };
+        assert.ok(
+          !structured.decisions.some((d) => d.slug === "the-naulon"),
+          "a self-hosted CATALOG_URL must keep the strict single-gate pin — the off-gate candidate must be refused at price, never reach decide()",
+        );
+        assert.ok(
+          structured.log.some((l) => /configured gate/i.test(l)),
+          `the off-gate refusal reason must be visible in the log — got ${JSON.stringify(structured.log)}`,
+        );
+      },
+    );
+  } finally {
+    await publisher.close();
+    await directory.close();
+  }
+});
+
+test("WP-2 T2 granular + L-OSS-3: naulon_pay_and_read's fleet-default allow is scoped to THIS session's last naulon_discover, and still covers the gate host itself once stated", async () => {
+  await withEnv(
+    { CATALOG_URL: undefined, RSS_URL: undefined, PUBLISHER_URL: undefined, TOLLGATE_URL: undefined, WAYFARER_ALLOW_DOMAINS: undefined },
+    async () => {
+      const gate = await standGate(payGate("1000"));
+      const stub = stubFleetDirectory([
+        { slug: "the-naulon", title: "The Naulon", summary: "the fare paid to cross", url: `${gate.url}/articles/the-naulon` },
+      ]);
+      try {
+        const client = await connectedClient();
+
+        // Before any naulon_discover call this session, the off-gate publisher host is NOT yet
+        // trusted — proves the allow is scoped to actual discovery, not a blanket fleet-wide trust
+        // (and, with no allowDomains stated at all yet, the plain gate-identity pin still governs).
+        const before = await client.callTool({
+          name: "naulon_pay_and_read",
+          arguments: { slug: "the-naulon", url: `${gate.url}/articles/the-naulon` },
+        });
+        const beforeStructured = before.structuredContent as { ok: boolean; error?: string };
+        assert.equal(beforeStructured.ok, false, "an undiscovered off-gate host must not be payable yet");
+        assert.match(beforeStructured.error ?? "", /configured gate/i);
+
+        // naulon_discover populates this session's last-discovery host set (just the publisher
+        // host — the gate itself was never among the discovered candidates)...
+        const discovered = await client.callTool({ name: "naulon_discover", arguments: { topic: "payment and passage" } });
+        const candidates = (discovered.structuredContent as { candidates: { slug: string }[] }).candidates;
+        assert.ok(candidates.some((c) => c.slug === "the-naulon"), "sanity: the fleet directory returned the off-gate candidate");
+
+        // ...so the SAME off-gate host is now payable.
+        const after = await client.callTool({
+          name: "naulon_pay_and_read",
+          arguments: { slug: "the-naulon", url: `${gate.url}/articles/the-naulon` },
+        });
+        const afterStructured = after.structuredContent as { ok: boolean; error?: string };
+        assert.equal(afterStructured.ok, true, `expected the fleet-discovered publisher domain to be payable — got ${JSON.stringify(afterStructured)}`);
+
+        // L-OSS-3: allowDomains is now STATED (just the publisher host, from lastDiscoveredHosts)
+        // — without unioning in the gate's own host, a plain slug-only quote (resolves to the
+        // fleet/gate host itself, which was never among the discovered candidates) would now be
+        // silently off-gate-skipped by spendGate's allowlist, having lost the identity-pin match
+        // that covered it before any allowlist was stated. Proves it still doesn't.
+        const gateHostQuote = await client.callTool({ name: "naulon_quote", arguments: { slug: "some-other-essay" } });
+        const gateHostStructured = gateHostQuote.structuredContent as { refused?: boolean; note?: string };
+        assert.ok(
+          !gateHostStructured.refused,
+          `L-OSS-3: a slug-only target on the gate host must not be off-gate refused even once an allowlist is stated — got ${JSON.stringify(gateHostStructured)}`,
+        );
+      } finally {
+        stub.restore();
+        await gate.close();
+      }
+    },
+  );
+});
+
+test("WP-2 T2 granular negative: a self-hosted CATALOG_URL's naulon_discover results are NOT auto-trusted for naulon_quote/naulon_pay_and_read, even after lastDiscoveredHosts is populated", async () => {
+  const gate = await standGate(payGate("1000"));
+  const publisher = await standGate(payGate("1000"));
+  const directory = await standGate((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify([
+        { slug: "the-naulon", title: "The Naulon", summary: "the fare paid to cross — payment, passage, and what we owe", url: `${publisher.url}/articles/the-naulon` },
+      ]),
+    );
+  });
+  try {
+    await withEnv(
+      {
+        CATALOG_URL: `${directory.url}/directory`,
+        RSS_URL: undefined,
+        PUBLISHER_URL: undefined,
+        TOLLGATE_URL: gate.url,
+        WAYFARER_ALLOW_DOMAINS: undefined,
+      },
+      async () => {
+        const client = await connectedClient();
+
+        // naulon_discover reads this SELF-HOSTED catalog (a custom CATALOG_URL, NOT the literal
+        // fleet directory) and populates lastDiscoveredHosts with the off-gate publisher host —
+        // exactly the precondition policyForGranularPay's fleet-default branch checks first.
+        const discovered = await client.callTool({ name: "naulon_discover", arguments: { topic: "payment and passage" } });
+        const candidates = (discovered.structuredContent as { candidates: { slug: string; url?: string }[] }).candidates;
+        assert.ok(
+          candidates.some((c) => c.slug === "the-naulon"),
+          `sanity: the self-hosted catalog returned the off-gate candidate — got ${JSON.stringify(candidates)}`,
+        );
+
+        // Because isFleetDefaultDiscovery(getConfig()) is FALSE here (a custom CATALOG_URL), the
+        // granular pay path must NOT fold lastDiscoveredHosts into allowDomains — the off-gate
+        // publisher host stays refused by the plain identity pin, same as if naulon_discover had
+        // never run this session. This is the property WP-2's `!isFleetDefaultDiscovery(...) ||`
+        // guard clause exists to hold; removing it would auto-trust a poisoned self-hosted catalog.
+        const quote = await client.callTool({
+          name: "naulon_quote",
+          arguments: { slug: "the-naulon", url: `${publisher.url}/articles/the-naulon` },
+        });
+        const quoteStructured = quote.structuredContent as { refused?: boolean; note?: string; gated?: boolean };
+        assert.equal(
+          quoteStructured.refused,
+          true,
+          `a self-hosted catalog's discovered domain must not be auto-trusted for naulon_quote — got ${JSON.stringify(quoteStructured)}`,
+        );
+        assert.match(quoteStructured.note ?? "", /configured gate/i);
+
+        const paid = await client.callTool({
+          name: "naulon_pay_and_read",
+          arguments: { slug: "the-naulon", url: `${publisher.url}/articles/the-naulon` },
+        });
+        const paidStructured = paid.structuredContent as { ok: boolean; error?: string };
+        assert.equal(
+          paidStructured.ok,
+          false,
+          `a self-hosted catalog's discovered domain must not be auto-trusted for naulon_pay_and_read — got ${JSON.stringify(paidStructured)}`,
+        );
+        assert.match(paidStructured.error ?? "", /configured gate/i);
+      },
+    );
+  } finally {
+    await Promise.all([gate.close(), publisher.close(), directory.close()]);
+  }
+});
+
+// ── WP-3a — hosted OSS tools inert-but-honest (hostedInertSteer) ───────────────────────────
+// Decision (WP-0): on the hosted fleet endpoint, naulon_ask is the SOLE fleet-buy path — the 4
+// granular OSS tools below are inert BY DESIGN there and must fail HONESTLY (steer the caller to
+// naulon_ask) rather than throw a raw config error or fabricate a success. `hostedInertSteer` is
+// the opt-in switch (unset by every caller above, including every existing test); WP-3c (cloud)
+// sets it only on its ask-only mount. Each guard runs BEFORE discover()/gateBase()/any tollgate
+// call — proven here with `poisonFetch()`, which would surface loudly if a guard were skipped.
+
+const WP3A_STEER =
+  "This hosted endpoint serves fleet buying via naulon_ask; the granular discover/quote/pay/research tools run on stdio/self-host.";
+
+test("WP-3a: naulon_discover short-circuits with the steer refusal, never touching discover()/the network", async () => {
+  const poison = poisonFetch();
+  try {
+    const client = await connectedClientWith({ hostedInertSteer: WP3A_STEER });
+    const res = await client.callTool({ name: "naulon_discover", arguments: { topic: "passage" } });
+    assert.notEqual(res.isError, true, "a hosted-inert steer is a typed refusal, not a thrown MCP error");
+    const structured = res.structuredContent as { candidates: unknown[]; refused?: boolean; note?: string };
+    assert.deepEqual(structured.candidates, [], "no candidates are fabricated — an honest empty result");
+    assert.equal(structured.refused, true);
+    assert.equal(structured.note, WP3A_STEER);
+  } finally {
+    poison.restore();
+  }
+});
+
+test("WP-3a: naulon_quote short-circuits with the steer refusal, never touching gateBase()/the network", async () => {
+  const poison = poisonFetch();
+  try {
+    const client = await connectedClientWith({ hostedInertSteer: WP3A_STEER });
+    const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "x" } });
+    assert.notEqual(res.isError, true, "a hosted-inert steer is a typed refusal, not a thrown MCP error");
+    const structured = res.structuredContent as { refused?: boolean; note?: string; gated?: boolean };
+    assert.equal(structured.refused, true);
+    assert.equal(structured.note, WP3A_STEER);
+    assert.equal(structured.gated, undefined, "never a fabricated gated:true/false — this is a refusal, not a quote");
+  } finally {
+    poison.restore();
+  }
+});
+
+test("WP-3a: naulon_pay_and_read short-circuits with the steer refusal, spending nothing", async () => {
+  const poison = poisonFetch();
+  try {
+    const client = await connectedClientWith({ hostedInertSteer: WP3A_STEER });
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+    assert.notEqual(res.isError, true, "a hosted-inert steer is a typed refusal, not a thrown MCP error");
+    const structured = res.structuredContent as {
+      ok: boolean;
+      error?: string;
+      errorCode?: string;
+      retryable?: boolean;
+      spentSessionUsdc: number;
+    };
+    assert.equal(structured.ok, false);
+    assert.equal(structured.error, WP3A_STEER);
+    assert.equal(structured.errorCode, "rejected");
+    assert.equal(structured.retryable, false);
+    assert.equal(structured.spentSessionUsdc, 0, "nothing was spent — the guard runs before any pay path");
+  } finally {
+    poison.restore();
+  }
+});
+
+test("WP-3a: naulon_research short-circuits with the steer refusal, deciding nothing and spending nothing", async () => {
+  const poison = poisonFetch();
+  try {
+    const client = await connectedClientWith({ hostedInertSteer: WP3A_STEER });
+    const res = await client.callTool({ name: "naulon_research", arguments: { topic: "passage" } });
+    assert.notEqual(res.isError, true, "a hosted-inert steer is a typed refusal, not a thrown MCP error");
+    const structured = res.structuredContent as {
+      topic: string;
+      spent: number;
+      answer: string;
+      decisions: unknown[];
+      sources: unknown[];
+      log: string[];
+    };
+    assert.equal(structured.topic, "passage");
+    assert.equal(structured.spent, 0);
+    assert.equal(structured.answer, WP3A_STEER);
+    assert.deepEqual(structured.decisions, []);
+    assert.deepEqual(structured.sources, []);
+    assert.ok(structured.log.includes(WP3A_STEER));
+  } finally {
+    poison.restore();
+  }
+});
+
+// Positive control: with the opt UNSET (the default — every caller above), the 4 tools' normal
+// path is completely unchanged, proven end-to-end (real discover → real quote → real pay), not
+// merely "doesn't throw".
+test("WP-3a positive control: hostedInertSteer UNSET leaves the 4 tools' normal discover/quote/pay path unchanged", async () => {
+  await withStubGate(payGate("1000"), async () => {
+    await withCatalog(async () => {
+      await withEnv(
+        {
+          WAYFARER_BUDGET_USDC: "1",
+          WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-wp3a-control-${process.pid}.json`),
+          OPENAI_API_KEY: undefined,
+        },
+        async () => {
+          const client = await connectedClient(); // no opts ⇒ hostedInertSteer absent, same as every existing caller
+
+          const discovered = await client.callTool({ name: "naulon_discover", arguments: { topic: "payment and passage" } });
+          const candidates = (discovered.structuredContent as { candidates: { slug: string }[] }).candidates;
+          assert.ok(candidates.some((c) => c.slug === "the-naulon"), "discover still returns real candidates when unset");
+
+          const quoted = await client.callTool({ name: "naulon_quote", arguments: { slug: "the-naulon" } });
+          const q = quoted.structuredContent as { gated?: boolean; refused?: boolean };
+          assert.equal(q.refused, undefined, "quote is not steer-refused when the opt is unset");
+          assert.equal(q.gated, true, "quote still reaches the real gate when unset");
+
+          const paid = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "the-naulon" } });
+          const p = paid.structuredContent as { ok: boolean; content?: string };
+          assert.equal(p.ok, true, "pay_and_read still completes a real pay when unset");
+          assert.equal(p.content, "paid content");
+        },
+      );
+    });
+  });
+});

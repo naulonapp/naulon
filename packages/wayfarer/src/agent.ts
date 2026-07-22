@@ -12,9 +12,10 @@ import { quotedTotalAtomic, rereadWithLicense, selectBuyer } from "./buyer.ts";
 import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
 import { memoBuyer, type MemoSigner } from "./memo.ts";
 import { railBuyer, type RailSigners } from "./rail.ts";
-import { decide, DEFAULT_POLICY } from "./decide.ts";
+import { decide, DEFAULT_POLICY, payHostOf, payUrlOf, spendGate } from "./decide.ts";
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
+import { authorizeOrigin } from "./origin-policy.ts";
 import { decodeHeld, fileHeldStore, isLive } from "./licenseStore.ts";
 import type { HeldStore } from "./licenseStore.ts";
 import { buildPopProof } from "./pop.ts";
@@ -51,22 +52,42 @@ export async function fetchJwks(base: string): Promise<JwkSet | null> {
   }
 }
 
-/** Verify a captured license against the gate's JWKS. null when JWKS unavailable. */
-export function verifyAgainst(jws: string, jwks: JwkSet): boolean {
+/**
+ * Verify a captured license against the gate's JWKS AND an explicit expected
+ * {issuer, audience} — the caller's job, never the token's own claims (A4). The
+ * previous implementation decoded the JWS and passed its OWN iss/aud back in as
+ * "expected", so `claims.iss !== expected` was always false by construction: any
+ * validly-signed token verified regardless of who it was actually minted for.
+ */
+export function verifyAgainst(jws: string, jwks: JwkSet, expected: { issuer: string; audience: string }): boolean {
   try {
-    const claims = JSON.parse(Buffer.from(jws.split(".")[1] ?? "", "base64url").toString("utf8")) as {
-      iss?: string;
-      aud?: string;
-    };
     const r = verifyLicense(jws, {
       now: Date.now(),
-      expectedIssuer: claims.iss ?? "",
-      expectedAudience: claims.aud ?? "",
+      expectedIssuer: expected.issuer,
+      expectedAudience: expected.audience,
       jwks,
     });
     return r.ok;
   } catch {
     return false;
+  }
+}
+
+/**
+ * The gate's canonical license identity for a URL, per the mint convention (tollgate
+ * publisher.ts / settle.ts): `iss == aud == naulon:${host}` by default, operator-
+ * overridable via LICENSE_ISSUER. A buyer can't know a custom LICENSE_ISSUER value
+ * without fetching the gate's discoverability doc (out of scope this wave — YAGNI);
+ * the default-convention host derivation is the honest, non-fabricated best effort.
+ * Returns undefined when `url` isn't a parseable absolute URL — callers must treat
+ * that as "identity unknown" (log as unverified/unchecked), never compare against a
+ * fabricated value.
+ */
+export function licenseIdentityFor(url: string): string | undefined {
+  try {
+    return `naulon:${new URL(url).host.toLowerCase()}`;
+  } catch {
+    return undefined;
   }
 }
 
@@ -121,6 +142,75 @@ export interface RunOptions {
    * omitted ⇒ `getWallet()` (the env/dev wallet, unchanged OSS path).
    */
   popWallet?: AgentWallet;
+  /**
+   * Fleet-default ONLY (WP-2 T2, corrected — see oss-fix-architecture.md §G6). Discovery
+   * happens INSIDE `run()`, so the caller (wayfarer-mcp's `naulon_research`) cannot pass
+   * discovered candidate hostnames into a policy built BEFORE this call — it can only pass
+   * the INTENT. When true, and `policy.allowDomains` is not already stated, `run()` derives
+   * the effective `allowDomains` from THIS run's own discovery: the distinct hostnames of the
+   * candidates the (trusted) fleet directory just returned, plus the gate's own host (L-OSS-3
+   * — a slug-only candidate's resolved pay-URL lands on the gate host, so it must not be
+   * silently skipped even before any off-gate candidate has been priced). The derived policy
+   * feeds BOTH the price-loop's `priceRefusal` gate and `decide()` — one derivation, never two.
+   * `wayfarer-mcp/server.ts` sets this flag ONLY for `isFleetDefaultDiscovery(cfg)` — a
+   * user-supplied `CATALOG_URL` is NEVER auto-trusted, keeping the strict single-gate pin.
+   * Server/config-supplied, never LLM-controlled — same principle as `budgetUsdc`/`policy`.
+   */
+  autoTrustDiscoveredDomains?: boolean;
+}
+
+/** Lowercased hostname (no port) — what domain policy (`allowDomains`) matches on, mirroring
+ *  `payHostOf`/decide.ts's own host resolution. Returns undefined for an unparseable URL. */
+function hostnameOf(u: string | undefined): string | undefined {
+  if (!u) return undefined;
+  try {
+    return new URL(u).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The price-loop origin/domain gate (H-OSS-1 — the SSRF fix). `discover()` is
+ * explicitly untrusted (a poisoned catalog/feed candidate can carry ANY `url`), and
+ * `buyer.price()` in the loop below is a real network GET — reached BEFORE decide()
+ * ever runs an origin check. Mirrors the granular MCP tools' `originRefusal`
+ * (wayfarer-mcp/server.ts): `authorizeOrigin` for endpoint identity — OR the
+ * operator-stated `allowDomains` boundary, which REPLACES identity rather than
+ * stacking with it — then the ONE shared `spendGate` for the price-independent
+ * domain policy (deny-list / allow-list). `priceUsdc: 0` because there is no price
+ * yet, same reasoning as the MCP's free-probe gate: whatever spendGate would refuse
+ * to pay for, this loop must refuse to even price.
+ *
+ * `killSwitch` is deliberately excluded from the policy handed to `spendGate` here
+ * (via a cloned copy) — it is evaluated for REAL, unmodified, inside decide()'s own
+ * spendGate call once appraisal has run. `DecisionPolicy.killSwitch` is documented
+ * to halt SPEND only ("free re-reads still allowed"), the same carve-out decide()
+ * already gives a held-license cache hit. A price probe is a free, unpaid read — not
+ * spend — so it stays outside the kill-switch, exactly like a cache re-read. Letting
+ * kill-switch drop candidates HERE would silently empty `priced` before appraise/
+ * decide ever run, losing the auditable "kill-switch halted this" decision log
+ * (BUY-3.3 / BUY-4.4). Deny-list / allow-list / off-gate identity are a DIFFERENT
+ * question — "may this origin be reached at all" — and stay fully enforced
+ * regardless of kill-switch.
+ */
+function priceRefusal(candidateUrl: string | undefined, gate: string, slug: string, policy: DecisionPolicy): string | null {
+  const target = payUrlOf(candidateUrl, gate, slug);
+  if (target === undefined) return `no resolvable pay URL — refusing (the configured gate is ${gate})`;
+
+  const origin = authorizeOrigin({
+    target,
+    gate,
+    ...(policy.allowDomains ? { allowDomains: policy.allowDomains } : {}),
+  });
+  if (!origin.ok) return origin.refusal;
+
+  const gated = spendGate({
+    host: payHostOf(candidateUrl, gate, slug),
+    priceUsdc: 0,
+    policy: { ...policy, killSwitch: false },
+  });
+  return gated.ok ? null : gated.reason;
 }
 
 export async function run(
@@ -131,6 +221,7 @@ export async function run(
   const cfg = getConfig();
   const budget = opts.budgetUsdc ?? cfg.WAYFARER_BUDGET_USDC;
   const base = opts.tollgateUrl ?? tollgateBase();
+  const policy = opts.policy ?? DEFAULT_POLICY;
   // Hosted path: sign each leg via the injected cloud session key (custody-free); the
   // env BUYER_PRIVATE_KEY is never read. Route the injected signer to the active network's
   // rail — memo-LESS networks (Base + every Gateway chain) settle via gatewayBuyer (the Circle
@@ -157,6 +248,24 @@ export async function run(
   const candidates = await discover(topic);
   log(`\ndiscovered ${candidates.length} candidate essays`);
 
+  // Fleet-default auto-trust (WP-2 T2, corrected): see RunOptions.autoTrustDiscoveredDomains.
+  // Merged into the SAME policy used by both the price loop below and decide() — one
+  // derivation, not two. A no-op (effectivePolicy === policy) unless the caller opted in AND
+  // left allowDomains unstated, so every existing caller/test is unaffected.
+  const effectivePolicy: DecisionPolicy =
+    opts.autoTrustDiscoveredDomains && !policy.allowDomains
+      ? {
+          ...policy,
+          allowDomains: [
+            ...new Set(
+              [hostnameOf(base), ...candidates.map((c) => hostnameOf(c.url))].filter(
+                (h): h is string => h !== undefined,
+              ),
+            ),
+          ],
+        }
+      : policy;
+
   // 2. price (free x402 probes — no payment yet)
   const priced: PricedCandidate[] = [];
   // The TRUE total (all legs, atomic micro-USDC) each candidate was quoted at here. The pay step
@@ -164,6 +273,13 @@ export async function run(
   // pay time is aborted — the BUY-1.4 guarantee. Budget-remaining alone cannot detect that.
   const quotedTotals = new Map<string, bigint>();
   for (const c of candidates) {
+    // SSRF gate (H-OSS-1) — see priceRefusal: refused candidates are dropped here,
+    // BEFORE buyer.price() ever reaches the network.
+    const refusal = priceRefusal(c.url, base, c.slug, effectivePolicy);
+    if (refusal) {
+      log(`  ⛔ ${c.slug}: refusing to price — ${refusal}`);
+      continue;
+    }
     const quoted = await buyer.price(c.url ?? articleUrl(base, c.slug), "citation");
     if (quoted) {
       priced.push({ ...c, price: usdc(quoted.priceUsdc) });
@@ -186,7 +302,7 @@ export async function run(
 
   // gateBase lets decide() resolve a slug-only candidate to the SAME url the pay step below uses,
   // so domain policy is evaluated against the host that actually gets paid (never Candidate.host).
-  const decisions = decide(appraised, budget, licensed, opts.policy ?? DEFAULT_POLICY, {
+  const decisions = decide(appraised, budget, licensed, effectivePolicy, {
     ...opts.decideContext,
     gateBase: opts.decideContext?.gateBase ?? base,
   });
@@ -204,6 +320,12 @@ export async function run(
     if (d.action === "cache") {
       const h = held.get(d.slug);
       if (!h) continue;
+      // Re-read at the license's OWN paid url — NEVER the untrusted candidate `d.url`
+      // (discover() can hand back anything). Mirrors naulon_read_held's
+      // `license.url ?? slugUrl(slug)` (wayfarer-mcp/server.ts) — the held store is
+      // keyed by slug alone, so a same-slug candidate from a DIFFERENT (still
+      // allow-listed) publisher must never receive this license/PoP proof (B1).
+      const target = h.url ?? articleUrl(base, d.slug);
       // Holder-of-key license: sign a fresh proof-of-possession so the gate knows
       // we still hold the payer wallet, not just a captured token.
       let proof: string | undefined;
@@ -214,7 +336,7 @@ export async function run(
           continue;
         }
       }
-      const reread = await rereadWithLicense(url, "citation", h.jws, buyer.address, proof);
+      const reread = await rereadWithLicense(target, "citation", h.jws, buyer.address, proof);
       if (reread.ok) {
         sources.push({ slug: d.slug, title: d.title, content: reread.content ?? "", paidUsdc: 0, licenseId: h.jti });
         log(`  🎫 re-read ${d.slug} FREE with held license (${h.jti.slice(0, 8)})${h.pop ? " 🔑 proof-of-possession" : ""}`);
@@ -249,12 +371,20 @@ export async function run(
     let licenseId: string | undefined;
     if (result.license) {
       const decoded = decodeHeld(result.license);
-      const verified = jwks ? verifyAgainst(result.license, jwks) : null;
+      // The canonical identity of the gate this read just settled into — derived from
+      // `url` (the paid target), never from the token's own claims (A4). When it can't
+      // be derived, `verified` stays null (unchecked) rather than fabricating a match.
+      const identity = licenseIdentityFor(url);
+      const verified = jwks && identity ? verifyAgainst(result.license, jwks, { issuer: identity, audience: identity }) : null;
       if (decoded) {
         // Persist the url actually paid alongside the license, so it travels with the
         // held record (a slug-only re-read can then target the real link, not a template).
         held.set(d.slug, { ...decoded, jws: result.license, url });
         licenseId = decoded.jti;
+        // Save NOW, not only once after the loop (A1): a later candidate's re-read
+        // throwing (or any other mid-loop failure) must never discard a license this
+        // run already paid for. Idempotent — the final save below is a safety net.
+        await heldStore.save(held);
       }
       const mark =
         verified === true ? " → 🎫 license verified" : verified === false ? " → ⚠ license UNVERIFIED" : " → 🎫 license";

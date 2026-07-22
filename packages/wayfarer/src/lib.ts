@@ -17,12 +17,14 @@ export { run } from "./agent.ts";
 export type { Logger, RunOptions } from "./agent.ts";
 
 // Pipeline primitives a second consumer (the MCP server) reuses to resolve an
-// article URL from a slug against the configured gate, and to verify a captured
+// article URL from a slug against the configured gate, to derive the gate's
+// canonical license identity from a paid-into URL, and to verify a captured
 // license against the gate's JWKS — single-sourced here so the two can't drift.
-export { tollgateBase, articleUrl, fetchJwks, verifyAgainst } from "./agent.ts";
+export { tollgateBase, articleUrl, fetchJwks, verifyAgainst, licenseIdentityFor } from "./agent.ts";
 
 // ── discover ────────────────────────────────────────────────────────────────
 export { discover } from "./discover.ts";
+export { resolvedDiscoverySourceUrl } from "./discovery.ts";
 
 // ── appraise ────────────────────────────────────────────────────────────────
 export { appraise } from "./appraise.ts";
@@ -50,13 +52,13 @@ export {
   classifyGatewaySettlement,
 } from "./gateway.ts";
 export type { GatewaySigner, GatewayDepositOpts, GatewaySettlementState } from "./gateway.ts";
-export { memoBuyer, signMemoPayment } from "./memo.ts";
-export type { MemoSigner } from "./memo.ts";
+export { memoBuyer, signMemoPayment, assembleMemoPayment } from "./memo.ts";
+export type { MemoSigner, MemoTypedData } from "./memo.ts";
 export { railBuyer } from "./rail.ts";
 export type { RailSigners } from "./rail.ts";
 
 // ── decide (policy) ─────────────────────────────────────────────────────────
-export { decide, DEFAULT_POLICY, spendGate } from "./decide.ts";
+export { decide, DEFAULT_POLICY, payHostOf, spendGate } from "./decide.ts";
 export type { DecisionPolicy, DecideContext, SpendVerdict } from "./decide.ts";
 
 // ── origin policy (whose origin may money touch) ─────────────────────────────

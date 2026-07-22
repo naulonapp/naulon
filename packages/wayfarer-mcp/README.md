@@ -26,10 +26,17 @@ spend) — but mock settlement is not a mock catalog: `discover` / `research` /
 `verify` need a real place to look, so with nothing configured they refuse
 (they never fabricate sources). To actually find and read something, pick one:
 
-- **Turnkey (hosted):** point a client at the hosted endpoint with an agent
-  token — real corpus, no local wallet. See [Hosted endpoint](#hosted-endpoint-no-local-wallet).
-- **Bring your own publisher:** set `RSS_URL`, `PUBLISHER_URL`, or `CATALOG_URL`
-  to a site's feed/catalog, plus `TOLLGATE_URL` to pay. See [Configuration](#configuration).
+- **Buy from the fleet (hosted):** point a client at the hosted endpoint with an
+  agent token and use `naulon_ask` — it buys across the whole naulon fleet
+  directory, real corpus, no local wallet. See [Hosted endpoint](#hosted-endpoint-no-local-wallet).
+- **Single publisher (stdio):** set `RSS_URL`, `PUBLISHER_URL`, or `CATALOG_URL`
+  to that site's feed/catalog, plus `TOLLGATE_URL` to pay. A lone `TOLLGATE_URL`
+  pins **every** payment to one gate — that's single-publisher by design.
+- **Fleet / many publishers (stdio):** to buy across more than one publisher
+  locally, set `WAYFARER_ALLOW_DOMAINS` to the publisher hosts you trust (and
+  point discovery at a fleet directory via `CATALOG_URL`) instead of pinning a
+  single `TOLLGATE_URL` — each discovered publisher is then paid at its own gate,
+  bounded by the allowlist. See [Configuration](#configuration).
 - **Full loop offline:** run the repo's `make demo` (or `make dev`) to drive the
   whole discover → toll → pay → settle loop against a local stub publisher.
 
@@ -175,7 +182,7 @@ Env read by the stdio server (all optional — omit for the offline mock):
 | `BUYER_PRIVATE_KEY` | The wallet the toll is paid from. BYO-key path; a hosted deploy signs through a cloud signer instead. |
 | `TOLLGATE_URL` | The gate every payment resolves against. Payments only ever flow here — a prompt-injected model cannot redirect them. |
 | `WAYFARER_BUDGET_USDC` | The session spend ceiling. The model can never raise it. |
-| `WAYFARER_ALLOW_DOMAINS` / `WAYFARER_DENY_DOMAINS` | Publisher allow/deny lists for `naulon_research`. |
+| `WAYFARER_ALLOW_DOMAINS` / `WAYFARER_DENY_DOMAINS` | Publisher allow/deny lists applied to **every paid tool** (`naulon_quote`, `naulon_pay_and_read`, `naulon_research`) — not just research. A stated `ALLOW_DOMAINS` *replaces* the single-gate identity pin, so one server can buy across many publishers. Blank/malformed reads as **unset** (no restriction); comma-separated hosts to allow. (Internally, a defined-but-empty allowlist denies all — a blank env var can only ever read as unset, never empty.) |
 | `WAYFARER_PER_DOMAIN_CAP` | Max paid reads per publisher per session. |
 | `WAYFARER_KILL_SWITCH` | Hard stop — refuse all spend. |
 

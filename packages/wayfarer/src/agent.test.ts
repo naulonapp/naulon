@@ -10,9 +10,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { resetConfig } from "@naulon/shared";
+import { jwksOf, loadSigningKey, mintLicense, resetConfig, type JwkSet } from "@naulon/shared";
 
-import { run, tollgateBase } from "./agent.ts";
+import { licenseIdentityFor, run, tollgateBase, verifyAgainst } from "./agent.ts";
+import { memoryHeldStore } from "./licenseStore.ts";
+import type { AgentWallet } from "./wallet.ts";
 
 /** The discovery catalog these run() tests point CATALOG_URL at. Discovery no
  *  longer has a bundled-demo fallback, so every run() test must supply a real
@@ -168,6 +170,70 @@ test("run discovers, prices, decides, pays for and cites a relevant source under
         assert.ok((result.spent as number) <= 0.1, "total spend stays within budget");
         assert.match(result.answer, /the-naulon/, "the grounded answer cites the paid source");
       });
+    },
+  );
+});
+
+// A2 — discovery (and the gates it points at) is untrusted: a candidate essay's
+// tollgate can 402 with a malformed/negative amount. Before the fix, run()'s price
+// loop pushed `usdc(quoted.priceUsdc)` unvalidated (buyer.ts probe()), and usdc()
+// (shared/src/types.ts) THROWS on a non-finite/negative value — aborting the whole
+// price loop and silently discarding every other, perfectly-good candidate's price.
+// One bad gate must never take down pricing for the rest of the batch.
+//
+// A2 follow-up — the same batch-DoS class survives a shape the original regex
+// (`^\d+$` alone) let through: an all-digit amount long enough that `Number(amount)`
+// overflows to `Infinity` (e.g. "9".repeat(310)). `overflow-toll` below pins that
+// case alongside the original non-numeric one.
+test("run does not throw when a gate 402s one candidate with a malformed toll amount (A2) — prices only the valid one", async () => {
+  const CATALOG = "http://catalog.test/list-a2";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-a2-${process.pid}.json`),
+    },
+    async () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: "bad-toll", title: "Bad Toll", summary: "a gate with a malformed 402 amount, about payment and passage" },
+              { slug: "overflow-toll", title: "Overflow Toll", summary: "a gate with an overflowing 402 amount, about payment and passage" },
+              { slug: "good-toll", title: "Good Toll", summary: "a gate with a valid 402 amount, about payment and passage" },
+            ]),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the toll is the fare paid to cross", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+        }
+        // The attacker-controlled candidates' gates 402 with a non-numeric amount and an
+        // overflow-to-Infinity amount, respectively; the well-behaved one 402s normally.
+        const amount = u.includes("bad-toll") ? "abc" : u.includes("overflow-toll") ? "9".repeat(310) : "1000";
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount, maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {});
+        const decisionSlugs = result.decisions.map((d) => d.slug);
+        assert.ok(decisionSlugs.includes("good-toll"), "the well-behaved candidate is still priced, appraised and decided");
+        assert.ok(!decisionSlugs.includes("bad-toll"), "the malformed-toll candidate is dropped at price — never reaches decide()");
+        assert.ok(!decisionSlugs.includes("overflow-toll"), "the overflow-to-Infinity candidate is dropped at price — never reaches decide()");
+      } finally {
+        globalThis.fetch = real;
+      }
     },
   );
 });
@@ -446,4 +512,591 @@ test("RAS-A2b: on a gateway (memo-less) network run() routes the injected signer
   } finally {
     globalThis.fetch = real;
   }
+});
+
+// ── H-OSS-1 — the SSRF gate on run()'s price loop ───────────────────────────────
+// discover() is explicitly untrusted (decide.ts: "a poisoned discover teaser is
+// enough") — a compromised catalog/feed candidate can carry ANY url. Before this
+// fix, run()'s price loop called buyer.price(c.url) for EVERY discovered candidate,
+// unconditionally, before decide() ever ran an origin/policy check — an attacker
+// url reached the network (cloud metadata endpoints, internal services) regardless
+// of the operator's gate/allowlist/denylist. These assert the fetch-count-0
+// invariant directly: a stub `globalThis.fetch` records every URL actually hit, and
+// the off-gate/deny-listed candidate must never appear in it, while an on-gate
+// candidate in the SAME run still gets priced normally.
+
+test("H-OSS-1: run() refuses to price/fetch an off-gate candidate url (no policy stated) — never reaches the network", async () => {
+  const CATALOG = "http://catalog.test/ssrf-plain";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-ssrf-plain-${process.pid}.json`),
+    },
+    async () => {
+      const fetched: string[] = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              // Poisoned teaser: an off-gate url a compromised catalog handed back.
+              { slug: "trap", title: "Trap", summary: "payment and passage", url: "http://evil.example/steal" },
+              // A genuine on-gate candidate (slug-only, resolves to the configured gate).
+              { slug: "on-stillness", title: "On Stillness", summary: "payment and passage, on staying" },
+            ]),
+            { status: 200 },
+          );
+        }
+        fetched.push(u);
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the fare is paid", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {});
+        assert.ok(
+          !fetched.some((u) => u.startsWith("http://evil.example")),
+          `off-gate candidate must NEVER be fetched/priced (SSRF) — got ${JSON.stringify(fetched)}`,
+        );
+        assert.ok(
+          fetched.some((u) => u.includes("gate.test")),
+          "the on-gate candidate in the SAME run must still be priced normally",
+        );
+        assert.ok(
+          result.decisions.some((d) => d.slug === "on-stillness"),
+          "the on-gate candidate reaches decide() and gets a real decision",
+        );
+        assert.ok(
+          !result.decisions.some((d) => d.slug === "trap"),
+          "the refused candidate is dropped at the price gate — it never reaches decide()",
+        );
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+test("H-OSS-1: run() refuses a deny-listed host even when an operator allowlist REPLACES the gate pin (WP-2 fleet-allowlist shape)", async () => {
+  // authorizeOrigin defers identity entirely once policy.allowDomains is stated — so this
+  // proves the SECOND gate (the host-only spendGate call) actually runs and enforces the
+  // allowlist itself; without it, a fleet-default allowlist (WP-2) would leave pricing wide
+  // open again despite the identity pin appearing to be "handled".
+  const CATALOG = "http://catalog.test/ssrf-allowlist";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-ssrf-allow-${process.pid}.json`),
+    },
+    async () => {
+      const fetched: string[] = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: "trap", title: "Trap", summary: "payment and passage", url: "http://evil.example/steal" },
+              { slug: "on-stillness", title: "On Stillness", summary: "payment and passage, on staying" },
+            ]),
+            { status: 200 },
+          );
+        }
+        fetched.push(u);
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the fare is paid", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {}, {
+          policy: { relevanceFloor: 0, maxPaid: 5, allowDomains: ["gate.test"] },
+        });
+        assert.ok(
+          !fetched.some((u) => u.startsWith("http://evil.example")),
+          `deny-listed (not-allowlisted) candidate must NEVER be fetched/priced — got ${JSON.stringify(fetched)}`,
+        );
+        assert.ok(
+          fetched.some((u) => u.includes("gate.test")),
+          "the allowlisted on-gate candidate in the SAME run must still be priced normally",
+        );
+        assert.ok(
+          result.decisions.some((d) => d.slug === "on-stillness"),
+          "the allowlisted candidate reaches decide() and gets a real decision",
+        );
+        assert.ok(
+          !result.decisions.some((d) => d.slug === "trap"),
+          "the refused candidate is dropped at the price gate — it never reaches decide()",
+        );
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+// ── WP-2 T2 (corrected) — run()'s autoTrustDiscoveredDomains ────────────────────
+// wayfarer-mcp's naulon_research can't build a policy from candidates before calling run()
+// (discovery happens INSIDE run()), so it can only pass the INTENT. These prove run() itself:
+// derives allowDomains from ITS OWN discovery when the flag is set (fleet publisher domains
+// become payable, not off-gate-skipped), and that omitting the flag preserves the existing
+// strict pin (H-OSS-1 above) — the flag, not an ambient default, is what gates the trust.
+
+test("WP-2 T2: run() with autoTrustDiscoveredDomains authorizes an off-gate candidate from THIS RUN'S OWN discovery", async () => {
+  const CATALOG = "http://catalog.test/fleet-default";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test", // the directory host — never itself gated
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-fleet-default-${process.pid}.json`),
+    },
+    async () => {
+      const fetched: string[] = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              // Shape of a real gate.naulon.app/directory entry: a candidate whose real link is
+              // a DIFFERENT (off-gate) publisher origin — never the directory host itself.
+              {
+                slug: "the-naulon",
+                title: "The Naulon",
+                summary: "payment and passage — the fare paid to cross",
+                url: "http://publisher.test/articles/the-naulon",
+              },
+            ]),
+            { status: 200 },
+          );
+        }
+        fetched.push(u);
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the fare is paid", { status: 200, headers: { "x-naulon-license": "lic.jws" } });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {}, { autoTrustDiscoveredDomains: true });
+        assert.ok(
+          fetched.some((u) => u.startsWith("http://publisher.test")),
+          `the off-gate publisher domain THIS RUN discovered must be priced — got ${JSON.stringify(fetched)}`,
+        );
+        assert.ok(
+          result.decisions.some((d) => d.slug === "the-naulon" && d.action === "pay"),
+          `expected the fleet-discovered publisher domain to be PAID, not off-gate skipped — got ${JSON.stringify(result.decisions)}`,
+        );
+        assert.ok(result.sources.some((s) => s.slug === "the-naulon"), "the paid fleet publisher source is cited");
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+test("WP-2 T2 negative: run() WITHOUT autoTrustDiscoveredDomains still off-gate-skips the same candidate", async () => {
+  // Proves the flag — not an ambient default — is what gates the trust: the identical
+  // discovery/gate shape as the positive test above, but the flag is simply omitted.
+  const CATALOG = "http://catalog.test/fleet-default-off";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-fleet-default-off-${process.pid}.json`),
+    },
+    async () => {
+      const fetched: string[] = [];
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: "the-naulon", title: "The Naulon", summary: "payment and passage", url: "http://publisher.test/articles/the-naulon" },
+            ]),
+            { status: 200 },
+          );
+        }
+        fetched.push(u);
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402 });
+      }) as typeof globalThis.fetch;
+      try {
+        const result = await run("payment and passage", () => {});
+        assert.ok(
+          !fetched.some((u) => u.startsWith("http://publisher.test")),
+          `without the flag, the off-gate publisher domain must NEVER be fetched — got ${JSON.stringify(fetched)}`,
+        );
+        assert.ok(!result.decisions.some((d) => d.slug === "the-naulon"), "the off-gate candidate never reaches decide()");
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+// ── A1 — a held-license re-read that throws must not crash the whole run ───────
+// rereadWithLicense used to let a bare agentFetch reject propagate unhandled, and
+// run()'s cache branch had no try/catch around the call — so ONE held essay whose
+// re-read hit a network error (DNS flake, connection reset) crashed the entire
+// run(), discarding every license already paid for earlier in the SAME loop (the
+// final `heldStore.save(held)` never ran). The fix: rereadWithLicense returns a
+// typed failure instead of throwing, AND a just-paid license is saved incrementally
+// (not only once after the loop) as a second line of defense.
+
+/** A real, decodable Citation License JWS for `slug` (mirrors licenseStore.test.ts's
+ *  `token()`) — decodeHeld() parses claims (jti/exp/aud/naulon.slug) without
+ *  verifying the signature, but it DOES require a well-formed JWT; an opaque
+ *  placeholder string like "lic.jws" decodes to garbage and is silently dropped,
+ *  which would make the A1 assertion below vacuous (it'd pass even if the
+ *  incremental-save fix were never applied). */
+function paidLicense(slug: string): string {
+  const now = Date.now();
+  return mintLicense(
+    {
+      event: {
+        id: `id-${slug}`,
+        slug,
+        kind: "citation",
+        amount: 0.001 as never,
+        payees: [{ authorId: "a", wallet: "0x1111111111111111111111111111111111111111" as never, share: 1 }],
+        payerAddress: "0x2222222222222222222222222222222222222222" as never,
+        settlementRef: "ref",
+        at: now,
+      },
+      issuer: "naulon:test",
+      audience: "naulon:test",
+      ttlSeconds: 600,
+      payeesMode: "full",
+      title: `Title ${slug}`,
+      network: { chainId: 5042002, usdc: "0x36", gateway: "g" },
+    },
+    loadSigningKey(),
+    now,
+  );
+}
+
+test("A1: a held license whose re-read throws (network reject) is logged-and-skipped — run() resolves, cites what it DID pay for, and the paid license persists", async () => {
+  const CATALOG = "http://catalog.test/a1";
+  const GATE = "http://gate.test";
+  const PAID_SLUG = "paid-essay";
+  const HELD_SLUG = "held-essay";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: GATE,
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-a1-${process.pid}.json`),
+    },
+    async () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: PAID_SLUG, title: "Paid Essay", summary: "payment and passage — worth paying for" },
+              { slug: HELD_SLUG, title: "Held Essay", summary: "payment and passage — already held" },
+            ]),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        // The vulnerable re-read: this candidate's cache-branch GET carries the held
+        // license header. Simulate a network-level failure (DNS/connection reset) —
+        // exactly what rereadWithLicense must catch and turn into a typed failure.
+        if (init?.headers?.["x-naulon-license"]) {
+          throw new TypeError("fetch failed: connection reset");
+        }
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the paid content", {
+            status: 200,
+            headers: { "x-naulon-license": paidLicense(PAID_SLUG) },
+          });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+
+      try {
+        const exp = Math.floor(Date.now() / 1000) + 3600; // live
+        const store = memoryHeldStore([
+          [
+            HELD_SLUG,
+            {
+              slug: HELD_SLUG,
+              title: "Held Essay",
+              jti: "jti-held",
+              exp,
+              aud: "gate://test",
+              pop: false,
+              jws: "held.jws.sig",
+              url: `${GATE}/essays/${HELD_SLUG}`,
+            },
+          ],
+        ]);
+
+        // Before the fix this `await` REJECTS (the throw from the stub propagates
+        // uncaught through rereadWithLicense → run()'s cache branch → run() itself).
+        const result = await run("payment and passage", () => {}, { heldStore: store });
+
+        assert.ok(
+          result.sources.some((s) => s.slug === PAID_SLUG),
+          "run() still cites the essay it successfully paid for, despite the held essay's re-read throwing",
+        );
+        assert.ok(
+          !result.sources.some((s) => s.slug === HELD_SLUG),
+          "the essay whose re-read threw is NOT cited — logged-and-skipped, not fatal",
+        );
+
+        const held = await store.load();
+        assert.ok(
+          held.get(PAID_SLUG),
+          "A's just-paid license was persisted to the injected store despite B's later re-read throwing",
+        );
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+// ── FU-A1b — a PoP-proof SIGNING failure in the held-license re-read path must
+// not crash the whole run either. `run()`'s cache branch calls `buildPopProof`,
+// which calls `wallet.signMessage` — on the hosted path that's
+// `cloudPopSigner.signMessage` (wayfarer-mcp/cloud-signer.ts), a real network POST
+// to `/_naulon/buyer-wallet/sign-pop` that THROWS a `SignerError` on any non-2xx.
+// Before this fix, that throw propagated uncaught through `buildPopProof` → run()'s
+// cache branch → run() itself — the exact A1 failure class, just one call earlier
+// (signing the proof instead of re-reading with it).
+//
+// This test doubles as FU-A1a coverage: PAID_SLUG's decision is ranked (and
+// therefore processed inside run()'s obtain loop) BEFORE HELD_SLUG's, so if the
+// incremental `heldStore.save` added in the B1/A1 commit were ever removed,
+// HELD_SLUG's later PoP-sign throw would discard PAID_SLUG's freshly-paid license
+// from the final save — this test would catch that regression too.
+test("FU-A1b: a held license whose PoP-proof signing THROWS is logged-and-skipped — run() resolves, cites what it DID pay for, and the paid license persists", async () => {
+  const CATALOG = "http://catalog.test/a1b";
+  const GATE = "http://gate.test";
+  const PAID_SLUG = "paid-essay";
+  const HELD_SLUG = "held-essay";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: GATE,
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-a1b-${process.pid}.json`),
+    },
+    async () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(
+            JSON.stringify([
+              { slug: PAID_SLUG, title: "Paid Essay", summary: "payment and passage — worth paying for" },
+              { slug: HELD_SLUG, title: "Held Essay", summary: "payment and passage — already held" },
+            ]),
+            { status: 200 },
+          );
+        }
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        // The held candidate's cache-branch re-read GET must NEVER be reached — the
+        // PoP-signing throw happens in buildPopProof, before rereadWithLicense is
+        // ever called. If this branch fires, the fix didn't actually short-circuit
+        // the re-read on a signing failure.
+        if (init?.headers?.["x-naulon-license"]) {
+          throw new Error("FU-A1b: re-read must not be attempted when PoP-signing throws");
+        }
+        if (init?.headers?.["payment-signature"]) {
+          return new Response("the paid content", {
+            status: 200,
+            headers: { "x-naulon-license": paidLicense(PAID_SLUG) },
+          });
+        }
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+
+      try {
+        const exp = Math.floor(Date.now() / 1000) + 3600; // live
+        const store = memoryHeldStore([
+          [
+            HELD_SLUG,
+            {
+              slug: HELD_SLUG,
+              title: "Held Essay",
+              jti: "jti-held",
+              exp,
+              aud: "gate://test",
+              pop: true, // holder-of-key bound — a re-read requires a signed PoP proof
+              jws: "held.jws.sig",
+              url: `${GATE}/essays/${HELD_SLUG}`,
+            },
+          ],
+        ]);
+
+        const throwingPopWallet: AgentWallet = {
+          address: "0x3333333333333333333333333333333333333333",
+          mock: false,
+          signMessage: async () => {
+            // Mirrors cloudPopSigner.signMessage (wayfarer-mcp/cloud-signer.ts)
+            // throwing SignerError on a non-2xx /_naulon/buyer-wallet/sign-pop reply.
+            throw new Error("sign-pop failed: 503");
+          },
+        };
+
+        // Before the fix this `await` REJECTS (the throw from popWallet.signMessage
+        // propagates uncaught through buildPopProof → run()'s cache branch).
+        const result = await run("payment and passage", () => {}, {
+          heldStore: store,
+          popWallet: throwingPopWallet,
+        });
+
+        assert.ok(
+          result.sources.some((s) => s.slug === PAID_SLUG),
+          "run() still cites the essay it successfully paid for, despite the held essay's PoP-sign throwing",
+        );
+        assert.ok(
+          !result.sources.some((s) => s.slug === HELD_SLUG),
+          "the essay whose PoP-sign threw is NOT cited — logged-and-skipped, not fatal",
+        );
+
+        const held = await store.load();
+        assert.ok(
+          held.get(PAID_SLUG),
+          "the earlier pay's license was persisted to the injected store despite the later PoP-sign throwing (FU-A1a coverage)",
+        );
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});
+
+// ── A4 — verifyAgainst must check the GATE's canonical iss/aud, not the token's
+// own claims. It used to decode the JWS and pass its OWN iss/aud back in as the
+// "expected" value, so `claims.iss !== expected` was always false by construction —
+// ANY validly-signed token verified regardless of who it was actually minted for.
+// The fix takes the expected {issuer, audience} as an explicit caller-supplied arg.
+
+function mintForIdentity(issuer: string, audience: string): { jws: string; jwks: JwkSet } {
+  const key = loadSigningKey();
+  const now = Date.now();
+  const jws = mintLicense(
+    {
+      event: {
+        id: "id-a4",
+        slug: "a4-essay",
+        kind: "citation",
+        amount: 0.001 as never,
+        payees: [{ authorId: "a", wallet: "0x1111111111111111111111111111111111111111" as never, share: 1 }],
+        payerAddress: "0x2222222222222222222222222222222222222222" as never,
+        settlementRef: "ref",
+        at: now,
+      },
+      issuer,
+      audience,
+      ttlSeconds: 600,
+      payeesMode: "full",
+      title: "A4 essay",
+      network: { chainId: 5042002, usdc: "0x36", gateway: "g" },
+    },
+    key,
+    now,
+  );
+  return { jws, jwks: jwksOf([key]) };
+}
+
+test("A4: verifyAgainst rejects a token minted for the WRONG audience, checked against the gate's canonical identity", () => {
+  const CANONICAL = "naulon:gate.test";
+  const { jws, jwks } = mintForIdentity(CANONICAL, "naulon:attacker.test");
+  // Before the fix, verifyAgainst decoded the JWS's own iss/aud and compared it
+  // to itself (always true). Now the caller supplies the expected identity, and
+  // a wrong-aud token must fail even though its own signature is perfectly valid.
+  assert.equal(
+    verifyAgainst(jws, jwks, { issuer: CANONICAL, audience: CANONICAL }),
+    false,
+    "a token whose aud does not match the gate's canonical identity must not verify",
+  );
+});
+
+test("A4: verifyAgainst accepts a token minted for the canonical gate identity", () => {
+  const CANONICAL = "naulon:gate.test";
+  const { jws, jwks } = mintForIdentity(CANONICAL, CANONICAL);
+  assert.equal(verifyAgainst(jws, jwks, { issuer: CANONICAL, audience: CANONICAL }), true);
+});
+
+// ── A4 follow-up — licenseIdentityFor must derive the SAME identity the gate
+// mints for a non-default port. The gate mints `naulon:${host}` from the
+// request `host` header / `new URL(url).host` — which INCLUDES the port
+// (tollgate/src/app.ts, publisher.ts:61). A buyer hitting a gate on a
+// non-default port (the wayfarer test harness's own `http://127.0.0.1:${port}`,
+// or any local/self-host deployment not behind a reverse proxy on 80/443) must
+// derive that same `naulon:host:port` identity — not the bare hostname with the
+// port silently stripped, which would make every valid license look forged.
+test("A4 follow-up: licenseIdentityFor includes the port, matching the gate's naulon:${host} mint convention", () => {
+  const urlWithPort = "http://127.0.0.1:4021/essays/some-essay";
+  const GATE_IDENTITY = "naulon:127.0.0.1:4021"; // what the gate actually mints for this host:port
+  const { jws, jwks } = mintForIdentity(GATE_IDENTITY, GATE_IDENTITY);
+
+  const derived = licenseIdentityFor(urlWithPort);
+  assert.equal(derived, GATE_IDENTITY, "derived identity must retain the port, not just the hostname");
+
+  assert.equal(
+    verifyAgainst(jws, jwks, { issuer: derived ?? "", audience: derived ?? "" }),
+    true,
+    "a license minted for naulon:host:port must verify when the buyer derives its expected identity from the same host:port URL",
+  );
 });

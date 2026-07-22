@@ -30,13 +30,15 @@ const OPERATOR = "0x3333333333333333333333333333333333333333";
 const NET = "arc-testnet";
 const ASSET = "0xUSDC";
 
-/** A PAYMENT-REQUIRED header exactly as tollgate `build402` emits it (mock mode). */
-function paymentRequiredHeader(opts: { withOperatorLeg: boolean }): string {
+/** A PAYMENT-REQUIRED header exactly as tollgate `build402` emits it (mock mode).
+ *  `amount` defaults to a stock "10000" (author leg) — override to pin an
+ *  attacker-controlled/malformed toll amount without inventing a second header helper. */
+function paymentRequiredHeader(opts: { withOperatorLeg: boolean; amount?: string }): string {
   const authorReq = {
     network: NET,
     asset: ASSET,
     payTo: AUTHOR,
-    amount: "10000",
+    amount: opts.amount ?? "10000",
     maxTimeoutSeconds: 691200,
     extra: { nonce: "author-nonce" },
   };
@@ -249,6 +251,29 @@ test("classifySignerRefusal maps a config refusal to a hard rejection (a top-up 
   }
 });
 
+test("classifySignerRefusal maps the reserve's spend-envelope stops to needs_topup (not retryable)", () => {
+  // sub_cap_exceeded (token cap) + daily_budget_exceeded (rolling 24h) are DETERMINISTIC reserve
+  // refusals: the grant may be healthy, but this authorization can't clear the envelope. Retrying
+  // re-signs the same amount into the same refusal — they must never fall through to
+  // classifyPaymentError's retryable `rejected`, which is what made the /ask agent retry-loop.
+  for (const msg of ["sub_cap_exceeded", "daily_budget_exceeded (remaining 0)"]) {
+    const c = classifySignerRefusal(msg);
+    assert.equal(c?.errorCode, "needs_topup", `"${msg}" → needs_topup`);
+    assert.equal(c?.retryable, false, "a full spend envelope can't be cleared by retrying the same amount");
+  }
+});
+
+test("classifySignerRefusal maps a policy/nonce refusal to a hard rejection (not retryable)", () => {
+  // below_floor (buyer's own spam floor) + nonce_reused (the nonce is committed to another payment)
+  // are deterministic: retrying the identical authorization only re-refuses. Before this they were
+  // unrecognized → classifyPaymentError → retryable `rejected`, telling the agent to retry a doomed pay.
+  for (const msg of ["below_floor", "nonce_reused"]) {
+    const c = classifySignerRefusal(msg);
+    assert.equal(c?.errorCode, "rejected", `"${msg}" → rejected`);
+    assert.equal(c?.retryable, false);
+  }
+});
+
 test("classifySignerRefusal returns null for a non-signer throw (caller maps origin_error)", () => {
   assert.equal(classifySignerRefusal("fetch failed: ECONNRESET"), null);
   assert.equal(classifySignerRefusal(""), null);
@@ -328,6 +353,52 @@ test("probe flags a 402 with an undecodable header as malformed (no throw)", asy
   await withFetch(stubStatus(402, { header: "@@@not-base64-json@@@" }), async () => {
     const o = await probe("https://x.test/essays/a", "read", "tester");
     assert.equal(o.status, "malformed");
+  });
+});
+
+// A2 — an attacker-controlled/untrusted gate (discovery is untrusted) can 402 with a
+// bogus toll `amount`. Before this fix, probe() decoded it unvalidated into
+// `priceUsdc: Number(req.amount) / 1e6`, and the FIRST caller to run that through
+// `usdc()` (shared/src/types.ts) threw on non-finite/negative — which, inside run()'s
+// price loop (agent.ts), aborted the whole loop and discarded every other candidate's
+// price (attacker-controlled batch DoS). The toll amount must be validated at the
+// source, in probe(), so every consumer inherits a safe value.
+test("probe flags a 402 with a negative toll amount as malformed (never reaches usdc() unvalidated)", async () => {
+  await withFetch(stub402(paymentRequiredHeader({ withOperatorLeg: false, amount: "-100" })), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "a negative toll amount is not a valid price — never silently gated");
+  });
+});
+
+test("probe flags a 402 with a non-numeric toll amount as malformed (never reaches usdc() unvalidated)", async () => {
+  await withFetch(stub402(paymentRequiredHeader({ withOperatorLeg: false, amount: "abc" })), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "a non-numeric toll amount is not a valid price — never silently gated");
+  });
+});
+
+// A2 follow-up — `^\d+$` alone accepts an arbitrarily long digit string. A 402 with
+// `amount: "9".repeat(310)` passes the regex, then `Number(amount)` overflows to
+// `Infinity`, which `probe()` used to hand back as a "gated" quote with
+// `priceUsdc: Infinity`. The FIRST caller to run that through `usdc()` (which throws on
+// non-finite) crashes — the exact same batch-DoS class A2 closed, via a shape the regex
+// didn't reject. The amount must be bounded so an overflowing value is malformed, not gated.
+test("probe flags a 402 with an overflowing (all-digit) toll amount as malformed, not gated to Infinity", async () => {
+  const overflow = "9".repeat(310);
+  assert.equal(Number(overflow), Infinity, "sanity: this digit string does overflow to Infinity");
+  await withFetch(stub402(paymentRequiredHeader({ withOperatorLeg: false, amount: overflow })), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "an overflow-to-Infinity amount must never reach usdc() as a gated quote");
+  });
+});
+
+test("probe flags a 402 with a toll amount just past the digit-length cap as malformed", async () => {
+  // 16 nines is comfortably past any real toll and past Number.MAX_SAFE_INTEGER's digit
+  // count — the boundary just beyond the cap, still finite but absurd.
+  const tooLong = "9".repeat(16);
+  await withFetch(stub402(paymentRequiredHeader({ withOperatorLeg: false, amount: tooLong })), async () => {
+    const o = await probe("https://x.test/essays/a", "read", "tester");
+    assert.equal(o.status, "malformed", "a digit string past the magnitude cap must not be treated as a real toll");
   });
 });
 

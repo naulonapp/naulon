@@ -8,18 +8,16 @@
  * builder activeNetwork() would have — byte-identical to memoBuyer/gatewayBuyer for a single-rail fleet.
  */
 import {
-  assemblePayment,
   classifyPaymentError,
   classifySignerRefusal,
   probe,
   type Buyer,
   type Fetched,
-  type LegRequirements,
   type PayGuard,
   type Quoted,
 } from "./buyer.ts";
 import { runPaidFetch } from "./paidFetch.ts";
-import { memoLegPayload, type MemoSigner } from "./memo.ts";
+import { assembleMemoPayment, type MemoSigner } from "./memo.ts";
 import { gatewayLegPayload, type BatchingRequirements, type GatewaySigner } from "./gateway.ts";
 import { networkByCaip2, supportsMemo } from "@naulon/shared";
 
@@ -67,10 +65,11 @@ export function railBuyer(signers: RailSigners): Buyer {
         }
         // Resolve the memo chain from the 402's advertised network so a non-fleet memo chain signs
         // against the right USDC domain (registry: memo = arcTestnet today, but keep it honest). An
-        // unknown CAIP-2 falls back to activeNetwork() inside memoLegPayload (undefined triggers the default).
+        // unknown CAIP-2 falls back to activeNetwork() inside assembleMemoPayment (undefined triggers the
+        // default). A multi-leg toll signed by a batch-capable injected signer reserves atomically here;
+        // a single leg or a batch-less signer takes the per-leg path — same framing either way.
         const net = networkByCaip2(quoted.requirements.network);
-        const memo = signers.memo;
-        return assemblePayment(quoted, (req: LegRequirements) => memoLegPayload(req, nowMs, memo, net));
+        return assembleMemoPayment(quoted, nowMs, signers.memo, net);
       };
       const onSignError = (error: string): Fetched => {
         // Parity with memoBuyer/gatewayBuyer: a hosted session signer throws a coded refusal
