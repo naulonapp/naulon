@@ -167,12 +167,23 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     case "grant_exceeded":
     case "leg_too_large":
     case "no_session":
+    // The reserve's spend-envelope stops (migrations 0109/0119): the token's cumulative sub-cap and the
+    // account's rolling 24h budget. The GRANT may be healthy, but this authorization can't clear the
+    // envelope — topping the grant / retrying the same amount changes nothing, so they are terminal.
+    case "sub_cap_exceeded":
+    case "daily_budget_exceeded":
       return { errorCode: "needs_topup", retryable: false };
     case "grant_expired":
       return { errorCode: "grant_expired", retryable: false };
     case "bad_from":
     case "chain_mismatch":
     case "payee_not_allowed":
+    // below_floor (the buyer's own spam floor) + nonce_reused (the nonce is committed to a DIFFERENT
+    // authorization) are equally deterministic — retrying the identical authorization only re-refuses.
+    // Left unrecognized they fell through to classifyPaymentError's retryable `rejected`, which is what
+    // made the /ask agent burn its one retry re-signing a doomed pay.
+    case "below_floor":
+    case "nonce_reused":
       return { errorCode: "rejected", retryable: false };
     default:
       return null;

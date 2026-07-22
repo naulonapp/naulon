@@ -251,6 +251,29 @@ test("classifySignerRefusal maps a config refusal to a hard rejection (a top-up 
   }
 });
 
+test("classifySignerRefusal maps the reserve's spend-envelope stops to needs_topup (not retryable)", () => {
+  // sub_cap_exceeded (token cap) + daily_budget_exceeded (rolling 24h) are DETERMINISTIC reserve
+  // refusals: the grant may be healthy, but this authorization can't clear the envelope. Retrying
+  // re-signs the same amount into the same refusal — they must never fall through to
+  // classifyPaymentError's retryable `rejected`, which is what made the /ask agent retry-loop.
+  for (const msg of ["sub_cap_exceeded", "daily_budget_exceeded (remaining 0)"]) {
+    const c = classifySignerRefusal(msg);
+    assert.equal(c?.errorCode, "needs_topup", `"${msg}" → needs_topup`);
+    assert.equal(c?.retryable, false, "a full spend envelope can't be cleared by retrying the same amount");
+  }
+});
+
+test("classifySignerRefusal maps a policy/nonce refusal to a hard rejection (not retryable)", () => {
+  // below_floor (buyer's own spam floor) + nonce_reused (the nonce is committed to another payment)
+  // are deterministic: retrying the identical authorization only re-refuses. Before this they were
+  // unrecognized → classifyPaymentError → retryable `rejected`, telling the agent to retry a doomed pay.
+  for (const msg of ["below_floor", "nonce_reused"]) {
+    const c = classifySignerRefusal(msg);
+    assert.equal(c?.errorCode, "rejected", `"${msg}" → rejected`);
+    assert.equal(c?.retryable, false);
+  }
+});
+
 test("classifySignerRefusal returns null for a non-signer throw (caller maps origin_error)", () => {
   assert.equal(classifySignerRefusal("fetch failed: ECONNRESET"), null);
   assert.equal(classifySignerRefusal(""), null);
