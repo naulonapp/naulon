@@ -10,6 +10,7 @@ import {
   AGENT_UA,
   assemblePayment,
   classifyPaymentError,
+  payeeRefusedOrNull,
   probe,
   probeFailure,
   probePrice,
@@ -38,6 +39,9 @@ export function mockBuyer(): Buyer {
       // Re-quote at pay time and abort if the toll moved past the authorized ceiling.
       const moved = tollMovedOrNull(quoted, guard);
       if (moved) return moved;
+      // Payee identity: refuse a payTo no owner authorized, before signing (parity with runPaidFetch).
+      const refused = await payeeRefusedOrNull(quoted, guard);
+      if (refused) return refused;
       // One offline signature per advertised leg (operator fee → 2-leg array); a stock
       // single-author quote stays the bare object assemblePayment emits for one leg.
       const paymentSignature = await assemblePayment(quoted, (req, nonce) => ({

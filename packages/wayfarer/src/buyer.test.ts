@@ -18,6 +18,7 @@ import {
   assemblePayment,
   classifyPaymentError,
   classifySignerRefusal,
+  payeeRefusedOrNull,
   probe,
   probePrice,
   quotedTotalAtomic,
@@ -138,6 +139,58 @@ test("assemblePayment signs every leg into the ARRAY the gate parses (leg order)
   assert.equal(parsed[1].amount, "500");
   assert.equal(parsed[1].payTo, OPERATOR);
   assert.equal(parsed[1].nonce, "operator-nonce");
+});
+
+// ── payee authorization — refuse a payTo no owner declared, before signing ─────
+const singleQuote = (payTo: string): Quoted => ({
+  priceUsdc: 0.01, amountAtomic: "10000", nonce: "author-nonce",
+  requirements: { network: NET, asset: ASSET, payTo, amount: "10000", maxTimeoutSeconds: 691200 },
+});
+const multiQuote = (authorPayTo: string, opPayTo: string): Quoted => ({
+  priceUsdc: 0.01, amountAtomic: "10000", nonce: "author-nonce",
+  requirements: { network: NET, asset: ASSET, payTo: authorPayTo, amount: "10000", maxTimeoutSeconds: 691200 },
+  legs: [
+    { role: "author", payTo: authorPayTo, amount: "10000", nonce: "author-nonce" },
+    { role: "operator", payTo: opPayTo, amount: "500", nonce: "operator-nonce" },
+  ],
+});
+
+test("payeeRefusedOrNull: no guard / no authorizePayee ⇒ null (opt-in, unchanged)", async () => {
+  assert.equal(await payeeRefusedOrNull(singleQuote(AUTHOR), undefined), null);
+  assert.equal(await payeeRefusedOrNull(singleQuote(AUTHOR), { maxTotalAtomic: "10000" }), null);
+});
+
+test("payeeRefusedOrNull: single-leg authorized ⇒ null (clear to pay)", async () => {
+  const r = await payeeRefusedOrNull(singleQuote(AUTHOR), { maxTotalAtomic: "10000", authorizePayee: (p) => p === AUTHOR });
+  assert.equal(r, null);
+});
+
+test("payeeRefusedOrNull: single-leg UNauthorized ⇒ typed payee_refused (nothing signed)", async () => {
+  const r = await payeeRefusedOrNull(singleQuote(OPERATOR), { maxTotalAtomic: "10000", authorizePayee: (p) => p === AUTHOR });
+  assert.ok(r && !r.ok && r.errorCode === "payee_refused", `expected payee_refused, got ${JSON.stringify(r)}`);
+  assert.equal(r.retryable, false);
+});
+
+test("payeeRefusedOrNull: multi-leg refuses if ANY leg's payTo is unauthorized", async () => {
+  // author owned, operator NOT → whole quote refused
+  const r = await payeeRefusedOrNull(multiQuote(AUTHOR, "0x9999999999999999999999999999999999999999"), {
+    maxTotalAtomic: "10500", authorizePayee: (p) => p === AUTHOR,
+  });
+  assert.ok(r && !r.ok && r.errorCode === "payee_refused");
+});
+
+test("payeeRefusedOrNull: multi-leg all authorized ⇒ null", async () => {
+  const r = await payeeRefusedOrNull(multiQuote(AUTHOR, OPERATOR), {
+    maxTotalAtomic: "10500", authorizePayee: (p) => p === AUTHOR || p === OPERATOR,
+  });
+  assert.equal(r, null);
+});
+
+test("payeeRefusedOrNull: awaits an async authorizePayee", async () => {
+  const r = await payeeRefusedOrNull(singleQuote(OPERATOR), {
+    maxTotalAtomic: "10000", authorizePayee: async (p) => p === AUTHOR,
+  });
+  assert.ok(r && !r.ok && r.errorCode === "payee_refused");
 });
 
 // ── BUY-1.4 — pay-path failure-mode primitives ────────────────────────────────

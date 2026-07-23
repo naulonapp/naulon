@@ -53,8 +53,10 @@ export type FetchErrorCode =
   // A hosted session-signer refusal (never reached the gate — nothing was paid):
   | "needs_topup" // the grant is exhausted / unset — funding the session is the remedy
   | "grant_expired" // the grant WINDOW lapsed though funds remain — renewing is the remedy
-  | "settlement_ambiguous"; // a failure AFTER the payment-signature was transmitted — money may
+  | "settlement_ambiguous" // a failure AFTER the payment-signature was transmitted — money may
   //                           have moved; a blind retry could double-charge, so NOT retryable
+  | "payee_refused"; // a 402 named a payTo the caller's PayGuard.authorizePayee did not authorize —
+  //                    refused BEFORE signing (nothing paid). Never retryable: the same 402 re-refuses.
 
 export interface Fetched {
   ok: boolean;
@@ -87,6 +89,15 @@ export interface Fetched {
 export interface PayGuard {
   /** Max atomic (micro-USDC) total across all legs the buyer may pay. */
   maxTotalAtomic: string;
+  /**
+   * Optional per-leg payee authorization, checked BEFORE any leg is signed. Given a leg's `payTo`,
+   * return false (or a rejecting promise) to refuse the whole pay — nothing is signed, the fetch
+   * resolves `payee_refused`. `undefined` ⇒ no payee check (unchanged). The caller supplies the
+   * policy: the cloud host binds it to "is this an owner-authorized payee for this origin?", so a
+   * compromised/buggy gate cannot redirect a toll to a wallet no owner declared. Endpoint identity
+   * (host==gate) is a separate concern owned by `authorizeOrigin`; this owns payee identity.
+   */
+  authorizePayee?: (payTo: string) => boolean | Promise<boolean>;
 }
 
 export interface Buyer {
@@ -136,6 +147,34 @@ export function tollMovedOrNull(quoted: Quoted, guard?: PayGuard): Fetched | nul
       `Toll moved at pay time: the live total is ${live} atomic but only ${ceiling} was authorized ` +
       `(the quoted total plus tolerance). Re-quote and decide again — nothing was paid.`,
   };
+}
+
+/**
+ * The payee guard, sibling of {@link tollMovedOrNull}: if `guard.authorizePayee` is set, EVERY leg's
+ * `payTo` must pass it BEFORE any leg is signed. The FIRST unauthorized payee refuses the whole pay
+ * (nothing is signed) with a typed `payee_refused` Fetched; otherwise null (clear to pay). The leg set
+ * mirrors {@link assemblePayment} exactly — the `legs` array for a real multi-leg (>1) quote, else the
+ * single `requirements.payTo` — so what is CHECKED is exactly what would be SIGNED. Async: the caller's
+ * authorizer may resolve an owner-declared set over the network. No `authorizePayee` ⇒ null (opt-in).
+ */
+export async function payeeRefusedOrNull(quoted: Quoted, guard?: PayGuard): Promise<Fetched | null> {
+  const authorize = guard?.authorizePayee;
+  if (!authorize) return null;
+  const payTos =
+    quoted.legs && quoted.legs.length > 1 ? quoted.legs.map((l) => l.payTo) : [quoted.requirements.payTo];
+  for (const payTo of payTos) {
+    if (!(await authorize(payTo))) {
+      return {
+        ok: false,
+        errorCode: "payee_refused",
+        retryable: false,
+        error:
+          `Refusing to pay ${payTo}: it is not an owner-authorized payee for this origin. Nothing was ` +
+          `signed. This is a spend-safety stop, not a transient error — the same 402 will refuse again.`,
+      };
+    }
+  }
+  return null;
 }
 
 /**

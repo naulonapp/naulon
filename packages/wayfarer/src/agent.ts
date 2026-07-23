@@ -103,6 +103,14 @@ export interface RunOptions {
    * principle as `budgetUsdc`. Omitted ⇒ `DEFAULT_POLICY` (the original behavior).
    */
   policy?: DecisionPolicy;
+  /**
+   * Per-payment payee authorization (server/config-supplied). Given a candidate's fetched `url` and
+   * the 402's advertised `payTo`, return false to REFUSE that pay before any leg is signed (nothing
+   * moves; the loop skips the candidate). `run()` binds the per-candidate url into the `PayGuard` for
+   * each pay. Omitted ⇒ no payee check (unchanged). Same intent as the MCP pay tool: a compromised
+   * gate cannot redirect a toll to a wallet no owner declared.
+   */
+  authorizePayee?: (input: { url: string; payTo: string }) => boolean | Promise<boolean>;
   /** Window state for per-domain rate caps across runs (prior pays per host). */
   decideContext?: DecideContext;
   /**
@@ -359,7 +367,12 @@ export async function run(
     const bps = BigInt(cfg.WAYFARER_TOLL_TOLERANCE_BPS);
     const tollCeiling = quotedAtomic === undefined ? undefined : quotedAtomic + (quotedAtomic * bps) / 10_000n;
     const ceiling = tollCeiling === undefined ? remainingAtomic : (tollCeiling < remainingAtomic ? tollCeiling : remainingAtomic);
-    const result = await buyer.fetch(url, "citation", { maxTotalAtomic: ceiling.toString() });
+    const result = await buyer.fetch(url, "citation", {
+      maxTotalAtomic: ceiling.toString(),
+      // Bind THIS candidate's url so the host can resolve its owner-declared payees; a leg paying an
+      // unauthorized payee refuses (payee_refused) before signing, and the loop skips the candidate.
+      ...(opts.authorizePayee ? { authorizePayee: (payTo) => opts.authorizePayee!({ url, payTo }) } : {}),
+    });
     if (!result.ok) {
       log(`  ✗ payment failed for ${d.slug}: ${result.error}`);
       continue;

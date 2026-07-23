@@ -107,6 +107,40 @@ function stubFetch(header402: string): () => void {
   };
 }
 
+test("PayGuard.authorizePayee: a refused payTo returns payee_refused, and NOTHING is signed", async () => {
+  const memo = recorder();
+  const gw = recorder();
+  const restore = stubFetch(memo402()); // pays AUTHOR
+  try {
+    const result = await railBuyer({ memo: memo.signer, gateway: gw.signer }).fetch("https://x.test/a", "read", {
+      maxTotalAtomic: "1000000",
+      authorizePayee: (payTo) => payTo !== AUTHOR, // refuse exactly the advertised payee
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "payee_refused", `expected payee_refused, got ${JSON.stringify(result)}`);
+    assert.equal(memo.calls.length, 0, "an unauthorized payee must be refused BEFORE signing");
+    assert.equal(gw.calls.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("PayGuard.authorizePayee: an authorized payTo pays as normal", async () => {
+  const memo = recorder();
+  const gw = recorder();
+  const restore = stubFetch(memo402());
+  try {
+    const result = await railBuyer({ memo: memo.signer, gateway: gw.signer }).fetch("https://x.test/a", "read", {
+      maxTotalAtomic: "1000000",
+      authorizePayee: (payTo) => payTo === AUTHOR,
+    });
+    assert.equal(result.ok, true, `expected a paid read, got ${JSON.stringify(result)}`);
+    assert.ok(memo.calls.length >= 1, "an authorized payee signs normally");
+  } finally {
+    restore();
+  }
+});
+
 test("railBuyer selects the GATEWAY builder when the 402 advertises GatewayWalletBatched", async () => {
   const memo = recorder();
   const gw = recorder();

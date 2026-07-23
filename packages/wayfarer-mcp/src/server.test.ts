@@ -561,6 +561,31 @@ test("naulon_pay_and_read refuses a toll over the remaining budget and spends no
   });
 });
 
+test("naulon_pay_and_read: an unauthorized payee (BuildServerOptions.authorizePayee) refuses, spending nothing", async () => {
+  await withStubGate(payGate("5000"), async () => {
+    const client = await connectedClientWith({ authorizePayee: () => false });
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+    const p = res.structuredContent as PayResult;
+    assert.equal(p.ok, false, "an unauthorized payee is refused");
+    assert.equal(p.spentSessionUsdc, 0, "nothing was spent — the refusal is BEFORE signing");
+    assert.match(p.error ?? "", /payee|owner-authorized/i, "the error names the payee refusal");
+  });
+});
+
+test("naulon_pay_and_read: authorizePayee sees the fetched url + advertised payTo; when it authorizes, the pay proceeds", async () => {
+  await withStubGate(payGate("5000"), async () => {
+    const seen: Array<{ url: string; payTo: string }> = [];
+    const client = await connectedClientWith({
+      authorizePayee: (input) => { seen.push(input); return true; },
+    });
+    const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+    const p = res.structuredContent as PayResult;
+    assert.equal(p.ok, true, `expected a paid read, got ${JSON.stringify(p)}`);
+    assert.ok(seen.some((s) => s.payTo.toLowerCase() === "0x000000000000000000000000000000000000dead"), "authorizePayee saw the advertised payTo");
+    assert.ok(seen.every((s) => typeof s.url === "string" && s.url.length > 0), "authorizePayee saw the fetched url");
+  });
+});
+
 test("naulon_pay_and_read debits the session envelope; a later pay beyond remaining is refused", async () => {
   await withStubGate(payGate("5000"), async () => {
     // Ceiling 0.012 affords two 0.005 tolls (→0.002 left), not a third.
@@ -773,6 +798,31 @@ test("BUY-3: a WAYFARER_KILL_SWITCH env halts naulon_research spend (server-conf
           assert.ok(r.decisions.length > 0, "essays were still discovered + decided");
           assert.ok(r.decisions.every((d) => d.action !== "pay"), "no decision is a pay under the kill-switch");
           assert.ok(r.decisions.some((d) => /kill-switch/i.test(d.reason)), "the halt reason is auditable in the log");
+        },
+      );
+    });
+  });
+});
+
+test("naulon_research: authorizePayee refusing every payee ⇒ the run pays nothing (rail-level refusal)", async () => {
+  // A gate that WOULD charge (payGate) + a catalog to discover. The agent still DECIDES to pay, but
+  // every candidate's payTo is refused at the rail before signing, so $0 moves and nothing is cited.
+  await withStubGate(payGate("1000"), async () => {
+    await withCatalog(async () => {
+      await withEnv(
+        {
+          WAYFARER_BUDGET_USDC: "0.1",
+          WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-payee-${process.pid}.json`),
+          OPENAI_API_KEY: undefined,
+        },
+        async () => {
+          const client = await connectedClientWith({ authorizePayee: () => false });
+          const res = await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } });
+          const r = res.structuredContent as { spent: number; spentSessionUsdc: number; sources: unknown[]; log: string[] };
+          assert.equal(r.spent, 0, "every payee refused ⇒ the run pays nothing");
+          assert.equal(r.spentSessionUsdc, 0, "the session envelope is untouched");
+          assert.equal(r.sources.length, 0, "nothing paid ⇒ nothing cited");
+          assert.ok(r.log.some((l) => /payee|owner-authorized/i.test(l)), "the payee refusal is auditable in the log");
         },
       );
     });
