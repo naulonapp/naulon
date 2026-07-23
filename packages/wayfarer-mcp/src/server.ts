@@ -1006,7 +1006,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       description:
         "Re-read a source you previously paid for, FREE, using the held Citation License — no second " +
         "payment. If the license is holder-of-key bound, a fresh wallet proof-of-possession is signed " +
-        "automatically. Returns ok:false (telling you to pay) if no live license is held for the slug.",
+        "automatically. Returns ok:false (telling you to pay) if no live license is held for the slug. " +
+        "A citation must always carry a LIVE license (jti): when the held one has expired this returns " +
+        "ok:false — re-read here to re-verify, or pay again. Any locally-cached copy of earlier content " +
+        "is your own continuity only; it carries no live license and must never be cited as a paid read.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug you previously paid for with naulon_pay_and_read."),
       },
