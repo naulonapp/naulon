@@ -286,6 +286,16 @@ export interface BuildServerOptions {
    * steered — only these 4. Absent/empty (every stdio/self-host caller, unchanged): a no-op.
    */
   hostedInertSteer?: string;
+  /**
+   * Per-payment payee authorization for the spend tools (`naulon_pay_and_read`, `naulon_research`).
+   * Given the fetched `url` and the 402's advertised `payTo`, return false to REFUSE the pay before
+   * any leg is signed (the buyer resolves `payee_refused`, nothing moves). The cloud host binds this to
+   * "is this an owner-authorized payee for this origin?" — resolving the tenant from the url and the
+   * owner-declared payee set from its own resolver — so a compromised/buggy gate cannot redirect a toll
+   * to a wallet no owner declared. Endpoint identity (host==gate) is a separate concern (`authorizeOrigin`);
+   * this owns payee identity. Absent (every stdio/self-host caller) ⇒ no payee check, unchanged.
+   */
+  authorizePayee?: (input: { url: string; payTo: string }) => boolean | Promise<boolean>;
 }
 
 /**
@@ -782,9 +792,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             "needs_topup",
             "grant_expired",
             "settlement_ambiguous",
+            "payee_refused",
           ])
           .optional()
-          .describe("Typed failure reason when ok:false — lets you decide whether to retry. not_found = the probed URL 404'd (pass the canonical url; it is not a free read). needs_topup = the funding session is exhausted/unset — fund it at topUpUrl. grant_expired = the funding window lapsed (funds intact) — renew at topUpUrl. settlement_ambiguous = the payment-signature was sent and may have settled, but reading the response failed — do NOT blind-retry (a fresh pay could double-charge); verify via settlementRef or a held license first."),
+          .describe("Typed failure reason when ok:false — lets you decide whether to retry. not_found = the probed URL 404'd (pass the canonical url; it is not a free read). needs_topup = the funding session is exhausted/unset — fund it at topUpUrl. grant_expired = the funding window lapsed (funds intact) — renew at topUpUrl. settlement_ambiguous = the payment-signature was sent and may have settled, but reading the response failed — do NOT blind-retry (a fresh pay could double-charge); verify via settlementRef or a held license first. payee_refused = the 402 named a payTo this server does not authorize for the origin — a spend-safety stop, nothing was paid; do NOT retry (the same 402 re-refuses)."),
         retryable: z
           .boolean()
           .optional()
@@ -893,7 +904,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       await buyer.init();
       // Re-quote at pay time and abort if the toll moved past the quote we gated the
       // budget on (BUY-1.4 toll-moved guard). The buyer pays NOTHING if it has moved.
-      const result = await buyer.fetch(target, KIND, { maxTotalAtomic: guardCeilingAtomic(quoted) });
+      const result = await buyer.fetch(target, KIND, {
+        maxTotalAtomic: guardCeilingAtomic(quoted),
+        // Bind the fetched url so the cloud host can resolve the tenant + its owner-declared payees; the
+        // guard passes each leg's payTo through and refuses (payee_refused) any the host does not authorize.
+        ...(opts.authorizePayee ? { authorizePayee: (payTo: string) => opts.authorizePayee!({ url: target, payTo }) } : {}),
+      });
       if (!result.ok) {
         // A failed pay is an accountable non-spend: the agent decided to pay, the rail refused.
         // Audit it as a skip carrying the typed failure so the org can see the attempt + cause.
@@ -1119,6 +1135,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       const result = await run(topic, (line) => log.push(line), {
         budgetUsdc: effective,
         policy: policyFromConfig(),
+        // Same per-payment payee authority as naulon_pay_and_read: run() binds each candidate's url and
+        // refuses (skips) a leg paying a payTo the host does not authorize. Absent ⇒ no payee check.
+        ...(opts.authorizePayee ? { authorizePayee: opts.authorizePayee } : {}),
         // B3: seed decide()'s per-host tally from the SAME session `paidByHost` the granular
         // naulon_pay_and_read path maintains (declared once above), so a perDomainCap already hit
         // via pay_and_read carries into this run instead of decide() starting every call at 0.

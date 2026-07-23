@@ -10,6 +10,7 @@ import {
   classifySignerRefusal,
   probe,
   probeFailure,
+  payeeRefusedOrNull,
   quotedTotalAtomic,
   tollMovedOrNull,
   type Fetched,
@@ -38,6 +39,10 @@ export async function runPaidFetch(
   // Re-quote at pay time and abort if the toll moved past the authorized ceiling.
   const moved = tollMovedOrNull(quoted, guard);
   if (moved) return moved;
+  // Payee identity: refuse a payTo no owner authorized for this origin, BEFORE signing (nothing paid).
+  // Checked on the SAME leg set assemblePayment signs, so check == sign. Opt-in (no authorizePayee ⇒ null).
+  const refused = await payeeRefusedOrNull(quoted, guard);
+  if (refused) return refused;
   // Signing and the paid fetch are wrapped SEPARATELY, because their non-spend failures classify
   // differently: a build/sign throw is rail-specific (a hosted session signer THROWS a coded grant
   // refusal → needs_topup; a config/payload fault → the rail's fallback, memo→origin_error,
