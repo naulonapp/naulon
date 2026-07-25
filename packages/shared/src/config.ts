@@ -184,6 +184,16 @@ export const configSchema = z.object({
   // (e.g. serverless, where a cron drives the drain instead of a live loop).
   SETTLEMENT_DRAIN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(60_000),
 
+  // Self-host webhook endpoints: JSON array of { url, secret, events?, hostFilter? }. Unset ⇒ the
+  // webhook emit is dark (no store, no sweep, no POST), like the origin-mirror with no secret. Parsed
+  // + validated by parseWebhookEndpointsEnv (kept a raw string here so a bad value fails loud there
+  // with a field-specific message rather than a wall of zod).
+  NAULON_WEBHOOK_ENDPOINTS: z.string().optional(),
+
+  // How often the webhook sweep sends due deliveries (ms). 0 = disabled (serverless drives it via a
+  // cron hitting the sweep instead). Mirrors SETTLEMENT_DRAIN_INTERVAL_MS.
+  WEBHOOK_SWEEP_INTERVAL_MS: z.coerce.number().int().nonnegative().default(30_000),
+
   // ── Settlement DELIVERY STATE (the cross-sweep retry plane) ──
   // Where per-event delivery state (acked / attempts / next attempt / dead-letter)
   // lives. "file" = process-local JSONL beside the outbox (the self-host, no-creds
