@@ -75,6 +75,7 @@ export function makeDispatchEvent(deps: DispatchDeps): (e: WebhookEvent) => Prom
         endpointId: ep.id,
         eventType: e.type,
         eventId: e.eventId,
+        host: e.host, // stamp the tenant host for operator dead-letter scoping (isolation key)
         payload,
         nextAttemptAt: now(), // due immediately; the sweep does attempt #1 on its next tick
       });

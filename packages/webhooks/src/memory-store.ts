@@ -144,6 +144,7 @@ export class MemoryWebhookDeliveryStore implements WebhookDeliveryStore {
       endpointId: d.endpointId,
       eventType: d.eventType,
       eventId: d.eventId,
+      host: d.host,
       payload: d.payload,
       status: "pending",
       attemptCount: 0,
@@ -211,5 +212,24 @@ export class MemoryWebhookDeliveryStore implements WebhookDeliveryStore {
     if (!row) return;
     this.claimedAt.delete(id); // release the lease — retry timing is nextAttemptAt's job, not the lease's
     Object.assign(row, patch);
+  }
+
+  async deadLettered({ hosts, limit }: { hosts?: string[] | undefined; limit: number }): Promise<WebhookDelivery[]> {
+    const hostSet = hosts === undefined ? null : new Set(hosts);
+    return this.rows
+      .filter((r) => r.status === "exhausted")
+      .filter((r) => hostSet === null || (r.host !== null && hostSet.has(r.host)))
+      .sort((a, b) => (b.lastAttemptAt ?? b.createdAt) - (a.lastAttemptAt ?? a.createdAt))
+      .slice(0, limit)
+      .map(cloneDelivery);
+  }
+
+  async revive(id: string, now: number): Promise<boolean> {
+    const row = this.rows.find((x) => x.id === id);
+    if (!row || row.status !== "exhausted") return false;
+    row.status = "pending";
+    row.nextAttemptAt = now;
+    this.claimedAt.delete(id);
+    return true;
   }
 }

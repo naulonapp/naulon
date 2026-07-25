@@ -76,6 +76,7 @@ test("enqueue is idempotent on (endpointId,eventId) — second call returns the 
     endpointId: a.id,
     eventType: "anomaly.detected",
     eventId: "e1",
+    host: null,
     payload: {},
     nextAttemptAt: 1000,
   });
@@ -83,11 +84,46 @@ test("enqueue is idempotent on (endpointId,eventId) — second call returns the 
     endpointId: a.id,
     eventType: "anomaly.detected",
     eventId: "e1",
+    host: null,
     payload: {},
     nextAttemptAt: 2000,
   });
   assert.equal(d1.id, d2.id);
   assert.equal((await del.listForEndpoint(a.id, null, 10)).length, 1);
+});
+
+test("enqueue stamps host; deadLettered returns exhausted, host-scoped, fail-closed", async () => {
+  const del = new MemoryWebhookDeliveryStore();
+  const mk = (eventId: string, host: string | null) =>
+    del.enqueue({ endpointId: "x", eventType: "settlement.completed", eventId, host, payload: {}, nextAttemptAt: 1 });
+  const a = await mk("a", "acme.test");
+  const b = await mk("b", "beta.test");
+  await mk("c", "acme.test"); // stays pending
+  await del.recordAttempt(a.id, { status: "exhausted", attemptCount: 8, lastAttemptAt: 100, lastError: "budget spent" });
+  await del.recordAttempt(b.id, { status: "exhausted", attemptCount: 8, lastAttemptAt: 200 });
+
+  // undefined hosts → every host's exhausted rows
+  assert.deepEqual((await del.deadLettered({ limit: 10 })).map((r) => r.eventId).sort(), ["a", "b"]);
+  // scoped to one host
+  assert.deepEqual((await del.deadLettered({ hosts: ["acme.test"], limit: 10 })).map((r) => r.eventId), ["a"]);
+  // FAIL-CLOSED: empty hosts → nothing (never "all tenants")
+  assert.deepEqual(await del.deadLettered({ hosts: [], limit: 10 }), []);
+  // pending (c) is never dead-lettered
+  assert.ok(!(await del.deadLettered({ limit: 10 })).some((r) => r.eventId === "c"));
+  // host is stamped on the row
+  assert.equal((await del.get(a.id))!.host, "acme.test");
+});
+
+test("revive flips an exhausted delivery back to pending+due; no-op otherwise", async () => {
+  const del = new MemoryWebhookDeliveryStore();
+  const d = await del.enqueue({ endpointId: "x", eventType: "settlement.completed", eventId: "e", host: "acme.test", payload: {}, nextAttemptAt: 1 });
+  await del.recordAttempt(d.id, { status: "exhausted", attemptCount: 8 });
+  assert.equal(await del.revive(d.id, 5000), true);
+  const revived = (await del.get(d.id))!;
+  assert.equal(revived.status, "pending");
+  assert.equal(revived.nextAttemptAt, 5000);
+  assert.equal(await del.revive(d.id, 6000), false); // no longer exhausted
+  assert.equal(await del.revive("nope", 6000), false); // unknown id
 });
 
 test("listForOwner never leaks another owner; listDue returns only pending + due", async () => {
@@ -97,8 +133,8 @@ test("listForOwner never leaks another owner; listDue returns only pending + due
   assert.equal((await eps.listForOwner("o1")).length, 1);
 
   const del = new MemoryWebhookDeliveryStore();
-  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "due", payload: {}, nextAttemptAt: 500 });
-  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "future", payload: {}, nextAttemptAt: 5000 });
+  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "due", host: null, payload: {}, nextAttemptAt: 500 });
+  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "future", host: null, payload: {}, nextAttemptAt: 5000 });
   const due = await del.listDue(1000, 10);
   assert.equal(due.length, 1);
   assert.equal(due[0]!.eventId, "due");
@@ -106,7 +142,7 @@ test("listForOwner never leaks another owner; listDue returns only pending + due
 
 test("recordAttempt patches in place; delivered terminal clears next_attempt_at", async () => {
   const del = new MemoryWebhookDeliveryStore();
-  const d = await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e", payload: {}, nextAttemptAt: 100 });
+  const d = await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e", host: null, payload: {}, nextAttemptAt: 100 });
   await del.recordAttempt(d.id, { status: "delivered", attemptCount: 1, nextAttemptAt: null, lastStatusCode: 200 });
   const got = await del.get(d.id);
   assert.equal(got!.status, "delivered");
@@ -119,8 +155,8 @@ const LEASE = 60_000;
 
 test("claimDue leases a row — a second concurrent claim at the same instant gets nothing (no double-deliver)", async () => {
   const del = new MemoryWebhookDeliveryStore();
-  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e1", payload: {}, nextAttemptAt: 500 });
-  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e2", payload: {}, nextAttemptAt: 600 });
+  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e1", host: null, payload: {}, nextAttemptAt: 500 });
+  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e2", host: null, payload: {}, nextAttemptAt: 600 });
 
   const first = await del.claimDue(1000, 10, LEASE);
   assert.equal(first.length, 2, "first sweep claims both due rows");
@@ -130,7 +166,7 @@ test("claimDue leases a row — a second concurrent claim at the same instant ge
 
 test("claimDue: a retry is governed by next_attempt_at, NOT blocked by the lease (recordAttempt clears the claim)", async () => {
   const del = new MemoryWebhookDeliveryStore();
-  const d = await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e", payload: {}, nextAttemptAt: 500 });
+  const d = await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e", host: null, payload: {}, nextAttemptAt: 500 });
   const claimed = await del.claimDue(1000, 10, LEASE);
   assert.equal(claimed.length, 1);
   // Attempt failed → backoff bumps next_attempt_at 5s out, status stays pending.
@@ -142,7 +178,7 @@ test("claimDue: a retry is governed by next_attempt_at, NOT blocked by the lease
 
 test("claimDue: a crashed worker's row (no recordAttempt) is re-claimable only after the lease expires", async () => {
   const del = new MemoryWebhookDeliveryStore();
-  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e", payload: {}, nextAttemptAt: 500 });
+  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "e", host: null, payload: {}, nextAttemptAt: 500 });
   const claimed = await del.claimDue(1000, 10, LEASE);
   assert.equal(claimed.length, 1);
   // No recordAttempt (the worker died). Within the lease: still claimed → not re-claimable.
@@ -153,9 +189,9 @@ test("claimDue: a crashed worker's row (no recordAttempt) is re-claimable only a
 
 test("claimDue honors limit + only pending + only due", async () => {
   const del = new MemoryWebhookDeliveryStore();
-  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "due1", payload: {}, nextAttemptAt: 100 });
-  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "due2", payload: {}, nextAttemptAt: 200 });
-  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "future", payload: {}, nextAttemptAt: 9000 });
+  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "due1", host: null, payload: {}, nextAttemptAt: 100 });
+  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "due2", host: null, payload: {}, nextAttemptAt: 200 });
+  await del.enqueue({ endpointId: "x", eventType: "anomaly.detected", eventId: "future", host: null, payload: {}, nextAttemptAt: 9000 });
   const one = await del.claimDue(1000, 1, LEASE);
   assert.equal(one.length, 1);
   assert.equal(one[0]!.eventId, "due1", "earliest due first");

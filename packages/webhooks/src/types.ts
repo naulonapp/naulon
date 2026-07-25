@@ -66,6 +66,10 @@ export interface WebhookDelivery {
   endpointId: string;
   eventType: WebhookEventType | "ping";
   eventId: string;
+  /** The emitting tenant's host (from the source `WebhookEvent`), stamped at enqueue. The explicit
+   *  isolation key for operator dead-letter reads — scope by host, never inferred via a join. `null`
+   *  for host-less events (e.g. a self-host ping). */
+  host: string | null;
   payload: unknown; // the CANONICAL event body; channel transform happens at send time
   status: WebhookDeliveryStatus;
   attemptCount: number;
@@ -149,4 +153,13 @@ export interface WebhookDeliveryStore {
       >
     >,
   ): Promise<void>;
+  /** Dead-lettered deliveries — the operator surface. A delivery is dead-lettered when it `exhausted`
+   *  its retry budget (parked, still owed, revivable). Scoped by `hosts` when given: an EMPTY array
+   *  returns NOTHING (fail-closed isolation — never "all tenants" by accident); `undefined` returns
+   *  every host (the self-host/global view). Newest dead-letter first. */
+  deadLettered(input: { hosts?: string[] | undefined; limit: number }): Promise<WebhookDelivery[]>;
+  /** Revive an `exhausted` delivery: set it `pending` and due now, so the next sweep re-sends it.
+   *  Returns false when there is no exhausted row to revive (already delivered/revived/unknown id) —
+   *  so the caller can report an honest no-op. */
+  revive(id: string, now: number): Promise<boolean>;
 }
