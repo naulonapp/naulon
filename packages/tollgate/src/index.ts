@@ -8,6 +8,7 @@ import { serve } from "@hono/node-server";
 import { getConfig } from "@naulon/shared";
 import { app } from "./app.ts";
 import { startSettlementDrain } from "./settlementSink.ts";
+import { startWebhookSweep } from "./webhookSink.ts";
 
 const cfg = getConfig();
 serve({ fetch: app.fetch, port: cfg.TOLLGATE_PORT });
@@ -17,3 +18,7 @@ console.log(`🜉 tollgate listening on :${cfg.TOLLGATE_PORT} → proxying ${cfg
 // ledger: a boot sweep recovers anything stranded by a restart, then a periodic
 // sweep catches transient IA outages. No-op when the emit is dark.
 startSettlementDrain();
+
+// Self-host webhook sweep: boot recovery + periodic send of due deliveries. No-op when
+// NAULON_WEBHOOK_ENDPOINTS is unset (dark).
+startWebhookSweep();

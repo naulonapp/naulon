@@ -54,11 +54,16 @@ export class EnvConfigStore implements WebhookEndpointStore {
     return Promise.reject(new Error(IMMUTABLE));
   }
 
-  update(): Promise<WebhookEndpoint | null> {
+  update(
+    _id: string,
+    _patch: Partial<
+      Pick<WebhookEndpoint, "url" | "eventTypes" | "description" | "enabled" | "secret" | "payloadProfile">
+    >,
+  ): Promise<WebhookEndpoint | null> {
     return Promise.reject(new Error(IMMUTABLE));
   }
 
-  delete(): Promise<void> {
+  delete(_id: string): Promise<void> {
     return Promise.reject(new Error(IMMUTABLE));
   }
 

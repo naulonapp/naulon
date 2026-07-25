@@ -17,7 +17,7 @@ function fakeEvent(): AttributedEvent {
     slug: "essays/x",
     kind: "read",
     amount: usdc(0.001),
-    payees: [{ wallet: walletAddress("0x" + "1".repeat(40)), shareBps: 10_000 }],
+    payees: [{ authorId: "a1", wallet: walletAddress("0x" + "1".repeat(40)), share: 1 }],
     payerAddress: walletAddress("0x" + "2".repeat(40)),
     settlementRef: "0xdeadbeef",
     chainId: 1,

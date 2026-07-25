@@ -27,6 +27,7 @@ import {
 import { licensing, type Quote, type SettlementLegReq } from "@naulon/enforce";
 import { record } from "./eventLog.ts";
 import { emitSettlement } from "./settlementSink.ts";
+import { emitSettlementWebhook } from "./webhookSink.ts";
 import { verifyAndSettle } from "./x402.ts";
 
 const cfg = getConfig();
@@ -129,6 +130,19 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
   // publisher's settlement secret; idempotent on event.id; never throws.
   void emitSettlement(event, publisher.settlementSecret, publisher.originUrl).catch((err: unknown) => {
     console.error("[tollgate] settlement emit threw (payment already settled):", err);
+  });
+
+  // Wire #4, self-host webhooks — runs alongside the origin-mirror above (P3 removes the mirror).
+  // Host is derived from the publisher origin so a hostFilter can match; dark-safe + never throws.
+  const webhookHost = (() => {
+    try {
+      return new URL(publisher.originUrl).host;
+    } catch {
+      return null;
+    }
+  })();
+  void emitSettlementWebhook(event, webhookHost).catch((err: unknown) => {
+    console.error("[tollgate] webhook emit threw (payment already settled):", err);
   });
 
   return {
