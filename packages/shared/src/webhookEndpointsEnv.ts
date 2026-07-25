@@ -41,6 +41,11 @@ export function parseWebhookEndpointsEnv(raw: string | undefined): WebhookEndpoi
     if (typeof e["url"] !== "string" || e["url"] === "") {
       throw new Error(`NAULON_WEBHOOK_ENDPOINTS[${i}] is missing a "url"`);
     }
+    if (!e["url"].startsWith("https://")) {
+      // The signed webhook carries a secret; the sender rejects non-https at send time — fail loud
+      // here so a self-hoster fixes it at boot, not after a silent stream of blocked deliveries.
+      throw new Error(`NAULON_WEBHOOK_ENDPOINTS[${i}].url must be https (got ${e["url"]})`);
+    }
     if (typeof e["secret"] !== "string" || e["secret"] === "") {
       throw new Error(`NAULON_WEBHOOK_ENDPOINTS[${i}] is missing a "secret"`);
     }

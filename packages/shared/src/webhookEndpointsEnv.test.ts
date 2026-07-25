@@ -38,6 +38,13 @@ test("an entry missing url or secret throws", () => {
   assert.throws(() => parseWebhookEndpointsEnv(JSON.stringify([{ secret: "s" }])), /url/);
 });
 
+test("a non-https url throws (no cleartext webhook secrets)", () => {
+  assert.throws(
+    () => parseWebhookEndpointsEnv(JSON.stringify([{ url: "http://a.test/h", secret: "s" }])),
+    /https/,
+  );
+});
+
 test("an unknown event type throws", () => {
   assert.throws(
     () => parseWebhookEndpointsEnv(JSON.stringify([{ url: "https://a.test/h", secret: "s", events: ["nope"] }])),
