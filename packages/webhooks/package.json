@@ -1,0 +1,31 @@
+{
+  "name": "@naulon/webhooks",
+  "version": "0.1.0",
+  "description": "The naulon webhook core: event/channel catalogs, Stripe-style signing, per-channel payload transforms, and the storage-agnostic dispatch + retry/backoff/dead-letter engine. Store implementations are supplied by the consumer (cloud: Supabase; OSS gate: env config).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naulonapp/naulon.git",
+    "directory": "packages/webhooks"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@naulon/shared": "^0.1.2"
+  }
+}
