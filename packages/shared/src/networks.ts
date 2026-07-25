@@ -48,6 +48,13 @@ export interface SettlementNetwork {
   rpcUrl: string;
   /** false only for a real-money mainnet — the guard behind the safe default. */
   testnet: boolean;
+  /** Public block-explorer origin (no trailing slash), for turning a settlement
+   *  reference into a clickable link (`${explorer}/tx/<hash>` — the universal
+   *  Etherscan/Blockscout path). Present ONLY where the origin is KNOWN-GOOD (the repo
+   *  won't ship a guessed explorer URL — a wrong link is worse than none, same rule as
+   *  the per-network memo/usdcName verification). Absent ⇒ callers omit the link and
+   *  fall back to citing the raw reference. Populated as chains are enrolled. */
+  explorer?: string;
   /** Arc-only transaction-extension capability. Present ONLY on chains that ship the
    *  Memo predeploy (Arc); ABSENT on Base / Base Sepolia (they have no equivalent).
    *  The settle path gates memo emission on the PRESENCE of this field, NEVER on
@@ -99,7 +106,8 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     usdcName: "USDC", usdcVersion: "2",
     gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
     gatewayApiUrl: TESTNET_FACILITATOR, rpcUrl: "https://rpc.testnet.arc.network",
-    testnet: true, modularChainName: "arcTestnet",
+    // Blockscout explorer — verified live (the memo settle above was confirmed here).
+    testnet: true, explorer: "https://testnet.arcscan.app", modularChainName: "arcTestnet",
     // Arc ships the Memo + CallFrom predeploys; Base does not — gated on presence,
     // so a swap to Base drops memos with no settle-path edit.
     memo: { contract: "0x5294E9927c3306DcBaDb03fe70b92e01cCede505" },
@@ -109,21 +117,21 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
     gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
     gatewayApiUrl: TESTNET_FACILITATOR, rpcUrl: "https://sepolia-preconf.base.org",
-    testnet: true, modularChainName: "baseSepolia",
+    testnet: true, explorer: "https://sepolia.basescan.org", modularChainName: "baseSepolia",
   },
   base: {
     chainName: "base", network: "eip155:8453", chainId: 8453,
     usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://mainnet.base.org",
-    testnet: false, modularChainName: "base",
+    testnet: false, explorer: "https://basescan.org", modularChainName: "base",
   },
   ethereum: {
     chainName: "ethereum", network: "eip155:1", chainId: 1,
     usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://ethereum-rpc.publicnode.com",
-    testnet: false, modularChainName: "ethereum",
+    testnet: false, explorer: "https://etherscan.io", modularChainName: "ethereum",
   },
   arbitrum: {
     chainName: "arbitrum", network: "eip155:42161", chainId: 42161,
@@ -226,6 +234,16 @@ export function networkByCaip2(caip2: string): SettlementNetwork | undefined {
 /** The network the gate is configured to settle on (`SETTLEMENT_NETWORK`). */
 export function activeNetwork(): SettlementNetwork {
   return NETWORKS[getConfig().SETTLEMENT_NETWORK];
+}
+
+/** A clickable explorer link for a settlement reference (tx hash), or undefined when
+ *  the network has no KNOWN-GOOD explorer origin (see {@link SettlementNetwork.explorer})
+ *  or the ref is empty. `${explorer}/tx/<hash>` is the universal Etherscan/Blockscout
+ *  path. Never guesses — an absent explorer yields undefined, and the caller cites the
+ *  raw reference instead. */
+export function explorerTxUrl(net: SettlementNetwork, ref: string | undefined): string | undefined {
+  if (!net.explorer || !ref) return undefined;
+  return `${net.explorer}/tx/${ref}`;
 }
 
 /** The Arc self-relay gas EOA for a network: the shared testnet key on testnet, a

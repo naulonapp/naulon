@@ -2143,3 +2143,43 @@ test("WP-3a positive control: hostedInertSteer UNSET leaves the 4 tools' normal 
     });
   });
 });
+
+// ── Network surfacing (#3) + durable spend seed (#4) ─────────────────────────
+// The gap that let an agent report a testnet toll as "real money": no tool result
+// carried the settlement network. Now every spend envelope + naulon_status does.
+
+test("naulon_status surfaces the settlement network so an agent can tell testnet from real money", async () => {
+  const client = await connectedClient();
+  const res = await client.callTool({ name: "naulon_status", arguments: {} });
+  const s = res.structuredContent as {
+    nextStep: string;
+    settlement: { network: string; chainId: number; chainName: string; testnet: boolean; token: { symbol: string; address: string; decimals: number }; explorer?: string };
+  };
+  assert.ok(s.settlement, "status carries a settlement block");
+  assert.match(s.settlement.network, /^eip155:\d+$/, "CAIP-2 network id, e.g. eip155:5042002");
+  assert.equal(typeof s.settlement.testnet, "boolean", "testnet flag present — the real-money/play-money answer");
+  assert.equal(s.settlement.token.symbol, "USDC", "the token every toll is paid in");
+  assert.equal(s.settlement.token.decimals, 6);
+  assert.equal(typeof s.settlement.chainId, "number");
+  // The funding hint is network-aware: a testnet gate says play-money, never the reverse.
+  if (s.settlement.testnet) assert.match(s.nextStep, /testnet|play-money|faucet/i, "testnet funding hint says play-money");
+});
+
+test("initialSpentUsdc seeds the running total so a silent reconnect does not reset the budget (#4)", async () => {
+  // The bug: an MCP session the edge idle-closed reconnects into a fresh server with
+  // spentUsdc=0 — the running total 'resets' though real spend happened. The cloud now
+  // seeds the prior spend; the envelope must start from it, not from zero.
+  const client = await connectedClientWith({ initialSpentUsdc: 0.4, budgetUsdc: 1, hostedInertSteer: "ask-only mount" });
+  const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "anything" } });
+  const q = res.structuredContent as {
+    spentSessionUsdc: number;
+    remainingUsdc: number;
+    ceilingUsdc: number;
+    settlement: { testnet: boolean; token: { symbol: string } };
+  };
+  assert.equal(q.spentSessionUsdc, 0.4, "spend starts from the injected prior total, not 0");
+  assert.equal(q.remainingUsdc, 0.6, "remaining reflects the seeded prior spend (1 − 0.4)");
+  assert.equal(q.ceilingUsdc, 1);
+  assert.ok(q.settlement, "the spend envelope also carries the settlement block");
+  assert.equal(q.settlement.token.symbol, "USDC");
+});
