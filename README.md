@@ -205,6 +205,22 @@ the contract. Start with the
 [settlement-contract.md](./docs/settlement-contract.md), and a runnable consumer is
 in [`packages/sdk/examples/next-credits/`](./packages/sdk/examples/next-credits).
 
+### Webhooks (settlement notifications)
+
+Point the gate at one or more of your own HTTPS endpoints and it POSTs a signed
+`settlement.completed` after every paid read. Set `NAULON_WEBHOOK_ENDPOINTS` to a
+JSON array:
+
+```
+NAULON_WEBHOOK_ENDPOINTS='[{"url":"https://you.example/naulon-hook","secret":"whsec_…","events":["settlement.completed"],"hostFilter":null}]'
+```
+
+Each endpoint gets a `Naulon-Signature: t=<unix>,v1=<hex>` header — HMAC-SHA256 over
+`${t}.${rawBody}`, keyed by your `secret`. Verify it with `verifyPayload` from
+`@naulon/webhooks` (reject if the timestamp is outside your tolerance, then
+constant-time compare). Endpoints must be HTTPS; delivery retries with backoff and
+is a no-op when the env is unset.
+
 ## What's here
 
 A small npm-workspaces monorepo. Each piece is independent and runs on its own.
