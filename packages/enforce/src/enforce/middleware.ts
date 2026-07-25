@@ -22,7 +22,9 @@ import {
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_LINK_HEADER,
   LICENSE_HEADER,
+  type LicenseVerification,
 } from "../decide.ts";
+import type { JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
 
 export interface NaulonMiddlewareOptions {
@@ -42,6 +44,25 @@ export interface NaulonMiddlewareOptions {
   fetchImpl?: typeof fetch;
   /** Injectable clock (tests); defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * Enable API-mode license re-read verification. REQUIRED for a free re-read
+   * (`naulon_read_held`) to work in API mode: the license is minted+signed by the
+   * hosted gate, so this in-app enforcer must verify it against the GATE's published
+   * JWKS — not its own (absent) signing key. Without this, `decide()` cannot verify a
+   * gate-minted license and every licensed re-read 402s (re-charging a paid reader).
+   * Pass `{}` to enable with defaults (JWKS URL derived from `verifyUrl`, issuer from
+   * `publisher.licenseIdentity`). Absent ⇒ proxy-mode behavior, unchanged.
+   */
+  licenseVerification?: {
+    /** The gate's JWKS URL. Default: `${new URL(verifyUrl).origin}/.well-known/naulon-jwks.json`. */
+    jwksUrl?: string;
+    /** The `iss`/`aud` the gate stamps for this publisher. Default: `publisher.licenseIdentity`. */
+    issuer?: string;
+    /** Cache TTL for the fetched JWKS (ms). Default 10 min. The gate rotates rarely; a
+     *  stale JWKS is served if a refetch fails (stale-if-error), so a gate hiccup never
+     *  turns a paid re-read into a 402. */
+    cacheTtlMs?: number;
+  };
 }
 
 export interface MiddlewareResult {
@@ -67,8 +88,44 @@ export function naulonMiddleware(
   const doFetch = opts.fetchImpl ?? fetch;
   const clock = opts.now ?? Date.now;
 
+  // API-mode license verification: a cached fetcher for the minting gate's JWKS. Built
+  // once; each request reuses the cached keys until the TTL lapses, then refetches. On a
+  // refetch failure the last-good JWKS is kept (stale-if-error) so a gate hiccup never
+  // turns a paid re-read into a 402. Absent option ⇒ resolver is undefined (proxy mode).
+  const resolveVerification = (() => {
+    const lv = opts.licenseVerification;
+    if (!lv) return undefined;
+    const issuer = lv.issuer ?? (opts.publisher as { licenseIdentity?: string }).licenseIdentity;
+    const jwksUrl = lv.jwksUrl ?? `${new URL(opts.verifyUrl).origin}/.well-known/naulon-jwks.json`;
+    const ttl = lv.cacheTtlMs ?? 600_000;
+    let cached: JwkSet | undefined;
+    let fetchedAt = 0;
+    return async (): Promise<LicenseVerification | undefined> => {
+      // Without an issuer we cannot pin iss/aud, so verification would be unsafe — skip
+      // (the re-read falls through to the normal 402 path, same as an unconfigured mount).
+      if (!issuer) return undefined;
+      const fresh = cached && clock() - fetchedAt < ttl;
+      if (!fresh) {
+        try {
+          const res = await doFetch(jwksUrl, { headers: { accept: "application/json" } });
+          if (res.ok) {
+            cached = (await res.json()) as JwkSet;
+            fetchedAt = clock();
+          }
+        } catch {
+          // keep `cached` (stale-if-error); if there was never a good fetch, cached stays undefined.
+        }
+      }
+      return cached ? { jwks: cached, issuer } : undefined;
+    };
+  })();
+
   return async (req: Request): Promise<MiddlewareResult> => {
     const url = new URL(req.url);
+    // Only resolve the gate JWKS when this request actually presents a license — a
+    // human read or a first-time agent 402 carries none, so the hot path never fetches.
+    const licenseVerification =
+      resolveVerification && req.headers.get(LICENSE_HEADER) ? await resolveVerification() : undefined;
     const d = await decide({
       raw: req,
       host: url.host,
@@ -76,6 +133,7 @@ export function naulonMiddleware(
       publisher: opts.publisher as never,
       now: clock(),
       quote: (publisher, slug, kind) => opts.quote.quote(publisher, slug, kind, { resource: req.url }),
+      ...(licenseVerification ? { licenseVerification } : {}),
     });
 
     switch (d.kind) {

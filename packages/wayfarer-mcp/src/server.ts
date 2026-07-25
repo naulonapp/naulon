@@ -66,7 +66,7 @@ import {
   verifyAgainst,
 } from "@naulon/wayfarer";
 import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners } from "@naulon/wayfarer";
-import { activeNetwork, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, supportsMemo, usdc } from "@naulon/shared";
+import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, supportsMemo, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
@@ -93,6 +93,32 @@ function trueTotalUsdc(quoted: { priceUsdc: number; legs?: { amount: string }[] 
 function round6(usdcAmount: number): number {
   return Math.round(usdcAmount * 1_000_000) / 1_000_000;
 }
+
+/** The settlement-network descriptor echoed on every spend envelope and on status —
+ *  the answer to "paid in WHAT, on WHICH chain, is it real money?" that used to be
+ *  absent from every tool result. `testnet:true` means no fiat value. */
+const networkOutputSchema = {
+  network: z.string().describe("CAIP-2 network id, e.g. eip155:5042002 (Arc Testnet) — the chain the toll settles on."),
+  chainId: z.number().describe("EVM chain id."),
+  chainName: z.string().describe("Human network name, e.g. arcTestnet / base."),
+  testnet: z.boolean().describe("TRUE = testnet play-money with NO fiat value (faucet-funded); FALSE = real-money mainnet. Report this honestly — never call a testnet toll 'real money'."),
+  token: z
+    .object({
+      symbol: z.string().describe("Settlement token symbol (USDC)."),
+      address: z.string().describe("ERC-20 token contract address on this chain."),
+      decimals: z.number().describe("Token decimals (6 for USDC)."),
+    })
+    .describe("The token every toll is paid in."),
+  explorer: z.string().optional().describe("Block-explorer origin for this chain when known — settlementRef is viewable at <explorer>/tx/<ref>. Omitted when no verified explorer exists for the chain."),
+} as const;
+type NetworkInfo = {
+  network: string;
+  chainId: number;
+  chainName: string;
+  testnet: boolean;
+  token: { symbol: string; address: string; decimals: number };
+  explorer?: string;
+};
 
 /** Lowercased host INCLUDING port — endpoint identity, used for the gate origin pin
  *  (a different port is a different service, so it must not satisfy the pin). */
@@ -231,6 +257,17 @@ export interface BuildServerOptions {
   railSigners?: RailSigners;
   /** This session's spend ceiling in USDC (else `WAYFARER_BUDGET_USDC`). */
   budgetUsdc?: number;
+  /**
+   * Spend ALREADY made by this caller before this server instance was built — the
+   * running total `spentSessionUsdc`/`remainingUsdc` start from (else 0). The stdio
+   * funnel leaves it unset (one process = one lifetime, the closure is the whole truth).
+   * The cloud host injects the caller's durable spend-in-window so the counter is
+   * MONOTONIC across reconnects: an MCP session that the edge idle-closed and the client
+   * silently re-`initialize`d no longer resets the budget to zero (the reset that let a
+   * per-call ceiling look like a session cap while the running total quietly restarted).
+   * Server-config, never a tool arg — the model cannot lower its own prior spend.
+   */
+  initialSpentUsdc?: number;
   /** This session's decision policy (else the env-derived policy over DEFAULT_POLICY). */
   policy?: DecisionPolicy;
   /**
@@ -313,7 +350,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // (so it reflects deployment config), but `spentUsdc` accumulates across this
   // server instance's lifetime — one stdio/HTTP session = one budget envelope. The
   // model sees what remains and can plan within it; it can never raise the ceiling.
-  let spentUsdc = 0;
+  // Seeded from the caller's durable prior spend (cloud) so the running total survives a
+  // silent reconnect; 0 for the stdio funnel (one process is the whole session lifetime).
+  let spentUsdc = round6(opts.initialSpentUsdc ?? 0);
   // Per-session pays per publisher host — the ONE `perDomainCap` counter shared by BOTH spending
   // paths. naulon_pay_and_read increments it directly (below); naulon_research seeds decide()'s own
   // per-host tally from it (`decideContext.priorDomainCounts`) before each run and increments it
@@ -464,12 +503,30 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     return fleetAllow.length ? { ...base, allowDomains: fleetAllow } : base;
   };
   const remainingUsdc = (): number => round6(Math.max(0, ceilingUsdc() - spentUsdc));
-  /** The session-budget fields every spend-aware tool echoes so the host LLM always
-   *  sees the live envelope alongside the tool's own result. */
-  const envelope = (): { ceilingUsdc: number; spentSessionUsdc: number; remainingUsdc: number } => ({
+  /** The settlement network this session tolls on — the fact that was MISSING, so an
+   *  agent could not tell whether a paid read cost real money or testnet play-money
+   *  (it would report a testnet toll as "real USDC"). `testnet:true` = no fiat value.
+   *  Constant for the session (`SETTLEMENT_NETWORK`); echoed alongside every spend
+   *  envelope and on naulon_status. */
+  const networkInfo = (): NetworkInfo => {
+    const net = activeNetwork();
+    return {
+      network: net.network,
+      chainId: net.chainId,
+      chainName: net.chainName,
+      testnet: net.testnet,
+      token: { symbol: "USDC", address: net.usdc, decimals: 6 },
+      ...(net.explorer ? { explorer: net.explorer } : {}),
+    };
+  };
+  /** The session-budget + network fields every spend-aware tool echoes so the host LLM
+   *  always sees the live envelope — and what chain/token it is spending — alongside the
+   *  tool's own result. */
+  const envelope = (): { ceilingUsdc: number; spentSessionUsdc: number; remainingUsdc: number; settlement: NetworkInfo } => ({
     ceilingUsdc: round6(ceilingUsdc()),
     spentSessionUsdc: round6(spentUsdc),
     remainingUsdc: remainingUsdc(),
+    settlement: networkInfo(),
   });
   // BUY-4.4: hand each buyer decision to the injected audit sink (the cloud writes it to
   // its org audit plane). Best-effort — a misbehaving sink must never break a paid read,
@@ -563,6 +620,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         discovery: z.string().describe("Where naulon_discover looks for candidates (RSS_URL > PUBLISHER_URL/rss.xml > CATALOG_URL)."),
         ready: z.boolean().describe("True once a wallet address is resolvable — does NOT mean it is funded."),
         nextStep: z.string().describe("Plain-language guidance for what to do next, given the current config."),
+        settlement: z
+          .object(networkOutputSchema)
+          .describe("The settlement chain + token this wallet tolls on. Read settlement.testnet FIRST: true ⇒ every spend is testnet play-money with no fiat value; false ⇒ real money."),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -573,18 +633,25 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // Amendment (wp2-brief): never imply a single universal pay-gate exists for the fleet
       // default — discovery is fleet-WIDE, but payment is authorized per-publisher (the trusted
       // directory's own discovered domains, spendGate-capped — WP-2 T2), not one gate.
+      // The funding phrase is network-aware: a testnet gate is faucet-funded play-money, a
+      // mainnet gate is real USDC — never tell an operator to "fund with testnet USDC" on mainnet.
+      const net = activeNetwork();
+      const fundHint = net.testnet
+        ? `with testnet USDC (play-money, no fiat value) — e.g. faucet.circle.com/Arc-Testnet — or connect a token`
+        : `with real USDC on ${net.chainName} (mainnet — real money) — or connect a funded token`;
       const nextStep = fleetDefault
-        ? `Fund this wallet (${wallet}) with testnet USDC — e.g. faucet.circle.com/Arc-Testnet — or connect a token. ` +
+        ? `Fund this wallet (${wallet}) ${fundHint}. ` +
           `Discovery is fleet-wide (the naulon directory); payment is authorized per-publisher for whatever it ` +
           `discovers (each publisher's own toll, capped by your spend policy) — there is no single pay-gate to configure.`
         : `Confirm your configured gate (TOLLGATE_URL${cfg.TOLLGATE_URL ? ` = ${cfg.TOLLGATE_URL}` : " is not set yet"}) ` +
-          `is reachable and that this wallet (${wallet}) is funded to pay it.`;
+          `is reachable and that this wallet (${wallet}) is funded ${fundHint.replace(/ — .*$/, "")} to pay it.`;
       return structured({
         wallet,
         ...(cfg.TOLLGATE_URL ? { tollgate: cfg.TOLLGATE_URL } : {}),
         discovery: resolvedDiscoverySourceUrl(),
         ready: Boolean(wallet),
         nextStep,
+        settlement: networkInfo(),
       });
     },
   );
@@ -691,6 +758,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ceilingUsdc: z.number().describe("The server-configured spend ceiling for this session (cannot be raised from a tool)."),
         spentSessionUsdc: z.number().describe("Total already spent in this MCP session."),
         remainingUsdc: z.number().describe("Budget left for this session — plan spend within this."),
+        settlement: z.object(networkOutputSchema).describe("The chain + token this session settles on. Check settlement.testnet before reporting a spend as real money."),
         note: z.string().optional(),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -766,6 +834,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ok: z.boolean(),
         content: z.string().optional().describe("The paid-for content."),
         settlementRef: z.string().optional().describe("On-chain / settlement reference for the payment."),
+        explorerTxUrl: z.string().optional().describe("A clickable block-explorer link for settlementRef (<explorer>/tx/<ref>), when the chain has a known explorer. Cite this so a human can verify the on-chain settlement."),
         paidUsdc: z.number().optional().describe("The author leg paid, in USDC."),
         costUsdc: z.number().optional().describe("The true total debited from the session budget (author + any fee legs)."),
         licenseId: z.string().optional().describe("Citation License jti — cite this as proof of a paid read."),
@@ -779,6 +848,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ceilingUsdc: z.number().describe("The server-configured spend ceiling for this session."),
         spentSessionUsdc: z.number().describe("Total spent in this MCP session (after this call)."),
         remainingUsdc: z.number().describe("Budget left for this session (after this call)."),
+        settlement: z.object(networkOutputSchema).describe("The chain + token this toll settled on. If settlement.testnet is true the amount is play-money with no fiat value — report it as such."),
         error: z.string().optional(),
         errorCode: z
           .enum([
@@ -983,10 +1053,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         agentId: policyFromConfig().agentId,
       });
 
+      const explorerUrl = explorerTxUrl(activeNetwork(), result.settlementRef);
       return structured({
         ok: true,
         content: result.content,
         settlementRef: result.settlementRef,
+        ...(explorerUrl ? { explorerTxUrl: explorerUrl } : {}),
         paidUsdc: result.paidUsdc,
         // Report the total ACTUALLY authorized (what the budget was debited), not the pre-pay quote.
         costUsdc: result.costUsdc ?? cost,
@@ -1085,6 +1157,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         spent: z.number().describe("Total actually spent on this run, in USDC."),
         spentSessionUsdc: z.number().describe("Total spent across the whole MCP session (after this run)."),
         remainingUsdc: z.number().describe("Budget left for this session (after this run)."),
+        settlement: z.object(networkOutputSchema).describe("The chain + token these tolls settled on. settlement.testnet true ⇒ play-money with no fiat value."),
         answer: z.string().describe("The grounded answer, citing the paid sources."),
         decisions: z.array(
           z.object({
