@@ -28,9 +28,29 @@ import {
   getConfig,
   popBoundAddress,
   verifyLicense,
+  type JwkSet,
   type PublisherConfig,
   type TollKind,
 } from "@naulon/shared";
+
+/**
+ * How a re-read license is verified when the deployment MINTING the license is not
+ * this process. In proxy mode the gate mints AND verifies with one local key, so the
+ * module-global `licensing` (from `LICENSE_SIGNING_KEY`) is both. But an IN-APP
+ * enforcer (API mode: the publisher runs `decide()` in its own runtime and settles
+ * money via the hosted gate's `/verify`) receives licenses SIGNED BY THE GATE — its
+ * local `licensing` is `null` (a consuming site sets no signing key), so without this
+ * seam `licenseEntitlesRead` fails closed and every licensed re-read 402s. Injecting
+ * the gate's published JWKS (`/.well-known/naulon-jwks.json`) + the issuer the gate
+ * stamped lets the in-app enforcer verify a gate-minted license locally. Absent ⇒ the
+ * module-global `licensing` path, byte-identical to before (proxy mode / the gate itself).
+ */
+export interface LicenseVerification {
+  /** The minting authority's public keys — the gate's JWKS, fetched from its well-known. */
+  jwks: JwkSet;
+  /** The `iss`/`aud` the minting gate stamped for this publisher (= its `licenseIdentity`). */
+  issuer: string;
+}
 
 // Global license POLICY (online-check flag) is a gate-operator setting, read once.
 const cfg = getConfig();
@@ -67,13 +87,25 @@ export async function licenseEntitlesRead(
   requestedKind: TollKind,
   req: Request,
   identity: string,
+  /** Verify against the MINTING gate's JWKS + issuer instead of the local `licensing`
+   *  (API mode — the license was signed by the hosted gate, not this process). Absent
+   *  ⇒ the module-global `licensing` + `identity`, unchanged (proxy mode / the gate). */
+  verification?: LicenseVerification,
 ): Promise<boolean> {
-  if (!licensing) return false;
+  // Effective verifier: the injected gate JWKS + issuer (API mode) wins; else the local
+  // signing key's JWKS + the publisher identity (proxy mode). No local key AND no injected
+  // verifier ⇒ nothing can verify a license here — fail closed exactly as before.
+  const jwks = verification?.jwks ?? licensing?.jwks;
+  if (!jwks) return false;
+  // The identity that pins BOTH the license iss/aud AND the holder-of-key proof to the
+  // minting deployment. In API mode this is the gate's stamped issuer, not the in-app
+  // publisher default — using the wrong one is exactly the mismatch that 402s a valid license.
+  const expected = verification?.issuer ?? identity;
   const r = verifyLicense(jws, {
     now: Date.now(),
-    expectedIssuer: identity,
-    expectedAudience: identity,
-    jwks: licensing.jwks,
+    expectedIssuer: expected,
+    expectedAudience: expected,
+    jwks,
   });
   if (!r.ok) return false;
   const n = r.claims.naulon;
@@ -85,7 +117,7 @@ export async function licenseEntitlesRead(
   if (popBoundAddress(r.claims)) {
     const proof = req.headers.get(PROOF_HEADER);
     if (!proof) return false;
-    if (!(await verifyPopProof(proof, { claims: r.claims, slug, identity, now: Date.now() }))) return false;
+    if (!(await verifyPopProof(proof, { claims: r.claims, slug, identity: expected, now: Date.now() }))) return false;
   }
   return true;
 }
@@ -212,6 +244,10 @@ export interface DecideInput {
   quote: (publisher: PublisherConfig, slug: string, kind: TollKind) => Promise<Quote | null | undefined>;
   /** Web-Bot-Auth options (e.g. `allowInsecureHttp` on a dev/plaintext origin). */
   botAuthOpts?: BotAuthOptions;
+  /** API mode — verify a re-read license against the MINTING gate's JWKS + issuer
+   *  instead of the local `licensing` (which is null in a consuming site, so every
+   *  licensed re-read would otherwise 402). Absent ⇒ proxy-mode behavior, unchanged. */
+  licenseVerification?: LicenseVerification;
 }
 
 export async function decide(input: DecideInput): Promise<Decision> {
@@ -283,7 +319,7 @@ export async function decide(input: DecideInput): Promise<Decision> {
   const presentedLicense = raw.headers.get(LICENSE_HEADER);
   if (
     presentedLicense &&
-    (await licenseEntitlesRead(presentedLicense, slug, tollKind, raw, publisher.licenseIdentity))
+    (await licenseEntitlesRead(presentedLicense, slug, tollKind, raw, publisher.licenseIdentity, input.licenseVerification))
   ) {
     return { kind: "reread", tollKind, obs };
   }

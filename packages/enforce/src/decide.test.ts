@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decide } from "./decide.ts";
+import { decide, LICENSE_HEADER, type LicenseVerification } from "./decide.ts";
 import { PAYMENT_SIGNATURE_HEADER } from "./build402.ts";
+import { jwksOf, loadSigningKey, mintLicense } from "@naulon/shared";
 
 const basePublisher = {
   id: "pub_test",
@@ -79,4 +80,107 @@ test("observed variants carry obs facts for the caller's audit plane", async () 
     assert.ok(d.obs.classifyReason.length > 0);
     assert.equal(d.tollKind, "read");
   }
+});
+
+// ── API-mode license re-read: verify against the MINTING gate's JWKS ─────────────
+// The bug (MCP-HELD-1): an in-app enforcer (API mode) receives a license SIGNED BY THE
+// HOSTED GATE, but licenseEntitlesRead verified it against the local module-global
+// `licensing` — which is null in a consuming site (no LICENSE_SIGNING_KEY). So every
+// licensed re-read fell through to a fresh 402, re-charging a paid reader. The
+// `licenseVerification` seam lets the in-app decide() verify a gate-minted license
+// against the gate's published JWKS + the issuer it stamped.
+
+const GATE_KEY = loadSigningKey(); // stands in for the hosted gate's LICENSE_SIGNING_KEY
+const GATE_JWKS = jwksOf([GATE_KEY]); // what /.well-known/naulon-jwks.json serves
+const GATE_ISS = "naulon:inneraxiom.com"; // the gate's licenseIdentity for this publisher
+
+// licenseEntitlesRead verifies with the REAL clock (verifyLicense reads Date.now()), not
+// decide's injected `now`, so fixtures must be minted relative to real time — an unexpired
+// license needs a real-current `mintedAt` + TTL, an expired one a real-past `mintedAt`.
+const REAL_NOW = Date.now();
+
+/** Mint a gate-signed license for slug `x`, kind, minted at `mintedAt` with `ttlSeconds`. */
+function gateLicense(
+  iss: string,
+  kind: "read" | "citation" = "citation",
+  mintedAt = REAL_NOW,
+  ttlSeconds = 3600,
+): string {
+  const event = {
+    id: "11111111-2222-4333-8444-555555555555",
+    slug: "x",
+    kind,
+    amount: 0.003,
+    payees: [{ authorId: "etiric", wallet: `0x${"1".repeat(40)}`, share: 1 }],
+    payerAddress: `0x${"3".repeat(40)}`,
+    settlementRef: "0xref",
+    at: mintedAt,
+  } as any;
+  return mintLicense(
+    { event, issuer: iss, audience: iss, ttlSeconds, payeesMode: "full", title: "X", network: "eip155:5042002" as any } as any,
+    GATE_KEY,
+    mintedAt,
+  );
+}
+
+const NOW = REAL_NOW; // decide's build402 clock (license verify uses the real clock regardless)
+const agentReread = (jws: string) =>
+  new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", [LICENSE_HEADER]: jws } });
+
+test("API mode: a gate-minted license WITHOUT the verifier 402s (the bug — local licensing can't verify it)", async () => {
+  // No licenseVerification, and the test process has no LICENSE_SIGNING_KEY → licensing is
+  // null → the license cannot be verified here → falls through to payment-required.
+  const d = await decide({
+    raw: agentReread(gateLicense(GATE_ISS)),
+    host: "h",
+    path: "/essays/x",
+    publisher: basePublisher,
+    now: NOW,
+    quote: quoteOf,
+  });
+  assert.equal(d.kind, "payment-required", "without the gate JWKS, a valid license is re-charged");
+});
+
+test("API mode: WITH the gate JWKS + issuer, the same license re-reads FREE", async () => {
+  const verification: LicenseVerification = { jwks: GATE_JWKS, issuer: GATE_ISS };
+  const d = await decide({
+    raw: agentReread(gateLicense(GATE_ISS)),
+    host: "h",
+    path: "/essays/x",
+    publisher: basePublisher,
+    now: NOW,
+    quote: quoteOf,
+    licenseVerification: verification,
+  });
+  assert.equal(d.kind, "reread", "the gate-minted license verifies against the injected gate JWKS → free re-read");
+});
+
+test("API mode: a license minted for ANOTHER issuer is refused even with our gate JWKS (no cross-publisher reuse)", async () => {
+  // Same signing key (one gate signs every tenant), but the license's iss/aud is a DIFFERENT
+  // publisher. Our verifier expects GATE_ISS, so the iss mismatch drops it to 402.
+  const d = await decide({
+    raw: agentReread(gateLicense("naulon:someone-else.com")),
+    host: "h",
+    path: "/essays/x",
+    publisher: basePublisher,
+    now: NOW,
+    quote: quoteOf,
+    licenseVerification: { jwks: GATE_JWKS, issuer: GATE_ISS },
+  });
+  assert.equal(d.kind, "payment-required", "a license scoped to another publisher must not re-read here");
+});
+
+test("API mode: an expired gate license falls through to 402 (fails closed)", async () => {
+  // Minted 2h ago with a 600s TTL → expired against the real clock verifyLicense uses.
+  const expired = gateLicense(GATE_ISS, "citation", REAL_NOW - 7_200_000, 600);
+  const d = await decide({
+    raw: agentReread(expired),
+    host: "h",
+    path: "/essays/x",
+    publisher: basePublisher,
+    now: NOW,
+    quote: quoteOf,
+    licenseVerification: { jwks: GATE_JWKS, issuer: GATE_ISS },
+  });
+  assert.equal(d.kind, "payment-required", "an expired license is not a free re-read");
 });
