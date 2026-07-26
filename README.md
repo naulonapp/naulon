@@ -217,9 +217,10 @@ NAULON_WEBHOOK_ENDPOINTS='[{"url":"https://you.example/naulon-hook","secret":"wh
 
 Each endpoint gets a `Naulon-Signature: t=<unix>,v1=<hex>` header — HMAC-SHA256 over
 `${t}.${rawBody}`, keyed by your `secret`. Verify it with `verifyPayload` from
-`@naulon/webhooks` (reject if the timestamp is outside your tolerance, then
-constant-time compare). Endpoints must be HTTPS; delivery retries with backoff and
-is a no-op when the env is unset.
+`@naulon/shared` (already installed with the gate), or reimplement the ~10 lines:
+reject if the timestamp is outside your tolerance, recompute the HMAC, constant-time
+compare. Endpoints must be HTTPS; delivery retries with backoff and is a no-op when
+the env is unset.
 
 ## What's here
 
