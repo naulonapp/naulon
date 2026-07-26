@@ -25,7 +25,7 @@ process.env.NAULON_WEBHOOK_ENDPOINTS = JSON.stringify([
 const { app } = await import("./app.ts");
 const { buildMockSignature, PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } = await import("./x402.ts");
 const { sweepOnceForTest, setWebhookFetchForTest } = await import("./webhookSink.ts");
-const { verifyPayload } = await import("@naulon/webhooks");
+const { verifyPayload } = await import("@naulon/shared");
 
 const PAYER = "0x1234567890abcdef1234567890abcdef12345678";
 const received: { header: string; body: string }[] = [];

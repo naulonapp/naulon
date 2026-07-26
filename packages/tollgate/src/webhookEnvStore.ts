@@ -10,7 +10,7 @@ import type {
   WebhookEndpoint,
   WebhookEndpointStore,
   WebhookEventType,
-} from "@naulon/webhooks";
+} from "@naulon/shared";
 
 const IMMUTABLE = "EnvConfigStore is read-only — webhook endpoints come from NAULON_WEBHOOK_ENDPOINTS";
 

@@ -3,15 +3,7 @@
 // a self-hoster learns at boot, not at the first missed settlement. The gate's EnvConfigStore consumes
 // these; the shape mirrors what cloud stores per-endpoint (url/secret/events/hostFilter).
 //
-// The event-type catalog is inlined (not imported from @naulon/webhooks) on purpose: @naulon/webhooks
-// depends on @naulon/shared (splitMicro/AuthorShare), so shared importing webhooks would be a package
-// cycle. These two strings must stay in step with @naulon/webhooks WEBHOOK_EVENT_TYPES — the gate's
-// EnvConfigStore test round-trips them through the real catalog, so any drift fails there.
-
-const WEBHOOK_EVENT_TYPES = ["anomaly.detected", "settlement.completed"] as const;
-type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
-const isWebhookEventType = (s: string): s is WebhookEventType =>
-  (WEBHOOK_EVENT_TYPES as readonly string[]).includes(s);
+import { WEBHOOK_EVENT_TYPES, isWebhookEventType, type WebhookEventType } from "./webhooks/index.ts";
 
 export interface WebhookEndpointSpec {
   url: string;

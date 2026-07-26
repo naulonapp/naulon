@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { verifyPayload } from "@naulon/webhooks";
+import { verifyPayload } from "@naulon/shared";
 import {
   emitSettlementWebhook,
   startWebhookSweep,

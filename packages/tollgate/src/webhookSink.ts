@@ -14,7 +14,7 @@ import {
   sweepWebhookDeliveries,
   type DispatchDeps,
   type WebhookEvent,
-} from "@naulon/webhooks";
+} from "@naulon/shared";
 import { EnvConfigStore } from "./webhookEnvStore.ts";
 
 interface Sink {

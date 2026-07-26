@@ -16,7 +16,6 @@
     "@naulon/enforce": "*",
     "@naulon/sdk": "*",
     "@naulon/shared": "*",
-    "@naulon/webhooks": "*",
     "@circle-fin/x402-batching": "^3.2.0",
     "@hono/node-server": "^2.0.4",
     "@x402/core": "^2.6.0",
