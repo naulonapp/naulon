@@ -1,0 +1,17 @@
+# What never ships to wordpress.org. The release zip is source minus development scaffolding —
+# tests, tooling and VCS metadata are for this repository, not for a publisher's server.
+/.git
+/.gitignore
+/.distignore
+/.wp-env.json
+/.phpunit.result.cache
+/tests
+/vendor
+/composer.json
+/composer.lock
+/phpunit.xml.dist
+/phpunit-integration.xml.dist
+
+# wordpress.org listing assets live in SVN /assets, never in the plugin itself.
+/.wordpress-org
+/languages/*.po
