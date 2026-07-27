@@ -65,7 +65,7 @@ This plugin relies on an external service to price a read and to settle a paymen
 settlement cannot be performed inside WordPress. Nothing is contacted until you enter a key —
 entering it is the consent, and until then the plugin makes no outbound requests at all.
 
-**Service:** naulon (https://naulon.app), reached at https://api.naulon.app.
+**Service:** naulon (https://naulon.app), reached at https://gate.naulon.app.
 
 **When it is contacted, and what is sent:**
 

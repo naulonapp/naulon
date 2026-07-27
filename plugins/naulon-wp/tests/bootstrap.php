@@ -57,3 +57,6 @@ require_once __DIR__ . '/../includes/class-naulon-agent.php';
 // covered by the wp-env suite instead.
 require_once __DIR__ . '/../includes/class-naulon-ledger.php';
 require_once __DIR__ . '/../includes/admin/class-naulon-admin-content.php';
+// Only the DEFAULT_API_BASE constant is exercised here — reading it needs no WordPress, and
+// getting it wrong tells every publisher their key was rejected. See ControlPlaneAddressTest.
+require_once __DIR__ . '/../includes/class-naulon-settings.php';

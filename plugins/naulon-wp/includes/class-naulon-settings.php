@@ -21,8 +21,17 @@ class Naulon_Settings {
 
 	const OPTION = 'naulon_settings';
 
-	/** Default hosted control plane. Overridable for self-host and for tests. */
-	const DEFAULT_API_BASE = 'https://api.naulon.app';
+	/**
+	 * Default hosted control plane. Overridable for self-host and for tests.
+	 *
+	 * **`gate.naulon.app`, not `api.naulon.app`.** The `api` host is the Supabase/Kong edge; it
+	 * answers `/_naulon/*` with its own `401 Unauthorized`, which is indistinguishable from a
+	 * rejected key unless you read the `x-kong-request-id` header. A site pointed there would
+	 * report "your key was rejected" forever while the key was fine. Measured against production
+	 * on 2026-07-27, and the same trap was already documented for the agent snippets on
+	 * 2026-07-20 — hence the test that pins this constant.
+	 */
+	const DEFAULT_API_BASE = 'https://gate.naulon.app';
 
 	/**
 	 * The whole settings array, with defaults filled in.
