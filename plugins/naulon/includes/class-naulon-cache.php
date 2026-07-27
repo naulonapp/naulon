@@ -63,7 +63,7 @@ class Naulon_Cache {
 	 * @return string
 	 */
 	public static function template_path() {
-		return NAULON_PLUGIN_DIR . 'mu/' . self::DROPIN_FILENAME;
+		return NAULON_PLUGIN_DIR . 'mu/' . self::DROPIN_FILENAME . '.tpl';
 	}
 
 	/**

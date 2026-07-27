@@ -269,6 +269,7 @@ class Naulon_Admin {
 	 * @return void
 	 */
 	private function redirect_back() {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- handle() ran check_admin_referer before dispatching; this only picks which of our own screens to return to, and the value is validated against an allowlist below.
 		$page  = isset( $_POST['naulon_page'] ) ? sanitize_key( wp_unslash( $_POST['naulon_page'] ) ) : self::PAGE_SETUP;
 		$allow = array( self::PAGE_SETUP, self::PAGE_CONTENT, self::PAGE_PEOPLE, self::PAGE_EARNINGS, self::PAGE_DIAGNOSTICS );
 		if ( ! in_array( $page, $allow, true ) ) {

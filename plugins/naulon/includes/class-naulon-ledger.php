@@ -165,9 +165,10 @@ class Naulon_Ledger {
 				$wpdb->prepare(
 					// INSERT IGNORE, not insert(): the unique key is the idempotency guarantee for
 					// a retried settle, and a duplicate must be a no-op rather than an error.
-					'INSERT IGNORE INTO `' . self::table() . '`
+					'INSERT IGNORE INTO %i
 					(settled_at, post_id, slug, kind, settlement_ref, leg_index, role, pay_to, amount_atomic, network, payer, status)
 					VALUES (%s, %d, %s, %s, %s, %d, %s, %s, %d, %s, %s, %s)',
+					self::table(),
 					current_time( 'mysql', true ),
 					isset( $settlement['post_id'] ) ? (int) $settlement['post_id'] : 0,
 					isset( $settlement['slug'] ) ? (string) $settlement['slug'] : '',
@@ -259,11 +260,11 @@ class Naulon_Ledger {
 		global $wpdb;
 		if ( '' === $status ) {
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-			return (int) $wpdb->get_var( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM `' . self::table() . '`' );
+			return (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i', self::table() ) );
 		}
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		return (int) $wpdb->get_var(
-			$wpdb->prepare( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM `' . self::table() . '` WHERE status = %s', $status )
+			$wpdb->prepare( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i WHERE status = %s', self::table(), $status )
 		);
 	}
 
@@ -283,13 +284,14 @@ class Naulon_Ledger {
 		if ( '' === $status ) {
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			return (int) $wpdb->get_var(
-				$wpdb->prepare( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM `' . self::table() . '` WHERE pay_to = %s', $normalized )
+				$wpdb->prepare( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i WHERE pay_to = %s', self::table(), $normalized )
 			);
 		}
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		return (int) $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT COALESCE(SUM(amount_atomic), 0) FROM `' . self::table() . '` WHERE pay_to = %s AND status = %s',
+				'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i WHERE pay_to = %s AND status = %s',
+				self::table(),
 				$normalized,
 				$status
 			)
@@ -310,12 +312,13 @@ class Naulon_Ledger {
 				'SELECT pay_to,
 					COALESCE(SUM(CASE WHEN status = %s THEN amount_atomic ELSE 0 END), 0) AS settled,
 					COALESCE(SUM(CASE WHEN status = %s THEN amount_atomic ELSE 0 END), 0) AS pending
-				FROM `' . self::table() . '`
+				FROM %i
 				GROUP BY pay_to
 				ORDER BY settled DESC
 				LIMIT %d',
 				self::STATUS_SETTLED,
 				self::STATUS_PENDING,
+				self::table(),
 				(int) $limit
 			),
 			ARRAY_A
@@ -344,7 +347,8 @@ class Naulon_Ledger {
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			$rows = $wpdb->get_results(
 				$wpdb->prepare(
-					'SELECT * FROM `' . self::table() . '` WHERE pay_to = %s ORDER BY settled_at DESC, id DESC LIMIT %d',
+					'SELECT * FROM %i WHERE pay_to = %s ORDER BY settled_at DESC, id DESC LIMIT %d',
+					self::table(),
 					Naulon_Wallet::normalize( $wallet ),
 					$limit
 				),
@@ -355,7 +359,7 @@ class Naulon_Ledger {
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$rows = $wpdb->get_results(
-			$wpdb->prepare( 'SELECT * FROM `' . self::table() . '` ORDER BY settled_at DESC, id DESC LIMIT %d', $limit ),
+			$wpdb->prepare( 'SELECT * FROM %i ORDER BY settled_at DESC, id DESC LIMIT %d', self::table(), $limit ),
 			ARRAY_A
 		);
 		return is_array( $rows ) ? $rows : array();
@@ -369,7 +373,7 @@ class Naulon_Ledger {
 	public static function settlement_count() {
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-		return (int) $wpdb->get_var( 'SELECT COUNT(DISTINCT settlement_ref) FROM `' . self::table() . '`' );
+		return (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(DISTINCT settlement_ref) FROM %i', self::table() ) );
 	}
 
 	/**
@@ -415,7 +419,7 @@ class Naulon_Ledger {
 	public static function drop() {
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-		$wpdb->query( 'DROP TABLE IF EXISTS `' . self::table() . '`' );
+		$wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', self::table() ) );
 		delete_option( self::DB_VERSION_OPTION );
 	}
 }

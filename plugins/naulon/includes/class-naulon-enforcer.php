@@ -540,6 +540,7 @@ class Naulon_Enforcer {
 	 */
 	private function no_store() {
 		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+			// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant, recognized by name.
 			define( 'DONOTCACHEPAGE', true );
 		}
 		nocache_headers();

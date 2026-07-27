@@ -55,24 +55,30 @@ function naulon_cache_guard_do_not_cache() {
 	// The near-universal signal: WP Super Cache, W3 Total Cache, WP Rocket, Batcache, LiteSpeed
 	// and Cache Enabler all honor it.
 	if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant; prefixing it would mean no cache plugin recognizes it.
 		define( 'DONOTCACHEPAGE', true );
 	}
 	if ( ! defined( 'DONOTCACHEOBJECT' ) ) {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant; prefixing it would mean no cache plugin recognizes it.
 		define( 'DONOTCACHEOBJECT', true );
 	}
 	if ( ! defined( 'DONOTCACHEDB' ) ) {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant; prefixing it would mean no cache plugin recognizes it.
 		define( 'DONOTCACHEDB', true );
 	}
 	// Optimizers rewrite the response body; on a 402 there is nothing worth rewriting and the
 	// pass costs latency an agent is waiting on.
 	if ( ! defined( 'DONOTMINIFY' ) ) {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant; prefixing it would mean no cache plugin recognizes it.
 		define( 'DONOTMINIFY', true );
 	}
 	if ( ! defined( 'DONOTROCKETOPTIMIZE' ) ) {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant; prefixing it would mean no cache plugin recognizes it.
 		define( 'DONOTROCKETOPTIMIZE', true );
 	}
 	// LiteSpeed's server-level cache reads its own constant.
 	if ( ! defined( 'LSCACHE_NO_CACHE' ) ) {
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant; prefixing it would mean no cache plugin recognizes it.
 		define( 'LSCACHE_NO_CACHE', true );
 	}
 }

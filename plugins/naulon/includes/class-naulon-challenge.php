@@ -134,6 +134,7 @@ class Naulon_Challenge {
 		// Keep every cache layer off this response: the checker must see the live token, and a
 		// cached stale token outlives a rotation and fails verification mysteriously.
 		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+			// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant, recognized by name.
 			define( 'DONOTCACHEPAGE', true );
 		}
 		nocache_headers();

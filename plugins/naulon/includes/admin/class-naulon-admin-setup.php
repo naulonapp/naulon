@@ -133,7 +133,7 @@ class Naulon_Admin_Setup {
 	 */
 	public static function save_connection() {
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- the dispatcher checked it.
-		$raw = isset( $_POST['naulon_connection'] ) ? trim( (string) wp_unslash( $_POST['naulon_connection'] ) ) : '';
+		$raw = isset( $_POST['naulon_connection'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['naulon_connection'] ) ) ) : '';
 		if ( '' === $raw ) {
 			Naulon_Admin::notice( 'error', __( 'Enter a key or a gate URL.', 'naulon' ) );
 			return;
@@ -468,7 +468,7 @@ class Naulon_Admin_Setup {
 	 */
 	public static function toggle_enforcement() {
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- the dispatcher checked it.
-		$wanted = isset( $_POST['naulon_enforcement'] ) && '1' === (string) wp_unslash( $_POST['naulon_enforcement'] );
+		$wanted = isset( $_POST['naulon_enforcement'] ) && '1' === sanitize_text_field( wp_unslash( $_POST['naulon_enforcement'] ) );
 
 		if ( $wanted && ! ( Naulon_Settings::is_connected() && Naulon_Settings::is_verified() ) ) {
 			Naulon_Admin::notice( 'error', __( 'Not yet. Connect and verify first — a toll that cannot be settled is worse than no toll.', 'naulon' ) );

@@ -91,7 +91,7 @@ class LedgerMoneyTest extends PHPUnit\Framework\TestCase {
 
 	public function test_the_settlement_mode_is_read_out_of_the_402() {
 		$header = base64_encode(
-			wp_json_encode_stub(
+			naulon_test_json(
 				array(
 					'x402Version' => 2,
 					'accepts'     => array( array( 'amount' => '5000', 'payTo' => '0xabc' ) ),
@@ -108,7 +108,7 @@ class LedgerMoneyTest extends PHPUnit\Framework\TestCase {
 	}
 
 	public function test_a_402_with_no_extension_block_has_no_mode() {
-		$header = base64_encode( wp_json_encode_stub( array( 'accepts' => array( array( 'amount' => '5000' ) ) ) ) );
+		$header = base64_encode( naulon_test_json( array( 'accepts' => array( array( 'amount' => '5000' ) ) ) ) );
 		$this->assertSame( '', Naulon_Ledger::mode_from_header( $header ) );
 	}
 
@@ -121,7 +121,7 @@ class LedgerMoneyTest extends PHPUnit\Framework\TestCase {
 
 	public function test_the_price_and_payee_can_be_read_back_for_display() {
 		$header = base64_encode(
-			wp_json_encode_stub(
+			naulon_test_json(
 				array(
 					'accepts' => array(
 						array(
@@ -145,6 +145,6 @@ class LedgerMoneyTest extends PHPUnit\Framework\TestCase {
  * @param array $value Value.
  * @return string
  */
-function wp_json_encode_stub( array $value ) {
+function naulon_test_json( array $value ) {
 	return json_encode( $value ); // phpcs:ignore WordPress.WP.AlternativeFunctions -- test fixture, no WordPress loaded.
 }

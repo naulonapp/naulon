@@ -228,8 +228,8 @@ class Naulon_Admin_Content {
 			return;
 		}
 
-		$allow  = self::parse_fragments( isset( $_POST['naulon_seo_allowlist'] ) ? wp_unslash( $_POST['naulon_seo_allowlist'] ) : '' );
-		$charge = self::parse_fragments( isset( $_POST['naulon_charge_list'] ) ? wp_unslash( $_POST['naulon_charge_list'] ) : '' );
+		$allow  = self::parse_fragments( isset( $_POST['naulon_seo_allowlist'] ) ? sanitize_textarea_field( wp_unslash( $_POST['naulon_seo_allowlist'] ) ) : '' );
+		$charge = self::parse_fragments( isset( $_POST['naulon_charge_list'] ) ? sanitize_textarea_field( wp_unslash( $_POST['naulon_charge_list'] ) ) : '' );
 		// phpcs:enable WordPress.Security.NonceVerification.Missing
 
 		Naulon_Settings::update(

@@ -1,16 +1,15 @@
 <?php
 /**
- * Plugin Name:       naulon — citation toll for WordPress
+ * Plugin Name:       naulon — citation toll
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
  * Version:           0.1.0
- * Requires at least: 6.0
+ * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       naulon
- * Domain Path:       /languages
  *
  * The WordPress equivalent of the `@naulon/enforce` SDK. A Node site installs the SDK and
  * writes a credits route; a WordPress site cannot, so this plugin IS that surface: the credits
