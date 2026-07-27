@@ -49,6 +49,34 @@ For the strongest key storage, add it to `wp-config.php` instead of the settings
 
 A key in `wp-config.php` stays out of your database, so it does not travel in database exports or backups. The settings screen will tell you which storage is in use.
 
+== External services ==
+
+This plugin relies on an external service to price a read and to settle a payment, because
+settlement cannot be performed inside WordPress. Nothing is contacted until you enter a key —
+entering it is the consent, and until then the plugin makes no outbound requests at all.
+
+**Service:** naulon (https://naulon.app), reached at https://api.naulon.app.
+
+**When it is contacted, and what is sent:**
+
+* When you connect or rotate a key, and hourly thereafter, to confirm the connection is live.
+  Sent: your API key and your site's domain.
+* When you verify ownership of your site. Sent: your API key and your site's domain. The
+  service then fetches a challenge file or your homepage to confirm you control the domain.
+* When an automated agent requests a full article and a price is needed. Sent: your API key,
+  the URL and slug of the requested article.
+* When an agent pays. Sent: your API key, the article URL, the payment the agent signed, and
+  the wallet addresses credited on that article.
+
+**What is never sent:** your article content, your readers, your visitor logs, and anything
+about human traffic. Human requests never contact the service at all.
+
+If you point the connectivity field at your own self-hosted gate instead of a key, the plugin
+talks only to that server and never to naulon.app.
+
+Terms of service: https://naulon.app/terms
+Privacy policy: https://naulon.app/privacy
+
 == Frequently Asked Questions ==
 
 = Will this slow down or break my site for readers? =
