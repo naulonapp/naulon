@@ -11,3 +11,7 @@
 /composer.lock
 /phpunit.xml.dist
 /phpunit-integration.xml.dist
+
+# wordpress.org listing assets live in SVN /assets, never in the plugin itself.
+/.wordpress-org
+/languages/*.po
