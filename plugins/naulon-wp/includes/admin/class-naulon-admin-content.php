@@ -192,8 +192,9 @@ class Naulon_Admin_Content {
 	private static function render_token( array $settings ) {
 		Naulon_Admin::card_open( __( 'Credits route', 'naulon' ) );
 		printf(
-			'<p><code>%s</code></p>',
-			esc_html( rest_url( Naulon_Credits::NAMESPACE_V1 . '/credits/' ) )
+			'<p><code>%s</code> <span class="naulon-muted">%s</span></p>',
+			esc_html( Naulon_Credits::credits_base_url() . '/credits/<article>' ),
+			esc_html__( 'give your account the base, without /credits — it appends the article itself', 'naulon' )
 		);
 		echo '<p class="naulon-muted">' . esc_html__( 'This route describes published articles and their payees, and nothing else — a draft or a private post answers 404 exactly like a post that does not exist. It is open by default because the control plane calls it from another host. A shared token is available if you would rather it were not open; set the same value on your account.', 'naulon' ) . '</p>';
 

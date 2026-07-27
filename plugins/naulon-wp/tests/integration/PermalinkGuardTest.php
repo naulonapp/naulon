@@ -74,6 +74,35 @@ class PermalinkGuardTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Permalinks are set to Plain', $html );
 	}
 
+	public function test_the_setup_screen_hands_over_the_base_never_the_route_itself() {
+		// The consumer appends /credits/<slug>. Showing the full route address makes it fetch
+		// …/credits/credits/<slug>, which 404s on any site whose leaf lookup is ambiguous — and a
+		// 404 here means "read this one free", silently.
+		update_option( 'permalink_structure', '/%postname%/' );
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
+		ob_start();
+		Naulon_Admin_Setup::render();
+		$html = ob_get_clean();
+
+		$base = Naulon_Credits::credits_base_url();
+		$this->assertStringContainsString( 'value="' . esc_attr( $base ) . '"', $html );
+		$this->assertStringNotContainsString( 'value="' . esc_attr( $base . '/credits/' ) . '"', $html );
+	}
+
+	public function test_the_base_has_no_trailing_slash_and_no_credits_segment() {
+		// Pretty permalinks, because that is the only configuration where anything is tollable
+		// at all — with plain ones rest_url() returns the ?rest_route= form and the plugin has
+		// already refused to work (see the tests above).
+		update_option( 'permalink_structure', '/%postname%/' );
+
+		$base = Naulon_Credits::credits_base_url();
+
+		$this->assertStringEndsWith( '/wp-json/naulon/v1', $base );
+		$this->assertStringNotContainsString( '/credits', $base );
+		$this->assertSame( rtrim( $base, '/' ), $base );
+	}
+
 	public function test_the_warning_is_gone_once_permalinks_are_set() {
 		update_option( 'permalink_structure', '/%postname%/' );
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );

@@ -370,7 +370,12 @@ class Naulon_Admin_Setup {
 		echo '<p>' . esc_html__( 'This plugin publishes who wrote each article and where their money goes. The control plane has to be told to read it — that is a setting on your account, and one this plugin deliberately cannot change for you. Paste this address into the credits field there:', 'naulon' ) . '</p>';
 		printf(
 			'<p><input type="text" class="large-text code naulon-copyable" readonly onfocus="this.select()" value="%s" /></p>',
-			esc_attr( rest_url( Naulon_Credits::NAMESPACE_V1 . '/credits/' ) )
+			esc_attr( Naulon_Credits::credits_base_url() )
+		);
+		printf(
+			'<p class="naulon-muted naulon-hint">%s <code>%s</code></p>',
+			esc_html__( 'That is the base, without a trailing slash and without /credits — the control plane appends the article itself, so what it fetches is:', 'naulon' ),
+			esc_html( Naulon_Credits::credits_base_url() . '/credits/your-article' )
 		);
 		echo '<p class="naulon-muted">' . esc_html__( 'An article that is not tollable — a draft, one with no author wallet, one you marked free — answers 404 here, which is the agreed signal for "read this one free". That is why nothing else needs a list of what is paid.', 'naulon' ) . '</p>';
 

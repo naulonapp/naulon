@@ -48,6 +48,23 @@ class Naulon_Credits {
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
 	}
 
+	/**
+	 * The address a publisher hands to the control plane — the **base**, with no trailing slash
+	 * and no `/credits` segment.
+	 *
+	 * This distinction is worth a method of its own because getting it wrong is silent. The
+	 * consumer appends `/credits/<slug>` itself (`httpResolver` in the SDK), so handing it the
+	 * full route address makes it fetch `…/credits/credits/<slug>`. That happens to resolve here
+	 * today — only because the route accepts a bare slug as a fallback and finds the leaf — but
+	 * it stops resolving the moment a site uses a path-style permalink or has two posts sharing
+	 * a leaf, and the failure is a 404, which means "read this one free". Silently, forever.
+	 *
+	 * @return string e.g. https://example.com/wp-json/naulon/v1
+	 */
+	public static function credits_base_url() {
+		return untrailingslashit( rest_url( self::NAMESPACE_V1 ) );
+	}
+
 	public function register_routes() {
 		register_rest_route(
 			self::NAMESPACE_V1,
