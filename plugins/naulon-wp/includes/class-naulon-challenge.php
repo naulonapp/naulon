@@ -49,8 +49,31 @@ class Naulon_Challenge {
 	public function register() {
 		add_action( 'init', array( $this, 'add_rewrite_rules' ) );
 		add_filter( 'query_vars', array( $this, 'add_query_var' ) );
-		add_action( 'template_redirect', array( $this, 'maybe_serve' ) );
+		// `parse_request`, NOT `template_redirect`. WordPress's canonical redirect runs on
+		// template_redirect and 301s `/.well-known/naulon-challenge/<token>` to the same path
+		// WITH a trailing slash whenever the permalink structure ends in one — which is the
+		// default. The control plane never follows a 3xx, so served from template_redirect the
+		// challenge is unreachable and verification can never pass. parse_request fires well
+		// before that, so we answer first. (Verified against real WordPress: it 301'd.)
+		add_action( 'parse_request', array( $this, 'maybe_serve' ) );
+		// Belt and braces for anything that re-runs the canonical logic on our URL.
+		add_filter( 'redirect_canonical', array( $this, 'block_canonical_redirect' ), 10, 2 );
 		add_action( 'wp_head', array( $this, 'print_meta_tag' ) );
+	}
+
+	/**
+	 * Never canonical-redirect a challenge URL. A redirect here is indistinguishable from a
+	 * missing challenge as far as the checker is concerned.
+	 *
+	 * @param string|false $redirect_url  Where WordPress wants to send this.
+	 * @param string       $requested_url What was asked for.
+	 * @return string|false
+	 */
+	public function block_canonical_redirect( $redirect_url, $requested_url ) {
+		if ( is_string( $requested_url ) && false !== strpos( $requested_url, '/.well-known/naulon-challenge/' ) ) {
+			return false;
+		}
+		return $redirect_url;
 	}
 
 	/**
@@ -85,10 +108,16 @@ class Naulon_Challenge {
 	 * turn this route into a reflector that proves ownership of any token an attacker chose —
 	 * i.e. it would let someone else's tenant verify our host.
 	 *
+	 * @param WP $wp The WordPress environment, mid-parse. Query vars are on it directly —
+	 *               `get_query_var()` is not populated this early.
 	 * @return void
 	 */
-	public function maybe_serve() {
-		$requested = get_query_var( self::QUERY_VAR );
+	public function maybe_serve( $wp = null ) {
+		if ( is_object( $wp ) && isset( $wp->query_vars ) && is_array( $wp->query_vars ) ) {
+			$requested = isset( $wp->query_vars[ self::QUERY_VAR ] ) ? $wp->query_vars[ self::QUERY_VAR ] : '';
+		} else {
+			$requested = get_query_var( self::QUERY_VAR );
+		}
 		if ( ! is_string( $requested ) || '' === $requested ) {
 			return;
 		}
