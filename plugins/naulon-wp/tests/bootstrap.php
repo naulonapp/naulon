@@ -36,3 +36,4 @@ if ( ! function_exists( 'esc_html' ) ) {
 require_once __DIR__ . '/../includes/class-naulon-slug.php';
 require_once __DIR__ . '/../includes/class-naulon-wallet.php';
 require_once __DIR__ . '/../includes/class-naulon-key.php';
+require_once __DIR__ . '/../includes/class-naulon-agent.php';

@@ -43,6 +43,8 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-challenge.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-verification.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-agent.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-enforcer.php';
 
 /**
  * Wire the plugin. Everything is hook-registration only — no work happens at load time, so a
@@ -51,6 +53,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
 function naulon_bootstrap() {
 	Naulon_Challenge::instance()->register();
 	Naulon_Credits::instance()->register();
+	Naulon_Enforcer::instance()->register();
 }
 add_action( 'plugins_loaded', 'naulon_bootstrap' );
 

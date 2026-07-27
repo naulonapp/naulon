@@ -102,15 +102,83 @@ class Naulon_Client {
 	 * @param string $kind     read|citation.
 	 * @return array
 	 */
-	public function quote( $resource, $slug, $kind = 'read' ) {
-		$query = http_build_query(
-			array(
-				'resource' => $resource,
-				'slug'     => $slug,
-				'kind'     => $kind,
-			)
+	public function quote( $resource, $slug, $kind = 'read', $build_402 = false ) {
+		$args = array(
+			'resource' => $resource,
+			'slug'     => $slug,
+			'kind'     => $kind,
 		);
-		return $this->request( 'GET', '/_naulon/quote?' . $query, null, self::TIMEOUT_REQUEST );
+		// `build=402` asks the control plane to ALSO return the built 402 — the header bytes and
+		// the settlement legs — derived by the same builder the gate uses and the same one
+		// /verify re-derives legs with when it checks our settle request.
+		//
+		// This is why there is no money math in this plugin. Converting a quote into legs means
+		// atomic USDC conversion, the co-author split and its remainder rule, and the exact
+		// requirements shape. Re-implementing that in PHP would be a second source of truth for
+		// how much each author is paid, and a rounding difference would not throw — it would
+		// quietly pay the wrong amount. So we do not implement it; we ask for the answer.
+		if ( $build_402 ) {
+			$args['build'] = '402';
+		}
+		return $this->request( 'GET', '/_naulon/quote?' . http_build_query( $args ), null, self::TIMEOUT_REQUEST );
+	}
+
+	/**
+	 * Settle a presented payment. The control plane verifies the buyer's signature, moves the
+	 * money buyer→author (custody-free — nothing is ever held here or there), and mints the
+	 * re-read license.
+	 *
+	 * `legs` and `quote` are handed back exactly as received from `quote(build_402: true)`.
+	 * The control plane re-derives what the legs SHOULD be and refuses a mismatch, so a stale
+	 * or tampered cache fails to a 400 rather than to a mispayment.
+	 *
+	 * @param string $payment  The buyer's payment-signature header value.
+	 * @param array  $legs     Legs from the built 402.
+	 * @param array  $quote    The quote from the same response.
+	 * @param string $resource Absolute URL of the resource being paid for.
+	 * @return array
+	 */
+	public function settle( $payment, array $legs, array $quote, $resource ) {
+		return $this->request(
+			'POST',
+			'/_naulon/verify',
+			array(
+				'payment'  => $payment,
+				'legs'     => $legs,
+				'quote'    => $quote,
+				'resource' => $resource,
+			),
+			self::TIMEOUT_ADMIN
+		);
+	}
+
+	/**
+	 * Does a presented license entitle a free re-read?
+	 *
+	 * Verified by the control plane rather than here, for the same reason the 402 is built
+	 * there: local verification would mean re-implementing EdDSA JWS verification plus the
+	 * entitlement rules (issuer and audience pinning, slug scope, read vs citation, expiry,
+	 * holder-of-key binding). A second implementation of security-critical verification is a
+	 * second chance to accept a forged token.
+	 *
+	 * @param string $license  The presented license JWS.
+	 * @param string $resource Absolute URL being re-read.
+	 * @param string $slug     Canonical slug.
+	 * @param string $kind     read|citation.
+	 * @param string $proof    Forwarded holder-of-key proof header, or ''.
+	 * @return array
+	 */
+	public function license_check( $license, $resource, $slug, $kind = 'read', $proof = '' ) {
+		$body = array(
+			'license'  => $license,
+			'resource' => $resource,
+			'slug'     => $slug,
+			'kind'     => $kind,
+		);
+		if ( '' !== $proof ) {
+			$body['proof'] = $proof;
+		}
+		return $this->request( 'POST', '/_naulon/license/check', $body, self::TIMEOUT_REQUEST );
 	}
 
 	/**
