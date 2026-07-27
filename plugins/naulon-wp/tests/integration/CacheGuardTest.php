@@ -188,6 +188,23 @@ class CacheGuardTest extends WP_UnitTestCase {
 		$this->assertFalse( $result['tested'] );
 	}
 
+	public function test_a_real_check_is_remembered_so_the_setup_step_can_stop_asking() {
+		$this->response_code = 402;
+		Naulon_Cache::probe();
+
+		$settings = Naulon_Settings::all();
+		$this->assertSame( 'enforcing', $settings['last_toll_verdict'] );
+		$this->assertNotSame( '', $settings['last_toll_check_at'] );
+	}
+
+	public function test_a_check_that_never_reached_the_site_records_no_verdict() {
+		// "We could not look" must never be stored as "it is broken" — or as "it is fine".
+		$this->transport_error = true;
+		Naulon_Cache::probe();
+
+		$this->assertSame( '', Naulon_Settings::all()['last_toll_verdict'] );
+	}
+
 	public function test_a_loopback_failure_is_not_reported_as_under_tolling() {
 		// A host that blocks loopback requests would otherwise look exactly like a cache serving
 		// crawlers for free, and send the publisher chasing the wrong problem.

@@ -58,6 +58,12 @@ class Naulon_Settings {
 				'status_error'       => '',
 				'heartbeat_at'       => '',
 				'heartbeat_note'     => '',
+				// The last time a crawler was actually charged, as observed by the toll test.
+				// This is the only evidence the plugin has that the whole chain works —
+				// including the one step it cannot check directly, the credits address being
+				// set on the account — so it is recorded rather than re-guessed each render.
+				'last_toll_verdict'  => '',
+				'last_toll_check_at' => '',
 			),
 			$stored
 		);

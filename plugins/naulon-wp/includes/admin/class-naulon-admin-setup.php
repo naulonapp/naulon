@@ -354,11 +354,17 @@ class Naulon_Admin_Setup {
 	 * @return void
 	 */
 	private static function render_credits_url( array $settings ) {
+		// This is the one step the plugin cannot check directly — the credits address is set on
+		// the account, through a session-only route. But a crawler that was actually charged
+		// could not have been priced without it, so a successful toll test is the evidence, and
+		// the step stops claiming to be outstanding forever.
+		$proven = 'enforcing' === (string) $settings['last_toll_verdict'];
+
 		Naulon_Admin::card_open(
 			__( 'Point your account at this site', 'naulon' ),
 			array(
 				'step'  => 3,
-				'state' => Naulon_Settings::is_verified() ? 'current' : 'todo',
+				'state' => $proven ? 'done' : ( Naulon_Settings::is_verified() ? 'current' : 'todo' ),
 			)
 		);
 		echo '<p>' . esc_html__( 'This plugin publishes who wrote each article and where their money goes. The control plane has to be told to read it — that is a setting on your account, and one this plugin deliberately cannot change for you. Paste this address into the credits field there:', 'naulon' ) . '</p>';
@@ -367,6 +373,15 @@ class Naulon_Admin_Setup {
 			esc_attr( rest_url( Naulon_Credits::NAMESPACE_V1 . '/credits/' ) )
 		);
 		echo '<p class="naulon-muted">' . esc_html__( 'An article that is not tollable — a draft, one with no author wallet, one you marked free — answers 404 here, which is the agreed signal for "read this one free". That is why nothing else needs a list of what is paid.', 'naulon' ) . '</p>';
+
+		if ( $proven ) {
+			printf(
+				'<p class="naulon-muted naulon-hint">%s %s</p>',
+				esc_html__( 'Confirmed by the toll test: a crawler was priced and charged, so this address is being read.', 'naulon' ),
+				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- when() escapes.
+				Naulon_Admin::when( (string) $settings['last_toll_check_at'] )
+			);
+		}
 
 		if ( '' !== trim( (string) $settings['credits_token'] ) ) {
 			echo '<p class="naulon-muted">' . esc_html__( 'A shared token is set, so the control plane must send it. Remove it on the Content screen if the two ever disagree.', 'naulon' ) . '</p>';

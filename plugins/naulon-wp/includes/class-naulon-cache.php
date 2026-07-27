@@ -327,6 +327,8 @@ class Naulon_Cache {
 		$status  = (int) wp_remote_retrieve_response_code( $response );
 		$headers = self::interesting_headers( $response );
 
+		self::remember( 402 === $status ? 'enforcing' : ( 200 === $status ? 'under_tolling' : 'unexpected' ) );
+
 		if ( 402 === $status ) {
 			return array(
 				'ok'      => true,
@@ -363,6 +365,24 @@ class Naulon_Cache {
 			'message' => sprintf( __( 'A crawler asking for this article got %d, which is neither a toll nor the article.', 'naulon' ), $status ),
 			'headers' => $headers,
 			'url'     => $url,
+		);
+	}
+
+	/**
+	 * Remember what the last real check saw.
+	 *
+	 * Only a check that reached the site is recorded. A loopback failure says nothing about the
+	 * toll, and storing it as a verdict would turn "we could not look" into "it is broken".
+	 *
+	 * @param string $verdict enforcing|under_tolling|unexpected.
+	 * @return void
+	 */
+	private static function remember( $verdict ) {
+		Naulon_Settings::update(
+			array(
+				'last_toll_verdict'  => $verdict,
+				'last_toll_check_at' => gmdate( 'c' ),
+			)
 		);
 	}
 
