@@ -42,8 +42,8 @@ class Naulon_Client {
 	 * @param string|null $key Override key (rotation check). Null = the stored key.
 	 * @return array {ok:bool, status:int, body:array|null, error:string}
 	 */
-	public function enforce_status( $key = null ) {
-		return $this->request( 'GET', '/_naulon/enforce-status', null, self::TIMEOUT_ADMIN, $key );
+	public function enforce_status( $key = null, $base = null ) {
+		return $this->request( 'GET', '/_naulon/enforce-status', null, self::TIMEOUT_ADMIN, $key, $base );
 	}
 
 	/**
@@ -189,11 +189,13 @@ class Naulon_Client {
 	 * @param array|null $body    JSON body, or null.
 	 * @param int        $timeout Seconds.
 	 * @param string|null $key    Override key (rotation), else the stored one.
+	 * @param string|null $base   Override base URL (validating a pasted self-host gate URL before
+	 *                            it is stored), else the configured one.
 	 * @return array {ok:bool, status:int, body:array|null, error:string}
 	 */
-	private function request( $method, $path, $body, $timeout, $key = null ) {
+	private function request( $method, $path, $body, $timeout, $key = null, $base = null ) {
 		$api_key = null === $key ? Naulon_Settings::api_key() : $key;
-		$url     = Naulon_Settings::api_base() . $path;
+		$url     = ( null === $base ? Naulon_Settings::api_base() : untrailingslashit( $base ) ) . $path;
 
 		$headers = array( 'Accept' => 'application/json' );
 		if ( '' !== $api_key ) {

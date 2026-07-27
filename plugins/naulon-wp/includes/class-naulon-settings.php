@@ -36,15 +36,28 @@ class Naulon_Settings {
 		}
 		return array_merge(
 			array(
-				'api_key'           => '',
-				'api_base'          => '',
-				'gate_url'          => '',
-				'challenge_host'    => '',
-				'challenge_token'   => '',
-				'challenge_method'  => '',
-				'verified_at'       => '',
-				'credits_token'     => '',
-				'enforcement_on'    => false,
+				'api_key'            => '',
+				'api_base'           => '',
+				'gate_url'           => '',
+				'challenge_host'     => '',
+				'challenge_token'    => '',
+				'challenge_method'   => '',
+				'verified_at'        => '',
+				'credits_token'      => '',
+				'enforcement_on'     => false,
+				// Classification policy the publisher controls (Content screen). Empty means
+				// "the built-in lists decide", which is the safe default in both directions.
+				'seo_allowlist'      => array(),
+				'charge_list'        => array(),
+				// Last verdict from the control plane's classification sweep, refreshed by the
+				// heartbeat. Stored so the admin screens can show a fact with a timestamp rather
+				// than making a network call every page load.
+				'status_checked_at'  => '',
+				'status_mode'        => '',
+				'status_next_action' => '',
+				'status_error'       => '',
+				'heartbeat_at'       => '',
+				'heartbeat_note'     => '',
 			),
 			$stored
 		);

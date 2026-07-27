@@ -27,6 +27,10 @@ A human visitor is never affected. They see exactly what they always saw, at the
 
 You paste one key, click verify, and choose what is tolled. Your authors each add their own wallet address from their normal WordPress profile — an author never sees anyone else's earnings, and only editors and administrators can see the site's total.
 
+**How you know it is working**
+
+The Setup screen has a **Test toll** button that asks your own site for one of your articles while presenting a crawler's user agent, over real HTTP, and shows you what came back: the status, the price, the chain, and the wallet being paid. Diagnostics runs the same check against caching, lists the last decisions the toll made — machine requests only, readers are never logged — and says plainly when something between the internet and WordPress is answering from a cache.
+
 **Where the money goes**
 
 Payment is direct: the agent pays your authors. This plugin never takes custody of funds, never holds a balance, and never asks you to top anything up. There is no wallet on this site holding money.
@@ -40,8 +44,14 @@ The whole protocol is open source. The connectivity field takes either a hosted 
 1. Install and activate the plugin.
 2. Open **naulon → Setup** and paste your key.
 3. Click **Verify this site**. The plugin proves you own the domain by serving a challenge file and a meta tag — no DNS changes needed.
-4. Choose what is tolled under **naulon → Content**.
-5. Ask your authors to add a wallet address to their profile. Posts by authors without one read free.
+4. Paste the credits address shown on that screen into your naulon account, so the service knows where to read your author data.
+5. Switch the toll on, and press **Test toll** to watch a crawler get charged.
+6. Choose what is tolled under **naulon → Content**.
+7. Ask your authors to add a wallet address to their profile. Posts by authors without one read free.
+
+Permalinks must not be set to Plain — with plain permalinks an article has no address to identify it by, and nothing can be tolled. The Setup screen says so if that is the case.
+
+If anything caches pages on your site, install the cache guard from **naulon → Diagnostics**. A cached article is served before any plugin runs, so without it crawlers can read from the cache for free.
 
 For the strongest key storage, add it to `wp-config.php` instead of the settings screen:
 
@@ -103,17 +113,29 @@ No. Content behind a membership plugin is excluded, and there is a filter (`naul
 
 No. Your content never leaves your server. The plugin talks to the control plane only to price a read and to settle a payment, and it does not contact anything at all until you enter a key.
 
+= Does it log my visitors? =
+
+No. Human requests are never recorded — not their address, not their browser, not the fact that they arrived. The Diagnostics screen lists recent decisions, and every line on it is a machine.
+
+= I use a caching plugin. Does that matter? =
+
+Yes, and the plugin is direct about it. A page cache answers before any plugin runs, so a cached article can be handed to a crawler for free. Install the cache guard from Diagnostics — it stops agent responses being cached at all — then add the listed user agents to your caching plugin's own exclusion list, and use the check on that screen to confirm a crawler is actually being charged.
+
 == Screenshots ==
 
-1. Setup — connect and verify in one step, with a specific diagnosis when verification cannot pass.
-2. Content — choose what is tolled, per site, category or post.
-3. People — which authors have wallets, and how many posts are reading free without one.
-4. Earnings — what has been paid, per author.
+1. Setup — connect, verify, switch on, and test the toll against your own site.
+2. Content — choose what is tolled and which machines are charged.
+3. People — which authors have wallets, and how many posts read free without one.
+4. Earnings — what has been paid, per author, settled and authorized shown separately.
+5. Diagnostics — the caching check, recent decisions, and connection health.
 
 == Changelog ==
 
 = 0.1.0 =
 * First release: credits contract, author wallets, site ownership verification, roles and capabilities.
+* Admin screens: setup with one-click verification and a real toll test, content policy, author payouts, earnings, diagnostics.
+* Cache guard drop-in, plus a live check that tells you whether a crawler is actually being charged.
+* Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
 

@@ -1,0 +1,563 @@
+/**
+ * naulon admin styles.
+ *
+ * The line this walks: these screens live inside wp-admin, so they must feel like WordPress —
+ * same rhythm, same controls, same greys — while still being recognizably naulon. So the brand
+ * appears exactly twice, in the header band and in the menu icon, and everything below is
+ * WordPress with better spacing. A plugin that repaints wp-admin in its own colours makes a
+ * publisher work out where they are before they can work out what the screen says.
+ *
+ * The one owned colour is the deep green (#0a7350 — the paper-safe form of the brand neon, which
+ * would be unreadable on white). It marks money and completion, and nothing else.
+ *
+ * @package naulon
+ */
+
+/* On :root, not on .naulon-wrap — the payouts card renders on profile.php, which has no naulon
+ * wrapper, and scoping the tokens to the wrapper left that card's warning colourless. This
+ * stylesheet is only enqueued on naulon screens and the profile screens, so nothing else on the
+ * site can pick these up. */
+:root {
+	--naulon-green: #0a7350;
+	--naulon-green-soft: #e8f5ef;
+	--naulon-amber: #8f5e00;
+	--naulon-amber-soft: #fdf6e3;
+	--naulon-red: #b32d3f;
+	--naulon-red-soft: #fdf0f1;
+	--naulon-ink: #1d2327;
+	--naulon-muted: #646970;
+	--naulon-line: #dcdcde;
+	--naulon-surface: #fff;
+	--naulon-inset: #f6f7f7;
+	--naulon-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.naulon-wrap {
+	max-width: 68rem;
+}
+
+/* On the profile screen the warning is a WordPress `.description`, and core styles that with a
+ * more specific selector than a bare class — so this one has to be at least as specific or the
+ * "your articles read free" line renders as ordinary grey help text and gets skipped. */
+.form-table td p.description.naulon-warn {
+	color: var(--naulon-amber);
+}
+
+/* A wallet the browser can already tell is malformed, marked before it is submitted. */
+input.naulon-wallet:invalid {
+	border-color: var(--naulon-red);
+	box-shadow: 0 0 0 1px var(--naulon-red);
+}
+
+/* ── Header band ───────────────────────────────────────────────────────────────────────────── */
+
+.naulon-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px 32px;
+	background: #10161c;
+	color: #f0f0f1;
+	border-radius: 8px;
+	padding: 14px 20px;
+	margin: 16px 0 20px;
+}
+
+.naulon-head__brand {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+
+.naulon-head__logo {
+	display: inline-flex;
+	color: #2bf5a0; /* the neon is legible here, and only here: this band is the dark surface */
+}
+
+.naulon-mark {
+	width: 26px;
+	height: 26px;
+	display: block;
+}
+
+.naulon-head__name {
+	font-family: var(--naulon-mono);
+	font-size: 17px;
+	font-weight: 500;
+	letter-spacing: -0.02em;
+}
+
+.naulon-head__sep {
+	width: 1px;
+	height: 18px;
+	background: rgba(240, 240, 241, 0.24);
+}
+
+.naulon-head__page {
+	font-size: 14px;
+	color: #c3c4c7;
+}
+
+.naulon-head__state {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 28px;
+}
+
+.naulon-head__item {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.naulon-head__label {
+	font-size: 10px;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: #8c8f94;
+}
+
+.naulon-head__value {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 13px;
+	color: #f0f0f1;
+	white-space: nowrap;
+}
+
+.naulon-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	flex: none;
+	background: #8c8f94;
+}
+
+.naulon-dot--ok {
+	background: #2bf5a0;
+}
+
+.naulon-dot--warn {
+	background: #ffb020;
+}
+
+.naulon-dot--bad {
+	background: #ff476f;
+}
+
+.naulon-lede {
+	max-width: 46rem;
+	font-size: 14px;
+	color: var(--naulon-muted);
+	margin: 0 0 8px;
+}
+
+/* ── Cards ─────────────────────────────────────────────────────────────────────────────────── */
+
+.naulon-card {
+	background: var(--naulon-surface);
+	border: 1px solid var(--naulon-line);
+	border-radius: 8px;
+	padding: 18px 22px 20px;
+	margin: 0 0 16px;
+	box-shadow: 0 1px 1px rgba(0, 0, 0, 0.02);
+}
+
+.naulon-card > h2 {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 0 0 14px;
+	padding: 0;
+	font-size: 15px;
+	line-height: 1.4;
+	color: var(--naulon-ink);
+}
+
+.naulon-card h3 {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.07em;
+	color: var(--naulon-muted);
+	margin: 22px 0 8px;
+}
+
+.naulon-card > *:last-child {
+	margin-bottom: 0;
+}
+
+/* A step's number carries its own state, so the sequence reads at a glance. */
+.naulon-step {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 50%;
+	border: 1px solid var(--naulon-line);
+	background: var(--naulon-inset);
+	color: var(--naulon-muted);
+	font-size: 12px;
+	font-weight: 600;
+	flex: none;
+}
+
+.naulon-card--done .naulon-step {
+	background: var(--naulon-green);
+	border-color: var(--naulon-green);
+	color: #fff;
+}
+
+.naulon-card--current .naulon-step {
+	background: #fff;
+	border-color: var(--naulon-green);
+	color: var(--naulon-green);
+	box-shadow: 0 0 0 3px var(--naulon-green-soft);
+}
+
+.naulon-card--todo {
+	opacity: 0.82;
+}
+
+/* ── State line, pills, tokens ─────────────────────────────────────────────────────────────── */
+
+.naulon-state {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px 10px;
+	margin: 0 0 12px;
+	min-width: 0;
+}
+
+.naulon-pill {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 10px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.7;
+	border: 1px solid transparent;
+	white-space: nowrap;
+}
+
+.naulon-pill--ok {
+	background: var(--naulon-green-soft);
+	border-color: #9ad3bd;
+	color: #04543a;
+}
+
+.naulon-pill--warn {
+	background: var(--naulon-amber-soft);
+	border-color: #e6c76a;
+	color: var(--naulon-amber);
+}
+
+.naulon-pill--bad {
+	background: var(--naulon-red-soft);
+	border-color: #e8a3ab;
+	color: var(--naulon-red);
+}
+
+.naulon-pill--idle {
+	background: var(--naulon-inset);
+	border-color: var(--naulon-line);
+	color: var(--naulon-muted);
+}
+
+.naulon-token,
+.naulon-wrap code {
+	font-family: var(--naulon-mono);
+	font-size: 12px;
+	background: var(--naulon-inset);
+	border: 1px solid var(--naulon-line);
+	border-radius: 4px;
+	padding: 1px 6px;
+}
+
+.naulon-truncate {
+	display: inline-block;
+	max-width: 34rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	vertical-align: bottom;
+}
+
+.naulon-table .naulon-truncate {
+	max-width: 22rem;
+}
+
+/* A list of user-agent fragments reads as a set of things, not as one long string. */
+.naulon-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	max-width: 52rem;
+}
+
+.naulon-tag {
+	font-family: var(--naulon-mono);
+	font-size: 11px;
+	background: var(--naulon-inset);
+	border: 1px solid var(--naulon-line);
+	border-radius: 4px;
+	padding: 2px 7px;
+	color: var(--naulon-muted);
+}
+
+.naulon-muted {
+	color: var(--naulon-muted);
+}
+
+.naulon-hint {
+	font-size: 12px;
+	max-width: 46rem;
+	margin: 8px 0 0;
+}
+
+.naulon-warn {
+	color: var(--naulon-amber);
+}
+
+.naulon-bad {
+	color: var(--naulon-red);
+}
+
+/* ── Forms and actions ─────────────────────────────────────────────────────────────────────── */
+
+.naulon-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin: 12px 0 0;
+}
+
+.naulon-actions form,
+.naulon-state form {
+	margin: 0;
+}
+
+.naulon-field {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin: 6px 0 0;
+}
+
+.naulon-field label {
+	flex-basis: 100%;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--naulon-ink);
+}
+
+.naulon-field input[type="password"],
+.naulon-field input[type="text"] {
+	font-family: var(--naulon-mono);
+}
+
+.naulon-copyable {
+	background: var(--naulon-inset);
+}
+
+.naulon-wrap textarea.code {
+	font-family: var(--naulon-mono);
+	font-size: 12px;
+}
+
+/* ── Results ───────────────────────────────────────────────────────────────────────────────── */
+
+.naulon-result {
+	border: 1px solid var(--naulon-line);
+	border-left-width: 3px;
+	border-radius: 6px;
+	background: var(--naulon-inset);
+	padding: 14px 16px;
+	margin: 14px 0 0;
+}
+
+.naulon-result--enforcing {
+	border-left-color: var(--naulon-green);
+}
+
+.naulon-result--under_tolling {
+	border-left-color: var(--naulon-red);
+}
+
+.naulon-result p {
+	margin: 0 0 8px;
+	max-width: 46rem;
+}
+
+.naulon-result > *:last-child {
+	margin-bottom: 0;
+}
+
+.naulon-diagnosis {
+	margin-top: 14px;
+}
+
+.naulon-diagnosis ul,
+.naulon-list {
+	list-style: disc;
+	margin: 8px 0 0 20px;
+	max-width: 46rem;
+}
+
+.naulon-diagnosis li,
+.naulon-list li {
+	margin-bottom: 8px;
+}
+
+/* ── Key/value tables ──────────────────────────────────────────────────────────────────────── */
+
+.naulon-kv {
+	border-collapse: collapse;
+	margin: 10px 0 0;
+	width: 100%;
+	max-width: 52rem;
+	font-size: 13px;
+}
+
+.naulon-kv tr + tr th,
+.naulon-kv tr + tr td {
+	border-top: 1px solid var(--naulon-line);
+}
+
+.naulon-kv th {
+	text-align: left;
+	font-weight: 500;
+	padding: 7px 20px 7px 0;
+	vertical-align: top;
+	white-space: nowrap;
+	color: var(--naulon-muted);
+	width: 14rem;
+}
+
+.naulon-kv td {
+	padding: 7px 0;
+	word-break: break-word;
+}
+
+/* ── Figures ───────────────────────────────────────────────────────────────────────────────── */
+
+.naulon-figures {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px 40px;
+	margin: 4px 0 14px;
+}
+
+.naulon-figure__value {
+	display: block;
+	font-size: 28px;
+	font-weight: 400;
+	line-height: 1.15;
+	color: var(--naulon-ink);
+}
+
+.naulon-num {
+	font-family: var(--naulon-mono);
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.02em;
+}
+
+.naulon-figure:first-child .naulon-figure__value {
+	color: var(--naulon-green);
+}
+
+.naulon-figure__label {
+	display: block;
+	font-size: 12px;
+	color: var(--naulon-muted);
+	margin-top: 2px;
+}
+
+/* ── Data tables ───────────────────────────────────────────────────────────────────────────── */
+
+.naulon-table {
+	margin: 10px 0 0;
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+.naulon-table th,
+.naulon-table td {
+	vertical-align: top;
+	font-size: 13px;
+}
+
+.naulon-table thead th {
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--naulon-muted);
+}
+
+.naulon-table code {
+	background: none;
+	border: none;
+	padding: 0;
+	color: var(--naulon-muted);
+}
+
+.naulon-table form {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+}
+
+.naulon-wallet-input {
+	width: 21rem;
+	max-width: 100%;
+	font-family: var(--naulon-mono);
+	font-size: 12px;
+}
+
+/* Money and counts line up on the decimal, so a column of them can be scanned. */
+.naulon-table td.naulon-num,
+.naulon-table th.naulon-num {
+	text-align: right;
+	white-space: nowrap;
+}
+
+.naulon-payees {
+	margin: 0;
+	font-size: 11px;
+	word-break: break-all;
+}
+
+/* ── Narrow screens ────────────────────────────────────────────────────────────────────────── */
+
+@media screen and (max-width: 782px) {
+	.naulon-head {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+
+	.naulon-head__state {
+		gap: 8px 20px;
+	}
+
+	.naulon-kv th {
+		width: auto;
+		white-space: normal;
+	}
+
+	.naulon-truncate {
+		max-width: 100%;
+	}
+
+	.naulon-wallet-input {
+		width: 100%;
+	}
+}

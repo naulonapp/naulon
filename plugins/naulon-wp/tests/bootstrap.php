@@ -32,8 +32,28 @@ if ( ! function_exists( 'esc_html' ) ) {
 		return htmlspecialchars( (string) $text, ENT_QUOTES, 'UTF-8' );
 	}
 }
+if ( ! function_exists( 'number_format_i18n' ) ) {
+	function number_format_i18n( $number, $decimals = 0 ) { // phpcs:ignore
+		return number_format( (float) $number, (int) $decimals );
+	}
+}
+if ( ! function_exists( 'wp_strip_all_tags' ) ) {
+	function wp_strip_all_tags( $text ) { // phpcs:ignore
+		return strip_tags( (string) $text ); // phpcs:ignore
+	}
+}
+if ( ! function_exists( 'sanitize_text_field' ) ) {
+	function sanitize_text_field( $str ) { // phpcs:ignore
+		return trim( wp_strip_all_tags( $str ) );
+	}
+}
 
 require_once __DIR__ . '/../includes/class-naulon-slug.php';
 require_once __DIR__ . '/../includes/class-naulon-wallet.php';
 require_once __DIR__ . '/../includes/class-naulon-key.php';
 require_once __DIR__ . '/../includes/class-naulon-agent.php';
+// Money formatting and the settlement-mode read are pure functions over integers and a header
+// string, so they belong in the fast suite — the parts of the ledger that touch a database are
+// covered by the wp-env suite instead.
+require_once __DIR__ . '/../includes/class-naulon-ledger.php';
+require_once __DIR__ . '/../includes/admin/class-naulon-admin-content.php';

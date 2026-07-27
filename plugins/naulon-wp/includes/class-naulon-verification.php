@@ -43,6 +43,22 @@ class Naulon_Verification {
 	}
 
 	/**
+	 * Are permalinks set to something other than plain?
+	 *
+	 * This is a prerequisite for the whole plugin, not just for verification, and it fails
+	 * silently in both directions. With plain permalinks a post's URL is `?p=123`, which has no
+	 * path — so the canonical slug is empty, the credits lookup finds nothing, and every article
+	 * reads free with no error anywhere. The rewrite that serves the ownership challenge does not
+	 * exist either. A publisher would see a plugin that is connected, verified-looking and
+	 * earning nothing.
+	 *
+	 * @return bool
+	 */
+	public static function permalinks_ok() {
+		return '' !== trim( (string) get_option( 'permalink_structure' ) );
+	}
+
+	/**
 	 * Step 1 — open the challenge and remember what to serve.
 	 *
 	 * @param string $method well-known|meta-tag|dns-txt.

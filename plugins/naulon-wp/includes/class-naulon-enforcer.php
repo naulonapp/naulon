@@ -211,6 +211,31 @@ class Naulon_Enforcer {
 	}
 
 	/**
+	 * Record a decision in the diagnostics window and return it unchanged.
+	 *
+	 * Only ever called on a path where the requester was already classified as a machine —
+	 * humans are not logged at all, anywhere. See Naulon_Log for why that is a position rather
+	 * than an omission.
+	 *
+	 * @param array   $decision The decision.
+	 * @param WP_Post $post     The post.
+	 * @param string  $slug     Canonical slug.
+	 * @return array The decision.
+	 */
+	private function logged( array $decision, $post, $slug ) {
+		Naulon_Log::record(
+			array(
+				'action' => $decision['action'],
+				'reason' => $decision['reason'],
+				'slug'   => $slug,
+				'kind'   => $this->requested_kind(),
+				'ua'     => $this->header( 'User-Agent' ),
+			)
+		);
+		return $decision;
+	}
+
+	/**
 	 * @param WP_Post $post The post.
 	 * @return array
 	 */
@@ -223,16 +248,25 @@ class Naulon_Enforcer {
 		if ( $this->is_first_party() ) {
 			return $this->free( 'first-party request' );
 		}
+		// Classification runs BEFORE the tollable check, and the order matters for two reasons.
+		// A human verdict returns here having touched no database beyond the post already loaded
+		// and having written nothing — which is the promise. And everything past this line is
+		// known to be a machine, so it can be recorded in the diagnostics window without ever
+		// logging a reader.
+		$verdict = Naulon_Agent::classify( Naulon_Agent::signals_from_request(), $this->policy() );
+		if ( 'human' === $verdict['kind'] ) {
+			return $this->free( 'human (' . $verdict['reason'] . ')' );
+		}
+
 		// Only a tollable article is ever gated — the same predicate the credits contract uses,
 		// so what is priced and what is payable can never disagree.
 		$credits = Naulon_Credits::instance();
 		if ( ! $credits->is_tollable( $post ) || empty( $credits->contributors_for( $post ) ) ) {
-			return $this->free( 'not tollable (no wallet, unpublished, or opted out)' );
-		}
-
-		$verdict = Naulon_Agent::classify( Naulon_Agent::signals_from_request(), $this->policy() );
-		if ( 'human' === $verdict['kind'] ) {
-			return $this->free( 'human (' . $verdict['reason'] . ')' );
+			return $this->logged(
+				$this->free( 'not tollable (no wallet, unpublished, or opted out)' ),
+				$post,
+				$credits->canonical_slug_for( $post )
+			);
 		}
 
 		$slug     = $credits->canonical_slug_for( $post );
@@ -246,12 +280,16 @@ class Naulon_Enforcer {
 		if ( '' !== $license ) {
 			$checked = Naulon_Client::instance()->license_check( $license, $resource, $slug, $kind, $this->header( self::PROOF_HEADER ) );
 			if ( $checked['ok'] && ! empty( $checked['body']['entitled'] ) ) {
-				return array(
-					'action'  => 'reread',
-					'header'  => '',
-					'receipt' => '',
-					'license' => '',
-					'reason'  => 'valid license',
+				return $this->logged(
+					array(
+						'action'  => 'reread',
+						'header'  => '',
+						'receipt' => '',
+						'license' => '',
+						'reason'  => 'valid license',
+					),
+					$post,
+					$slug
 				);
 			}
 		}
@@ -259,17 +297,21 @@ class Naulon_Enforcer {
 		$built = $this->built_402( $resource, $slug, $kind );
 		if ( null === $built ) {
 			// No price (free article), or the control plane is unreachable. Either way: serve.
-			return $this->free( 'no quote available' );
+			return $this->logged( $this->free( 'no quote available' ), $post, $slug );
 		}
 
 		$payment = $this->header( self::PAYMENT_HEADER );
 		if ( '' === $payment ) {
-			return array(
-				'action'  => 'pay',
-				'header'  => $built['header'],
-				'receipt' => '',
-				'license' => '',
-				'reason'  => 'agent (' . $verdict['reason'] . ')',
+			return $this->logged(
+				array(
+					'action'  => 'pay',
+					'header'  => $built['header'],
+					'receipt' => '',
+					'license' => '',
+					'reason'  => 'agent (' . $verdict['reason'] . ')',
+				),
+				$post,
+				$slug
 			);
 		}
 
@@ -278,23 +320,45 @@ class Naulon_Enforcer {
 		// happened.
 		$settled = Naulon_Client::instance()->settle( $payment, $built['legs'], $built['quote'], $resource );
 		if ( $settled['ok'] && ! empty( $settled['body']['ok'] ) ) {
-			return array(
-				'action'  => 'settled',
-				'header'  => '',
-				'receipt' => isset( $settled['body']['responseHeader'] ) ? (string) $settled['body']['responseHeader'] : '',
-				'license' => isset( $settled['body']['licenseJws'] ) ? (string) $settled['body']['licenseJws'] : '',
-				'reason'  => 'settled',
+			// Write the earnings record before returning. The amounts stored are the ones the
+			// control plane put in the 402 the buyer signed — copied, never recomputed.
+			Naulon_Ledger::record(
+				array(
+					'post_id'        => (int) $post->ID,
+					'slug'           => $slug,
+					'kind'           => $kind,
+					'settlement_ref' => isset( $settled['body']['settlementRef'] ) ? (string) $settled['body']['settlementRef'] : '',
+					'payer'          => isset( $settled['body']['payer'] ) ? (string) $settled['body']['payer'] : '',
+					'legs'           => $built['legs'],
+					'mode'           => Naulon_Ledger::mode_from_header( $built['header'] ),
+				)
+			);
+
+			return $this->logged(
+				array(
+					'action'  => 'settled',
+					'header'  => '',
+					'receipt' => isset( $settled['body']['responseHeader'] ) ? (string) $settled['body']['responseHeader'] : '',
+					'license' => isset( $settled['body']['licenseJws'] ) ? (string) $settled['body']['licenseJws'] : '',
+					'reason'  => 'settled',
+				),
+				$post,
+				$slug
 			);
 		}
 
 		// Settlement failed. Re-present the price rather than serving: the agent asked to pay
 		// and did not succeed, so the honest answer is the bill again, not free content.
-		return array(
-			'action'  => 'pay',
-			'header'  => $built['header'],
-			'receipt' => '',
-			'license' => '',
-			'reason'  => 'settlement failed',
+		return $this->logged(
+			array(
+				'action'  => 'pay',
+				'header'  => $built['header'],
+				'receipt' => '',
+				'license' => '',
+				'reason'  => 'settlement failed',
+			),
+			$post,
+			$slug
 		);
 	}
 

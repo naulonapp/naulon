@@ -44,7 +44,12 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-verification.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-agent.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-log.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-enforcer.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cache.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cron.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-profile.php';
 
 /**
  * Wire the plugin. Everything is hook-registration only — no work happens at load time, so a
@@ -54,27 +59,48 @@ function naulon_bootstrap() {
 	Naulon_Challenge::instance()->register();
 	Naulon_Credits::instance()->register();
 	Naulon_Enforcer::instance()->register();
+	Naulon_Cron::instance()->register();
+	Naulon_Profile::instance()->register();
+
+	// The admin surface is loaded only in the admin. Two thirds of this plugin's code renders
+	// screens, and none of it has any business being parsed on a reader's request.
+	if ( is_admin() ) {
+		require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-admin.php';
+		require_once NAULON_PLUGIN_DIR . 'includes/admin/class-naulon-admin-setup.php';
+		require_once NAULON_PLUGIN_DIR . 'includes/admin/class-naulon-admin-content.php';
+		require_once NAULON_PLUGIN_DIR . 'includes/admin/class-naulon-admin-people.php';
+		require_once NAULON_PLUGIN_DIR . 'includes/admin/class-naulon-admin-earnings.php';
+		require_once NAULON_PLUGIN_DIR . 'includes/admin/class-naulon-admin-diagnostics.php';
+
+		Naulon_Admin::instance()->register();
+		add_action( 'add_meta_boxes', array( 'Naulon_Admin_Content', 'add_meta_box' ) );
+		add_action( 'save_post', array( 'Naulon_Admin_Content', 'save_meta_box' ) );
+	}
 }
 add_action( 'plugins_loaded', 'naulon_bootstrap' );
 
 /**
- * Activation: grant the capabilities and add the rewrite rule, then flush ONCE. Flushing is
- * expensive and must never run on a normal request (a classic plugin sin) — activation and
- * deactivation are the only two places it is correct.
+ * Activation: grant the capabilities, create the earnings table, add the rewrite rule, then
+ * flush ONCE. Flushing is expensive and must never run on a normal request (a classic plugin
+ * sin) — activation and deactivation are the only two places it is correct.
  */
 function naulon_activate() {
 	Naulon_Roles::add_capabilities();
+	Naulon_Ledger::install();
 	Naulon_Challenge::instance()->add_rewrite_rules();
 	flush_rewrite_rules();
+	Naulon_Cron::instance()->ensure_scheduled();
 }
 register_activation_hook( __FILE__, 'naulon_activate' );
 
 /**
- * Deactivation drops the rewrite rule but KEEPS all data (wallets, settings, verification
- * state). A publisher who deactivates to debug something must not lose their author wallets;
- * only uninstall removes data.
+ * Deactivation drops the rewrite rule and stops the heartbeat, but KEEPS all data (wallets,
+ * settings, verification state, the earnings ledger). A publisher who deactivates to debug
+ * something must not lose their author wallets or their record of what they were paid; only
+ * uninstall removes data.
  */
 function naulon_deactivate() {
+	Naulon_Cron::instance()->unschedule();
 	flush_rewrite_rules();
 }
 register_deactivation_hook( __FILE__, 'naulon_deactivate' );
