@@ -103,8 +103,9 @@ class Naulon_Verification {
 
 			Naulon_Settings::update(
 				array(
-					'challenge_host' => $host,
-					'verified_at'    => gmdate( 'c' ),
+					'challenge_host'    => $host,
+					'verified_at'       => gmdate( 'c' ),
+					'ownership_lost_at' => '', // the proof is back; the "you lost it" screen must not linger
 				)
 			);
 			return array(
@@ -156,7 +157,12 @@ class Naulon_Verification {
 		$response = Naulon_Client::instance()->check_challenge( $host );
 
 		if ( $response['ok'] ) {
-			Naulon_Settings::update( array( 'verified_at' => gmdate( 'c' ) ) );
+			Naulon_Settings::update(
+				array(
+					'verified_at'       => gmdate( 'c' ),
+					'ownership_lost_at' => '', // recovered; stop telling them they lost it
+				)
+			);
 			return array(
 				'ok'        => true,
 				'message'   => __( 'Ownership verified. This site can now settle tolls.', 'naulon' ),

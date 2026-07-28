@@ -81,14 +81,85 @@ class Naulon_Cron {
 	}
 
 	/**
-	 * One tick: refresh the classification, then stamp liveness.
+	 * One tick: reconcile ownership, refresh the classification, then stamp liveness.
+	 *
+	 * Ownership goes first on purpose — if this host lost its proof, the other two are describing
+	 * an integration that cannot settle anything, and stamping liveness for it would keep it
+	 * looking alive upstream.
 	 *
 	 * @return array The status result, for the admin "check now" button.
 	 */
 	public function run() {
+		$this->reconcile_ownership();
 		$status = $this->refresh_status();
 		$this->stamp_liveness();
 		return $status;
+	}
+
+	/**
+	 * Does the control plane still hold an ownership proof for this host?
+	 *
+	 * The enforcer gates on the LOCAL `verified_at` (`Naulon_Enforcer::should_toll`), and nothing
+	 * ever re-read it. The control plane can withdraw the proof on its own: its re-verify sweep
+	 * demotes a host that stops serving the challenge for longer than the grace window, and the
+	 * trigger is the failure this plugin's own diagnostics call the common one — a security or
+	 * static-file plugin swallowing `/.well-known/`. Removing the domain in the dashboard has the
+	 * same effect.
+	 *
+	 * Both used to leave the two sides silently disagreeing: the control plane says unverified, so
+	 * `/verify` answers `resource not owned by this key` and no payment can ever settle — while
+	 * this plugin, still believing itself verified, keeps answering agents with a 402. Every agent
+	 * loops pay → rejected, the site earns nothing, and the setup screen shows a green **Verified**
+	 * pill over the whole thing. Nothing surfaced it and nothing recovered from it.
+	 *
+	 * The read costs one call on a scope the setup key KEEPS: listing challenges needs `tenant.read`,
+	 * not the `domain.manage` the control plane takes back once setup succeeds. So this works with
+	 * the credential already in the options table, for the whole life of the key.
+	 *
+	 * Conservative in exactly one direction. Only an authoritative answer clears anything: a
+	 * transport failure, a 401/403, or a malformed body all leave local state untouched, because
+	 * un-verifying a healthy site over a network hiccup would take a working toll offline. A list
+	 * that comes back fine and simply does not carry a verified proof for this host is the
+	 * authoritative "no" — including the host being absent entirely, which is what a deleted
+	 * domain looks like.
+	 *
+	 * @return bool True when this tick cleared a stale local verification.
+	 */
+	public function reconcile_ownership() {
+		if ( ! Naulon_Settings::is_connected() || ! Naulon_Settings::is_verified() ) {
+			return false; // nothing to reconcile — there is no local claim to withdraw.
+		}
+
+		$response = Naulon_Client::instance()->list_challenges();
+		if ( ! $response['ok'] || ! isset( $response['body']['challenges'] ) || ! is_array( $response['body']['challenges'] ) ) {
+			return false; // unreadable ⇒ no evidence ⇒ never touch a working verification.
+		}
+
+		$host = Naulon_Verification::host();
+		foreach ( $response['body']['challenges'] as $challenge ) {
+			if ( ! is_array( $challenge ) || ! isset( $challenge['host'] ) ) {
+				continue;
+			}
+			if ( strtolower( (string) $challenge['host'] ) !== $host ) {
+				continue;
+			}
+			$verified = isset( $challenge['verifiedAt'] ) && '' !== (string) $challenge['verifiedAt'];
+			if ( $verified ) {
+				return false; // both sides agree — the normal path, and the common one.
+			}
+			break;
+		}
+
+		// Either the host is gone from the list, or its proof is null. Stand down: clear the local
+		// verification so the enforcer stops issuing 402s nothing can settle, and record WHY so the
+		// setup screen can say "this was verified and is not any more" rather than "not verified".
+		Naulon_Settings::update(
+			array(
+				'verified_at'       => '',
+				'ownership_lost_at' => gmdate( 'c' ),
+			)
+		);
+		return true;
 	}
 
 	/**

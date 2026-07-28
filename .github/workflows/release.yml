@@ -89,9 +89,35 @@ jobs:
           npm pack -w @naulon/wayfarer    --pack-destination _release
           npm pack -w @naulon/wayfarer-mcp --pack-destination _release
 
-      - name: GitHub Release (attach tarballs)
+      # The WordPress plugin's ONLY distribution channel until it is listed on
+      # wordpress.org. The portal's domains card and the customer docs both link
+      # `releases/latest/download/naulon.zip` — GitHub's version-free redirector —
+      # so the asset name is load-bearing: it must never gain a version suffix, and
+      # in exchange nothing on the consuming side needs bumping per release.
+      #
+      # Zipped from a staging dir so the archive has exactly one top-level folder,
+      # `naulon/`. WordPress installs a zip by unpacking it into wp-content/plugins/,
+      # so a wrong root silently produces a plugin WordPress cannot see.
+      #
+      # What to leave out is NOT restated here — `plugins/naulon/.distignore` already
+      # owns that list (it is the wordpress.org convention, and the SVN publish will
+      # read the same file). rsync skips its comments and blank lines, and the leading
+      # `/` entries anchor to the transfer root exactly as .distignore means them. Two
+      # copies of "what never ships" would drift the first time either changed.
+      - name: Pack the WordPress plugin
+        run: |
+          set -euo pipefail
+          mkdir -p _release _wp/naulon
+          rsync -a --exclude-from=plugins/naulon/.distignore plugins/naulon/ _wp/naulon/
+          test -f _wp/naulon/naulon.php # the plugin header WordPress reads; no header, no plugin
+          (cd _wp && zip -qr ../_release/naulon.zip naulon)
+          unzip -l _release/naulon.zip | tail -3
+
+      - name: GitHub Release (attach tarballs + the plugin zip)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: _release/*.tgz
+          files: |
+            _release/*.tgz
+            _release/naulon.zip
           generate_release_notes: true

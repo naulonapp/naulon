@@ -270,7 +270,22 @@ class Naulon_Admin_Setup {
 			echo '<p class="naulon-bad">' . esc_html__( 'This site is served over http. The ownership check is https-only, so it cannot pass until the site has a certificate. Everything else on this page will work; verification will not.', 'naulon' ) . '</p>';
 		}
 
-		if ( ! $verified ) {
+		// Lost is not the same as never had. The heartbeat clears the local proof when the control
+		// plane withdraws its own — a swallowed /.well-known/ past the grace window, or the domain
+		// removed from the dashboard. Enforcement has already stopped by the time this renders (the
+		// enforcer gates on the same flag), so the job of this block is to say what happened and
+		// what it costs, rather than showing a first-time setup screen to someone who is not new.
+		$lost = '' !== trim( (string) $settings['ownership_lost_at'] );
+		if ( ! $verified && $lost ) {
+			echo '<p class="naulon-bad">' . esc_html__( 'This site was verified and is not any more — the control plane no longer holds a proof for this host. Nothing is being charged until it is verified again: agents read free. The usual cause is that /.well-known/ stopped being reachable long enough for the check to give up, so look for a security or caching plugin intercepting it, then run the steps below.', 'naulon' ) . '</p>';
+			printf(
+				'<p class="naulon-muted naulon-hint">%s %s</p>',
+				esc_html__( 'Noticed', 'naulon' ),
+				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- when() escapes.
+				Naulon_Admin::when( (string) $settings['ownership_lost_at'] )
+			);
+			echo '<p class="naulon-muted">' . esc_html__( 'Your setup key almost certainly cannot do this on its own. It hands its domain permission back once a site verifies, so claiming the domain again needs a fresh one: in your naulon dashboard, Settings → API & webhooks → Create key → Connect WordPress.', 'naulon' ) . '</p>';
+		} elseif ( ! $verified ) {
 			echo '<p>' . esc_html__( 'This plugin serves the proof itself — both as a file under /.well-known/ and as a tag in the page head — so there is no DNS to edit. Start it, then ask the control plane to look.', 'naulon' ) . '</p>';
 		}
 
