@@ -67,6 +67,11 @@ class Naulon_Settings {
 				'status_error'       => '',
 				'heartbeat_at'       => '',
 				'heartbeat_note'     => '',
+				// Set when the heartbeat found the control plane no longer holds an ownership
+				// proof for this host and cleared the local one. A separate fact from `verified_at`
+				// simply being empty: "never verified" and "was verified and lost it" need
+				// different words, and only the second one needs a fresh setup key.
+				'ownership_lost_at'  => '',
 				// The last time a crawler was actually charged, as observed by the toll test.
 				// This is the only evidence the plugin has that the whole chain works —
 				// including the one step it cannot check directly, the credits address being
