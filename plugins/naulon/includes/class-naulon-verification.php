@@ -301,7 +301,18 @@ class Naulon_Verification {
 			return __( 'The control plane rejected this API key (401). It may have been revoked or mistyped. Nothing is being tolled until this is fixed.', 'naulon' );
 		}
 		if ( 403 === $response['status'] ) {
-			return __( 'This key is not allowed to manage domains (403). Issue a key with the domain-management scope.', 'naulon' );
+			// A setup key is deliberately single-use for this one job. The control plane drops
+			// `domain.manage` from it the moment the domain verifies, so a 403 AFTER verification is
+			// the design working, not a fault — and the remedy is a NEW key, never "fix this one".
+			// Before verification a 403 means the key was assembled from the permission matrix,
+			// which offers read access only; such a key can never prove a domain, and saying
+			// "issue a key with the domain-management scope" sent people looking for a checkbox
+			// that does not exist. Name the preset in both cases — it is the only thing that mints
+			// this scope.
+			if ( Naulon_Settings::is_verified() ) {
+				return __( 'This site is already verified, so the setup key has handed its domain permission back — it only ever needed it once. To claim a domain from here again, open your naulon dashboard, go to Settings → API & webhooks → Create key, choose "Connect WordPress", and paste the new key on this page.', 'naulon' );
+			}
+			return __( 'This key cannot claim domains (403). In your naulon dashboard go to Settings → API & webhooks → Create key and choose "Connect WordPress" — that preset is the only one that mints the permission this step needs. A key built from the permission list is read-only and can never prove this domain.', 'naulon' );
 		}
 		if ( 0 === $response['status'] ) {
 			return sprintf(
