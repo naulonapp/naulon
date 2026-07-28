@@ -76,8 +76,31 @@ class Naulon_Verification {
 
 		$response = Naulon_Client::instance()->open_challenge( $host, $method );
 
-		// Already verified upstream is success, not failure — the publisher is simply done.
+		// A 409 means the host is already verified — but NOT necessarily by us, and that difference
+		// is money. `routingVerified` says which proof made it live:
+		//
+		//   true  — the domain is CNAME'd to the naulon fleet and a live probe confirmed it reaches
+		//           the gate, so the FLEET IS ALREADY TOLLING IT. Switching in-app enforcement on
+		//           would put our 402 behind the fleet's and charge an agent twice for one read.
+		//           Refuse, and do not stamp verified_at (the enforcer gates on it, so enforcement
+		//           stays off).
+		//   false — verified for in-app, nothing routes it. The publisher is simply done.
+		//
+		// ABSENT is treated as true. An older control plane sends the bare `{error}` this branch
+		// used to read as plain success, and that is exactly the bug: the two situations are
+		// indistinguishable without the field. A false refusal is loud and recoverable; a false
+		// "carry on" silently double-charges every agent that reads the site.
 		if ( 409 === $response['status'] && isset( $response['body']['error'] ) && 'host_already_added' === $response['body']['error'] ) {
+			$routing_verified = ! isset( $response['body']['routingVerified'] ) || ! empty( $response['body']['routingVerified'] );
+
+			if ( $routing_verified ) {
+				return array(
+					'ok'      => false,
+					'message' => __( 'This domain is routed through the naulon fleet, which is already collecting the toll for it. Turning on in-app enforcement as well would charge an agent twice for the same read, so it stays off. To run the toll from WordPress instead, remove the naulon CNAME record for this domain at your DNS provider, wait for it to stop resolving, then run this step again.', 'naulon' ),
+					'token'   => '',
+				);
+			}
+
 			Naulon_Settings::update(
 				array(
 					'challenge_host' => $host,
