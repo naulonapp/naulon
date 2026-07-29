@@ -180,6 +180,34 @@ export const navIcon = (id) =>
       `class="nav-ico">${NAV_ICON[id]}</svg>`
     : "";
 
+/**
+ * An empty state, in the portal's shape: a dashed, tinted box with an icon tile above the line
+ * that says what is absent. Every page had been hand-rolling the same `<div class="empty">`
+ * markup — seven files, ten copies — which is the drift `$`/`esc`/`fmt6` were consolidated here
+ * to stop, and the copies had already diverged on whether they carried a `<p>` at all.
+ *
+ * `icon` is a NAV_ICON id. `lead`/`body`/`foot` are TRUSTED HTML: callers escape their own
+ * interpolations, the same contract as every other render helper here. `body` takes a string or
+ * an array of paragraphs.
+ */
+export function emptyState({ icon, lead, body = "", foot = "" }) {
+  // A block-level item is emitted as-is. Wrapping one in `<p>` is invalid — the parser closes the
+  // paragraph before it and opens another after, so `<p><pre>…</pre></p>` silently became two empty
+  // paragraphs around the block. It rendered, which is exactly why it would have gone unnoticed.
+  const paras = (Array.isArray(body) ? body : [body])
+    .filter(Boolean)
+    .map((p) => (/^\s*<(pre|div|ul|ol|table|figure)\b/i.test(p) ? p : `<p>${p}</p>`))
+    .join("");
+  return (
+    `<div class="empty">` +
+    (icon ? `<span class="empty-ico">${navIcon(icon)}</span>` : "") +
+    `<div class="lead">${lead}</div>` +
+    paras +
+    (foot ? `<p class="empty-foot">${foot}</p>` : "") +
+    `</div>`
+  );
+}
+
 // ── the sidebar ───────────────────────────────────────────────────────────────
 /** Nav groups, in order. `null` group = ungrouped, rendered above the first label. */
 export const NAV = [

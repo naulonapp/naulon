@@ -7,7 +7,7 @@
  * boundary the Overview uses. `agentLabel`/`selfTestBadge` return already-escaped HTML.
  */
 import {
-  $, esc, usd, rel, renderShell, setGate, poll, wireSeg, debounced,
+  $, esc, usd, rel, emptyState, renderShell, setGate, poll, wireSeg, debounced,
   VERDICTS, VERDICT_LABEL, VERDICT_BAD, agentLabel, selfTestBadge,
 } from "./shell.js";
 
@@ -98,11 +98,12 @@ function renderRows(rows, matched) {
     // Never let a capped list read as the whole truth.
     rows.length < matched ? `newest ${rows.length} of ${matched}` : `${matched} request${matched === 1 ? "" : "s"}`;
   if (!rows.length) {
-    $("#rows").innerHTML = `<div class="empty">
-      <div class="lead">Nothing matches.</div>
-      <p>${q || verdict ? "Widen the filter, or try a longer window." : "No gated request has been recorded in this window yet."}</p>
-      ${q || verdict ? "" : `<p class="empty-foot">If you expected traffic, <a href="/doctor">Doctor</a> checks whether recording is even switched on.</p>`}
-    </div>`;
+    $("#rows").innerHTML = emptyState({
+      icon: "requests",
+      lead: "Nothing matches.",
+      body: q || verdict ? "Widen the filter, or try a longer window." : "No gated request has been recorded in this window yet.",
+      foot: q || verdict ? "" : `If you expected traffic, <a href="/doctor">Doctor</a> checks whether recording is even switched on.`,
+    });
     return;
   }
   $("#rows").innerHTML = rows.map((o) => `

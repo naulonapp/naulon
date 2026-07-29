@@ -5,7 +5,7 @@
  * Security: agent keys are caller-controlled (a raw User-Agent, when unsigned). Every
  * one goes through esc() from shell.js before it touches innerHTML.
  */
-import { $, esc, usd, renderShell, setGate, poll, wireSeg, debounced } from "./shell.js";
+import { $, esc, usd, emptyState, renderShell, setGate, poll, wireSeg, debounced } from "./shell.js";
 
 renderShell({ active: "agents" });
 
@@ -65,11 +65,12 @@ const numCells = (r) =>
 function renderAgents(rows) {
   $("#agentCount").textContent = `${rows.length} agent${rows.length === 1 ? "" : "s"}`;
   if (!rows.length) {
-    $("#agents").innerHTML = `<div class="empty">
-      <div class="lead">No agent traffic in this window.</div>
-      <p>${q ? "Nothing matches that filter." : "Humans do not appear here — they read free, always, and there is nothing to act on."}</p>
-      ${q ? "" : `<p class="empty-foot">If you expected crawlers, <a href="/doctor">Doctor</a> checks whether traffic is being recorded at all.</p>`}
-    </div>`;
+    $("#agents").innerHTML = emptyState({
+      icon: "agents",
+      lead: "No agent traffic in this window.",
+      body: q ? "Nothing matches that filter." : "Humans do not appear here — they read free, always, and there is nothing to act on.",
+      foot: q ? "" : `If you expected crawlers, <a href="/doctor">Doctor</a> checks whether traffic is being recorded at all.`,
+    });
     return;
   }
   $("#agents").innerHTML = rows.map((r) => `

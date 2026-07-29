@@ -4,7 +4,7 @@
  * two buttons. Nothing here interprets a status; if the wording is wrong, it is wrong
  * on the server where it can be unit-tested.
  */
-import { $, esc, rel, renderShell, setGate } from "./shell.js";
+import { $, esc, rel, emptyState, renderShell, setGate } from "./shell.js";
 
 renderShell({ active: "doctor" });
 
@@ -46,7 +46,7 @@ async function load() {
     renderChecks(await r.json());
   } catch (e) {
     $("#headline").textContent = "The console could not run the checks.";
-    $("#checks").innerHTML = `<div class="empty"><div class="lead">${esc(e.message)}</div></div>`;
+    $("#checks").innerHTML = emptyState({ icon: "doctor", lead: esc(e.message) });
   } finally {
     btn.disabled = false;
     btn.textContent = "Re-run";

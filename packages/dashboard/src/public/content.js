@@ -11,7 +11,7 @@
  * navigating away; the banner tells you whether the gate is serving your current
  * file or needs a restart to pick up your edits.
  */
-import { $, esc, renderShell, setGate } from "./shell.js";
+import { $, esc, emptyState, renderShell, setGate } from "./shell.js";
 
 renderShell({ active: "content" });
 
@@ -44,7 +44,11 @@ async function load() {
   setGate(d.apiMode ? null : !!(d.gate && d.gate.up), d.apiMode ? "credits via API" : d.gate && d.gate.up ? "gate up" : "gate down");
   if (d.apiMode) {
     setBanner("api");
-    $("#rows").innerHTML = `<div class="empty"><div class="lead">Credits come from a live API.</div><p>Your articles + wallets are served by <code>${esc(d.origin)}/api/credits</code> — edit them at your CMS. This file manager applies only to the static <code>credits.json</code> path.</p></div>`;
+    $("#rows").innerHTML = emptyState({
+      icon: "content",
+      lead: "Credits come from a live API.",
+      body: `Your articles + wallets are served by <code>${esc(d.origin)}/api/credits</code> — edit them at your CMS. This file manager applies only to the static <code>credits.json</code> path.`,
+    });
     $("#scanBtn").disabled = true; $("#saveBtn").disabled = true; $("#addBtn").disabled = true;
     return;
   }
@@ -75,7 +79,11 @@ function render() {
   $("#count").textContent = `${rows.length} article${rows.length === 1 ? "" : "s"}`;
   $("#rows").innerHTML = rows.length
     ? rows.map((r, i) => rowHtml(r, i)).join("")
-    : `<div class="empty"><div class="lead">No articles yet.</div><p>Hit <b>Scan site</b> to pull them from your sitemap/RSS, or <b>+ Add article</b>.</p></div>`;
+    : emptyState({
+        icon: "content",
+        lead: "No articles yet.",
+        body: `Hit <b>Scan site</b> to pull them from your sitemap/RSS, or <b>+ Add article</b>.`,
+      });
   bind();
 }
 

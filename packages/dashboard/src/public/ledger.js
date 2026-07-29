@@ -11,7 +11,7 @@
  * author ids originate from crawled URLs and tenant config, so treat them as
  * untrusted — esc() from shell.js is the boundary.
  */
-import { $, esc, fmt6, trunc, rel, renderShell, setGate, sse } from "./shell.js";
+import { $, esc, fmt6, trunc, rel, emptyState, renderShell, setGate, sse } from "./shell.js";
 
 const isOperatorPreview = location.pathname === "/ledger";
 renderShell({ active: "ledger", nav: isOperatorPreview });
@@ -55,9 +55,11 @@ function renderLedger(authors) {
   const maxEarned = authors.reduce((m, a) => Math.max(m, a.earned), 0) || 1;
   $("#ledgerN").textContent = authors.length ? "by earnings" : "—";
   if (!authors.length) {
-    $("#ledger").innerHTML =
-      `<div class="empty"><div class="lead">The ledger is quiet.</div>` +
-      `<p>No machine has paid yet — run <code>npm run -w @naulon/dashboard seed</code> or the wayfarer.</p></div>`;
+    $("#ledger").innerHTML = emptyState({
+      icon: "ledger",
+      lead: "The ledger is quiet.",
+      body: `No machine has paid yet — run <code>npm run -w @naulon/dashboard seed</code> or the wayfarer.`,
+    });
     return;
   }
   $("#ledger").innerHTML = authors.map((a, i) => {
@@ -78,7 +80,7 @@ function renderLedger(authors) {
 
 function renderFeed(recent) {
   if (!recent.length) {
-    $("#feed").innerHTML = `<div class="empty"><div class="lead">Still waiting for the first fare.</div></div>`;
+    $("#feed").innerHTML = emptyState({ icon: "ledger", lead: "Still waiting for the first fare." });
     return;
   }
   $("#feed").innerHTML = recent.map((c, i) => {

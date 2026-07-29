@@ -11,7 +11,7 @@
  * (env, or a receiving server's response body). All of it goes through esc() before it touches
  * innerHTML, and the signing secret arrives already masked — the server never sends it.
  */
-import { $, esc, renderShell, setGate, poll, timeTag } from "./shell.js";
+import { $, esc, emptyState, renderShell, setGate, poll, timeTag } from "./shell.js";
 
 renderShell({ active: "webhooks" });
 
@@ -54,12 +54,15 @@ function renderStats(d) {
 
 /** The state every fresh install is in: the machinery is there, nothing is pointed at it yet. */
 function darkState() {
-  return `<div class="empty">
-    <div class="lead">No endpoints configured, so nothing is sent.</div>
-    <p>This gate can post a signed <span class="mono">settlement.completed</span> to your own systems every time a citation settles. Point it somewhere by setting <span class="mono">NAULON_WEBHOOK_ENDPOINTS</span> and restarting:</p>
-    <pre class="wh-recipe mono">NAULON_WEBHOOK_ENDPOINTS='[{"url":"https://your-server.example/naulon","secret":"whsec_…"}]'</pre>
-    <p class="empty-foot">The secret signs the body so your server can prove the request came from this gate. Deliveries are retried with backoff and parked here if they run out of attempts — nothing is dropped silently.</p>
-  </div>`;
+  return emptyState({
+    icon: "webhooks",
+    lead: "No endpoints configured, so nothing is sent.",
+    body: [
+      `This gate can post a signed <span class="mono">settlement.completed</span> to your own systems every time a citation settles. Point it somewhere by setting <span class="mono">NAULON_WEBHOOK_ENDPOINTS</span> and restarting:`,
+      `<pre class="wh-recipe mono">NAULON_WEBHOOK_ENDPOINTS='[{"url":"https://your-server.example/naulon","secret":"whsec_…"}]'</pre>`,
+    ],
+    foot: "The secret signs the body so your server can prove the request came from this gate. Deliveries are retried with backoff and parked here if they run out of attempts — nothing is dropped silently.",
+  });
 }
 
 function endpointRow(ep) {
@@ -89,8 +92,10 @@ function endpointRow(ep) {
         <span>${ep.hostFilter ? `only <span class="mono">${esc(ep.hostFilter)}</span>` : "every site this gate serves"}</span>
       </div>
     </div>
-    <div class="wh-ep-nums">${nums}</div>
-    <div class="wh-ep-act"><button type="button" class="btn" data-ping="${esc(ep.id)}">Send test ping</button></div>
+    <div class="wh-ep-right">
+      <div class="wh-ep-nums">${nums}</div>
+      <div class="wh-ep-act"><button type="button" class="btn" data-ping="${esc(ep.id)}">Send test ping</button></div>
+    </div>
   </div>`;
 }
 
@@ -143,14 +148,13 @@ function renderDeliveries(d) {
   $("#deliveryCount").textContent = d.deliveries.length ? plural(d.deliveries.length, "delivery", "deliveries") : "";
 
   if (!d.deliveries.length) {
-    host.innerHTML = `<div class="empty">
-      <div class="lead">Nothing has been sent yet.</div>
-      <p>${
-        d.configured
-          ? "A delivery appears here the moment a citation settles. To check the path end to end without waiting for one, send a test ping above."
-          : "Deliveries appear once an endpoint is configured."
-      }</p>
-    </div>`;
+    host.innerHTML = emptyState({
+      icon: "webhooks",
+      lead: "Nothing has been sent yet.",
+      body: d.configured
+        ? "A delivery appears here the moment a citation settles. To check the path end to end without waiting for one, send a test ping above."
+        : "Deliveries appear once an endpoint is configured.",
+    });
     return;
   }
 

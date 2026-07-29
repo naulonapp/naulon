@@ -6,7 +6,7 @@
  * verified-agent). Every one is HTML-escaped before it touches innerHTML — esc()
  * from shell.js is the boundary, same as the earnings view.
  */
-import { $, esc, usd, trunc, rel, renderShell, setGate, poll, sse, wireSeg, agentLabel, selfTestBadge } from "./shell.js";
+import { $, esc, usd, trunc, rel, emptyState, renderShell, setGate, poll, sse, wireSeg, agentLabel, selfTestBadge } from "./shell.js";
 
 renderShell({ active: "overview" });
 
@@ -95,17 +95,15 @@ function renderFeed(recent) {
   if (!recent.length) {
     // The state every new install is in. Rather than an empty column, give them the
     // next action: prove the toll works, then check the config that decides it.
-    $("#feed").innerHTML =
-      `<div class="empty">
-        <div class="lead">No requests recorded yet.</div>
-        <p>That is normal on a fresh gate — a row appears here the first time a crawler
-        hits a tollable path.</p>
-        <p>To check it works without waiting for one, hit <b>Test toll</b> above: the
-        console asks your own gate for an article while pretending to be a crawler and
-        expects a <span class="mono">402</span>.</p>
-        <p class="empty-foot"><a href="/doctor">Doctor</a> checks everything else that
-        decides whether this gate can earn.</p>
-      </div>`;
+    $("#feed").innerHTML = emptyState({
+      icon: "requests",
+      lead: "No requests recorded yet.",
+      body: [
+        "That is normal on a fresh gate — a row appears here the first time a crawler hits a tollable path.",
+        `To check it works without waiting for one, hit <b>Test toll</b> above: the console asks your own gate for an article while pretending to be a crawler and expects a <span class="mono">402</span>.`,
+      ],
+      foot: `<a href="/doctor">Doctor</a> checks everything else that decides whether this gate can earn.`,
+    });
     return;
   }
   $("#feed").innerHTML = recent.map((o) => {

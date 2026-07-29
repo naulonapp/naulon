@@ -254,8 +254,23 @@ body {
 .seg-btn:hover { color: var(--fg); }
 .seg-btn.on { color: var(--primary); background: var(--primary-soft); }
 
-.empty { padding: 44px 0; text-align: center; color: var(--faint); }
-.empty .lead { font-size: 15px; color: var(--muted-fg); }
+/* The portal's empty-state shape: a dashed, tinted box with an icon tile. This used to be bare
+   centred text on the page background, which read as a gap in the layout rather than a deliberate
+   "there is nothing here yet" — the one state every fresh install spends its first hour in. */
+.empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 32px 16px; text-align: center; color: var(--faint);
+  border: 1px dashed color-mix(in oklab, var(--line-strong) 60%, transparent);
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--surface-2) 20%, transparent);
+}
+.empty .lead { font-size: 14px; font-weight: 500; color: var(--fg); }
+.empty-ico {
+  display: grid; place-items: center; width: 36px; height: 36px;
+  border: 1px solid color-mix(in oklab, var(--line-strong) 50%, transparent);
+  border-radius: 4px; background: var(--card); color: var(--muted-fg);
+}
+.empty-ico svg { width: 16px; height: 16px; }
 .empty code, .banner code { font-family: var(--font-mono); font-size: 12.5px; color: var(--primary); background: var(--surface-2); padding: 2px 7px; border-radius: 3px; }
 
 .banner {
@@ -460,8 +475,8 @@ body {
 }
 
 /* The teaching empty state — readable prose width, left-aligned inside a centered block. */
-.empty p { max-width: 52ch; margin: 10px auto 0; font-size: 13.5px; line-height: 1.6; }
-.empty-foot { margin-top: 14px; font-size: 12.5px; }
+.empty p { max-width: 46ch; margin: 0 auto; font-size: 12.5px; line-height: 1.65; color: var(--muted-fg); }
+.empty-foot { margin-top: 6px; font-size: 12px; color: var(--faint); }
 /* A row the operator's own Test toll produced — real traffic, but not a real crawler. */
 .badge.selftest { margin-left: 8px; color: var(--muted-fg); border-color: var(--line-strong); }
 
@@ -559,13 +574,17 @@ body {
 .badge.block { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
 
 /* ── webhooks ──────────────────────────────────────────────────────────────── */
-/* One endpoint. Same three-part shape as .agent-row — identity, numbers, action — because it is
-   the same kind of row, and the two pages should not invent different geometry for it. */
+/* Identity left, everything actionable right — the portal's own `justify-between` row shape.
+   This was three tracks (identity | numbers | action), and because the url chip never filled a
+   1.6fr identity track it opened a ~240px void mid-row, then a second gap before the button. Two
+   holes in a row that carries four short numbers. One flexible track and one hugging cluster
+   leaves a single, intentional gap. */
 .wh-ep {
-  display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto;
-  gap: 16px; padding: 15px 0; border-bottom: 1px solid var(--line); align-items: start;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px 24px; padding: 15px 0; border-bottom: 1px solid var(--line); align-items: center;
 }
 .wh-ep > * { min-width: 0; }
+.wh-ep-right { display: flex; align-items: center; gap: 24px; }
 .wh-ep-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 /* The url is the one field with no length bound — it wraps rather than widening the row.
    A bordered chip, not bare text: the portal renders the same value as
@@ -587,7 +606,7 @@ body {
 }
 /* FOUR fixed columns, never auto-fit — the .agent-nums lesson: auto-fit orphaned the last cell onto
    a second line and let columns disagree from one row to the next. A zero is information here. */
-.wh-ep-nums { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 10px; }
+.wh-ep-nums { display: grid; grid-template-columns: repeat(4, minmax(52px, auto)); gap: 0 14px; }
 .wh-ep-nums .kv { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; }
 .wh-ep-nums .kv .k { letter-spacing: 0.1em; font-size: 9.5px; white-space: nowrap; }
 .wh-ep-nums .kv .v { font-size: 13px; }
@@ -654,6 +673,7 @@ body {
   .cause:first-child { border-top: 0; }
   .agent-row { grid-template-columns: 1fr; gap: 10px; }
   .agent-money { text-align: left; }
-  .wh-ep { grid-template-columns: 1fr; gap: 12px; }
+  .wh-ep { grid-template-columns: 1fr; gap: 12px; align-items: start; }
+  .wh-ep-right { flex-wrap: wrap; gap: 12px 24px; }
   .wh-ep-act { text-align: left; }
 }
