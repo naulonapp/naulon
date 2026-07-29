@@ -36,7 +36,13 @@
   color-scheme: dark;
 
   /* Four elevation steps, so the UI reads with depth rather than one flat charcoal:
-     sidebar #050609 < background #07080b < card #11141c < surface-2 #1a2030 */
+     sidebar #050609 < background #07080b < card #11141c < surface-2 #1a1f29
+
+     All four are the hosted portal's, byte-for-byte — `--surface-2` is its `--secondary`.
+     It used to be #1a2030: bluer and a step lighter than the portal's #1a1f29, so any
+     surface painted with it read as a different product's grey. That is the same defect
+     `--muted` carried (a surface here, text there) and it hid for the same reason — it is
+     invisible until something paints a large area with it. */
   --sidebar: #050609;
   /* The sidebar's own two extra tokens, same values the hosted portal publishes —
      the console had neither, so its nav had to invent its own active treatment. */
@@ -44,7 +50,7 @@
   --sidebar-muted: #7c8593;
   --bg: #07080b;
   --card: #11141c;
-  --surface-2: #1a2030;
+  --surface-2: #1a1f29;
 
   --fg: #e9edf3;
   /* `--muted-fg`, never `--muted`. Every value in this block is the published palette
@@ -561,8 +567,15 @@ body {
 }
 .wh-ep > * { min-width: 0; }
 .wh-ep-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-/* The url is the one field with no length bound — it wraps rather than widening the row. */
-.wh-url { font-size: 13px; color: var(--fg); overflow-wrap: anywhere; }
+/* The url is the one field with no length bound — it wraps rather than widening the row.
+   A bordered chip, not bare text: the portal renders the same value as
+   `border-border/50 bg-secondary/40` mono, and a naked url next to a badge read as a
+   loose fragment instead of a field. */
+.wh-url {
+  font-size: 12.5px; color: var(--muted-fg); overflow-wrap: anywhere;
+  border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px;
+  background: color-mix(in oklab, var(--surface-2) 40%, transparent);
+}
 .wh-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .wh-chip {
   font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-fg);
@@ -591,14 +604,30 @@ body {
 
 /* The delivery log scrolls WITHIN its container rather than widening the page — the same fix the
    portal's own delivery table carries, and what keeps the document free of horizontal overflow. */
-.wh-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
-.wh-table { width: 100%; border-collapse: collapse; font-size: 12.5px; text-align: left; }
-.wh-table th {
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--muted-fg); font-weight: 500; padding: 9px 12px; background: var(--surface-2);
-  border-bottom: 1px solid var(--line); white-space: nowrap;
+/* Carries the card surface, like every other container in this console (.card/.panel) — and like
+   the portal, whose delivery table lives inside the settings card. Without it the table floated on
+   the page background, and the /30 head tint composited over #07080b instead of #11141c, landing
+   several steps darker than the portal's identical rule. */
+.wh-scroll {
+  overflow-x: auto; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--card); box-shadow: var(--shadow-panel);
 }
-.wh-table td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.wh-table { width: 100%; border-collapse: collapse; font-size: 12.5px; text-align: left; }
+/* A TINT, not a slab. The portal's delivery-table head is `bg-secondary/30` — 30% over the
+   card, a whisper of separation. Painting the token solid put a heavy blue band across a UI
+   that is otherwise built from hairlines, which is what made this table read as imported from
+   somewhere else. Same reasoning for the payload row's /20 below. */
+/* Type is `.thead`'s, the console's existing column-header idiom (used on /content): mono caps,
+   10px, 0.18em. This had invented 9.5px/0.14em — close enough to look like a mistake rather than
+   a decision, and one page's table disagreeing with another's is the same drift the duplicated
+   helpers caused. 10px is also the portal's own th size. */
+.wh-table th {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--muted-fg); font-weight: 400; padding: 10px 12px;
+  background: color-mix(in oklab, var(--surface-2) 30%, transparent);
+  border-bottom: 1px solid var(--line-strong); white-space: nowrap;
+}
+.wh-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 .wh-table tbody tr:last-child td { border-bottom: 0; }
 .wh-table .dim { color: var(--faint); }
 .wh-row-act { text-align: right; white-space: nowrap; }
@@ -609,7 +638,7 @@ body {
 .wh-link:hover { color: var(--fg); }
 .wh-link.accent { color: var(--primary); }
 .wh-link:disabled { opacity: 0.5; cursor: not-allowed; }
-.wh-payload-row td { background: var(--surface-2); }
+.wh-payload-row td { background: color-mix(in oklab, var(--surface-2) 20%, transparent); }
 .wh-payload-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .wh-payload {
   max-height: 260px; overflow: auto; margin: 0; padding: 10px 12px; font-size: 11px; line-height: 1.6;

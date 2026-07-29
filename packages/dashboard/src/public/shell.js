@@ -24,13 +24,54 @@ export const usd = (n) => "$" + fmt6(n);
 /** Middle-truncate an address or hash. Null-safe. */
 export const trunc = (a) => (a && a.length > 12 ? a.slice(0, 6) + "…" + a.slice(-4) : a || "—");
 
-/** Coarse relative time, newest-first vocabulary: 12s / 5m / 3h / 8d. */
+/** Coarse relative time, newest-first vocabulary: 12s / 5m / 3h / 8d. The live-feed dialect —
+ *  a dense column where the unit alone is the whole label. */
 export const rel = (ms) => {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
+};
+
+/**
+ * The LOGGED-EVENT dialect, for a table with a "When" column rather than a live feed: the
+ * portal's own `formatAgo` vocabulary, thresholds and all, so "5 min. ago" here and in the
+ * portal are the same string. Past 7 days it becomes an absolute date, because "43d ago" is
+ * a number nobody converts.
+ */
+export const relAgo = (ms) => {
+  if (!Number.isFinite(ms)) return "—";
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  const rtf = new Intl.RelativeTimeFormat("en", { style: "short", numeric: "auto" });
+  if (s < 45) return rtf.format(0, "second");
+  const m = Math.round(s / 60);
+  if (m < 60) return rtf.format(-m, "minute");
+  const h = Math.round(m / 60);
+  if (h < 24) return rtf.format(-h, "hour");
+  const d = Math.round(h / 24);
+  if (d < 7) return rtf.format(-d, "day");
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(ms));
+};
+
+/** The unambiguous instant behind a relative label — date, time, zone. The hover. */
+export const exactTime = (ms) =>
+  !Number.isFinite(ms)
+    ? "—"
+    : new Intl.DateTimeFormat("en", {
+        year: "numeric", month: "short", day: "numeric",
+        hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short",
+      }).format(new Date(ms));
+
+/**
+ * A logged instant as escaped HTML: a semantic `<time>` carrying the machine-readable ISO in
+ * `dateTime` and the exact instant in `title`. Mirrors the portal's `TimeAgo` — a relative
+ * label stays scannable, and the precise moment is one hover away instead of gone. A bare
+ * string in a "When" column threw both away.
+ */
+export const timeTag = (ms) => {
+  if (!Number.isFinite(ms)) return `<time>—</time>`;
+  return `<time datetime="${esc(new Date(ms).toISOString())}" title="${esc(exactTime(ms))}">${esc(relAgo(ms))}</time>`;
 };
 
 /** Build an element without innerHTML when the content is untrusted. */

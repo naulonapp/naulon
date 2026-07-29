@@ -11,7 +11,7 @@
  * (env, or a receiving server's response body). All of it goes through esc() before it touches
  * innerHTML, and the signing secret arrives already masked — the server never sends it.
  */
-import { $, esc, rel, renderShell, setGate, poll } from "./shell.js";
+import { $, esc, renderShell, setGate, poll, timeTag } from "./shell.js";
 
 renderShell({ active: "webhooks" });
 
@@ -130,7 +130,7 @@ function deliveryRow(d) {
     <td>${status}</td>
     <td class="mono dim">${d.lastStatusCode ?? "—"}</td>
     <td class="mono dim">${d.attemptCount}</td>
-    <td class="dim">${esc(rel(d.createdAt))}</td>
+    <td class="dim">${timeTag(d.createdAt)}</td>
     <td class="wh-row-act">
       <button type="button" class="wh-link" data-toggle="${esc(d.id)}" aria-expanded="${isOpen}">${isOpen ? "Hide" : "View"} payload</button>
       ${d.status === "pending" ? "" : `<button type="button" class="wh-link accent" data-resend="${esc(d.id)}">Resend</button>`}
