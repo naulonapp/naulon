@@ -43,7 +43,12 @@
   --surface-2: #1a2030;
 
   --fg: #e9edf3;
-  --muted: #8d96a3;
+  /* `--muted-fg`, never `--muted`. Every value in this block is the published palette
+     (naulon.app/brand) verbatim, and in that set `--muted` is a SURFACE fill while
+     #8d96a3 is `--muted-foreground` — text. Keeping the short name here would have left
+     exactly one token meaning opposite things in the two codebases that share the
+     palette, which is worse than a longer name. */
+  --muted-fg: #8d96a3;
   --faint: #6b7482;
   --line: #242b39;
   --line-strong: #2e3647;
@@ -107,7 +112,7 @@ body {
 .brand-word b { font-family: var(--font-mono); font-weight: 500; font-size: 15px; letter-spacing: -0.01em; }
 .brand-role {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--muted); margin-top: 2px;
+  text-transform: uppercase; color: var(--muted-fg); margin-top: 2px;
 }
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
@@ -118,7 +123,7 @@ body {
 }
 .nav-link {
   display: block; padding: 8px 10px; border-radius: 5px;
-  font-size: 14px; color: var(--muted); text-decoration: none;
+  font-size: 14px; color: var(--muted-fg); text-decoration: none;
   border-left: 2px solid transparent;
   transition: color var(--motion) var(--ease), background var(--motion) var(--ease);
 }
@@ -129,12 +134,12 @@ body {
 .gate-state {
   display: flex; align-items: center; gap: 8px;
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: uppercase; color: var(--muted-fg);
 }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--primary); }
 .dot.off { background: var(--faint); }
 .dot.bad { background: var(--down); }
-.rail-link { display: block; margin-top: 10px; font-size: 12px; color: var(--muted); text-decoration: none; }
+.rail-link { display: block; margin-top: 10px; font-size: 12px; color: var(--muted-fg); text-decoration: none; }
 .rail-link:hover { color: var(--primary); }
 
 /* ── page head ───────────────────────────────────────────────────────────── */
@@ -142,18 +147,18 @@ body {
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 26px; }
 .eyebrow {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--muted);
+  text-transform: uppercase; color: var(--muted-fg);
 }
 /* Fraunces earns display size only — this is the smallest place it may appear. */
 .page-title { font-family: var(--font-serif); font-size: 40px; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; margin-top: 8px; }
-.page-sub { margin-top: 10px; max-width: 62ch; color: var(--muted); }
+.page-sub { margin-top: 10px; max-width: 62ch; color: var(--muted-fg); }
 .head-actions { display: flex; align-items: center; gap: 10px; flex: none; }
 
 /* Section heads are SANS — a 20px serif reads fussy and breaks the display-only rule. */
 .section-head { display: flex; align-items: center; gap: 10px; margin: 34px 0 12px; }
 .section-head h2 { font-family: var(--font-sans); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .section-head .rule { height: 1px; width: 24px; background: color-mix(in oklab, var(--primary) 60%, transparent); flex: none; }
-.section-head .n { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+.section-head .n { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted-fg); }
 
 .cols { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; align-items: start; }
 
@@ -164,7 +169,7 @@ body {
 }
 .panel { overflow: hidden; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--card); box-shadow: var(--shadow-panel); }
 .panel-head { border-bottom: 1px solid var(--line); padding: 8px 14px; }
-.panel-foot { border-top: 1px solid var(--line); padding: 8px 14px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.panel-foot { border-top: 1px solid var(--line); padding: 8px 14px; font-family: var(--font-mono); font-size: 11px; color: var(--muted-fg); }
 
 /* ONE container, hairline-divided cells — never N separate tiles with an orphan. */
 .stat-strip {
@@ -173,7 +178,7 @@ body {
 }
 .stat { padding: 16px 18px; border-left: 1px solid var(--line); }
 .stat:first-child { border-left: 0; }
-.stat-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+.stat-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted-fg); }
 .stat-v { font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 26px; line-height: 1.15; margin-top: 8px; }
 .stat-v.pos { color: var(--primary); }
 .stat-v.warn { color: var(--warning); }
@@ -189,7 +194,7 @@ body {
 
 .badge {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
-  padding: 2px 7px; border-radius: 2px; border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap;
+  padding: 2px 7px; border-radius: 2px; border: 1px solid var(--line-strong); color: var(--muted-fg); white-space: nowrap;
 }
 .badge.paid { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
 .badge.served-free, .badge.agent-reread { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
@@ -218,7 +223,7 @@ body {
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
 .seg-btn {
   font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.06em;
-  background: transparent; color: var(--muted); border: 0; padding: 6px 12px; cursor: pointer;
+  background: transparent; color: var(--muted-fg); border: 0; padding: 6px 12px; cursor: pointer;
   border-left: 1px solid var(--line);
   transition: color var(--motion) var(--ease), background var(--motion) var(--ease);
 }
@@ -227,7 +232,7 @@ body {
 .seg-btn.on { color: var(--primary); background: var(--primary-soft); }
 
 .empty { padding: 44px 0; text-align: center; color: var(--faint); }
-.empty .lead { font-size: 15px; color: var(--muted); }
+.empty .lead { font-size: 15px; color: var(--muted-fg); }
 .empty code, .banner code { font-family: var(--font-mono); font-size: 12.5px; color: var(--primary); background: var(--surface-2); padding: 2px 7px; border-radius: 3px; }
 
 .banner {
@@ -249,8 +254,8 @@ body {
   margin-top: 14px; color: var(--fg);
 }
 .total .cur { color: var(--primary); font-size: 0.5em; vertical-align: 0.42em; margin-right: 0.06em; }
-.total .frac { color: var(--muted); }
-.hero-sub { margin-top: 16px; font-size: 14px; color: var(--muted); }
+.total .frac { color: var(--muted-fg); }
+.hero-sub { margin-top: 16px; font-size: 14px; color: var(--muted-fg); }
 .hero-sub b { font-family: var(--font-mono); font-weight: 500; color: var(--fg); }
 
 /* ── page: ledger rows ───────────────────────────────────────────────────── */
@@ -263,7 +268,7 @@ body {
 .rank { font-family: var(--font-mono); font-size: 13px; color: var(--faint); text-align: right; }
 .who .name { font-family: var(--font-mono); font-size: 16px; font-weight: 500; }
 .who .addr { font-family: var(--font-mono); font-size: 11px; color: var(--faint); letter-spacing: 0.03em; margin-top: 4px; }
-.who .meta { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+.who .meta { font-size: 12.5px; color: var(--muted-fg); margin-top: 5px; }
 .earned { text-align: right; min-width: 150px; }
 .earned .amt {
   font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums;
@@ -289,23 +294,23 @@ body {
 }
 .cross .when { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
 .cross .line { margin-top: 5px; font-size: 15px; }
-.cross .line .agent { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
-.cross .line .verb { color: var(--muted); }
+.cross .line .agent { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted-fg); }
+.cross .line .verb { color: var(--muted-fg); }
 .cross .line .amt { font-family: var(--font-mono); color: var(--primary); font-weight: 600; }
 /* Slugs are mono, not display serif — Fraunces is >=28px only. */
 .cross .line .slug { font-family: var(--font-mono); font-size: 13.5px; color: var(--fg); }
 .cross .split { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
-.cross .split span { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); }
+.cross .split span { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-fg); }
 .cross .split span b { color: var(--primary); font-weight: 500; }
 .cross .prov { margin-top: 7px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--faint); }
-.cross .prov b { color: var(--muted); font-weight: 500; }
+.cross .prov b { color: var(--muted-fg); font-weight: 500; }
 
 /* ── page: request feed ──────────────────────────────────────────────────── */
 .req { padding: 12px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: baseline; }
 .req.fresh { animation: flash 2.2s ease forwards; }
 .req .rt { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
 .req .rmid .slug { font-family: var(--font-mono); color: var(--fg); font-size: 13.5px; }
-.req .rmid .who { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+.req .rmid .who { font-family: var(--font-mono); font-size: 11px; color: var(--muted-fg); margin-top: 3px; }
 .req .rmid .who .badge { color: var(--primary); }
 .req .rmid .who .bad { color: var(--down); }
 .req .rprice { font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
@@ -316,7 +321,7 @@ body {
   padding: 11px 0; border-bottom: 1px solid var(--line);
   font-size: 13px; align-items: baseline;
 }
-.kv .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.kv .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted-fg); }
 .kv .v { font-family: var(--font-mono); color: var(--fg); word-break: break-all; }
 .article { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
 .article .slug { font-family: var(--font-mono); color: var(--fg); }
@@ -355,21 +360,21 @@ body {
 .check.warn .check-mark { color: var(--warning); }
 .check.fail .check-mark { color: var(--down); }
 .check-label { font-size: 14.5px; font-weight: 500; }
-.check-detail { margin-top: 3px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.check-detail { margin-top: 3px; font-family: var(--font-mono); font-size: 12px; color: var(--muted-fg); overflow-wrap: anywhere; }
 .check-fix { margin-top: 7px; font-size: 13px; color: var(--fg); border-left: 2px solid var(--line-strong); padding-left: 11px; }
 .check.fail .check-fix { border-left-color: color-mix(in oklab, var(--down) 55%, transparent); }
 .check.warn .check-fix { border-left-color: color-mix(in oklab, var(--warning) 55%, transparent); }
 .badge.pass { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
 .badge.warn { color: var(--warning); border-color: color-mix(in oklab, var(--warning) 45%, transparent); }
 .badge.fail { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
-.toll-fix { margin-top: 7px; font-size: 13px; color: var(--muted); }
+.toll-fix { margin-top: 7px; font-size: 13px; color: var(--muted-fg); }
 .toll-meta { margin-top: 8px; font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; }
 
 /* ── page: content editor ────────────────────────────────────────────────── */
 .scan { padding: 4px 0 8px; }
 .scan-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
 .fld { display: flex; flex-direction: column; gap: 7px; flex: 1; min-width: 260px; }
-.fld > span { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.fld > span { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted-fg); }
 .in {
   font-family: var(--font-mono); font-size: 13px; color: var(--fg); background: var(--bg);
   border: 1px solid var(--input); border-radius: 4px; padding: 9px 11px; width: 100%;
@@ -377,7 +382,7 @@ body {
 }
 .in:focus { outline: none; border-color: var(--primary); }
 .in.bad { border-color: var(--down); }
-.scan-out { margin-top: 12px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); min-height: 1em; }
+.scan-out { margin-top: 12px; font-family: var(--font-mono); font-size: 12px; color: var(--muted-fg); min-height: 1em; }
 .scan-out b { color: var(--fg); }
 
 .thead, .crow {
@@ -388,7 +393,7 @@ body {
 .thead > *, .crow > * { min-width: 0; overflow-wrap: anywhere; }
 .thead {
   padding: 10px 0; margin-top: 4px; border-bottom: 1px solid var(--line-strong);
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted-fg);
 }
 .crow { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .crow .slug { font-family: var(--font-mono); color: var(--fg); font-size: 13.5px; }
@@ -402,7 +407,7 @@ body {
 .x:hover { color: var(--down); }
 
 .actions { display: flex; gap: 12px; margin-top: 20px; }
-.save-out { margin-top: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.save-out { margin-top: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--muted-fg); }
 .save-out .mono { color: var(--faint); }
 .save-out.flash { animation: flash 2.4s ease forwards; padding: 8px 10px; border-radius: 3px; }
 .err-row { color: var(--down); margin-top: 5px; }
@@ -435,4 +440,4 @@ body {
 .empty p { max-width: 52ch; margin: 10px auto 0; font-size: 13.5px; line-height: 1.6; }
 .empty-foot { margin-top: 14px; font-size: 12.5px; }
 /* A row the operator's own Test toll produced — real traffic, but not a real crawler. */
-.badge.selftest { margin-left: 8px; color: var(--muted); border-color: var(--line-strong); }
+.badge.selftest { margin-left: 8px; color: var(--muted-fg); border-color: var(--line-strong); }

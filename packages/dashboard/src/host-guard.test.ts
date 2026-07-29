@@ -59,3 +59,17 @@ test("parseAllowedHosts trims, lowercases, and drops blanks", () => {
   assert.deepEqual(parseAllowedHosts(""), []);
   assert.deepEqual(parseAllowedHosts("   "), []);
 });
+
+test("the guard's own 403 carries the security headers", async () => {
+  // The guard used to be registered BEFORE the header middleware, and a middleware that
+  // returns without calling next() skips everything after it — so the one response an
+  // attacker can force, which echoes their Host back, was the only response in the app
+  // served with no CSP, no nosniff and no Referrer-Policy.
+  const { app } = await import("./server.ts");
+  const res = await app.request("/", { headers: { Host: "rebind.attacker.test" } });
+  assert.equal(res.status, 403);
+  assert.match(res.headers.get("content-type") ?? "", /text\/plain/);
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  assert.match(res.headers.get("content-security-policy") ?? "", /default-src 'self'/);
+  assert.equal(res.headers.get("referrer-policy"), "no-referrer");
+});

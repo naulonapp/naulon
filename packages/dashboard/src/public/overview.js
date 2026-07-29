@@ -87,7 +87,7 @@ function renderConfig(cfg) {
 function renderWarnings(warnings) {
   $("#warnCount").textContent = warnings.length;
   $("#warnings").innerHTML = warnings.length
-    ? warnings.map((w) => `<div class="warn-row">${esc(w)}</div>`).join("")
+    ? warnings.map((w) => `<div class="warn-row">${esc(w.message)}</div>`).join("")
     : `<div class="warn-none">Nothing to flag — the gate is configured to toll.</div>`;
 }
 

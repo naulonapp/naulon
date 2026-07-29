@@ -9,18 +9,26 @@
  * Read-only. Every check either reads config the gate already loaded or performs a
  * GET against an address from that config — nothing here writes, spends, or settles.
  */
+import { access as fsAccess, constants as fsConstants } from "node:fs/promises";
+import { dirname } from "node:path";
 import { getConfig } from "@naulon/shared";
-import { summarizeConfig, type ConfigSummary } from "./config-view.ts";
+import { summarizeConfig, type ConfigSummary, type ConfigWarningCode } from "./config-view.ts";
 import { isLoopback } from "./access.ts";
+import { parseAllowedHosts } from "./host-guard.ts";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 
 export interface Check {
   id: string;
-  /** What is being checked, as a claim the operator can read at a glance. */
+  /**
+   * What is being checked, phrased as the claim the operator WANTS to be true ("The
+   * gate is up"). Because it is the positive phrasing, it must never be spliced into a
+   * sentence about what went wrong — that is how the headline came to read "One thing
+   * is stopping this gate from earning: credits are loaded." Use `detail` for that.
+   */
   label: string;
   status: CheckStatus;
-  /** What we actually found. */
+  /** What we actually found. On a fail this is the problem, in the operator's terms. */
   detail: string;
   /** What to do. Empty on a pass. */
   fix: string;
@@ -52,8 +60,16 @@ export interface DoctorInput {
   accessMode: string;
   /** DASHBOARD_BIND, for the exposure check. */
   bind: string;
+  /** Parsed DASHBOARD_ALLOWED_HOSTS — extra Host values the private console answers to. */
+  allowedHosts: readonly string[];
   paymentMode: "mock" | "gateway";
   settlementNetwork: string;
+  /**
+   * Can the gate actually append to EVENTS_PATH? null = supabase backend (not a file).
+   * A read-only volume or a wrong container uid loses every settlement event silently,
+   * which is the failure this check exists to name.
+   */
+  eventsWritable: boolean | null;
 }
 
 const ok = (id: string, label: string, detail: string): Check => ({ id, label, status: "pass", detail, fix: "" });
@@ -99,9 +115,21 @@ export function buildChecks(i: DoctorInput): Check[] {
     });
   }
 
-  // 3. Is anything actually tollable? An empty credits source is a silent no-op.
+  // 3. Is anything actually tollable? An empty credits source is a silent no-op — and
+  //    an UNREADABLE one is a different problem with a different fix, so say which.
+  //    Getting these two confused sent the operator to "scan your site" when the real
+  //    answer was "the file isn't there".
+  const unreadable = i.config.warnings.find((w) => w.code === "credits-unreadable");
   if (i.config.creditsSource.mode === "api") {
     checks.push(ok("credits", "Credits are loaded", `Served live from ${i.config.creditsSource.location}.`));
+  } else if (unreadable) {
+    checks.push({
+      id: "credits",
+      label: "Credits are loaded",
+      status: "fail",
+      detail: unreadable.message,
+      fix: `The gate reads CREDITS_FIXTURES at boot. Create ${i.config.creditsSource.location} (valid JSON), or point CREDITS_FIXTURES / CREDITS_API_URL somewhere that exists.`,
+    });
   } else if ((i.config.slugCount ?? 0) > 0) {
     checks.push(ok("credits", "Credits are loaded", `${i.config.slugCount} article(s) tollable, ${i.config.wallets.length} wallet(s).`));
   } else {
@@ -127,8 +155,24 @@ export function buildChecks(i: DoctorInput): Check[] {
       : ok("observations", "Traffic is being recorded", `OBSERVATIONS_BACKEND=${i.config.observations}.`),
   );
 
-  // 5. The event log is what the ledger and earnings read.
-  checks.push(ok("events", "Settlement events are being kept", `EVENTS_BACKEND=${i.config.events}.`));
+  // 5. The event log is what the ledger and earnings read. `EVENTS_BACKEND` only has
+  //    two legal values, so reporting it was a row that could never do anything but
+  //    pass — padding on a screen whose whole value is an honest count. What CAN go
+  //    wrong is the file: a read-only volume or a container uid that can't write to
+  //    EVENTS_PATH drops every settlement event with no error the operator ever sees.
+  if (i.eventsWritable === false) {
+    checks.push({
+      id: "events",
+      label: "Settlement events are being kept",
+      status: "fail",
+      detail: `EVENTS_BACKEND=jsonl, but ${i.config.eventsPath} is not writable.`,
+      fix: "Every settled payment is being dropped, silently — the ledger will stay empty however much you earn. Fix the directory's permissions (or its volume mount) so the gate's user can append.",
+    });
+  } else if (i.eventsWritable === null) {
+    checks.push(ok("events", "Settlement events are being kept", `EVENTS_BACKEND=supabase.`));
+  } else {
+    checks.push(ok("events", "Settlement events are being kept", `Appending to ${i.config.eventsPath}.`));
+  }
 
   // 6. A zero price would quote nothing.
   checks.push(
@@ -176,7 +220,19 @@ export function buildChecks(i: DoctorInput): Check[] {
   } else if (i.accessMode === "authed") {
     checks.push(ok("exposure", "The console is not over-exposed", "Bound wide, behind HTTP Basic."));
   } else if (isLoopback(i.bind)) {
-    checks.push(ok("exposure", "The console is not over-exposed", `Loopback only (${i.bind}), and it answers only to loopback hostnames.`));
+    // Say what the Host allowlist ACTUALLY is. Claiming "loopback hostnames only" while
+    // DASHBOARD_ALLOWED_HOSTS names three more is a lie on the one screen whose entire
+    // job is to report posture — and it leaves the operator nothing to read when a
+    // typo'd entry starts 403ing their proxy.
+    checks.push(
+      ok(
+        "exposure",
+        "The console is not over-exposed",
+        i.allowedHosts.length
+          ? `Loopback only (${i.bind}); it answers to loopback hostnames plus ${i.allowedHosts.join(", ")}.`
+          : `Loopback only (${i.bind}), and it answers only to loopback hostnames.`,
+      ),
+    );
   } else {
     checks.push({
       id: "exposure",
@@ -187,15 +243,24 @@ export function buildChecks(i: DoctorInput): Check[] {
     });
   }
 
-  // 10. Anything config-view already flagged that the checks above did not cover.
+  // 10. Anything config-view flagged that no check above already reports. Keyed on the
+  //     warning CODE, never the message text: the old prose match let "the fixture has
+  //     no articles" through, so an empty fixture rendered twice — a `fail` from check 3
+  //     and a `warn` here, labelled "Credits parse cleanly" when nothing had failed to
+  //     parse, and counted as two problems instead of one.
+  const COVERED: ReadonlySet<ConfigWarningCode> = new Set<ConfigWarningCode>([
+    "observations-off", // check 4
+    "credits-api-dynamic", // check 3, api branch — informational, not a warning
+    "credits-empty", // check 3, fail branch
+    "credits-unreadable", // check 3, fail branch
+  ]);
   for (const [n, w] of i.config.warnings.entries()) {
-    const covered = /OBSERVATIONS_BACKEND|live API/.test(w);
-    if (covered) continue;
+    if (COVERED.has(w.code)) continue;
     checks.push({
       id: `config-warning-${n}`,
       label: "Credits parse cleanly",
       status: "warn",
-      detail: w,
+      detail: w.message,
       fix: "Fix the entry in your credits source — a malformed one is skipped, so that article earns nothing.",
     });
   }
@@ -203,13 +268,22 @@ export function buildChecks(i: DoctorInput): Check[] {
   return checks;
 }
 
-/** One sentence for the top of the page — the worst thing found, or the all-clear. */
+/**
+ * One sentence for the top of the page — the worst thing found, or the all-clear.
+ *
+ * The single-failure line names the check's `detail` (the problem), NOT its `label`.
+ * The label is phrased as the claim the operator wants to be true, so splicing it in
+ * produced the exact inverse of the truth: a missing credits file rendered as "One
+ * thing is stopping this gate from earning: credits are loaded." `detail` is already a
+ * standalone sentence, so it is appended as one rather than lowercased into the clause
+ * — which also keeps `DEFAULT_PRICE_USDC` and URLs from being case-mangled.
+ */
 export function headlineFor(checks: readonly Check[]): string {
   const fails = checks.filter((c) => c.status === "fail");
   const warns = checks.filter((c) => c.status === "warn");
   if (fails.length) {
     return fails.length === 1
-      ? `One thing is stopping this gate from earning: ${fails[0]!.label.toLowerCase()}.`
+      ? `One thing is stopping this gate from earning. ${fails[0]!.detail}`
       : `${fails.length} things are stopping this gate from earning.`;
   }
   if (warns.length) {
@@ -238,6 +312,21 @@ async function probeOrigin(originUrl: string): Promise<boolean> {
   return false;
 }
 
+/**
+ * Can the gate append to the events log? Probes the DIRECTORY, not the file: the file
+ * legitimately does not exist until the first settlement, and `W_OK` on a missing path
+ * always fails. Only meaningful for the jsonl backend — supabase gets null.
+ */
+async function probeEventsWritable(backend: string, eventsPath: string): Promise<boolean | null> {
+  if (backend !== "jsonl") return null;
+  try {
+    await fsAccess(dirname(eventsPath), fsConstants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Run the full report. `health` is passed in because the server already computes it. */
 export async function runDoctor(input: {
   health: GateHealth;
@@ -247,7 +336,10 @@ export async function runDoctor(input: {
 }): Promise<DoctorReport> {
   const c = getConfig();
   const config = await summarizeConfig();
-  const originReachable = await probeOrigin(config.originUrl);
+  const [originReachable, eventsWritable] = await Promise.all([
+    probeOrigin(config.originUrl),
+    probeEventsWritable(config.events, config.eventsPath),
+  ]);
   const checks = buildChecks({
     config,
     health: input.health,
@@ -255,8 +347,10 @@ export async function runDoctor(input: {
     originReachable,
     accessMode: input.accessMode,
     bind: c.DASHBOARD_BIND,
+    allowedHosts: parseAllowedHosts(c.DASHBOARD_ALLOWED_HOSTS),
     paymentMode: c.PAYMENT_MODE,
     settlementNetwork: c.SETTLEMENT_NETWORK,
+    eventsWritable,
   });
   return {
     at: input.now ?? Date.now(),

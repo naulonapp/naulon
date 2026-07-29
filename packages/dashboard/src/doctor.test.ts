@@ -13,6 +13,7 @@ const CONFIG: ConfigSummary = {
   wallets: ["0x1"],
   observations: "jsonl",
   events: "jsonl",
+  eventsPath: "/tmp/data/events.jsonl",
   warnings: [],
 };
 
@@ -23,8 +24,10 @@ const HEALTHY: DoctorInput = {
   originReachable: true,
   accessMode: "private",
   bind: "127.0.0.1",
+  allowedHosts: [],
   paymentMode: "gateway",
   settlementNetwork: "arcTestnet",
+  eventsWritable: true,
 };
 
 const byId = (cs: ReturnType<typeof buildChecks>, id: string) => cs.find((c) => c.id === id)!;
@@ -104,7 +107,10 @@ test("authed and public exposure both pass", () => {
 });
 
 test("a malformed credits entry surfaces as its own check", () => {
-  const cs = buildChecks({ ...HEALTHY, config: { ...CONFIG, warnings: ['credits entry "x" is invalid: bad wallet'] } });
+  const cs = buildChecks({
+    ...HEALTHY,
+    config: { ...CONFIG, warnings: [{ code: "credits-entry-invalid", message: 'credits entry "x" is invalid: bad wallet' }] },
+  });
   const c = cs.find((x) => x.id.startsWith("config-warning-"))!;
   assert.equal(c.status, "warn");
   assert.match(c.detail, /bad wallet/);
@@ -113,14 +119,93 @@ test("a malformed credits entry surfaces as its own check", () => {
 test("warnings the checks already cover are not duplicated", () => {
   const cs = buildChecks({
     ...HEALTHY,
-    config: { ...CONFIG, observations: "off", warnings: ["OBSERVATIONS_BACKEND is off — the traffic panel stays empty."] },
+    config: {
+      ...CONFIG,
+      observations: "off",
+      warnings: [{ code: "observations-off", message: "OBSERVATIONS_BACKEND is off — the traffic panel stays empty." }],
+    },
   });
   assert.equal(cs.filter((x) => x.id.startsWith("config-warning-")).length, 0, "the observations check already says this");
+});
+
+test("an empty fixture is ONE problem, not a fail plus a warn", () => {
+  // The regression: config-view emits "the fixture has no articles" AND check 3 derives
+  // the same thing from slugCount. Matching warnings by prose let both render, so one
+  // misconfiguration was counted twice, at two severities, the second row labelled
+  // "Credits parse cleanly" when nothing had failed to parse.
+  const cs = buildChecks({
+    ...HEALTHY,
+    config: {
+      ...CONFIG,
+      slugCount: 0,
+      articles: [],
+      wallets: [],
+      warnings: [{ code: "credits-empty", message: "The credits fixture has no articles — nothing is tollable." }],
+    },
+  });
+  assert.equal(cs.filter((x) => x.id.startsWith("config-warning-")).length, 0);
+  assert.equal(cs.filter((c) => c.status === "fail").length, 1);
+  assert.equal(cs.filter((c) => c.status === "warn").length, 0);
+});
+
+test("an unreadable fixture says the file could not be read, not 'go scan your site'", () => {
+  const cs = buildChecks({
+    ...HEALTHY,
+    config: {
+      ...CONFIG,
+      articles: null,
+      slugCount: null,
+      wallets: [],
+      warnings: [{ code: "credits-unreadable", message: "Could not read the credits fixture /tmp/credits.json: ENOENT" }],
+    },
+  });
+  const c = byId(cs, "credits");
+  assert.equal(c.status, "fail");
+  assert.match(c.detail, /Could not read/);
+  assert.doesNotMatch(c.fix, /Content page/, "scanning cannot fix a file that is not there");
+  assert.equal(cs.filter((x) => x.id.startsWith("config-warning-")).length, 0, "and it is not also reported as a warning");
+});
+
+test("an unwritable events directory FAILS — settlements would vanish silently", () => {
+  const cs = buildChecks({ ...HEALTHY, eventsWritable: false });
+  const c = byId(cs, "events");
+  assert.equal(c.status, "fail");
+  assert.match(c.detail, /not writable/);
+  assert.match(c.fix, /dropped/);
+});
+
+test("the exposure check names the declared Host allowlist, not just loopback", () => {
+  // Claiming "answers only to loopback hostnames" while DASHBOARD_ALLOWED_HOSTS names
+  // more is a lie on the one screen whose job is to report posture.
+  const cs = buildChecks({ ...HEALTHY, allowedHosts: ["ops.example.com"] });
+  const c = byId(cs, "exposure");
+  assert.equal(c.status, "pass");
+  assert.match(c.detail, /ops\.example\.com/);
+
+  const bare = byId(buildChecks(HEALTHY), "exposure");
+  assert.match(bare.detail, /only to loopback hostnames/);
 });
 
 test("the headline names the single blocker when there is exactly one", () => {
   const cs = buildChecks({ ...HEALTHY, health: { up: false } });
   assert.match(headlineFor(cs), /^One thing is stopping this gate from earning/);
+});
+
+test("the headline states the PROBLEM, never the check's positive label", () => {
+  // The regression: the headline spliced in `label`, which is phrased as the claim the
+  // operator wants to be true — so a missing credits file rendered as "One thing is
+  // stopping this gate from earning: credits are loaded."
+  const cs = buildChecks({ ...HEALTHY, config: { ...CONFIG, slugCount: 0, articles: [], wallets: [] } });
+  const line = headlineFor(cs);
+  assert.match(line, /No tollable articles/);
+  assert.doesNotMatch(line, /credits are loaded/i);
+});
+
+test("the headline never lowercases an env var or a URL out of a blocker", () => {
+  const price = headlineFor(buildChecks({ ...HEALTHY, config: { ...CONFIG, priceUsdc: 0 } }));
+  assert.match(price, /DEFAULT_PRICE_USDC/, "the env var keeps its case");
+  const origin = headlineFor(buildChecks({ ...HEALTHY, originReachable: false }));
+  assert.match(origin, /http:\/\/localhost:3000/);
 });
 
 test("the headline counts multiple blockers", () => {

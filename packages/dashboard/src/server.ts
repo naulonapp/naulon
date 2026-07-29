@@ -88,25 +88,11 @@ async function gateHealth(): Promise<{ up: boolean; service?: string; startedAt?
 
 export const app = new Hono();
 
-// DNS-rebinding guard — FIRST, before anything reads or renders. Private mode runs
-// without auth, so the Host allowlist is the only thing that stops a page the
-// operator visits from re-pointing its own hostname at 127.0.0.1 and reading the
-// ops API same-origin. See host-guard.ts for the full shape.
-const ALLOWED_HOSTS = parseAllowedHosts(cfg.DASHBOARD_ALLOWED_HOSTS);
-app.use("*", async (c, next) => {
-  if (!isAllowedHost(c.req.header("Host"), ALLOWED_HOSTS, ACCESS.mode)) {
-    return c.text(
-      `naulon dashboard: refusing a request for Host "${c.req.header("Host") ?? "(absent)"}".\n\n` +
-        `The private console has no authentication, so it answers only to loopback\n` +
-        `hostnames. If you reach it through a reverse proxy, add that hostname to\n` +
-        `DASHBOARD_ALLOWED_HOSTS (comma-separated).\n`,
-      403,
-    );
-  }
-  await next();
-});
-
-// Security headers on every response (strict CSP: all assets same-origin).
+// Security headers on EVERY response — registered before the Host guard so it also
+// wraps the guard's own 403. It didn't, and that response (the one an attacker can
+// force, echoing their Host back) was the single response in the app served with no
+// CSP, no nosniff and no Referrer-Policy. Order matters here: a middleware that
+// returns without calling next() skips everything registered after it.
 app.use("*", async (c, next) => {
   await next();
   c.header(
@@ -127,6 +113,28 @@ app.use("*", async (c, next) => {
   );
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "no-referrer");
+});
+
+// DNS-rebinding guard — before anything reads or renders. Private mode runs without
+// auth, so the Host allowlist is the only thing that stops a page the operator visits
+// from re-pointing its own hostname at 127.0.0.1 and reading the ops API same-origin.
+// See host-guard.ts for the full shape.
+const ALLOWED_HOSTS = parseAllowedHosts(cfg.DASHBOARD_ALLOWED_HOSTS);
+app.use("*", async (c, next) => {
+  if (!isAllowedHost(c.req.header("Host"), ALLOWED_HOSTS, ACCESS.mode)) {
+    // The Host is echoed so the operator can see WHICH value was refused (a proxy
+    // sending an unexpected name is the whole failure mode). It is attacker-controlled,
+    // so it stays in a text/plain body under the nosniff + CSP set above — never
+    // interpolated into HTML.
+    return c.text(
+      `naulon dashboard: refusing a request for Host "${c.req.header("Host") ?? "(absent)"}".\n\n` +
+        `The private console has no authentication, so it answers only to loopback\n` +
+        `hostnames. If you reach it through a reverse proxy, add that hostname to\n` +
+        `DASHBOARD_ALLOWED_HOSTS (comma-separated).\n`,
+      403,
+    );
+  }
+  await next();
 });
 
 // Fail safe: bound wide with no auth and not public → serve nothing but the reason.
