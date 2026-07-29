@@ -26,3 +26,41 @@ jobs:
 
       - name: Test (incl. license interop conformance)
         run: make test
+
+  # The WordPress plugin is PHP, so the Node job above cannot see it. Until this job
+  # existed, plugins/naulon/tests/ ran NOWHERE — including VersionTest, written
+  # precisely to stop a build shipping under a version already in the wild, which is
+  # the failure that let v0.2.2 go out labelled 0.1.0. A guard nothing executes is not
+  # a guard. The suite needs no WordPress and finishes in about a tenth of a second.
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The dev tree (phpunit 9 and its dependencies) cannot install below PHP 8 —
+      # doctrine/instantiator in the lock requires ^8.4 — so the suite runs on current
+      # PHP, and the floor the plugin advertises is covered by the syntax pass below.
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: composer
+
+      - name: Install dependencies
+        working-directory: plugins/naulon
+        run: composer install --no-interaction --no-progress
+
+      - name: Test (unit — no WordPress needed)
+        working-directory: plugins/naulon
+        run: composer test
+
+      # `Requires PHP: 7.4` is a promise to publishers on older hosting, and nothing
+      # checked it. php -l needs no vendor tree, so the floor can be honoured even
+      # though the test tooling cannot run there.
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "7.4"
+          tools: none
+
+      - name: Syntax-check against the declared PHP floor (7.4)
+        working-directory: plugins/naulon
+        run: find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l

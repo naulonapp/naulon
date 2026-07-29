@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.2.0
+Stable tag: 0.2.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -131,6 +131,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.2.3 =
+* A shared cache could hand a crawler the copy it made for a human, so a read that should have been paid was served free. The cache guard now varies on what the toll actually decides on.
+* The toll test named two wrong causes and never the real one — a network edge in front of your site turning the crawler away before it ever reaches WordPress. It now names that, and what to change.
+* The version in the plugin header, the readme and the code is checked against the last release, so a build can no longer ship under a version you already have.
+
 = 0.2.0 =
 * Refuse in-app enforcement on a domain the naulon fleet already tolls, so one read is never charged twice.
 * Reconcile ownership on the hourly heartbeat: a proof withdrawn in the dashboard now stands the toll down here.
@@ -144,6 +149,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+
+= 0.2.3 =
+Stops a shared cache serving a paid read for free, and the toll test now names an edge block instead of two wrong causes. If you are on 0.1.0, this is the first update WordPress has been able to offer you — the one release that carried the plugin shipped it labelled 0.1.0, so no update ever appeared.
 
 = 0.2.0 =
 Stops a domain being charged twice when the fleet already tolls it, and notices when you withdraw a domain proof.

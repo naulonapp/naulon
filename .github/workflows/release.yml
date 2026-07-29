@@ -28,7 +28,68 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 — the version guard below reads the PREVIOUS tag's plugin
+      # header. A shallow clone carries neither the tags nor the history to do it.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Runs BEFORE the npm publish on purpose: that publish is irreversible, and a
+      # guard that fires after it has already let the bad release out.
+      #
+      # Scope note: whether the plugin's THREE internal version sites agree (the
+      # `Version:` header, NAULON_VERSION, readme.txt's `Stable tag:`) and whether the
+      # changelog documents the shipping version is owned by
+      # plugins/naulon/tests/unit/VersionTest.php — one owner, asserted in CI. Do not
+      # restate it here; two copies of a rule means one is already wrong.
+      #
+      # This step asks the one question no unit test can, because it needs git history:
+      # did the version MOVE relative to what was last released? v0.2.2 is the only tag
+      # that has ever carried the plugin and it shipped labelled 0.1.0, so WordPress
+      # offered no installed site the update. Coupling the plugin to the tag is
+      # deliberately NOT the rule — the npm packages version themselves (see the
+      # idempotent publish below), so that would be a discipline this repo does not
+      # otherwise keep.
+      - name: Plugin version moved with the plugin
+        run: |
+          set -euo pipefail
+          read_version() { sed -n 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*//p' | head -1 | tr -d '[:space:]'; }
+          hdr=$(read_version < plugins/naulon/naulon.php)
+          test -n "$hdr" || { echo "::error::no Version: header in plugins/naulon/naulon.php"; exit 1; }
+          echo "plugin version: $hdr"
+
+          # Only a tag build has a previous release to compare against.
+          case "${GITHUB_REF:-}" in
+            refs/tags/*) ;;
+            *) echo "not a tag build — drift check does not apply"; exit 0 ;;
+          esac
+
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -z "$prev" ]; then
+            echo "no previous tag — first release, nothing to compare"
+            exit 0
+          fi
+          echo "previous tag: $prev"
+
+          if git diff --quiet "$prev" "${GITHUB_REF_NAME}" -- plugins/naulon/; then
+            echo "plugins/naulon/ unchanged since $prev — the version may legitimately stand still"
+            exit 0
+          fi
+
+          # The plugin is younger than the tag series — it did not exist at v0.2.1.
+          # A tag from before it landed has nothing to compare, and must not be read
+          # as drift (git show would simply die there).
+          if ! git cat-file -e "$prev:plugins/naulon/naulon.php" 2>/dev/null; then
+            echo "the plugin did not exist at $prev — first release to carry it"
+            exit 0
+          fi
+
+          prev_hdr=$(git show "$prev:plugins/naulon/naulon.php" | read_version)
+          if [ "$hdr" = "$prev_hdr" ]; then
+            echo "::error::plugins/naulon/ changed since $prev but Version: is still $hdr — WordPress offers no update, so no installed site gets the fix. Bump naulon.php Version: and readme.txt Stable tag: together."
+            exit 1
+          fi
+          echo "plugin changed since $prev and the version moved: $prev_hdr → $hdr"
 
       - uses: actions/setup-node@v4
         with:
