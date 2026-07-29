@@ -24,6 +24,7 @@ import { summarizeConfig } from "./config-view.ts";
 import { readObservations } from "./observations.ts";
 import { readContent, scanArticles, writeCredits, isRestartPending } from "./content.ts";
 import { decideAccess } from "./access.ts";
+import { tileSvg } from "./brand.ts";
 import { RECENT_LIMIT } from "./constants.ts";
 
 const cfg = getConfig();
@@ -43,16 +44,18 @@ const isPublic = ACCESS.mode === "public";
 const ASSETS: Record<string, { file: string; type: string }> = isPublic
   ? {
       "/": { file: "ledger.html", type: "text/html; charset=utf-8" },
-      "/ledger.css": { file: "ledger.css", type: "text/css; charset=utf-8" },
+      "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
+      "/shell.js": { file: "shell.js", type: "text/javascript; charset=utf-8" },
       "/ledger.js": { file: "ledger.js", type: "text/javascript; charset=utf-8" },
     }
   : {
-      "/": { file: "index.html", type: "text/html; charset=utf-8" },
+      "/": { file: "overview.html", type: "text/html; charset=utf-8" },
       "/ledger": { file: "ledger.html", type: "text/html; charset=utf-8" },
       "/content": { file: "content.html", type: "text/html; charset=utf-8" },
-      "/ledger.css": { file: "ledger.css", type: "text/css; charset=utf-8" },
+      "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
+      "/shell.js": { file: "shell.js", type: "text/javascript; charset=utf-8" },
+      "/overview.js": { file: "overview.js", type: "text/javascript; charset=utf-8" },
       "/ledger.js": { file: "ledger.js", type: "text/javascript; charset=utf-8" },
-      "/ops.js": { file: "ops.js", type: "text/javascript; charset=utf-8" },
       "/content.js": { file: "content.js", type: "text/javascript; charset=utf-8" },
     };
 
@@ -89,6 +92,9 @@ app.use("*", async (c, next) => {
       "default-src 'self'",
       "img-src 'self' data:",
       "style-src 'self'",
+      // Inherited from default-src, but stated so the "we ship our own faces, we
+      // never reach a CDN" decision is legible to anyone auditing the header.
+      "font-src 'self'",
       "script-src 'self'",
       "connect-src 'self'",
       "base-uri 'none'",
@@ -115,6 +121,27 @@ if (ACCESS.refuse) {
       return c.body(await readFile(new URL(asset.file, PUBLIC), "utf8"));
     });
   }
+
+  // Fonts — same-origin so the strict CSP holds. Explicit allowlist, never a path
+  // join from user input.
+  const FONTS = new Set([
+    "fraunces-latin.woff2",
+    "hanken-grotesk-latin.woff2",
+    "jetbrains-mono-latin.woff2",
+  ]);
+  app.get("/fonts/:file", async (c) => {
+    const file = c.req.param("file");
+    if (!FONTS.has(file)) return c.notFound();
+    c.header("Content-Type", "font/woff2");
+    c.header("Cache-Control", "public, max-age=31536000, immutable");
+    return c.body(await readFile(new URL(`fonts/${file}`, PUBLIC)));
+  });
+
+  app.get("/favicon.svg", (c) => {
+    c.header("Content-Type", "image/svg+xml");
+    c.header("Cache-Control", "public, max-age=86400");
+    return c.body(tileSvg(32));
+  });
 
   app.get("/api/ledger", async (c) => c.json(ledgerFor(aggregate(await sink.readAll(), RECENT_LIMIT))));
 
