@@ -100,6 +100,42 @@ export const markSvg = () =>
   `stroke-linecap="round" stroke-linejoin="round"/>` +
   `<circle cx="${MARK_COIN.cx}" cy="${MARK_COIN.cy}" r="${MARK_COIN.r}" fill="currentColor"/></svg>`;
 
+// ── nav icons ─────────────────────────────────────────────────────────────────
+/**
+ * The same lucide glyphs the hosted portal uses, inlined as path data because this
+ * console has no build step and a strict `default-src 'self'` CSP — it cannot import a
+ * package or pull a CDN sprite. Concept-matched to the portal's own assignments so the
+ * two products read as one system: Overview is its LayoutGrid, Requests its Radar (the
+ * observation plane), Agents its Bot, Ledger its Coins, Content its FileText.
+ *
+ * 24×24 viewBox, stroke-width 2, round caps — lucide's own contract — rendered at 16px,
+ * which is what the portal's sidebar measures.
+ */
+const NAV_ICON = {
+  overview:
+    "<rect width=\"7\" height=\"7\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"3\" y=\"14\" rx=\"1\"/>",
+  requests:
+    "<path d=\"M19.07 4.93A10 10 0 0 0 6.99 3.34\"/><path d=\"M4 6h.01\"/><path d=\"M2.29 9.62A10 10 0 1 0 21.31 8.35\"/><path d=\"M16.24 7.76A6 6 0 1 0 8.23 16.67\"/><path d=\"M12 18h.01\"/><path d=\"M17.99 11.66A6 6 0 0 1 15.77 16.67\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/><path d=\"m13.41 10.59 5.66-5.66\"/>",
+  agents:
+    "<path d=\"M12 8V4H8\"/><rect width=\"16\" height=\"12\" x=\"4\" y=\"8\" rx=\"2\"/><path d=\"M2 14h2\"/><path d=\"M20 14h2\"/><path d=\"M15 13v2\"/><path d=\"M9 13v2\"/>",
+  ledger:
+    "<path d=\"M13.744 17.736a6 6 0 1 1-7.48-7.48\"/><path d=\"M15 6h1v4\"/><path d=\"m6.134 14.768.866-.5 2 3.464\"/><circle cx=\"16\" cy=\"8\" r=\"6\"/>",
+  content:
+    "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\"/><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"/><path d=\"M10 9H8\"/><path d=\"M16 13H8\"/><path d=\"M16 17H8\"/>",
+  crawlers:
+    "<path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z\"/><path d=\"m9 12 2 2 4-4\"/>",
+  doctor:
+    "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\"/><path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\"/><path d=\"m9 14 2 2 4-4\"/>",
+};
+
+/** One nav glyph at the portal's 16px, inheriting colour from the link. */
+export const navIcon = (id) =>
+  NAV_ICON[id]
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
+      `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" ` +
+      `class="nav-ico">${NAV_ICON[id]}</svg>`
+    : "";
+
 // ── the sidebar ───────────────────────────────────────────────────────────────
 /** Nav groups, in order. `null` group = ungrouped, rendered above the first label. */
 export const NAV = [
@@ -138,7 +174,7 @@ export function renderShell({ active, nav = true }) {
       .map(
         (i) =>
           `<a class="nav-link${i.id === active ? " on" : ""}" href="${esc(i.href)}"` +
-          `${i.id === active ? ' aria-current="page"' : ""}>${esc(i.label)}</a>`,
+          `${i.id === active ? ' aria-current="page"' : ""}>${navIcon(i.id)}<span>${esc(i.label)}</span></a>`,
       )
       .join("");
     return label + links;

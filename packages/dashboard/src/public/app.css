@@ -38,6 +38,10 @@
   /* Four elevation steps, so the UI reads with depth rather than one flat charcoal:
      sidebar #050609 < background #07080b < card #11141c < surface-2 #1a2030 */
   --sidebar: #050609;
+  /* The sidebar's own two extra tokens, same values the hosted portal publishes —
+     the console had neither, so its nav had to invent its own active treatment. */
+  --sidebar-accent: #0e1218;
+  --sidebar-muted: #7c8593;
   --bg: #07080b;
   --card: #11141c;
   --surface-2: #1a2030;
@@ -71,7 +75,7 @@
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   --radius: 0.5rem;
-  --rail: 232px;
+  --rail: 256px;   /* measured off the hosted portal's sidebar */
   --motion: 180ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 }
@@ -121,14 +125,23 @@ body {
   text-transform: uppercase; color: var(--faint);
   padding: 16px 8px 6px;
 }
+/* Measured off the hosted portal's sidebar rather than styled by eye: 36px tall,
+   8px/12px/8px/16px padding, 7px radius, 12px gap, 14px text — inactive at
+   --sidebar-muted weight 400, active filled with --sidebar-accent at weight 500.
+   The console used to differ on every one of those AND carry no icon at all, which
+   was the single loudest "these are two different products" signal. */
 .nav-link {
-  display: block; padding: 8px 10px; border-radius: 5px;
-  font-size: 14px; color: var(--muted-fg); text-decoration: none;
-  border-left: 2px solid transparent;
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px 8px 16px; border-radius: 7px; min-height: 36px;
+  /* 20px, not the body's 1.5 — 14 × 1.5 = 21 rounds the row to 37px and the rail sits
+     one pixel off the portal's for every item. */
+  font-size: 14px; line-height: 20px; font-weight: 400;
+  color: var(--sidebar-muted); text-decoration: none;
   transition: color var(--motion) var(--ease), background var(--motion) var(--ease);
 }
-.nav-link:hover { color: var(--fg); background: var(--surface-2); }
-.nav-link.on { color: var(--fg); background: var(--surface-2); border-left-color: var(--primary); }
+.nav-ico { width: 16px; height: 16px; flex: none; }
+.nav-link:hover { color: var(--fg); background: color-mix(in oklab, var(--sidebar-accent) 60%, transparent); }
+.nav-link.on { color: var(--fg); font-weight: 500; background: var(--sidebar-accent); }
 
 .rail { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--line); }
 .gate-state {
@@ -145,19 +158,23 @@ body {
 /* ── page head ───────────────────────────────────────────────────────────── */
 .main { padding: 34px 40px 64px; max-width: 1180px; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 26px; }
+/* 10px / 0.2em — the portal's measured eyebrow, not a nearby-looking 10.5 / 0.22. */
 .eyebrow {
-  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em;
   text-transform: uppercase; color: var(--muted-fg);
 }
 /* Fraunces earns display size only — this is the smallest place it may appear. */
-.page-title { font-family: var(--font-serif); font-size: 40px; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; margin-top: 8px; }
+.page-title { font-family: var(--font-serif); font-size: 48px; font-weight: 500; line-height: 1.05; letter-spacing: -0.025em; margin-top: 8px; }
 .page-sub { margin-top: 10px; max-width: 62ch; color: var(--muted-fg); }
 .head-actions { display: flex; align-items: center; gap: 10px; flex: none; }
 
 /* Section heads are SANS — a 20px serif reads fussy and breaks the display-only rule. */
 .section-head { display: flex; align-items: center; gap: 10px; margin: 34px 0 12px; }
-.section-head h2 { font-family: var(--font-sans); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-.section-head .rule { height: 1px; width: 24px; background: color-mix(in oklab, var(--primary) 60%, transparent); flex: none; }
+.section-head h2 { font-family: var(--font-sans); font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+/* The portal's section heads carry no ornament. The green dash here was invented,
+   and an invented flourish is exactly what makes two products read as unrelated.
+   Kept in the markup as a zero-width no-op so every page need not be re-cut. */
+.section-head .rule { display: none; }
 .section-head .n { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted-fg); }
 
 .cols { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; align-items: start; }
@@ -459,9 +476,13 @@ body {
   padding: 11px 14px; border-bottom: 1px solid var(--line); align-items: baseline;
 }
 .roll:last-child { border-bottom: 0; }
-.roll-name { font-size: 13px; color: var(--fg); overflow-wrap: anywhere; }
-.roll-meta { grid-column: 1; font-size: 11.5px; color: var(--faint); display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.roll-money { grid-row: 1 / span 2; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+/* Every child states BOTH its column and its row. `.roll-money` used to declare only
+   `grid-row: 1 / span 2`, so auto-placement put it in column 1 — the wide one — and
+   pushed the name into the 78px column on the right. The row read money-then-name, and
+   any slug longer than "live-proof" would have truncated. */
+.roll-name { grid-column: 1; grid-row: 1; font-size: 13px; color: var(--fg); overflow-wrap: anywhere; }
+.roll-meta { grid-column: 1; grid-row: 2; font-size: 11.5px; color: var(--faint); display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.roll-money { grid-column: 2; grid-row: 1 / span 2; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; }
 .roll-money .pos { color: var(--primary); display: block; }
 .roll-money .dim { font-size: 11px; display: block; margin-top: 3px; }
 .panel-empty { padding: 22px 14px; color: var(--faint); font-size: 13px; }
