@@ -115,6 +115,26 @@ Bind wider than loopback with neither auth nor public set and the dashboard
 real exposure, HTTP Basic is the floor; put it behind your own reverse proxy
 (Caddy, nginx) or an access gateway if you want more.
 
+### Why "it's on 127.0.0.1" isn't the whole story
+
+A loopback bind has no authentication — that's the point of the private mode, and
+it's fine against the network. It is *not* fine against your own browser. A page you
+visit can register a hostname, re-point it at `127.0.0.1`, and fetch the dashboard;
+the browser treats that as same-origin, so nothing is blocked and the attacker's
+script reads the response. That's DNS rebinding, and it's how "private" consoles
+leak.
+
+So the private console answers only to loopback hostnames. If you front a
+loopback-bound dashboard with a reverse proxy, name it:
+
+```
+DASHBOARD_ALLOWED_HOSTS=ops.example.com,dash.internal
+```
+
+Anything else gets a `403` naming the Host it refused. Authed mode skips the check —
+Basic already defeats rebinding, since your browser holds no credential for the
+attacker's origin — and so does public mode, which serves nothing worth stealing.
+
 The public page (`DASHBOARD_PUBLIC=true`, or `/ledger` from the ops console) is the
 shareable "authors are earning" view — the same live ledger with addresses
 truncated and nothing operational on it. It carries no console navigation, so it

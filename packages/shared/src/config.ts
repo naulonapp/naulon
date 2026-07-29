@@ -304,6 +304,15 @@ export const configSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  // Extra Host header values the dashboard will answer to in PRIVATE (loopback)
+  // mode, comma-separated. Loopback names are always allowed; this is for the
+  // "Caddy on :443 → 127.0.0.1:8403" shape, where the browser sends your real
+  // domain. Anything else is refused, which is what defeats DNS rebinding: a
+  // malicious page cannot read a loopback dashboard that has no auth by pointing
+  // its own hostname at 127.0.0.1. Ignored in authed mode (Basic already stops
+  // rebinding — the browser holds no credential for the attacker's origin) and in
+  // public mode (nothing sensitive is served).
+  DASHBOARD_ALLOWED_HOSTS: z.string().default(""),
   // The gate's base URL, so the dashboard can report gate health (GET /healthz).
   // Defaults to the local gate (TOLLGATE_PORT); unreachable → health shows "down".
   GATE_URL: z.string().url().default("http://127.0.0.1:8402"),

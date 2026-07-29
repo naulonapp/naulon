@@ -24,6 +24,7 @@ import { summarizeConfig } from "./config-view.ts";
 import { readObservations } from "./observations.ts";
 import { readContent, scanArticles, writeCredits, isRestartPending } from "./content.ts";
 import { decideAccess } from "./access.ts";
+import { isAllowedHost, parseAllowedHosts } from "./host-guard.ts";
 import { tileSvg } from "./brand.ts";
 import { RECENT_LIMIT } from "./constants.ts";
 
@@ -82,6 +83,24 @@ async function gateHealth(): Promise<{ up: boolean; service?: string; startedAt?
 }
 
 export const app = new Hono();
+
+// DNS-rebinding guard — FIRST, before anything reads or renders. Private mode runs
+// without auth, so the Host allowlist is the only thing that stops a page the
+// operator visits from re-pointing its own hostname at 127.0.0.1 and reading the
+// ops API same-origin. See host-guard.ts for the full shape.
+const ALLOWED_HOSTS = parseAllowedHosts(cfg.DASHBOARD_ALLOWED_HOSTS);
+app.use("*", async (c, next) => {
+  if (!isAllowedHost(c.req.header("Host"), ALLOWED_HOSTS, ACCESS.mode)) {
+    return c.text(
+      `naulon dashboard: refusing a request for Host "${c.req.header("Host") ?? "(absent)"}".\n\n` +
+        `The private console has no authentication, so it answers only to loopback\n` +
+        `hostnames. If you reach it through a reverse proxy, add that hostname to\n` +
+        `DASHBOARD_ALLOWED_HOSTS (comma-separated).\n`,
+      403,
+    );
+  }
+  await next();
+});
 
 // Security headers on every response (strict CSP: all assets same-origin).
 app.use("*", async (c, next) => {
