@@ -14,16 +14,21 @@ npm run -w @naulon/dashboard dev      # → http://127.0.0.1:8403
 By default it binds `127.0.0.1`, so only the box owner sees it. That's the private
 ops console. Point a browser at it and you get five things.
 
+The sidebar carries the pages — **Overview**, **Ledger** under Money, and
+**Content** under Config — and at its foot, the live gate state.
+
 ## What each panel tells you
 
-**Health** (top right). A ping to the gate's `/healthz`. Green "gate up" means the
-proxy is answering. "gate down" means the console can reach itself but not the gate
-— check the gate process and `GATE_URL`.
+**Gate state** (sidebar, bottom). A ping to the gate's `/healthz`. "gate up" means
+the proxy is answering. "gate down" means the console can reach itself but not the
+gate — check the gate process and `GATE_URL`.
 
-**The tiles.** Traffic over the last 24h, straight from the gate's observation log:
+**The stat strip.** Traffic over the last 24h, straight from the gate's observation
+log:
 
 - **served free** — humans and allow-listed crawlers, passed through untolled.
 - **denied** — agents that got a 402 and walked away. This is scraping you stopped.
+- **blocked** — refused outright, without a price being offered.
 - **paid** — agents that settled and were served.
 - **payment failed** — an agent presented payment that failed verify/settle. A few
   is normal (a bad signer); a spike is worth investigating.
@@ -84,14 +89,14 @@ tab tells you so.
 
 ## Turning the traffic panel on
 
-The gate records nothing by default. To populate the tiles and the request feed:
+The gate records nothing by default. To populate the stat strip and the request feed:
 
 ```
 OBSERVATIONS_BACKEND=jsonl            # writes to data/observations.jsonl
 ```
 
 Observations are telemetry only — they never gate a request or move money. The
-console reads that file; the earnings tiles and the ledger read the event log
+console reads that file; the earnings figures and the ledger read the event log
 (`EVENTS_BACKEND`, on by default).
 
 ## Exposing it safely
@@ -112,4 +117,10 @@ real exposure, HTTP Basic is the floor; put it behind your own reverse proxy
 
 The public page (`DASHBOARD_PUBLIC=true`, or `/ledger` from the ops console) is the
 shareable "authors are earning" view — the same live ledger with addresses
-truncated and nothing operational on it.
+truncated and nothing operational on it. It carries no console navigation, so it
+doesn't advertise routes it won't serve.
+
+Every byte the console loads comes off your own box. Its fonts ship in
+`packages/dashboard/src/public/fonts` (SIL OFL), so it runs under a strict
+`default-src 'self'` CSP and never calls a CDN — an air-gapped box serves it
+exactly as a connected one does.
