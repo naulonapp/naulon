@@ -429,10 +429,14 @@ class Naulon_Cache {
 	 * of wrong answer as the "either enforcement is off, or something is answering early" copy this
 	 * screen used to print. Only a status that means "served from the edge" earns the edge remedy.
 	 *
+	 * Public for the same reason `merge_vary` is: it is a pure function over a header bag whose
+	 * OUTPUT IS PUBLISHER-FACING COPY, and the branch it takes cannot be reached from the admin
+	 * screens without a live control plane and a priced article. Untestable copy is unverified copy.
+	 *
 	 * @param array<string, string> $headers Interesting response headers from the probe.
 	 * @return string Leading space included, so it appends to a sentence.
 	 */
-	private static function edge_remedy( array $headers ) {
+	public static function edge_remedy( array $headers ) {
 		$lower  = array_change_key_case( $headers, CASE_LOWER );
 		$cf     = isset( $lower['cf-cache-status'] ) ? strtoupper( trim( $lower['cf-cache-status'] ) ) : '';
 		$xcache = isset( $lower['x-cache'] ) ? strtoupper( trim( $lower['x-cache'] ) ) : '';

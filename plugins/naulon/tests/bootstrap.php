@@ -63,3 +63,6 @@ require_once __DIR__ . '/../includes/class-naulon-settings.php';
 // Only `merge_vary` is exercised here — a pure string merge over a header value. The header it
 // produces is what stops a shared cache replaying a human's free 200 to a crawler. See CacheVaryTest.
 require_once __DIR__ . '/../includes/class-naulon-enforcer.php';
+// Only `edge_remedy` is exercised here — a pure function over a header bag whose output is
+// publisher-facing copy on a branch the admin screens cannot reach offline. See EdgeRemedyTest.
+require_once __DIR__ . '/../includes/class-naulon-cache.php';
