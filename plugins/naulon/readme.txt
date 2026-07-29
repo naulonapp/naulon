@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -131,6 +131,12 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.2.0 =
+* Refuse in-app enforcement on a domain the naulon fleet already tolls, so one read is never charged twice.
+* Reconcile ownership on the hourly heartbeat: a proof withdrawn in the dashboard now stands the toll down here.
+* A spent connect key reads as finished instead of failing — the key drops its domain-management scope once the domain verifies.
+* Clearer message when a key cannot claim domains, naming the key preset that can.
+
 = 0.1.0 =
 * First release: credits contract, author wallets, site ownership verification, roles and capabilities.
 * Admin screens: setup with one-click verification and a real toll test, content policy, author payouts, earnings, diagnostics.
@@ -138,6 +144,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+
+= 0.2.0 =
+Stops a domain being charged twice when the fleet already tolls it, and notices when you withdraw a domain proof.
 
 = 0.1.0 =
 First release.
