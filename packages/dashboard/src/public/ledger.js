@@ -11,7 +11,7 @@
  * author ids originate from crawled URLs and tenant config, so treat them as
  * untrusted — esc() from shell.js is the boundary.
  */
-import { $, esc, fmt6, trunc, rel, renderShell, sse } from "./shell.js";
+import { $, esc, fmt6, trunc, rel, renderShell, setGate, sse } from "./shell.js";
 
 const isOperatorPreview = location.pathname === "/ledger";
 renderShell({ active: "ledger", nav: isOperatorPreview });
@@ -110,8 +110,7 @@ function render(L) {
 }
 
 function setConn(ok) {
-  $("#gateDot").classList.toggle("off", !ok);
-  $("#gateState").textContent = ok ? "settling live" : "offline";
+  setGate(ok, ok ? "settling live" : "offline");
 }
 
 const stream = sse("/api/stream", (_name, data) => { setConn(true); render(data); }, ["ledger"]);

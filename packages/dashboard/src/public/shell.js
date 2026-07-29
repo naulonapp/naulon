@@ -99,6 +99,20 @@ export function renderShell({ active, nav = true }) {
     `<a class="rail-link" href="https://naulon.app" target="_blank" rel="noopener">naulon cloud ↗</a></div>`;
 }
 
+/**
+ * Paint the rail's gate state. Every page owns a different source for it (the ops
+ * poll, the SSE connection, the content fetch) but they all render it the same way,
+ * so the rail never sits on its "checking gate" placeholder forever.
+ */
+export function setGate(up, label) {
+  const dot = $("#gateDot");
+  const text = $("#gateState");
+  if (!dot || !text) return;
+  dot.classList.toggle("off", !up);
+  dot.classList.toggle("bad", up === false);
+  text.textContent = label;
+}
+
 // ── data ──────────────────────────────────────────────────────────────────────
 /**
  * Run `fn` now, then every `ms`, and once more whenever the tab becomes visible.

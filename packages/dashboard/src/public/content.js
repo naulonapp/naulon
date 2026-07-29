@@ -11,8 +11,10 @@
  * navigating away; the banner tells you whether the gate is serving your current
  * file or needs a restart to pick up your edits.
  */
-const $ = (s) => document.querySelector(s);
-const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+import { $, esc, renderShell, setGate } from "./shell.js";
+
+renderShell({ active: "content" });
+
 const WALLET_RE = /^0x[0-9a-fA-F]{40}$/;
 const titleFromSlug = (s) => s.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -38,9 +40,11 @@ function entryToRow(slug, entry) {
 
 async function load() {
   const d = await fetch("/api/content").then((r) => r.json());
+  // API mode reports no gate health (there is no local file to be in sync with).
+  setGate(d.apiMode ? null : !!(d.gate && d.gate.up), d.apiMode ? "credits via API" : d.gate && d.gate.up ? "gate up" : "gate down");
   if (d.apiMode) {
     setBanner("api");
-    $("#rows").innerHTML = `<div class="empty"><div class="big">Credits come from a live API.</div><p>Your articles + wallets are served by <code>${esc(d.origin)}/api/credits</code> — edit them at your CMS. This file manager applies only to the static <code>credits.json</code> path.</p></div>`;
+    $("#rows").innerHTML = `<div class="empty"><div class="lead">Credits come from a live API.</div><p>Your articles + wallets are served by <code>${esc(d.origin)}/api/credits</code> — edit them at your CMS. This file manager applies only to the static <code>credits.json</code> path.</p></div>`;
     $("#scanBtn").disabled = true; $("#saveBtn").disabled = true; $("#addBtn").disabled = true;
     return;
   }
@@ -71,7 +75,7 @@ function render() {
   $("#count").textContent = `${rows.length} article${rows.length === 1 ? "" : "s"}`;
   $("#rows").innerHTML = rows.length
     ? rows.map((r, i) => rowHtml(r, i)).join("")
-    : `<div class="empty"><div class="big">No articles yet.</div><p>Hit <b>Scan site</b> to pull them from your sitemap/RSS, or <b>+ Add article</b>.</p></div>`;
+    : `<div class="empty"><div class="lead">No articles yet.</div><p>Hit <b>Scan site</b> to pull them from your sitemap/RSS, or <b>+ Add article</b>.</p></div>`;
   bind();
 }
 
@@ -166,7 +170,7 @@ function requestSave() {
   $("#saveOut").className = "save-out";
   $("#saveOut").innerHTML =
     `<div class="confirm">Rewrites <span class="mono">credits.json</span> with <b>${nextSlugs.size}</b> article(s).${removedNote}` +
-    ` <button class="btn primary sm" id="confirmSave">Rewrite credits.json</button>` +
+    ` <button class="btn btn-primary sm" id="confirmSave">Rewrite credits.json</button>` +
     ` <button class="btn ghost sm" id="cancelSave">Cancel</button></div>`;
   $("#confirmSave").addEventListener("click", doSave);
   $("#cancelSave").addEventListener("click", cancelConfirm);

@@ -6,7 +6,7 @@
  * verified-agent). Every one is HTML-escaped before it touches innerHTML — esc()
  * from shell.js is the boundary, same as the earnings view.
  */
-import { $, $$, esc, usd, trunc, rel, renderShell, poll } from "./shell.js";
+import { $, $$, esc, usd, trunc, rel, renderShell, setGate, poll } from "./shell.js";
 
 renderShell({ active: "overview" });
 
@@ -40,11 +40,8 @@ function paintFreshness() {
 }
 
 function renderHealth(h) {
-  const up = h && h.up;
-  const dot = $("#gateDot");
-  dot.classList.toggle("off", !up);
-  dot.classList.toggle("bad", !up);
-  $("#gateState").textContent = up ? "gate up" : "gate down — " + (h?.detail || "unreachable");
+  const up = !!(h && h.up);
+  setGate(up, up ? "gate up" : "gate down — " + (h?.detail || "unreachable"));
 }
 
 function renderTiles(ops) {
@@ -137,8 +134,7 @@ async function tick() {
     const fr = $("#freshness");
     fr.classList.remove("beat"); void fr.offsetWidth; fr.classList.add("beat");
   } catch {
-    $("#gateState").textContent = "dashboard offline";
-    $("#gateDot").classList.add("off");
+    setGate(false, "dashboard offline");
   }
 }
 

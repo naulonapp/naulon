@@ -84,7 +84,11 @@ body {
 }
 
 /* ── shell ───────────────────────────────────────────────────────────────── */
+/* `min-width: 0` on both tracks: a grid item refuses to shrink below its content's
+   intrinsic width by default, so a wide row (the mobile rail, a long config path)
+   blows the track out and the whole PAGE scrolls sideways instead of the element. */
 .shell-wrap { display: grid; grid-template-columns: var(--rail) 1fr; min-height: 100vh; }
+.shell-wrap > * { min-width: 0; }
 
 .shell {
   display: flex; flex-direction: column; gap: 26px;
@@ -351,6 +355,9 @@ body {
 .thead, .crow {
   display: grid; grid-template-columns: 1.1fr 0.8fr 1.5fr 28px; gap: 14px; align-items: center;
 }
+/* Same grid-blowout guard as .shell-wrap: a long wallet value or an un-breakable
+   label would otherwise widen the track and scroll the whole page sideways. */
+.thead > *, .crow > * { min-width: 0; overflow-wrap: anywhere; }
 .thead {
   padding: 10px 0; margin-top: 4px; border-bottom: 1px solid var(--line-strong);
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
