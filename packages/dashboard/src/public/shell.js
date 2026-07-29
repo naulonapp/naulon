@@ -69,9 +69,13 @@ export const NAV = [
  * Render the sidebar into `#shell` and mark `active` current. Every page calls this
  * once, so the nav can never drift between pages again (it had: /content was missing
  * the Ledger link entirely).
+ *
+ * `nav: false` renders the brand and the status rail with NO links — the public
+ * earnings page (DASHBOARD_PUBLIC serves the ledger at "/") has no console to link
+ * to, and must not advertise routes that would 404 or leak that they exist.
  */
-export function renderShell({ active }) {
-  const groups = NAV.map(({ group, items }) => {
+export function renderShell({ active, nav = true }) {
+  const groups = !nav ? "" : NAV.map(({ group, items }) => {
     const label = group ? `<div class="nav-group">${esc(group)}</div>` : "";
     const links = items
       .map(

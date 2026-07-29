@@ -191,6 +191,8 @@ body {
 .badge.served-free, .badge.agent-reread { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
 .badge.denied { color: var(--warning); border-color: color-mix(in oklab, var(--warning) 45%, transparent); }
 .badge.payment-failed, .badge.blocked { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
+.badge.citation { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
+.badge.read { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
 
 .btn {
   font-family: var(--font-sans); font-size: 13px; font-weight: 500;
