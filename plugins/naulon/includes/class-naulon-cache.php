@@ -350,7 +350,7 @@ class Naulon_Cache {
 				'tested'  => true,
 				'status'  => $status,
 				'verdict' => 'under_tolling',
-				'message' => self::why_free( $post, $url ),
+				'message' => self::why_free( $post, $url, $headers ),
 				'headers' => $headers,
 				'url'     => $url,
 			);
@@ -386,11 +386,13 @@ class Naulon_Cache {
 	 * So: ask the control plane directly, and report what it actually said. This is a fresh /quote,
 	 * not the cached verdict the request path uses — an explicit test must show ground truth.
 	 *
-	 * @param WP_Post $post The article that was probed.
-	 * @param string  $url  Its permalink.
+	 * @param WP_Post              $post    The article that was probed.
+	 * @param string               $url     Its permalink.
+	 * @param array<string,string> $headers Interesting response headers from that probe — the
+	 *                                      evidence the last branch turns into a remedy.
 	 * @return string
 	 */
-	private static function why_free( $post, $url ) {
+	private static function why_free( $post, $url, array $headers = array() ) {
 		if ( ! Naulon_Enforcer::instance()->is_active() ) {
 			return __( 'A crawler was served this article free because the toll is switched off, or this site is not connected and verified yet. Finish the steps above and test again.', 'naulon' );
 		}
@@ -412,7 +414,46 @@ class Naulon_Cache {
 
 		// The control plane DID price it, yet the article came back 200 — now the old two suspects
 		// are the right ones, because everything upstream of WordPress is the only thing left.
-		return __( 'A crawler was served this article free even though your naulon account priced it. Something is answering before the toll runs — a page cache, a CDN rule, or a security plugin. The response headers below name the layer.', 'naulon' );
+		// Naming the layer is not enough on its own: the layer the publisher most often has is the
+		// one this plugin cannot reach from inside WordPress, so the remedy has to come with it.
+		return __( 'A crawler was served this article free even though your naulon account priced it. Something is answering before the toll runs — a page cache, a CDN rule, or a security plugin. The response headers below name the layer.', 'naulon' )
+			. self::edge_remedy( $headers );
+	}
+
+	/**
+	 * The remedy for the layer the headers actually implicate — or '' when they implicate none.
+	 *
+	 * Deliberately discriminating rather than helpful-sounding. `cf-cache-status` is present on
+	 * every Cloudflare response, including `DYNAMIC`, which means Cloudflare did NOT serve this
+	 * from cache — telling that publisher to go fix their Cloudflare cache rules is the same class
+	 * of wrong answer as the "either enforcement is off, or something is answering early" copy this
+	 * screen used to print. Only a status that means "served from the edge" earns the edge remedy.
+	 *
+	 * @param array<string, string> $headers Interesting response headers from the probe.
+	 * @return string Leading space included, so it appends to a sentence.
+	 */
+	private static function edge_remedy( array $headers ) {
+		$lower  = array_change_key_case( $headers, CASE_LOWER );
+		$cf     = isset( $lower['cf-cache-status'] ) ? strtoupper( trim( $lower['cf-cache-status'] ) ) : '';
+		$xcache = isset( $lower['x-cache'] ) ? strtoupper( trim( $lower['x-cache'] ) ) : '';
+		// The statuses that mean the edge answered rather than passed the request through.
+		$served = array( 'HIT', 'STALE', 'UPDATING', 'REVALIDATED' );
+
+		if ( '' !== $cf && in_array( $cf, $served, true ) ) {
+			return ' ' . __( 'Cloudflare served this from its own cache — cf-cache-status below says so — which means it answered without WordPress running at all. No setting in this plugin can reach that, so the fix is at Cloudflare: either stop caching article HTML (Cache Everything and APO are the settings that start it), or add a cache rule that bypasses the cache when the user agent is one of the crawlers you toll. Purge the cache afterwards, or the copies stored before the change keep being served.', 'naulon' );
+		}
+
+		if ( '' !== $xcache && false !== strpos( $xcache, 'HIT' ) ) {
+			return ' ' . __( 'A CDN in front of this site answered from its cache — the x-cache header below says HIT — so WordPress never ran for that request. The fix belongs at that CDN: exclude article URLs from full-page caching, or bypass the cache for the crawler user agents you toll, then purge what it already stored.', 'naulon' );
+		}
+
+		if ( '' !== $cf ) {
+			// Cloudflare is in front but did not serve this one (DYNAMIC/MISS/BYPASS). Say so, so
+			// nobody spends an afternoon on cache rules that were never the problem.
+			return ' ' . __( 'Cloudflare is in front of this site but did not answer this request from cache (cf-cache-status below), so the layer is inside WordPress — a page cache plugin, or a security plugin short-circuiting the request.', 'naulon' );
+		}
+
+		return '';
 	}
 
 	/**

@@ -238,7 +238,16 @@ class Naulon_Verification {
 		}
 
 		if ( empty( $findings ) ) {
-			$findings[] = __( 'This site is serving the challenge correctly from here. If the check still fails, the control plane is reaching a different server than this one — check for a CDN, a staging copy, or DNS that points elsewhere.', 'naulon' );
+			// This probe ran FROM this server, so it proves WordPress serves the token — and
+			// proves nothing about what an outside caller gets. The two ways a passing self-probe
+			// still fails the real check are different problems with different fixes, and naming
+			// only the first sent publishers hunting DNS that was never wrong: a bot-protection
+			// or WAF rule at the edge challenges the checker (a server-to-server GET, no browser,
+			// a datacenter address — the exact profile those rules exist to stop) while this
+			// same-machine fetch never meets it.
+			$findings[] = __( 'This site is serving the challenge correctly from here, so WordPress is doing its part. If the check still fails, something between the checker and this server is answering instead.', 'naulon' );
+			$findings[] = __( 'If a CDN or firewall sits in front of this site — Cloudflare, a security service, your host\'s WAF — allow the path /.well-known/naulon-challenge/ through it. The checker is a plain server-to-server request with no browser behind it, which bot protection is built to challenge, and a challenge page is not the token.', 'naulon' );
+			$findings[] = __( 'Otherwise the checker is reaching a different machine than this one: a staging copy, or DNS pointing somewhere else.', 'naulon' );
 		}
 
 		return $findings;
