@@ -102,6 +102,16 @@ export {
 } from "./x402.ts";
 export type { TollKind } from "@naulon/shared";
 import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER } from "./x402.ts";
+// Cloudflare's pay-per-crawl vocabulary, emitted alongside the x402 headers. Purely
+// advertisement: a crawler fluent in `crawler-price` learns what this costs without
+// decoding the base64 x402 payload, and still settles over x402/USDC. Nothing here
+// charges anyone or changes who is charged.
+import {
+  CRAWLER_CHARGED_HEADER,
+  CRAWLER_PRICE_HEADER,
+  formatCrawlerPrice,
+  totalChargedMicro,
+} from "@naulon/enforce";
 
 // Global license POLICY (online check) + settlement network coordinates are
 // gate-operator settings, read where they're used (here for /licenses + the
@@ -550,6 +560,7 @@ export function createApp(
         return stampGateCacheHeaders(
           c.body(null, 402, {
             [PAYMENT_REQUIRED_HEADER]: d.header,
+            [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(totalChargedMicro(d.legs)),
             Link: PAYMENT_LINK_HEADER,
             "X-Naulon-Verdict": headerSafe(`agent (${d.obs.classifyReason})`),
           }),
@@ -565,6 +576,8 @@ export function createApp(
           return stampGateCacheHeaders(
             c.json({ error: settled.error }, 402, {
               [PAYMENT_REQUIRED_HEADER]: d.header,
+              // Still the ASK, not a charge — settlement failed, so nothing was taken.
+              [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(totalChargedMicro(d.legs)),
               Link: PAYMENT_LINK_HEADER,
             }),
             { noStore: true },
@@ -577,6 +590,9 @@ export function createApp(
         const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
         if (settled.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, settled.responseHeader);
         if (settled.licenseJws) res.headers.set(LICENSE_HEADER, settled.licenseJws);
+        // Only on the settled path: `crawler-charged` is a claim that money moved, so
+        // it is set after settleAndAttribute succeeded and never on a 402.
+        res.headers.set(CRAWLER_CHARGED_HEADER, formatCrawlerPrice(totalChargedMicro(d.legs)));
         res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${d.obs.classifyReason})`));
         return stampGateCacheHeaders(res, { noStore: true });
       }
