@@ -337,6 +337,34 @@ body {
   100% { color: var(--faint); }
 }
 
+/* ── page: doctor ────────────────────────────────────────────────────────── */
+/* The headline is a whole sentence and it changes with the verdict, so it runs long.
+   30px keeps it a display moment (Fraunces' floor is 28) without shouting a
+   two-line paragraph at 40. */
+.page-title.headline { font-size: 30px; max-width: 22ch; }
+.check {
+  display: grid; grid-template-columns: 22px 1fr auto; gap: 14px; align-items: start;
+  padding: 15px 0; border-bottom: 1px solid var(--line);
+}
+.check > * { min-width: 0; }
+.check-mark {
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.5; text-align: center;
+  color: var(--faint);
+}
+.check.pass .check-mark { color: var(--primary); }
+.check.warn .check-mark { color: var(--warning); }
+.check.fail .check-mark { color: var(--down); }
+.check-label { font-size: 14.5px; font-weight: 500; }
+.check-detail { margin-top: 3px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.check-fix { margin-top: 7px; font-size: 13px; color: var(--fg); border-left: 2px solid var(--line-strong); padding-left: 11px; }
+.check.fail .check-fix { border-left-color: color-mix(in oklab, var(--down) 55%, transparent); }
+.check.warn .check-fix { border-left-color: color-mix(in oklab, var(--warning) 55%, transparent); }
+.badge.pass { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.warn { color: var(--warning); border-color: color-mix(in oklab, var(--warning) 45%, transparent); }
+.badge.fail { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
+.toll-fix { margin-top: 7px; font-size: 13px; color: var(--muted); }
+.toll-meta { margin-top: 8px; font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; }
+
 /* ── page: content editor ────────────────────────────────────────────────── */
 .scan { padding: 4px 0 8px; }
 .scan-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
@@ -402,3 +430,9 @@ body {
   .rise, .bar, .cross.fresh, .req.fresh, .crow.rise, .save-out.flash, .freshness.beat { animation: none !important; }
   .bar { transform: scaleX(1); }
 }
+
+/* The teaching empty state — readable prose width, left-aligned inside a centered block. */
+.empty p { max-width: 52ch; margin: 10px auto 0; font-size: 13.5px; line-height: 1.6; }
+.empty-foot { margin-top: 14px; font-size: 12.5px; }
+/* A row the operator's own Test toll produced — real traffic, but not a real crawler. */
+.badge.selftest { margin-left: 8px; color: var(--muted); border-color: var(--line-strong); }

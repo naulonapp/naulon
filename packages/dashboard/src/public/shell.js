@@ -62,7 +62,13 @@ export const markSvg = () =>
 export const NAV = [
   { group: null, items: [{ href: "/", label: "Overview", id: "overview" }] },
   { group: "Money", items: [{ href: "/ledger", label: "Ledger", id: "ledger" }] },
-  { group: "Config", items: [{ href: "/content", label: "Content", id: "content" }] },
+  {
+    group: "Config",
+    items: [
+      { href: "/content", label: "Content", id: "content" },
+      { href: "/doctor", label: "Doctor", id: "doctor" },
+    ],
+  },
 ];
 
 /**

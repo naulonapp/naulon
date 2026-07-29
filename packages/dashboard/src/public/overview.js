@@ -93,9 +93,19 @@ function renderWarnings(warnings) {
 
 function renderFeed(recent) {
   if (!recent.length) {
+    // The state every new install is in. Rather than an empty column, give them the
+    // next action: prove the toll works, then check the config that decides it.
     $("#feed").innerHTML =
-      `<div class="empty"><div class="lead">No requests recorded yet.</div>` +
-      `<p>Traffic appears here once an agent hits a tollable path (needs <code>OBSERVATIONS_BACKEND=jsonl</code>).</p></div>`;
+      `<div class="empty">
+        <div class="lead">No requests recorded yet.</div>
+        <p>That is normal on a fresh gate — a row appears here the first time a crawler
+        hits a tollable path.</p>
+        <p>To check it works without waiting for one, hit <b>Test toll</b> above: the
+        console asks your own gate for an article while pretending to be a crawler and
+        expects a <span class="mono">402</span>.</p>
+        <p class="empty-foot"><a href="/doctor">Doctor</a> checks everything else that
+        decides whether this gate can earn.</p>
+      </div>`;
     return;
   }
   $("#feed").innerHTML = recent.map((o) => {
@@ -108,9 +118,15 @@ function renderFeed(recent) {
             : esc(o.agentUa || "unsigned agent"))
       : "human";
     const price = o.price != null ? `<div class="who"><span class="rprice">${usd(o.price)}</span></div>` : "";
+    // Test toll leaves real observations behind — it genuinely asks the gate for an
+    // article and genuinely gets refused. Label them, or the operator wonders where
+    // a handful of denials and some "missed" earnings came from.
+    const selftest = (o.agentUa || "").includes("naulon-dashboard-selftest")
+      ? `<span class="badge selftest">self-test</span>`
+      : "";
     return `<div class="req ${fresh ? "fresh" : ""} rise">
       <div class="rt">${esc(rel(o.at))} ago</div>
-      <div class="rmid"><div class="slug">${esc(o.slug || o.host || "—")}</div><div class="who">${who}</div>${price}</div>
+      <div class="rmid"><div class="slug">${esc(o.slug || o.host || "—")}${selftest}</div><div class="who">${who}</div>${price}</div>
       <div class="badge ${esc(o.verdict)}">${esc(o.verdict)}</div>
     </div>`;
   }).join("");
@@ -137,6 +153,39 @@ async function tick() {
     setGate(false, "dashboard offline");
   }
 }
+
+/**
+ * Test toll — the server does the probing and writes every sentence (test-toll.ts);
+ * this only renders the answer. Shared shape with the Doctor page on purpose.
+ */
+async function testToll() {
+  const btn = $("#tollBtn");
+  btn.disabled = true;
+  btn.textContent = "probing…";
+  $("#tollOut").innerHTML = "";
+  try {
+    const r = await fetch("/api/test-toll", { method: "POST", headers: { "content-type": "application/json" } });
+    const p = await r.json();
+    const tone = p.status === "pass" ? "synced" : p.status === "skipped" ? "" : "pending";
+    $("#tollOut").innerHTML =
+      `<div class="banner ${tone}"><b>${esc(p.summary)}</b>` +
+      (p.fix ? `<div class="toll-fix">${esc(p.fix)}</div>` : "") +
+      (p.url
+        ? `<div class="toll-meta"><span class="mono">GET ${esc(p.url)}</span>` +
+          (p.httpStatus ? ` → <span class="mono">${esc(p.httpStatus)}</span>` : "") +
+          (p.verdict ? ` · <span class="mono">${esc(p.verdict)}</span>` : "") +
+          ` · ${esc(p.elapsedMs)}ms</div>`
+        : "") +
+      `</div>`;
+  } catch (e) {
+    $("#tollOut").innerHTML = `<div class="banner pending"><b>${esc(e.message)}</b></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Test toll";
+  }
+}
+
+$("#tollBtn").addEventListener("click", testToll);
 
 const loop = poll(tick, 4000);
 

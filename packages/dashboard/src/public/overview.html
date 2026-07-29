@@ -25,6 +25,7 @@
             <button type="button" class="seg-btn on" data-win="24h">24h</button>
             <button type="button" class="seg-btn" data-win="7d">7d</button>
           </div>
+          <button id="tollBtn" class="btn">Test toll</button>
           <span class="freshness" id="freshness" aria-live="off"></span>
         </div>
       </div>
@@ -37,6 +38,8 @@
         <div class="stat"><div class="stat-k">payment failed</div><div class="stat-v" id="tFailed">—</div><div class="stat-sub">verify/settle rejected</div></div>
         <div class="stat"><div class="stat-k">earned · missed</div><div class="stat-v pos" id="tEarned">$0.000000</div><div class="stat-sub"><span id="tMissed">$0.000000</span> left on the table</div></div>
       </section>
+
+      <div id="tollOut" aria-live="polite"></div>
 
       <div class="cols">
         <section>

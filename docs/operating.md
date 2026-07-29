@@ -49,6 +49,41 @@ off here, your gate isn't doing what you think.
 **Warnings.** Misconfig that quietly under-performs — the commonest being the
 observation log switched off, which leaves the traffic panel blank.
 
+## "Is it actually tolling?" — Doctor and Test toll
+
+Two things answer the questions everyone has on day one.
+
+**Test toll** (a button on Overview and on Doctor) asks *your* gate for one of *your*
+tollable articles while pretending to be a crawler, and shows you exactly what came
+back:
+
+```
+402 Payment Required, with a signed quote. The toll works.
+GET http://127.0.0.1:8402/essays/on-stillness → 402 · agent (user-agent matched "gptbot") · 3ms
+```
+
+Anything other than a 402 is diagnosed rather than dumped. A `200` means the gate
+served a crawler for free, and it names the three real causes in the order they
+actually occur: the path isn't under `ARTICLE_PATH_PREFIXES`, the slug isn't in your
+credits source, or a `crawlerPolicy` is allow-listing that user-agent. A redirect
+means an edge is answering before the gate does. A `502` means the gate is up but
+your origin isn't.
+
+The probe leaves a real observation behind — it genuinely asked and was genuinely
+refused — so it shows up in Recent requests tagged **self-test**. That's deliberate:
+those rows are real denials and they do count toward "missed", and you should be able
+to tell which ones were you.
+
+**Doctor** (`/doctor`) is the preflight: every condition that decides whether this
+gate can earn, each with the fix attached, and passing checks shown too so you can
+see the thing is configured rather than merely quiet. It checks the gate, your
+origin, whether anything is tollable at all, both logs, the price, whether settlement
+is live or mocked, whether the gate is serving credits you've since edited, and
+whether the console itself is over-exposed.
+
+It reads config and GETs addresses that came from that config. It never writes,
+spends, or settles.
+
 ## Where articles, wallets, and prices come from
 
 Not the dashboard — that would defeat the point (the gate never holds your keys or

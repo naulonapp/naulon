@@ -23,6 +23,8 @@ import { summarizeOps, windowMsFromKey } from "./ops.ts";
 import { summarizeConfig } from "./config-view.ts";
 import { readObservations } from "./observations.ts";
 import { readContent, scanArticles, writeCredits, isRestartPending } from "./content.ts";
+import { runDoctor } from "./doctor.ts";
+import { runTollProbe } from "./test-toll.ts";
 import { decideAccess } from "./access.ts";
 import { isAllowedHost, parseAllowedHosts } from "./host-guard.ts";
 import { tileSvg } from "./brand.ts";
@@ -53,11 +55,13 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
       "/": { file: "overview.html", type: "text/html; charset=utf-8" },
       "/ledger": { file: "ledger.html", type: "text/html; charset=utf-8" },
       "/content": { file: "content.html", type: "text/html; charset=utf-8" },
+      "/doctor": { file: "doctor.html", type: "text/html; charset=utf-8" },
       "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
       "/shell.js": { file: "shell.js", type: "text/javascript; charset=utf-8" },
       "/overview.js": { file: "overview.js", type: "text/javascript; charset=utf-8" },
       "/ledger.js": { file: "ledger.js", type: "text/javascript; charset=utf-8" },
       "/content.js": { file: "content.js", type: "text/javascript; charset=utf-8" },
+      "/doctor.js": { file: "doctor.js", type: "text/javascript; charset=utf-8" },
     };
 
 const maskWallet = (w: string): string => (w.length > 12 ? w.slice(0, 6) + "…" + w.slice(-4) : w);
@@ -179,6 +183,26 @@ if (ACCESS.refuse) {
 
   // Ops + content planes — never exposed publicly (wallets, config, the write path).
   if (!isPublic) {
+    // State-changing routes: reject cross-origin (Basic-auth browsers auto-send
+    // creds, so a same-origin check is the CSRF guard on this money-write surface).
+    // Prefer Origin; fall back to Referer's host when Origin is absent (older
+    // browsers / some form posts omit Origin but still send Referer). Neither
+    // present ⇒ not a browser CSRF vector (curl/tooling carry no ambient creds).
+    const sameOrigin = async (c: import("hono").Context, next: () => Promise<void>) => {
+      const host = c.req.header("Host");
+      const source = c.req.header("Origin") ?? c.req.header("Referer");
+      if (source) {
+        let sourceHost: string;
+        try {
+          sourceHost = new URL(source).host;
+        } catch {
+          return c.text("malformed Origin/Referer", 403);
+        }
+        if (sourceHost !== host) return c.text("cross-origin request refused", 403);
+      }
+      await next();
+    };
+
     app.get("/api/ops", async (c) => {
       const now = Date.now();
       const windowMs = windowMsFromKey(c.req.query("window"));
@@ -188,6 +212,36 @@ if (ACCESS.refuse) {
         summarizeConfig(),
       ]);
       return c.json({ at: now, health, ops: summarizeOps(observations, now, windowMs), config });
+    });
+
+    // The preflight. Read-only: reads loaded config and GETs addresses that came
+    // from it. Never writes, spends, or settles.
+    app.get("/api/doctor", async (c) => {
+      const content = await readContent();
+      const health = await gateHealth();
+      return c.json(
+        await runDoctor({
+          health,
+          restartPending: content.apiMode
+            ? false
+            : isRestartPending({
+                fileModifiedAt: content.fileModifiedAt,
+                gateStartedAt: health.startedAt ?? null,
+                gateUp: health.up,
+              }),
+          accessMode: ACCESS.mode,
+        }),
+      );
+    });
+
+    // "Is it actually tolling?" — the gate is asked for one of its own tollable
+    // articles with a crawler UA. State-changing only in the sense that it makes an
+    // outbound request, so it takes the same CSRF guard as the write routes; the
+    // target is built from GATE_URL, never from the request.
+    app.post("/api/test-toll", sameOrigin, async (c) => {
+      const config = await summarizeConfig();
+      const slug = config.articles?.[0]?.slug ?? null;
+      return c.json(await runTollProbe({ slug, apiMode: config.creditsSource.mode === "api" }));
     });
 
     app.get("/api/content", async (c) => {
@@ -208,26 +262,6 @@ if (ACCESS.refuse) {
         }),
       });
     });
-
-    // State-changing routes: reject cross-origin (Basic-auth browsers auto-send
-    // creds, so a same-origin check is the CSRF guard on this money-write surface).
-    // Prefer Origin; fall back to Referer's host when Origin is absent (older
-    // browsers / some form posts omit Origin but still send Referer). Neither
-    // present ⇒ not a browser CSRF vector (curl/tooling carry no ambient creds).
-    const sameOrigin = async (c: import("hono").Context, next: () => Promise<void>) => {
-      const host = c.req.header("Host");
-      const source = c.req.header("Origin") ?? c.req.header("Referer");
-      if (source) {
-        let sourceHost: string;
-        try {
-          sourceHost = new URL(source).host;
-        } catch {
-          return c.text("malformed Origin/Referer", 403);
-        }
-        if (sourceHost !== host) return c.text("cross-origin request refused", 403);
-      }
-      await next();
-    };
 
     app.post("/api/content/scan", sameOrigin, async (c) => {
       const body = await c.req.json<{ defaultWallet?: string }>().catch(() => ({}) as { defaultWallet?: string });
