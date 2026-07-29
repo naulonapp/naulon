@@ -106,7 +106,8 @@ export const markSvg = () =>
  * console has no build step and a strict `default-src 'self'` CSP — it cannot import a
  * package or pull a CDN sprite. Concept-matched to the portal's own assignments so the
  * two products read as one system: Overview is its LayoutGrid, Requests its Radar (the
- * observation plane), Agents its Bot, Ledger its Coins, Content its FileText.
+ * observation plane), Agents its Bot, Ledger its Coins, Content its FileText, Webhooks its
+ * Webhook — the same glyph the portal puts on Settings → Webhooks.
  *
  * 24×24 viewBox, stroke-width 2, round caps — lucide's own contract — rendered at 16px,
  * which is what the portal's sidebar measures.
@@ -124,6 +125,8 @@ const NAV_ICON = {
     "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\"/><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"/><path d=\"M10 9H8\"/><path d=\"M16 13H8\"/><path d=\"M16 17H8\"/>",
   crawlers:
     "<path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z\"/><path d=\"m9 12 2 2 4-4\"/>",
+  webhooks:
+    "<path d=\"M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2\"/><path d=\"m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06\"/><path d=\"m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8\"/>",
   doctor:
     "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\"/><path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\"/><path d=\"m9 14 2 2 4-4\"/>",
 };
@@ -153,6 +156,7 @@ export const NAV = [
     items: [
       { href: "/content", label: "Content", id: "content" },
       { href: "/crawlers", label: "Crawlers", id: "crawlers" },
+      { href: "/webhooks", label: "Webhooks", id: "webhooks" },
       { href: "/doctor", label: "Doctor", id: "doctor" },
     ],
   },

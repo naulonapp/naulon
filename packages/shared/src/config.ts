@@ -53,6 +53,7 @@ const DEFAULT_CREDITS_FIXTURES = join(REPO_ROOT, "examples/meridian/credits.json
 const DEFAULT_CRAWLER_POLICY = join(REPO_ROOT, "data/crawler-policy.json");
 const DEFAULT_SETTLEMENT_OUTBOX = join(REPO_ROOT, "data/settlement-outbox.jsonl");
 const DEFAULT_SETTLEMENT_DELIVERY_STATE = join(REPO_ROOT, "data/settlement-delivery.jsonl");
+const DEFAULT_WEBHOOK_DELIVERIES = join(REPO_ROOT, "data/webhook-deliveries.jsonl");
 
 // Exported so config validation (e.g. the licensing superRefine) is unit-testable
 // without mutating process.env / the getConfig() singleton.
@@ -202,6 +203,10 @@ export const configSchema = z.object({
   // How often the webhook sweep sends due deliveries (ms). 0 = disabled (serverless drives it via a
   // cron hitting the sweep instead). Mirrors SETTLEMENT_DRAIN_INTERVAL_MS.
   WEBHOOK_SWEEP_INTERVAL_MS: z.coerce.number().int().nonnegative().default(30_000),
+  // Where webhook deliveries live. A JSONL journal rather than process memory for two reasons: a
+  // gate restart used to drop every unsent delivery, and the dashboard is a SEPARATE process that
+  // can only see gate state through a file (same seam as EVENTS_PATH / OBSERVATIONS_PATH).
+  WEBHOOK_DELIVERIES_PATH: z.string().default(DEFAULT_WEBHOOK_DELIVERIES),
 
   // ── Settlement DELIVERY STATE (the cross-sweep retry plane) ──
   // Where per-event delivery state (acked / attempts / next attempt / dead-letter)

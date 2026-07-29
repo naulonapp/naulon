@@ -1,7 +1,9 @@
 // Webhook core (part of @naulon/shared) — the machinery the OSS gate and the cloud control plane both
 // run: event/channel catalogs + stored shapes and store seams (types), Stripe-style signing (sign),
 // per-channel wire transforms (transform), the SSRF-guarded HTTP sender (sender), the enqueue +
-// sweep/retry/backoff/dead-letter engine (dispatch), and an in-memory reference delivery store.
+// sweep/retry/backoff/dead-letter engine (dispatch), and two reference delivery stores — in-memory
+// (tests) and a JSONL journal (the self-host default: durable across a restart, and readable by the
+// dashboard process, which shares nothing with the gate but files).
 //
 // Deliberately generic + settlement-agnostic: store IMPLEMENTATIONS live in the consumer (cloud:
 // Supabase; OSS gate: env config), and the settlement.completed BODY builder is cloud's concern
@@ -10,6 +12,7 @@
 
 export * from "./types.ts";
 export * from "./memory-store.ts";
+export * from "./jsonl-store.ts";
 export * from "./sign.ts";
 export * from "./transform.ts";
 export * from "./sender.ts";

@@ -34,6 +34,7 @@ import { readObservations } from "./observations.ts";
 import { readContent, scanArticles, writeCredits, isRestartPending } from "./content.ts";
 import { readCrawlers, writeCrawlers, isPolicyRestartPending } from "./crawlers.ts";
 import { runDoctor } from "./doctor.ts";
+import { buildWebhooksView, queuePing, resendDelivery } from "./webhooks.ts";
 import { runTollProbe } from "./test-toll.ts";
 import { decideAccess } from "./access.ts";
 import { isAllowedHost, parseAllowedHosts } from "./host-guard.ts";
@@ -68,6 +69,7 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
       "/ledger": { file: "ledger.html", type: "text/html; charset=utf-8" },
       "/content": { file: "content.html", type: "text/html; charset=utf-8" },
       "/crawlers": { file: "crawlers.html", type: "text/html; charset=utf-8" },
+      "/webhooks": { file: "webhooks.html", type: "text/html; charset=utf-8" },
       "/doctor": { file: "doctor.html", type: "text/html; charset=utf-8" },
       "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
       "/shell.js": { file: "shell.js", type: "text/javascript; charset=utf-8" },
@@ -77,6 +79,7 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
       "/ledger.js": { file: "ledger.js", type: "text/javascript; charset=utf-8" },
       "/content.js": { file: "content.js", type: "text/javascript; charset=utf-8" },
       "/crawlers.js": { file: "crawlers.js", type: "text/javascript; charset=utf-8" },
+      "/webhooks.js": { file: "webhooks.js", type: "text/javascript; charset=utf-8" },
       "/doctor.js": { file: "doctor.js", type: "text/javascript; charset=utf-8" },
     };
 
@@ -388,6 +391,35 @@ if (ACCESS.refuse) {
         .catch(() => ({}) as { allow?: unknown; block?: unknown; charge?: unknown });
       const result = await writeCrawlers(body);
       return c.json(result, result.written ? 200 : 422);
+    });
+
+    // Webhooks — the settlement notifications the gate has always been able to send and has never
+    // been able to show. Read-only by construction: endpoints come from NAULON_WEBHOOK_ENDPOINTS,
+    // so there is nothing here to create or delete. Secrets are masked before they leave the
+    // process, in every mode (this whole block is already non-public, but a whsec_ does not get to
+    // depend on that).
+    app.get("/api/webhooks", async (c) => {
+      const view = await buildWebhooksView();
+      const health = await gateHealth();
+      // A queued delivery is sent by the GATE's sweep, not by the console. With the gate down,
+      // pressing Send test ping would otherwise look like it did nothing.
+      return c.json({ ...view, gate: { up: health.up } });
+    });
+
+    // Both writes below take the same CSRF guard as every other state-changing route, and both
+    // resolve their target from the operator's own configuration — never from a URL in the request.
+    app.post("/api/webhooks/ping", sameOrigin, async (c) => {
+      const body = await c.req.json<{ endpointId?: unknown }>().catch(() => ({}) as { endpointId?: unknown });
+      const endpointId = typeof body.endpointId === "string" ? body.endpointId : "";
+      const result = await queuePing(endpointId);
+      return c.json(result, result.ok ? 200 : 400);
+    });
+
+    app.post("/api/webhooks/resend", sameOrigin, async (c) => {
+      const body = await c.req.json<{ deliveryId?: unknown }>().catch(() => ({}) as { deliveryId?: unknown });
+      const deliveryId = typeof body.deliveryId === "string" ? body.deliveryId : "";
+      const result = await resendDelivery(deliveryId);
+      return c.json(result, result.ok ? 200 : 400);
     });
 
     app.post("/api/content", sameOrigin, async (c) => {

@@ -552,6 +552,71 @@ body {
 .badge.charge { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
 .badge.block { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
 
+/* ── webhooks ──────────────────────────────────────────────────────────────── */
+/* One endpoint. Same three-part shape as .agent-row — identity, numbers, action — because it is
+   the same kind of row, and the two pages should not invent different geometry for it. */
+.wh-ep {
+  display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto;
+  gap: 16px; padding: 15px 0; border-bottom: 1px solid var(--line); align-items: start;
+}
+.wh-ep > * { min-width: 0; }
+.wh-ep-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* The url is the one field with no length bound — it wraps rather than widening the row. */
+.wh-url { font-size: 13px; color: var(--fg); overflow-wrap: anywhere; }
+.wh-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.wh-chip {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-fg);
+  border: 1px solid var(--line-strong); border-radius: 3px; padding: 2px 6px;
+}
+.wh-ep-meta {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px;
+  font-size: 11.5px; color: var(--faint);
+}
+/* FOUR fixed columns, never auto-fit — the .agent-nums lesson: auto-fit orphaned the last cell onto
+   a second line and let columns disagree from one row to the next. A zero is information here. */
+.wh-ep-nums { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 10px; }
+.wh-ep-nums .kv { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; }
+.wh-ep-nums .kv .k { letter-spacing: 0.1em; font-size: 9.5px; white-space: nowrap; }
+.wh-ep-nums .kv .v { font-size: 13px; }
+.wh-ep-nums .kv .v.bad { color: var(--down); }
+.wh-ep-nums .kv .v.zero { color: var(--faint); }
+.wh-ep-act { text-align: right; }
+
+/* The env recipe in the empty state: a block of config to copy, so it keeps its own line breaks. */
+.wh-recipe {
+  margin: 10px 0; padding: 11px 13px; font-size: 11.5px; line-height: 1.6;
+  color: var(--fg); background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* The delivery log scrolls WITHIN its container rather than widening the page — the same fix the
+   portal's own delivery table carries, and what keeps the document free of horizontal overflow. */
+.wh-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+.wh-table { width: 100%; border-collapse: collapse; font-size: 12.5px; text-align: left; }
+.wh-table th {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted-fg); font-weight: 500; padding: 9px 12px; background: var(--surface-2);
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.wh-table td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.wh-table tbody tr:last-child td { border-bottom: 0; }
+.wh-table .dim { color: var(--faint); }
+.wh-row-act { text-align: right; white-space: nowrap; }
+.wh-link {
+  background: none; border: 0; padding: 0 0 0 14px; cursor: pointer;
+  font: inherit; font-size: 11.5px; color: var(--muted-fg);
+}
+.wh-link:hover { color: var(--fg); }
+.wh-link.accent { color: var(--primary); }
+.wh-link:disabled { opacity: 0.5; cursor: not-allowed; }
+.wh-payload-row td { background: var(--surface-2); }
+.wh-payload-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.wh-payload {
+  max-height: 260px; overflow: auto; margin: 0; padding: 10px 12px; font-size: 11px; line-height: 1.6;
+  color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 3px;
+}
+.wh-lasterr { margin-top: 8px; font-size: 11px; color: var(--down); overflow-wrap: anywhere; }
+
 @media (max-width: 1000px) {
   .crawl { grid-template-columns: 1fr; align-items: start; }
   .crawl-default { white-space: normal; }
@@ -560,4 +625,6 @@ body {
   .cause:first-child { border-top: 0; }
   .agent-row { grid-template-columns: 1fr; gap: 10px; }
   .agent-money { text-align: left; }
+  .wh-ep { grid-template-columns: 1fr; gap: 12px; }
+  .wh-ep-act { text-align: left; }
 }
