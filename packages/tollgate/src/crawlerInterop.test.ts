@@ -14,10 +14,33 @@ import { join } from "node:path";
 
 process.env.EVENTS_PATH = join(tmpdir(), `naulon-crawler-interop-${process.pid}.jsonl`);
 process.env.PAYMENT_MODE = "mock";
+process.env.LICENSES_ENABLED = "true"; // the free-re-read case below needs a license
 process.env.RATE_LIMIT_RPM = "0";
 
 const { app } = await import("./app.ts");
+const { buildMockSignature, PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } = await import("./x402.ts");
 const { parseCrawlerPrice, formatCrawlerPrice } = await import("@naulon/enforce");
+
+const PAYER = "0x1234567890abcdef1234567890abcdef12345678";
+
+/** The full 402 → pay handshake, mirroring payflow.test.ts. */
+async function pay(slug: string): Promise<{ quoted: Response; paid: Response }> {
+  const quoted = await app.request(`/essays/${slug}`, { headers: { ...AGENT } });
+  const required = quoted.headers.get(PAYMENT_REQUIRED_HEADER)!;
+  const accepts = (
+    JSON.parse(Buffer.from(required, "base64").toString("utf8")).accepts as Array<{
+      amount: string;
+      extra: { nonce: string };
+    }>
+  )[0]!;
+  const paid = await app.request(`/essays/${slug}`, {
+    headers: {
+      ...AGENT,
+      [PAYMENT_SIGNATURE_HEADER]: buildMockSignature(PAYER, accepts.amount, accepts.extra.nonce),
+    },
+  });
+  return { quoted, paid };
+}
 
 const realFetch = globalThis.fetch;
 before(() => {
@@ -111,6 +134,37 @@ test("a crawler that states no budget gets no budget claim", async () => {
     headers: { ...AGENT, "crawler-max-price": "free please" },
   });
   assert.doesNotMatch(junk.headers.get("x-naulon-verdict") ?? "", /crawler budget/);
+});
+
+test("a settled 200 reports crawler-charged, and it equals what was quoted", async () => {
+  const { quoted, paid } = await pay("on-stillness");
+  assert.equal(paid.status, 200, "the mock payment should settle");
+
+  const charged = paid.headers.get("crawler-charged");
+  assert.ok(charged, "a settled read must report what it charged");
+  // The charge cannot exceed or undercut the advertised ask — quoting one price and
+  // reporting another is the money lie this whole header exists to avoid.
+  assert.equal(charged, quoted.headers.get("crawler-price"));
+  assert.ok(parseCrawlerPrice(charged)! > 0n);
+
+  // The ask is not repeated on a response where money already moved.
+  assert.equal(paid.headers.get("crawler-price"), null);
+});
+
+test("a FREE re-read on a license reports no charge", async () => {
+  const { paid } = await pay("on-stillness");
+  const jws = paid.headers.get("x-naulon-license");
+  assert.ok(jws, "the paid read mints a license");
+
+  const reread = await app.request("/essays/on-stillness", {
+    headers: { ...AGENT, "x-naulon-license": jws },
+  });
+  assert.equal(reread.status, 200);
+  assert.match(reread.headers.get("x-naulon-verdict") ?? "", /reread/);
+  // The re-read costs nothing. Reporting a charge here would bill the buyer twice in
+  // their own accounting for one purchase.
+  assert.equal(reread.headers.get("crawler-charged"), null);
+  assert.equal(reread.headers.get("crawler-price"), null);
 });
 
 test("a human's free read carries no crawler-* headers at all", async () => {
