@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>naulon — self-host console</title>
+<meta name="description" content="Your self-hosted naulon gate: health, live toll traffic, settlement earnings, and config sanity." />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="shell-wrap">
+    <aside class="shell" id="shell"></aside>
+    <main class="main">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Self-hosted gate</p>
+          <h1 class="page-title">Your gate</h1>
+          <p class="page-sub">One box, one origin. Humans read free; machines pay to read and cite. This console is read-only — articles, wallets and prices come from your credits source and env.</p>
+        </div>
+        <div class="head-actions">
+          <div class="seg" id="winSeg" role="group" aria-label="traffic window">
+            <button type="button" class="seg-btn" data-win="1h">1h</button>
+            <button type="button" class="seg-btn on" data-win="24h">24h</button>
+            <button type="button" class="seg-btn" data-win="7d">7d</button>
+          </div>
+          <span class="freshness" id="freshness" aria-live="off"></span>
+        </div>
+      </div>
+
+      <section class="stat-strip" id="tiles" aria-live="polite">
+        <div class="stat"><div class="stat-k">served free</div><div class="stat-v" id="tHumans">—</div><div class="stat-sub">humans + allowed crawlers</div></div>
+        <div class="stat"><div class="stat-k">denied</div><div class="stat-v warn" id="tDenied">—</div><div class="stat-sub">refused at 402</div></div>
+        <div class="stat"><div class="stat-k">blocked</div><div class="stat-v" id="tBlocked">—</div><div class="stat-sub">refused outright</div></div>
+        <div class="stat"><div class="stat-k">paid</div><div class="stat-v pos" id="tPaid">—</div><div class="stat-sub">agents that settled</div></div>
+        <div class="stat"><div class="stat-k">payment failed</div><div class="stat-v" id="tFailed">—</div><div class="stat-sub">verify/settle rejected</div></div>
+        <div class="stat"><div class="stat-k">earned · missed</div><div class="stat-v pos" id="tEarned">$0.000000</div><div class="stat-sub"><span id="tMissed">$0.000000</span> left on the table</div></div>
+      </section>
+
+      <div class="cols">
+        <section>
+          <div class="section-head"><span class="rule"></span><h2>Recent requests</h2><span class="n" id="window">last 24h</span></div>
+          <div class="feed" id="feed" aria-live="polite" aria-relevant="additions"></div>
+        </section>
+        <section>
+          <div class="section-head"><span class="rule"></span><h2>Config</h2><span class="n" id="agentSplit">—</span></div>
+          <div id="config"></div>
+          <div class="section-head"><span class="rule"></span><h2>Warnings</h2><span class="n" id="warnCount">0</span></div>
+          <div id="warnings"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="/overview.js"></script>
+</body>
+</html>
