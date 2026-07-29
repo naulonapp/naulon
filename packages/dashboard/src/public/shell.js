@@ -43,6 +43,49 @@ export const el = (tag, attrs = {}, html = "") => {
   return node;
 };
 
+// ── observations ──────────────────────────────────────────────────────────────
+// The six verdicts and the identity split get rendered on more than one page. They
+// live here for the same reason $/esc/fmt6 do: the moment a second page carried its
+// own copy of these, the copies started disagreeing.
+
+/** The six verdicts, in the order the operator reads them (free → refused → money). */
+export const VERDICTS = ["served-free", "agent-reread", "denied", "blocked", "payment-failed", "paid"];
+
+/** Short labels for the counter strip — the raw verdict is the badge's own text. */
+export const VERDICT_LABEL = {
+  "served-free": "free",
+  "agent-reread": "re-read",
+  denied: "denied",
+  blocked: "blocked",
+  "payment-failed": "failed",
+  paid: "paid",
+};
+
+/** Verdicts that mean something went wrong, so a non-zero count can go red. */
+export const VERDICT_BAD = new Set(["blocked", "payment-failed"]);
+
+/**
+ * Who made this request, as escaped HTML. Verified agents get their directory host, a
+ * failed signature is called out as a spoof rather than folded into "unsigned", and a
+ * human is just a human.
+ */
+export const agentLabel = (o) =>
+  o.classifiedAs === "agent"
+    ? o.verified
+      ? `<span class="badge">✓ ${esc(o.verifiedAgent || "verified agent")}</span>`
+      : o.sigInvalid
+        ? `<span class="bad">spoofed signature</span>`
+        : esc(o.agentUa || "unsigned agent")
+    : "human";
+
+/**
+ * Test toll leaves REAL observations behind — it genuinely asks the gate for an article
+ * and genuinely gets refused. Label them, or the operator wonders where a handful of
+ * denials and some "missed" earnings came from.
+ */
+export const isSelfTest = (o) => (o.agentUa || "").includes("naulon-dashboard-selftest");
+export const selfTestBadge = (o) => (isSelfTest(o) ? `<span class="badge selftest">self-test</span>` : "");
+
 // ── the mark ──────────────────────────────────────────────────────────────────
 // Geometry mirrors src/brand.ts (public source of truth: https://naulon.app/brand).
 // shell-brand-parity.test.ts asserts the two stay identical.
@@ -61,6 +104,13 @@ export const markSvg = () =>
 /** Nav groups, in order. `null` group = ungrouped, rendered above the first label. */
 export const NAV = [
   { group: null, items: [{ href: "/", label: "Overview", id: "overview" }] },
+  {
+    group: "Traffic",
+    items: [
+      { href: "/requests", label: "Requests", id: "requests" },
+      { href: "/agents", label: "Agents", id: "agents" },
+    ],
+  },
   { group: "Money", items: [{ href: "/ledger", label: "Ledger", id: "ledger" }] },
   {
     group: "Config",
@@ -117,6 +167,44 @@ export function setGate(up, label) {
   dot.classList.toggle("off", !up);
   dot.classList.toggle("bad", up === false);
   text.textContent = label;
+}
+
+// ── controls ──────────────────────────────────────────────────────────────────
+/**
+ * Wire a `.seg` group of `[data-<key>]` buttons: paint the active one and hand the
+ * chosen value back. Three pages pick a traffic window with the same control, and this
+ * is the difference between one implementation and three that drift.
+ *
+ * Returns nothing — the caller owns what happens on change.
+ */
+export function wireSeg(container, key, onPick) {
+  if (!container) return;
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest(`[data-${key}]`);
+    if (!btn || !container.contains(btn)) return;
+    for (const b of $$(`[data-${key}]`, container)) {
+      const on = b === btn;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    onPick(btn.dataset[key]);
+  });
+  // State the initial pressed state, so a screen reader isn't told the group is empty.
+  for (const b of $$(`[data-${key}]`, container)) {
+    b.setAttribute("aria-pressed", String(b.classList.contains("on")));
+  }
+}
+
+/**
+ * Debounce a handler — a filter that repaints on every keystroke reads as jitter, and
+ * one that waits for the next poll reads as broken. 200ms is the gap between the two.
+ */
+export function debounced(fn, ms = 200) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
 }
 
 // ── data ──────────────────────────────────────────────────────────────────────

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>naulon — agents</title>
+<meta name="description" content="Which agents read this gate: who signs their requests, who does not, and who presented a signature that failed — with what each one took and paid." />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="shell-wrap">
+    <aside class="shell" id="shell"></aside>
+    <main class="main">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Traffic</p>
+          <h1 class="page-title">Agents</h1>
+          <p class="page-sub">Who is reading, and how much of that you can actually trust. A user-agent string is a claim anyone can make; a Web Bot Auth signature is one only the operator's key can.</p>
+        </div>
+        <div class="head-actions">
+          <div class="seg" id="winSeg" role="group" aria-label="traffic window">
+            <button type="button" class="seg-btn" data-win="1h">1h</button>
+            <button type="button" class="seg-btn on" data-win="24h">24h</button>
+            <button type="button" class="seg-btn" data-win="7d">7d</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="notice" aria-live="polite"></div>
+
+      <section class="stat-strip">
+        <div class="stat"><div class="stat-k">agent requests</div><div class="stat-v" id="sTotal">—</div></div>
+        <div class="stat"><div class="stat-k">verified</div><div class="stat-v pos" id="sVerified">—</div><div class="stat-sub" id="sVerifiedPct"></div></div>
+        <div class="stat"><div class="stat-k">unsigned</div><div class="stat-v" id="sUnsigned">—</div><div class="stat-sub" id="sUnsignedPct"></div></div>
+        <div class="stat"><div class="stat-k">masquerade</div><div class="stat-v" id="sMasq">—</div><div class="stat-sub">signature presented and failed</div></div>
+      </section>
+
+      <div id="masqNote" aria-live="polite"></div>
+
+      <div class="filters">
+        <input id="q" class="in" type="search" placeholder="Filter by agent, path or host" aria-label="Filter agents" />
+      </div>
+
+      <div class="section-head"><span class="rule"></span><h2>Every agent seen</h2><span class="n" id="agentCount"></span></div>
+      <div id="agents"></div>
+    </main>
+  </div>
+
+  <script type="module" src="/agents.js"></script>
+</body>
+</html>

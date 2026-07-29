@@ -441,3 +441,71 @@ body {
 .empty-foot { margin-top: 14px; font-size: 12.5px; }
 /* A row the operator's own Test toll produced — real traffic, but not a real crawler. */
 .badge.selftest { margin-left: 8px; color: var(--muted-fg); border-color: var(--line-strong); }
+
+/* ── traffic: requests + agents ─────────────────────────────────────────────
+   Green stays punctuation: it marks money that landed and a verified identity,
+   nothing else. Refusals are warning-amber, faults are down-red, and the rest of
+   the surface carries no colour at all. */
+
+.filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 18px 0 4px; }
+.filters .in { flex: 1; min-width: 220px; }
+
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 8px; }
+.two-col > * { min-width: 0; }
+
+/* A rollup row. NOT `.rank` — that is the ledger's right-aligned position number. */
+.roll {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 14px;
+  padding: 11px 14px; border-bottom: 1px solid var(--line); align-items: baseline;
+}
+.roll:last-child { border-bottom: 0; }
+.roll-name { font-size: 13px; color: var(--fg); overflow-wrap: anywhere; }
+.roll-meta { grid-column: 1; font-size: 11.5px; color: var(--faint); display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.roll-money { grid-row: 1 / span 2; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+.roll-money .pos { color: var(--primary); display: block; }
+.roll-money .dim { font-size: 11px; display: block; margin-top: 3px; }
+.panel-empty { padding: 22px 14px; color: var(--faint); font-size: 13px; }
+
+/* Missed earnings, split by cause — two figures that must never share a cell. */
+.cause-row { display: grid; grid-template-columns: 1fr 1fr; }
+.cause { padding: 16px 18px; border-left: 1px solid var(--line); }
+.cause:first-child { border-left: 0; }
+.cause .mono-figure { font-size: 24px; font-weight: 600; margin-top: 8px; line-height: 1.15; }
+.cause .mono-figure.bad { color: var(--down); }
+
+.req .rmid .reason { font-size: 10.5px; color: var(--faint); margin-top: 3px; overflow-wrap: anywhere; }
+
+/* Identity, on both traffic pages. `unsigned` is deliberately uncoloured: it is the
+   normal state of most crawler traffic, not a fault to be flagged. */
+.badge.verified { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.unsigned { color: var(--muted-fg); border-color: var(--line-strong); }
+.badge.masquerade { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
+
+.agent-row {
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.95fr) auto;
+  gap: 16px; padding: 15px 0; border-bottom: 1px solid var(--line); align-items: start;
+}
+.agent-row > * { min-width: 0; }
+.agent-id .roll-name { font-size: 13.5px; }
+.agent-id .roll-meta { margin-top: 5px; }
+/* SIX fixed columns, never `auto-fit`. Auto-fit orphaned the last cell onto a second
+   line — the same defect the old console's `.tile.wide` had — and, because two of the
+   six used to be conditional, the columns did not line up from one row to the next.
+   Every row now renders all six; a zero is information here ("0 blocked" is a fact). */
+.agent-nums { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0 10px; }
+.agent-nums .kv { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; }
+.agent-nums .kv .k { letter-spacing: 0.1em; font-size: 9.5px; white-space: nowrap; }
+.agent-nums .kv .v { font-size: 13px; }
+.agent-nums .kv .v.bad { color: var(--down); }
+.agent-nums .kv .v.zero { color: var(--faint); }
+.agent-money { text-align: right; }
+.agent-money .mono-figure { font-size: 17px; font-weight: 600; }
+.agent-money .mono-figure.pos { color: var(--primary); }
+
+@media (max-width: 1000px) {
+  .two-col, .cause-row { grid-template-columns: 1fr; }
+  .cause { border-left: 0; border-top: 1px solid var(--line); }
+  .cause:first-child { border-top: 0; }
+  .agent-row { grid-template-columns: 1fr; gap: 10px; }
+  .agent-money { text-align: left; }
+}

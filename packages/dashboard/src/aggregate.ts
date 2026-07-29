@@ -2,7 +2,16 @@
  * Turn the raw attributed-event ledger into the shape the dashboard renders:
  * per-author earnings (the traction proof) plus a recent-crossings feed.
  */
-import type { AttributedEvent } from "@naulon/shared";
+import type { AttributedEvent, AuthorShare } from "@naulon/shared";
+
+/**
+ * One payee's cut of a settled event. `AuthorShare` carries a fractional `share`, not an
+ * amount, so every surface that shows what an author got has to do this multiplication —
+ * and a second copy of a money rule is a second chance to get it wrong. One owner: the
+ * ledger, the recent feed and the CSV export all call this.
+ */
+export const payeeCut = (event: Pick<AttributedEvent, "amount">, payee: AuthorShare): number =>
+  event.amount * payee.share;
 
 export interface AuthorRow {
   authorId: string;
@@ -37,7 +46,7 @@ export function aggregate(events: AttributedEvent[], recentLimit = 12): Ledger {
   for (const e of events) {
     totalSettled += e.amount;
     for (const p of e.payees) {
-      const cut = e.amount * p.share;
+      const cut = payeeCut(e, p);
       const row = byAuthor.get(p.wallet);
       if (row) {
         row.earned += cut;
@@ -67,7 +76,7 @@ export function aggregate(events: AttributedEvent[], recentLimit = 12): Ledger {
       kind: e.kind,
       amount: e.amount,
       payer: e.payerAddress,
-      split: e.payees.map((p) => ({ authorId: p.authorId, amount: e.amount * p.share })),
+      split: e.payees.map((p) => ({ authorId: p.authorId, amount: payeeCut(e, p) })),
     }));
 
   return {

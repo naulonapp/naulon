@@ -20,6 +20,15 @@ import { getConfig, getSink } from "@naulon/shared";
 import { aggregate, type Ledger } from "./aggregate.ts";
 import { watchLedger } from "./watch.ts";
 import { summarizeOps, windowMsFromKey } from "./ops.ts";
+import { watchOps } from "./watch-ops.ts";
+import { buildAgents, buildTraffic, parseVerdict } from "./traffic.ts";
+import {
+  exportFilename,
+  parseFormat,
+  parseKind,
+  serializeEvents,
+  serializeObservations,
+} from "./export.ts";
 import { summarizeConfig } from "./config-view.ts";
 import { readObservations } from "./observations.ts";
 import { readContent, scanArticles, writeCredits, isRestartPending } from "./content.ts";
@@ -53,12 +62,16 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
     }
   : {
       "/": { file: "overview.html", type: "text/html; charset=utf-8" },
+      "/requests": { file: "requests.html", type: "text/html; charset=utf-8" },
+      "/agents": { file: "agents.html", type: "text/html; charset=utf-8" },
       "/ledger": { file: "ledger.html", type: "text/html; charset=utf-8" },
       "/content": { file: "content.html", type: "text/html; charset=utf-8" },
       "/doctor": { file: "doctor.html", type: "text/html; charset=utf-8" },
       "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
       "/shell.js": { file: "shell.js", type: "text/javascript; charset=utf-8" },
       "/overview.js": { file: "overview.js", type: "text/javascript; charset=utf-8" },
+      "/requests.js": { file: "requests.js", type: "text/javascript; charset=utf-8" },
+      "/agents.js": { file: "agents.js", type: "text/javascript; charset=utf-8" },
       "/ledger.js": { file: "ledger.js", type: "text/javascript; charset=utf-8" },
       "/content.js": { file: "content.js", type: "text/javascript; charset=utf-8" },
       "/doctor.js": { file: "doctor.js", type: "text/javascript; charset=utf-8" },
@@ -220,6 +233,74 @@ if (ACCESS.refuse) {
         summarizeConfig(),
       ]);
       return c.json({ at: now, health, ops: summarizeOps(observations, now, windowMs), config });
+    });
+
+    // The traffic tail. Everything the Overview's six counters summarise, unrolled:
+    // which path earns, which crawler takes free, and what the missed money is made
+    // of. `verdict` is narrowed against the known set, so an unknown value falls back
+    // to "all" rather than silently matching nothing.
+    app.get("/api/traffic", async (c) => {
+      const now = Date.now();
+      const windowMs = windowMsFromKey(c.req.query("window"));
+      const observations = await readObservations();
+      return c.json(
+        buildTraffic(
+          observations,
+          { since: now - windowMs, verdict: parseVerdict(c.req.query("verdict")), q: c.req.query("q") },
+          now,
+        ),
+      );
+    });
+
+    // The identity split, given its own surface: who signs, who doesn't, and who
+    // presented a signature that failed — which is a masquerade, not a mistake.
+    app.get("/api/agents", async (c) => {
+      const now = Date.now();
+      const windowMs = windowMsFromKey(c.req.query("window"));
+      const observations = await readObservations();
+      return c.json(buildAgents(observations, { since: now - windowMs, q: c.req.query("q") }, now));
+    });
+
+    // The operator's own records, back out. GET (a download, not a mutation) and
+    // read-only, so it takes no CSRF guard; the Host allowlist and Basic auth are what
+    // stand between it and anyone else, exactly as for /api/ops.
+    app.get("/api/export", async (c) => {
+      const now = Date.now();
+      const windowMs = windowMsFromKey(c.req.query("window"));
+      const since = now - windowMs;
+      const kind = parseKind(c.req.query("kind"));
+      const format = parseFormat(c.req.query("format"));
+
+      const body =
+        kind === "events"
+          ? serializeEvents(
+              (await sink.readAll()).filter((e) => e.at >= since).sort((a, b) => b.at - a.at),
+              format,
+            )
+          : serializeObservations(
+              (await readObservations()).filter((o) => o.at >= since).sort((a, b) => b.at - a.at),
+              format,
+            );
+
+      c.header("Content-Type", format === "csv" ? "text/csv; charset=utf-8" : "application/x-ndjson; charset=utf-8");
+      c.header("Content-Disposition", `attachment; filename="${exportFilename(kind, format, now)}"`);
+      return c.body(body);
+    });
+
+    // Ops over SSE. The ledger already streamed while traffic polled, so the two
+    // halves of the Overview moved on different clocks.
+    app.get("/api/stream/ops", (c) => {
+      const windowMs = windowMsFromKey(c.req.query("window"));
+      return streamSSE(c, async (stream) => {
+        const signal = { aborted: false };
+        stream.onAbort(() => {
+          signal.aborted = true;
+        });
+        for await (const snapshot of watchOps(readObservations, { signal, windowMs })) {
+          if (stream.aborted) break;
+          await stream.writeSSE({ event: "ops", data: JSON.stringify(snapshot) });
+        }
+      });
     });
 
     // The preflight. Read-only: reads loaded config and GETs addresses that came

@@ -6,7 +6,7 @@
  * verified-agent). Every one is HTML-escaped before it touches innerHTML — esc()
  * from shell.js is the boundary, same as the earnings view.
  */
-import { $, $$, esc, usd, trunc, rel, renderShell, setGate, poll } from "./shell.js";
+import { $, esc, usd, trunc, rel, renderShell, setGate, poll, sse, wireSeg, agentLabel, selfTestBadge } from "./shell.js";
 
 renderShell({ active: "overview" });
 
@@ -110,23 +110,10 @@ function renderFeed(recent) {
   }
   $("#feed").innerHTML = recent.map((o) => {
     const fresh = !firstPaint && !seen.has(o.id);
-    const who = o.classifiedAs === "agent"
-      ? (o.verified
-          ? `<span class="badge">✓ ${esc(o.verifiedAgent || "verified agent")}</span>`
-          : o.sigInvalid
-            ? `<span class="bad">spoofed signature</span>`
-            : esc(o.agentUa || "unsigned agent"))
-      : "human";
     const price = o.price != null ? `<div class="who"><span class="rprice">${usd(o.price)}</span></div>` : "";
-    // Test toll leaves real observations behind — it genuinely asks the gate for an
-    // article and genuinely gets refused. Label them, or the operator wonders where
-    // a handful of denials and some "missed" earnings came from.
-    const selftest = (o.agentUa || "").includes("naulon-dashboard-selftest")
-      ? `<span class="badge selftest">self-test</span>`
-      : "";
     return `<div class="req ${fresh ? "fresh" : ""} rise">
       <div class="rt">${esc(rel(o.at))} ago</div>
-      <div class="rmid"><div class="slug">${esc(o.slug || o.host || "—")}${selftest}</div><div class="who">${who}</div>${price}</div>
+      <div class="rmid"><div class="slug">${esc(o.slug || o.host || "—")}${selfTestBadge(o)}</div><div class="who">${agentLabel(o)}</div>${price}</div>
       <div class="badge ${esc(o.verdict)}">${esc(o.verdict)}</div>
     </div>`;
   }).join("");
@@ -189,13 +176,33 @@ $("#tollBtn").addEventListener("click", testToll);
 
 const loop = poll(tick, 4000);
 
-// Traffic-window selector — refetch immediately on change.
-$$(".seg-btn", $("#winSeg")).forEach((b) =>
-  b.addEventListener("click", () => {
-    currentWindow = b.dataset.win;
-    $$(".seg-btn", $("#winSeg")).forEach((x) => x.classList.toggle("on", x === b));
-    void loop.run();
-  }),
-);
+/**
+ * Traffic over SSE. The ledger already streamed while traffic polled, so the two halves
+ * of this screen moved on different clocks and the request feed could sit up to a poll
+ * interval behind the money. The poll stays — it owns health, config and warnings, which
+ * change on a human timescale — but the counters and the feed now repaint the moment the
+ * gate records anything.
+ *
+ * The stream is re-opened on a window change because the cutoff is applied server-side.
+ */
+let opsStream = null;
+function streamOps() {
+  opsStream?.close();
+  opsStream = sse(`/api/stream/ops?window=${encodeURIComponent(currentWindow)}`, (_name, ops) => {
+    renderTiles(ops);
+    renderFeed(ops.recent || []);
+    firstPaint = false;
+    lastUpdate = Date.now();
+    paintFreshness();
+  }, ["ops"]);
+}
+streamOps();
+
+// Traffic-window selector — refetch and re-subscribe immediately on change.
+wireSeg($("#winSeg"), "win", (v) => {
+  currentWindow = v;
+  void loop.run();
+  streamOps();
+});
 
 setInterval(paintFreshness, 1000); // keep the "updated Ns ago" cue climbing between polls
