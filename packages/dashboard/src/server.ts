@@ -32,6 +32,7 @@ import {
 import { summarizeConfig } from "./config-view.ts";
 import { readObservations } from "./observations.ts";
 import { readContent, scanArticles, writeCredits, isRestartPending } from "./content.ts";
+import { readCrawlers, writeCrawlers, isPolicyRestartPending } from "./crawlers.ts";
 import { runDoctor } from "./doctor.ts";
 import { runTollProbe } from "./test-toll.ts";
 import { decideAccess } from "./access.ts";
@@ -66,6 +67,7 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
       "/agents": { file: "agents.html", type: "text/html; charset=utf-8" },
       "/ledger": { file: "ledger.html", type: "text/html; charset=utf-8" },
       "/content": { file: "content.html", type: "text/html; charset=utf-8" },
+      "/crawlers": { file: "crawlers.html", type: "text/html; charset=utf-8" },
       "/doctor": { file: "doctor.html", type: "text/html; charset=utf-8" },
       "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
       "/shell.js": { file: "shell.js", type: "text/javascript; charset=utf-8" },
@@ -74,6 +76,7 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
       "/agents.js": { file: "agents.js", type: "text/javascript; charset=utf-8" },
       "/ledger.js": { file: "ledger.js", type: "text/javascript; charset=utf-8" },
       "/content.js": { file: "content.js", type: "text/javascript; charset=utf-8" },
+      "/crawlers.js": { file: "crawlers.js", type: "text/javascript; charset=utf-8" },
       "/doctor.js": { file: "doctor.js", type: "text/javascript; charset=utf-8" },
     };
 
@@ -359,6 +362,32 @@ if (ACCESS.refuse) {
       } catch (e) {
         return c.json({ error: (e as Error).message }, 502);
       }
+    });
+
+    // The crawler policy — the gate has always enforced it and the open core never let
+    // anyone write one. Read projects the file over the curated registry; write validates
+    // through shared's normalizer (including the humans-read-free guard) before it
+    // persists, so the file the gate loads at boot is always one the validator passed.
+    app.get("/api/crawlers", async (c) => {
+      const view = await readCrawlers();
+      const health = await gateHealth();
+      return c.json({
+        ...view,
+        gate: { up: health.up, startedAt: health.startedAt ?? null },
+        restartPending: isPolicyRestartPending({
+          fileModifiedAt: view.fileModifiedAt,
+          gateStartedAt: health.startedAt ?? null,
+          gateUp: health.up,
+        }),
+      });
+    });
+
+    app.post("/api/crawlers", sameOrigin, async (c) => {
+      const body = await c.req
+        .json<{ allow?: unknown; block?: unknown; charge?: unknown }>()
+        .catch(() => ({}) as { allow?: unknown; block?: unknown; charge?: unknown });
+      const result = await writeCrawlers(body);
+      return c.json(result, result.written ? 200 : 422);
     });
 
     app.post("/api/content", sameOrigin, async (c) => {

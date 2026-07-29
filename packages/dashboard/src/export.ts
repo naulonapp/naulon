@@ -6,7 +6,7 @@
  * Read-only and pure: rows in, a string out. The caller owns reading the log and
  * choosing the window.
  */
-import type { AttributedEvent, ObservationEvent } from "@naulon/shared";
+import { csvField, toCsv as sharedToCsv, type AttributedEvent, type ObservationEvent } from "@naulon/shared";
 import { payeeCut } from "./aggregate.ts";
 
 export type ExportKind = "observations" | "events";
@@ -21,27 +21,22 @@ export function parseFormat(v: string | undefined): ExportFormat {
 }
 
 /**
- * Quote one CSV field.
+ * Rows → CSV, columns in the given order, header row always present.
  *
- * The leading-quote clause is not cosmetic. Several fields here are attacker-supplied
- * — `agentUa` and `slug` come off the wire — and a spreadsheet treats a cell starting
- * `=`, `+`, `-`, `@`, tab or CR as a FORMULA, so a crawler could put executable content
- * into an operator's export by sending it as a User-Agent. Prefixing with an
- * apostrophe is the standard defusal: Excel/Sheets/LibreOffice all render the text and
- * none of them evaluate it. Doing this at the serializer means no caller can forget.
+ * The escaping is `@naulon/shared`'s `csvField`, not a local one. That matters for a
+ * reason worth stating: the guard has two branches and re-deriving it gets one of them
+ * wrong. A STRING beginning `=`, `+`, `-`, `@`, tab or CR is prefixed with an apostrophe,
+ * because `agentUa` and `slug` come off the wire and a spreadsheet would otherwise run
+ * them as formulas. A NUMBER is exempt, because a leading `-` there is a legitimate sign
+ * and prefixing it turns the money column into text. This module's first version applied
+ * the prefix to both.
  */
-export function csvField(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  let s = String(value);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-}
-
-/** Rows → CSV, columns in the given order. Header row always present. */
-export function toCsv<T>(rows: readonly T[], columns: readonly { key: string; get: (row: T) => unknown }[]): string {
-  const head = columns.map((c) => csvField(c.key)).join(",");
-  const body = rows.map((r) => columns.map((c) => csvField(c.get(r))).join(","));
-  return [head, ...body].join("\n") + "\n";
+function toCsv<T>(rows: readonly T[], columns: readonly { key: string; get: (row: T) => unknown }[]): string {
+  const cell = (v: unknown): string | number =>
+    v === null || v === undefined ? "" : typeof v === "number" ? v : String(v);
+  const head = columns.map((c) => csvField(c.key));
+  const body = rows.map((r) => columns.map((c) => cell(c.get(r))));
+  return sharedToCsv(head, body);
 }
 
 /** Rows → newline-delimited JSON, one object per line. */

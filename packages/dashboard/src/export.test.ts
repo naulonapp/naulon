@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { usdc, type AttributedEvent, type ObservationEvent } from "@naulon/shared";
+import { csvField } from "@naulon/shared";
 import {
-  csvField,
   exportFilename,
   parseFormat,
   parseKind,
   serializeEvents,
   serializeObservations,
-  toCsv,
   toJsonl,
 } from "./export.ts";
 
@@ -28,8 +27,6 @@ test("csvField quotes commas, quotes and newlines", () => {
   assert.equal(csvField("a,b"), '"a,b"');
   assert.equal(csvField('say "hi"'), '"say ""hi"""');
   assert.equal(csvField("line\nbreak"), '"line\nbreak"');
-  assert.equal(csvField(undefined), "");
-  assert.equal(csvField(null), "");
 });
 
 test("a formula-leading field is defused — a User-Agent must not execute in a spreadsheet", () => {
@@ -46,18 +43,13 @@ test("a formula-leading field is defused — a User-Agent must not execute in a 
   assert.ok(nasty.startsWith(`"'=HYPERLINK`), nasty);
 });
 
-test("a legitimate negative number is still defused — correctness beats prettiness here", () => {
-  // -0.01 leads with `-`, so it gets the apostrophe too. That is the right trade: the
-  // alternative is a per-field allowlist that eventually lets one real payload past.
-  assert.equal(csvField("-0.01"), "'-0.01");
-});
-
-test("toCsv writes a header and one row per record, in column order", () => {
-  const out = toCsv([{ a: 1, b: "x" }], [
-    { key: "a", get: (r: { a: number }) => r.a },
-    { key: "b", get: (r: { b: string }) => r.b },
-  ]);
-  assert.equal(out, "a,b\n1,x\n");
+test("a NUMBER is exempt from the defusal — a leading minus is a sign, not an injection", () => {
+  // The two branches that matter. Prefixing a negative number would turn the money column
+  // into text and break arithmetic on the export; not prefixing a negative STRING would
+  // leave the hole open. Shared's csvField is typed `string | number` precisely so the
+  // caller has to decide which one it is holding.
+  assert.equal(csvField(-0.01), "-0.01");
+  assert.equal(csvField("-0.01"), `"'-0.01"`);
 });
 
 test("toJsonl emits one object per line and nothing at all for no rows", () => {

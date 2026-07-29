@@ -50,6 +50,7 @@ const DEFAULT_OBSERVATIONS_PATH = join(REPO_ROOT, "data/observations.jsonl");
 const DEFAULT_PAYOUTS_PATH = join(REPO_ROOT, "data/payouts.jsonl");
 const DEFAULT_LICENSE_STORE = join(REPO_ROOT, "data/wayfarer-licenses.json");
 const DEFAULT_CREDITS_FIXTURES = join(REPO_ROOT, "examples/meridian/credits.json");
+const DEFAULT_CRAWLER_POLICY = join(REPO_ROOT, "data/crawler-policy.json");
 const DEFAULT_SETTLEMENT_OUTBOX = join(REPO_ROOT, "data/settlement-outbox.jsonl");
 const DEFAULT_SETTLEMENT_DELIVERY_STATE = join(REPO_ROOT, "data/settlement-delivery.jsonl");
 
@@ -166,6 +167,14 @@ export const configSchema = z.object({
   CREDITS_API_URL: z.string().url().optional(),
   CREDITS_API_TOKEN: z.string().optional(),
   CREDITS_FIXTURES: z.string().default(DEFAULT_CREDITS_FIXTURES),
+  // Per-crawler policy for the single-tenant gate: a JSON file holding
+  // `{ allow, block, charge }` UA fragments (see `CrawlerPolicy`). The gate has
+  // always ENFORCED this — `decide()` refuses a blocked fragment before it even
+  // classifies — but nothing in the open core ever authored one, so a self-hoster's
+  // only route to a blocklist was writing their own PublisherResolver. This is that
+  // route. Absent or unreadable ⇒ no policy, i.e. classifier defaults, which is the
+  // behaviour every existing deploy already has.
+  CRAWLER_POLICY_PATH: z.string().default(DEFAULT_CRAWLER_POLICY),
   // Shared HMAC secret for the naulon → publisher settlement emit (POST
   // ${ORIGIN_URL}/api/credits/settlement). Must match the publisher's value. When
   // unset the emit is dark — the gate still tolls and serves; it just doesn't

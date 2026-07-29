@@ -116,6 +116,7 @@ export const NAV = [
     group: "Config",
     items: [
       { href: "/content", label: "Content", id: "content" },
+      { href: "/crawlers", label: "Crawlers", id: "crawlers" },
       { href: "/doctor", label: "Doctor", id: "doctor" },
     ],
   },
