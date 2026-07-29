@@ -160,6 +160,7 @@ class Naulon_Enforcer {
 		$response = new WP_REST_Response( array( 'code' => 'naulon_payment_required' ), 402 );
 		$response->header( self::PAYMENT_REQUIRED_HEADER, $decision['header'] );
 		$response->header( 'Cache-Control', 'private, no-store' );
+		$response->header( 'Vary', 'User-Agent' );
 		return $response;
 	}
 
@@ -170,6 +171,11 @@ class Naulon_Enforcer {
 	 * @return void
 	 */
 	private function enforce( $post ) {
+		// Before the branch, not inside one: the route is user-agent-dependent whatever this
+		// particular request turns out to be, and the FREE outcome is the one a shared cache
+		// stores and could later replay to a crawler. See vary_user_agent().
+		$this->vary_user_agent();
+
 		$decision = $this->decide( $post );
 
 		if ( 'pay' === $decision['action'] ) {
@@ -545,6 +551,66 @@ class Naulon_Enforcer {
 		}
 		nocache_headers();
 		header( 'Cache-Control: private, no-store' );
+	}
+
+	/**
+	 * Partition every shared cache by user agent on a tolled route.
+	 *
+	 * The same article URL answers a human 200, an agent 402, or paid content, decided from the
+	 * user agent. A shared cache keying on URL alone is therefore free to serve one caller's
+	 * response to another, and the dangerous direction is silent: a human's cached 200 handed to
+	 * a crawler is a free read with no 402, no quote call, no earnings and no trace anywhere in
+	 * WordPress — the site simply under-earns forever. `no_store()` cannot prevent it, because
+	 * the artifact being replayed is a legitimate human response the publisher is entitled to
+	 * cache.
+	 *
+	 * `Vary: User-Agent` is the header that closes it, and it must ride the FREE response too —
+	 * that is the entry the cache actually stores. The naulon gate stamps exactly this on every
+	 * gateable-route response for the same reason (`stampGateCacheHeaders` in @naulon/tollgate);
+	 * the plugin makes the same decision in PHP and owed the same header.
+	 *
+	 * Merged, never clobbered: a publisher's own `Vary` (a theme varying on `Accept-Encoding`,
+	 * say) has to survive.
+	 *
+	 * @return void
+	 */
+	private function vary_user_agent() {
+		if ( headers_sent() ) {
+			return;
+		}
+		$existing = '';
+		foreach ( headers_list() as $sent ) {
+			if ( 0 === stripos( $sent, 'vary:' ) ) {
+				$existing = trim( substr( $sent, 5 ) );
+			}
+		}
+		$merged = self::merge_vary( $existing );
+		if ( '' !== $merged ) {
+			header( 'Vary: ' . $merged );
+		}
+	}
+
+	/**
+	 * The merge itself, pure so its branches are testable without a live request.
+	 *
+	 * Returns '' when the existing header already covers the user agent — `*` or an explicit
+	 * `User-Agent` in any casing — so the caller sends nothing and leaves the origin's value alone.
+	 *
+	 * @param string $existing Current Vary header value, '' when unset.
+	 * @return string The value to send, or '' to send nothing.
+	 */
+	public static function merge_vary( $existing ) {
+		$existing = trim( (string) $existing );
+		if ( '' === $existing ) {
+			return 'User-Agent';
+		}
+		foreach ( explode( ',', $existing ) as $field ) {
+			$field = strtolower( trim( $field ) );
+			if ( '*' === $field || 'user-agent' === $field ) {
+				return '';
+			}
+		}
+		return $existing . ', User-Agent';
 	}
 
 	/**
