@@ -77,8 +77,39 @@ export function parseCrawlerPrice(value: string | null | undefined): bigint | nu
   // silently truncate someone's stated limit.
   if (frac.length > 6) return null;
 
-  const micro = BigInt(whole) * MICRO_PER_USD + BigInt(frac.padEnd(6, "0") || "0");
+  // padEnd always yields six digits, so there is no empty-string case to guard.
+  const micro = BigInt(whole) * MICRO_PER_USD + BigInt(frac.padEnd(6, "0"));
   return micro;
+}
+
+/**
+ * The ceiling a crawler stated, from whichever header it used — or null if it stated
+ * none. Null means "said nothing", never "will pay nothing".
+ *
+ * Cloudflare documents the two as mutually exclusive: `crawler-max-price` is proactive
+ * ("I'll pay up to this"), `crawler-exact-price` is reactive ("I accept the price you
+ * quoted"). If a crawler sends both anyway, the proactive ceiling wins — it is the
+ * crawler's own stated limit, so honouring it can never overstate what it agreed to.
+ */
+export function declaredCrawlerBudget(headers: {
+  maxPrice?: string | null;
+  exactPrice?: string | null;
+}): bigint | null {
+  return parseCrawlerPrice(headers.maxPrice) ?? parseCrawlerPrice(headers.exactPrice);
+}
+
+/**
+ * Whether the crawler's stated budget covers the asking price. Null when it stated
+ * none, so a caller can tell "did not say" apart from "said too little".
+ *
+ * This is REPORTING, never gating: the toll answer is a 402 either way, because naulon
+ * settles over x402/USDC and cannot auto-charge the way a Cloudflare-proxied origin
+ * does. It exists so a run of `over` is visible as a pricing signal instead of looking
+ * like ordinary silence.
+ */
+export function crawlerBudgetVerdict(declared: bigint | null, askMicro: bigint): "within" | "over" | null {
+  if (declared === null) return null;
+  return declared >= askMicro ? "within" : "over";
 }
 
 /**

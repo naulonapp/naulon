@@ -108,7 +108,11 @@ import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER } from "./x402.ts";
 // charges anyone or changes who is charged.
 import {
   CRAWLER_CHARGED_HEADER,
+  CRAWLER_EXACT_PRICE_HEADER,
+  CRAWLER_MAX_PRICE_HEADER,
   CRAWLER_PRICE_HEADER,
+  crawlerBudgetVerdict,
+  declaredCrawlerBudget,
   formatCrawlerPrice,
   totalChargedMicro,
 } from "@naulon/enforce";
@@ -555,17 +559,33 @@ export function createApp(
 
       // Machine, no payment: 402 with the requirement in the PAYMENT-REQUIRED
       // header. Link points an agent at the toll manifest (discoverability).
-      case "payment-required":
+      case "payment-required": {
         emitObs(d.obs, "denied", { kind: d.tollKind, price: usdc(d.quote.price) });
+        const askMicro = totalChargedMicro(d.legs);
+        // A Cloudflare-trained crawler states its ceiling on the request. Reading it
+        // does NOT change the answer — a 402 either way, because naulon settles over
+        // x402/USDC and cannot auto-charge the way a Cloudflare-proxied origin does.
+        // It changes what is VISIBLE: whether the buyer that arrived would have paid.
+        // Without this the interop cannot be measured at all, only assumed.
+        const budget = crawlerBudgetVerdict(
+          declaredCrawlerBudget({
+            maxPrice: c.req.header(CRAWLER_MAX_PRICE_HEADER),
+            exactPrice: c.req.header(CRAWLER_EXACT_PRICE_HEADER),
+          }),
+          askMicro,
+        );
         return stampGateCacheHeaders(
           c.body(null, 402, {
             [PAYMENT_REQUIRED_HEADER]: d.header,
-            [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(totalChargedMicro(d.legs)),
+            [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
             Link: PAYMENT_LINK_HEADER,
-            "X-Naulon-Verdict": headerSafe(`agent (${d.obs.classifyReason})`),
+            "X-Naulon-Verdict": headerSafe(
+              `agent (${d.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,
+            ),
           }),
           { noStore: true },
         );
+      }
 
       // Machine WITH a payment: verify + settle (custody-free), then serve.
       case "payment-presented": {

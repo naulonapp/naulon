@@ -12,6 +12,8 @@ import {
   CRAWLER_EXACT_PRICE_HEADER,
   CRAWLER_MAX_PRICE_HEADER,
   CRAWLER_PRICE_HEADER,
+  crawlerBudgetVerdict,
+  declaredCrawlerBudget,
   formatCrawlerPrice,
   parseCrawlerPrice,
   totalChargedMicro,
@@ -92,4 +94,34 @@ test("crawler-charged sums every leg, not the quote price", () => {
 test("a single-author toll charges exactly the quote", () => {
   assert.equal(totalChargedMicro([{ requirements: { amount: "1000" } }]), 1000n);
   assert.equal(totalChargedMicro([]), 0n);
+});
+
+test("the declared budget reads either header, proactive first", () => {
+  assert.equal(declaredCrawlerBudget({ maxPrice: "USD 0.05" }), 50_000n);
+  assert.equal(declaredCrawlerBudget({ exactPrice: "USD 0.02" }), 20_000n);
+  // Cloudflare documents them as mutually exclusive; if both arrive the crawler's own
+  // stated ceiling wins, so we can never overstate what it agreed to.
+  assert.equal(
+    declaredCrawlerBudget({ maxPrice: "USD 0.05", exactPrice: "USD 9.99" }),
+    50_000n,
+    "the proactive ceiling must win over a reactive figure",
+  );
+  // An unusable proactive value falls through to the reactive one rather than
+  // swallowing the crawler's intent entirely.
+  assert.equal(declaredCrawlerBudget({ maxPrice: "EUR 5.00", exactPrice: "USD 0.02" }), 20_000n);
+});
+
+test("a crawler that stated nothing is null, not zero", () => {
+  assert.equal(declaredCrawlerBudget({}), null);
+  assert.equal(declaredCrawlerBudget({ maxPrice: null, exactPrice: undefined }), null);
+  // The distinction matters: zero would read as "will pay nothing", which is a claim
+  // the crawler never made.
+  assert.equal(crawlerBudgetVerdict(null, 1000n), null);
+});
+
+test("budget verdict compares the ceiling against the real ask", () => {
+  assert.equal(crawlerBudgetVerdict(50_000n, 1000n), "within");
+  assert.equal(crawlerBudgetVerdict(1000n, 1000n), "within", "exactly the ask is within it");
+  assert.equal(crawlerBudgetVerdict(999n, 1000n), "over");
+  assert.equal(crawlerBudgetVerdict(0n, 1000n), "over");
 });

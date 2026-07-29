@@ -30,6 +30,8 @@ export {
   CRAWLER_EXACT_PRICE_HEADER,
   CRAWLER_MAX_PRICE_HEADER,
   CRAWLER_PRICE_HEADER,
+  crawlerBudgetVerdict,
+  declaredCrawlerBudget,
   formatCrawlerPrice,
   parseCrawlerPrice,
   totalChargedMicro,

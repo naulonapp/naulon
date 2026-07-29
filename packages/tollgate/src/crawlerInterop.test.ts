@@ -17,7 +17,7 @@ process.env.PAYMENT_MODE = "mock";
 process.env.RATE_LIMIT_RPM = "0";
 
 const { app } = await import("./app.ts");
-const { parseCrawlerPrice } = await import("@naulon/enforce");
+const { parseCrawlerPrice, formatCrawlerPrice } = await import("@naulon/enforce");
 
 const realFetch = globalThis.fetch;
 before(() => {
@@ -68,6 +68,49 @@ test("crawler-charged never appears on a 402 — nothing was charged", async () 
   const res = await app.request("/essays/on-stillness", { headers: AGENT });
   assert.equal(res.status, 402);
   assert.equal(res.headers.get("crawler-charged"), null);
+});
+
+test("a crawler's stated budget is read, and never changes the answer", async () => {
+  const ask = await app.request("/essays/on-stillness", { headers: AGENT });
+  const askMicro = parseCrawlerPrice(ask.headers.get("crawler-price"))!;
+
+  // Comfortably above the ask, and one micro-USDC below it.
+  const rich = await app.request("/essays/on-stillness", {
+    headers: { ...AGENT, "crawler-max-price": "USD 10.00" },
+  });
+  const poor = await app.request("/essays/on-stillness", {
+    headers: { ...AGENT, "crawler-max-price": formatCrawlerPrice(askMicro - 1n) },
+  });
+
+  // The toll answer is identical either way — reading the budget REPORTS, never gates.
+  assert.equal(rich.status, 402);
+  assert.equal(poor.status, 402);
+  assert.equal(rich.headers.get("crawler-price"), poor.headers.get("crawler-price"));
+
+  assert.match(rich.headers.get("x-naulon-verdict") ?? "", /within crawler budget/);
+  assert.match(poor.headers.get("x-naulon-verdict") ?? "", /over crawler budget/);
+});
+
+test("a budget exactly equal to the ask is within it", async () => {
+  const ask = await app.request("/essays/on-stillness", { headers: AGENT });
+  const exact = ask.headers.get("crawler-price")!;
+
+  const res = await app.request("/essays/on-stillness", {
+    headers: { ...AGENT, "crawler-exact-price": exact },
+  });
+  assert.match(res.headers.get("x-naulon-verdict") ?? "", /within crawler budget/);
+});
+
+test("a crawler that states no budget gets no budget claim", async () => {
+  const res = await app.request("/essays/on-stillness", { headers: AGENT });
+  const verdict = res.headers.get("x-naulon-verdict") ?? "";
+  // Silence must not be reported as either willingness or refusal.
+  assert.doesNotMatch(verdict, /crawler budget/);
+  // An unparseable value is the same as silence, not a refusal.
+  const junk = await app.request("/essays/on-stillness", {
+    headers: { ...AGENT, "crawler-max-price": "free please" },
+  });
+  assert.doesNotMatch(junk.headers.get("x-naulon-verdict") ?? "", /crawler budget/);
 });
 
 test("a human's free read carries no crawler-* headers at all", async () => {
