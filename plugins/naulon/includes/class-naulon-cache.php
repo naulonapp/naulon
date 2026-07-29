@@ -350,7 +350,7 @@ class Naulon_Cache {
 				'tested'  => true,
 				'status'  => $status,
 				'verdict' => 'under_tolling',
-				'message' => __( 'A crawler asking for this article was served the article, free. Either enforcement is off, or something is answering before WordPress runs — the response headers below name the layer.', 'naulon' ),
+				'message' => self::why_free( $post, $url ),
 				'headers' => $headers,
 				'url'     => $url,
 			);
@@ -374,6 +374,48 @@ class Naulon_Cache {
 	 * Only a check that reached the site is recorded. A loopback failure says nothing about the
 	 * toll, and storing it as a verdict would turn "we could not look" into "it is broken".
 	 *
+	 * Why was a crawler served this article free?
+	 *
+	 * The old copy guessed at two causes — "enforcement is off, or something is answering before
+	 * WordPress runs" — and on a real site both were wrong. The site was connected, verified and
+	 * enforcing, nothing cached the page, and the toll was silent because the CONTROL PLANE had no
+	 * usable credits endpoint for it: /quote answered 204 (the deliberate "this one is free"
+	 * signal), so the enforcer correctly served it. A diagnostic that names the wrong layer sends
+	 * the publisher to check caching for an hour, which is exactly what happened on 2026-07-29.
+	 *
+	 * So: ask the control plane directly, and report what it actually said. This is a fresh /quote,
+	 * not the cached verdict the request path uses — an explicit test must show ground truth.
+	 *
+	 * @param WP_Post $post The article that was probed.
+	 * @param string  $url  Its permalink.
+	 * @return string
+	 */
+	private static function why_free( $post, $url ) {
+		if ( ! Naulon_Enforcer::instance()->is_active() ) {
+			return __( 'A crawler was served this article free because the toll is switched off, or this site is not connected and verified yet. Finish the steps above and test again.', 'naulon' );
+		}
+
+		$slug  = Naulon_Credits::instance()->canonical_slug_for( $post );
+		$quote = Naulon_Client::instance()->quote( $url, $slug, 'read', false );
+
+		if ( $quote['ok'] && 204 === (int) $quote['status'] ) {
+			return __( 'A crawler was served this article free because your naulon account says it is free. That is what a missing or wrong credits endpoint looks like from here: the control plane asks your site who wrote the article and where the money goes, gets nothing back, and treats it as a free read. Open your site in the naulon dashboard, check the credits endpoint under Tollable content, and test again. If the endpoint is right, this article may simply have no author wallet — which is a deliberate free read.', 'naulon' );
+		}
+
+		if ( ! $quote['ok'] || $quote['status'] >= 400 ) {
+			return sprintf(
+				/* translators: %d: HTTP status the control plane answered with. */
+				__( 'A crawler was served this article free because the control plane could not price it (HTTP %d). The toll always fails open — a pricing outage never blocks a reader. Check the API key above, then test again.', 'naulon' ),
+				(int) $quote['status']
+			);
+		}
+
+		// The control plane DID price it, yet the article came back 200 — now the old two suspects
+		// are the right ones, because everything upstream of WordPress is the only thing left.
+		return __( 'A crawler was served this article free even though your naulon account priced it. Something is answering before the toll runs — a page cache, a CDN rule, or a security plugin. The response headers below name the layer.', 'naulon' );
+	}
+
+	/**
 	 * @param string $verdict enforcing|under_tolling|unexpected.
 	 * @return void
 	 */
