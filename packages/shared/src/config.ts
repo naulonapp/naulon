@@ -50,8 +50,10 @@ const DEFAULT_OBSERVATIONS_PATH = join(REPO_ROOT, "data/observations.jsonl");
 const DEFAULT_PAYOUTS_PATH = join(REPO_ROOT, "data/payouts.jsonl");
 const DEFAULT_LICENSE_STORE = join(REPO_ROOT, "data/wayfarer-licenses.json");
 const DEFAULT_CREDITS_FIXTURES = join(REPO_ROOT, "examples/meridian/credits.json");
+const DEFAULT_CRAWLER_POLICY = join(REPO_ROOT, "data/crawler-policy.json");
 const DEFAULT_SETTLEMENT_OUTBOX = join(REPO_ROOT, "data/settlement-outbox.jsonl");
 const DEFAULT_SETTLEMENT_DELIVERY_STATE = join(REPO_ROOT, "data/settlement-delivery.jsonl");
+const DEFAULT_WEBHOOK_DELIVERIES = join(REPO_ROOT, "data/webhook-deliveries.jsonl");
 
 // Exported so config validation (e.g. the licensing superRefine) is unit-testable
 // without mutating process.env / the getConfig() singleton.
@@ -166,6 +168,14 @@ export const configSchema = z.object({
   CREDITS_API_URL: z.string().url().optional(),
   CREDITS_API_TOKEN: z.string().optional(),
   CREDITS_FIXTURES: z.string().default(DEFAULT_CREDITS_FIXTURES),
+  // Per-crawler policy for the single-tenant gate: a JSON file holding
+  // `{ allow, block, charge }` UA fragments (see `CrawlerPolicy`). The gate has
+  // always ENFORCED this — `decide()` refuses a blocked fragment before it even
+  // classifies — but nothing in the open core ever authored one, so a self-hoster's
+  // only route to a blocklist was writing their own PublisherResolver. This is that
+  // route. Absent or unreadable ⇒ no policy, i.e. classifier defaults, which is the
+  // behaviour every existing deploy already has.
+  CRAWLER_POLICY_PATH: z.string().default(DEFAULT_CRAWLER_POLICY),
   // Shared HMAC secret for the naulon → publisher settlement emit (POST
   // ${ORIGIN_URL}/api/credits/settlement). Must match the publisher's value. When
   // unset the emit is dark — the gate still tolls and serves; it just doesn't
@@ -193,6 +203,10 @@ export const configSchema = z.object({
   // How often the webhook sweep sends due deliveries (ms). 0 = disabled (serverless drives it via a
   // cron hitting the sweep instead). Mirrors SETTLEMENT_DRAIN_INTERVAL_MS.
   WEBHOOK_SWEEP_INTERVAL_MS: z.coerce.number().int().nonnegative().default(30_000),
+  // Where webhook deliveries live. A JSONL journal rather than process memory for two reasons: a
+  // gate restart used to drop every unsent delivery, and the dashboard is a SEPARATE process that
+  // can only see gate state through a file (same seam as EVENTS_PATH / OBSERVATIONS_PATH).
+  WEBHOOK_DELIVERIES_PATH: z.string().default(DEFAULT_WEBHOOK_DELIVERIES),
 
   // ── Settlement DELIVERY STATE (the cross-sweep retry plane) ──
   // Where per-event delivery state (acked / attempts / next attempt / dead-letter)
@@ -304,6 +318,15 @@ export const configSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  // Extra Host header values the dashboard will answer to in PRIVATE (loopback)
+  // mode, comma-separated. Loopback names are always allowed; this is for the
+  // "Caddy on :443 → 127.0.0.1:8403" shape, where the browser sends your real
+  // domain. Anything else is refused, which is what defeats DNS rebinding: a
+  // malicious page cannot read a loopback dashboard that has no auth by pointing
+  // its own hostname at 127.0.0.1. Ignored in authed mode (Basic already stops
+  // rebinding — the browser holds no credential for the attacker's origin) and in
+  // public mode (nothing sensitive is served).
+  DASHBOARD_ALLOWED_HOSTS: z.string().default(""),
   // The gate's base URL, so the dashboard can report gate health (GET /healthz).
   // Defaults to the local gate (TOLLGATE_PORT); unreachable → health shows "down".
   GATE_URL: z.string().url().default("http://127.0.0.1:8402"),

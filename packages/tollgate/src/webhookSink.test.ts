@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { verifyPayload } from "@naulon/shared";
 import {
   emitSettlementWebhook,
@@ -9,6 +12,13 @@ import {
   setWebhookFetchForTest,
 } from "./webhookSink.ts";
 import { usdc, walletAddress, resetConfig, type AttributedEvent } from "@naulon/shared";
+
+/** Deliveries are a FILE now, so each test gets its own journal. Sharing the repo's real one would
+ *  make these order-dependent: enqueue dedups on (endpointId,eventId), so a second run would find
+ *  the first run's row and never enqueue. */
+function isolateJournal(): void {
+  process.env["WEBHOOK_DELIVERIES_PATH"] = join(mkdtempSync(join(tmpdir(), "naulon-sink-")), "deliveries.jsonl");
+}
 
 function fakeEvent(): AttributedEvent {
   return {
@@ -28,6 +38,7 @@ function fakeEvent(): AttributedEvent {
 test("dark by default: no env endpoints ⇒ emit is a no-op that never throws", async () => {
   setWebhookFetchForTest(undefined);
   resetWebhookSinkForTest();
+  isolateJournal();
   delete process.env["NAULON_WEBHOOK_ENDPOINTS"];
   resetConfig();
   await emitSettlementWebhook(fakeEvent(), "site.test"); // must not throw / must not open anything
@@ -48,6 +59,7 @@ test("configured endpoint receives a signed settlement.completed that verifyPayl
     { url: "https://hook.internal/naulon", secret: "whsec_test", events: ["settlement.completed"] },
   ]);
   process.env["WEBHOOK_SWEEP_INTERVAL_MS"] = "0"; // we drive the sweep by hand
+  isolateJournal();
   resetConfig();
 
   await emitSettlementWebhook(fakeEvent(), "site.test");
@@ -72,6 +84,39 @@ test("configured endpoint receives a signed settlement.completed that verifyPayl
   assert.equal(parsed.eventId, "11111111-1111-4111-8111-111111111111");
   assert.equal(parsed.data.amountMicro, 1000); // 0.001 USDC → 1000 µUSDC (integer)
   assert.equal(parsed.data.settlementRef, "0xdeadbeef");
+
+  setWebhookFetchForTest(undefined);
+  delete process.env["NAULON_WEBHOOK_ENDPOINTS"];
+  resetConfig();
+});
+
+test("an enqueued delivery survives a gate restart — the journal is the store, not process memory", async () => {
+  process.env["NAULON_WEBHOOK_ENDPOINTS"] = JSON.stringify([
+    { url: "https://hook.internal/naulon", secret: "whsec_test", events: ["settlement.completed"] },
+  ]);
+  process.env["WEBHOOK_SWEEP_INTERVAL_MS"] = "0";
+  isolateJournal();
+  resetConfig();
+
+  // Enqueue with the endpoint UNREACHABLE, so nothing is delivered before the "restart".
+  setWebhookFetchForTest(async () => {
+    throw new Error("connection refused");
+  });
+  resetWebhookSinkForTest();
+  await emitSettlementWebhook(fakeEvent(), "site.test");
+
+  // The restart: drop the singleton (and with it any in-memory store) but keep the journal path.
+  resetWebhookSinkForTest();
+
+  const received: string[] = [];
+  setWebhookFetchForTest(async (_url, init) => {
+    received.push(String(init?.body ?? ""));
+    return new Response("ok", { status: 200 });
+  });
+  await sweepOnceForTest();
+
+  assert.equal(received.length, 1, "the pending delivery was recovered after the restart, not lost");
+  assert.equal(JSON.parse(received[0]!).eventId, "11111111-1111-4111-8111-111111111111");
 
   setWebhookFetchForTest(undefined);
   delete process.env["NAULON_WEBHOOK_ENDPOINTS"];

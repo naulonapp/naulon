@@ -9,7 +9,7 @@
 import { getConfig, parseWebhookEndpointsEnv, type AttributedEvent } from "@naulon/shared";
 import {
   HttpWebhookSender,
-  MemoryWebhookDeliveryStore,
+  JsonlWebhookDeliveryStore,
   makeDispatchEvent,
   sweepWebhookDeliveries,
   type DispatchDeps,
@@ -30,7 +30,10 @@ function build(): Sink | null {
   if (specs.length === 0) return null; // dark
   const deps: DispatchDeps = {
     endpoints: new EnvConfigStore(specs),
-    deliveries: new MemoryWebhookDeliveryStore(),
+    // A JSONL journal, not process memory. Memory dropped every unsent delivery on restart — a
+    // settlement notification the operator is owed — and was invisible to the dashboard, which is a
+    // separate process and can only see gate state through a file.
+    deliveries: new JsonlWebhookDeliveryStore({ path: () => getConfig().WEBHOOK_DELIVERIES_PATH }),
     // Self-host endpoints come from the operator's own env (trusted) and may point at an internal
     // service, so private targets are allowed here — unlike cloud, where endpoints are tenant-supplied
     // and the SSRF guard must stay on. (https is still required — the sender rejects cleartext.)
@@ -50,6 +53,17 @@ function getSink(): Sink | null {
 function amountMicro(amount: AttributedEvent["amount"]): number {
   return Math.round(Number(amount) * 1_000_000);
 }
+
+/**
+ * Enqueues that have not finished writing. `settle.ts` fires the emit with `void` — deliberately,
+ * so a webhook never delays a settle — and the enqueue now touches the filesystem rather than a Map,
+ * which takes long enough that a sweep started immediately afterwards can beat it to the journal.
+ *
+ * In production that is a non-event: the sweep runs on a timer and the delivery is picked up on the
+ * next tick. It only matters where something settles and sweeps in the same breath, which is a test
+ * (and a serverless cron, where the next cron tick would cover it anyway).
+ */
+const inFlight = new Set<Promise<unknown>>();
 
 /**
  * Enqueue a `settlement.completed` webhook for the settled event. Never throws (settle already
@@ -76,15 +90,32 @@ export async function emitSettlementWebhook(event: AttributedEvent, host: string
       at: event.at,
     },
   };
-  await s.dispatch(wh).catch((err: unknown) => {
+  const enqueue = s.dispatch(wh).catch((err: unknown) => {
     console.error("[tollgate] webhook enqueue failed (settlement already on-chain):", err);
   });
+  inFlight.add(enqueue);
+  try {
+    await enqueue;
+  } finally {
+    inFlight.delete(enqueue);
+  }
 }
 
-/** Run one sweep now (boot recovery / test / serverless cron). No-op when dark. */
+/** Wait for every in-flight enqueue to reach the journal. See the `inFlight` note above. */
+export async function flushWebhookEnqueues(): Promise<void> {
+  while (inFlight.size > 0) await Promise.all([...inFlight]);
+}
+
+/**
+ * Run one sweep now (boot recovery / test / serverless cron). No-op when dark.
+ *
+ * Flushes pending enqueues first, so "settle, then sweep" sends the delivery that settle just
+ * produced rather than racing it.
+ */
 export async function sweepOnceForTest(): Promise<void> {
   const s = getSink();
   if (!s) return;
+  await flushWebhookEnqueues();
   await sweepWebhookDeliveries(s.deps);
 }
 

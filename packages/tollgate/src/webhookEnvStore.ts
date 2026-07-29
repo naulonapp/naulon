@@ -14,9 +14,13 @@ import type {
 
 const IMMUTABLE = "EnvConfigStore is read-only — webhook endpoints come from NAULON_WEBHOOK_ENDPOINTS";
 
+/** Rows are handed out by value: a caller mutating what it read must not reach into the store. */
+function clone(e: WebhookEndpoint): WebhookEndpoint {
+  return { ...e, eventTypes: [...e.eventTypes] };
+}
+
 export class EnvConfigStore implements WebhookEndpointStore {
   private readonly endpoints: WebhookEndpoint[];
-  private readonly failures = new Map<string, number>();
 
   constructor(specs: WebhookEndpointSpec[]) {
     this.endpoints = specs.map((s, i) => ({
@@ -39,15 +43,16 @@ export class EnvConfigStore implements WebhookEndpointStore {
   }
 
   listForOwner(_ownerUserId: string): Promise<WebhookEndpoint[]> {
-    return Promise.resolve([...this.endpoints]);
+    return Promise.resolve(this.endpoints.map(clone));
   }
 
   listDeliverable(_ownerUserId: string, type: WebhookEventType): Promise<WebhookEndpoint[]> {
-    return Promise.resolve(this.endpoints.filter((e) => e.enabled && e.eventTypes.includes(type)));
+    return Promise.resolve(this.endpoints.filter((e) => e.enabled && e.eventTypes.includes(type)).map(clone));
   }
 
   get(id: string): Promise<WebhookEndpoint | null> {
-    return Promise.resolve(this.endpoints.find((e) => e.id === id) ?? null);
+    const ep = this.endpoints.find((e) => e.id === id);
+    return Promise.resolve(ep ? clone(ep) : null);
   }
 
   create(_input: NewWebhookEndpoint): Promise<WebhookEndpoint> {
@@ -67,22 +72,36 @@ export class EnvConfigStore implements WebhookEndpointStore {
     return Promise.reject(new Error(IMMUTABLE));
   }
 
+  // The failure counters live ON the endpoint row, not in a side map. They used to live in a
+  // parallel `failures` Map that nothing ever read back into the row, so `consecutiveFailures`
+  // reported 0 forever: the accounting was write-only, and every consumer — the auto-disable
+  // threshold's own audit trail included — was told a healthy endpoint was healthy while it failed.
   bumpFailures(id: string): Promise<number> {
-    const n = (this.failures.get(id) ?? 0) + 1;
-    this.failures.set(id, n);
-    return Promise.resolve(n);
+    const ep = this.endpoints.find((e) => e.id === id);
+    if (!ep) return Promise.resolve(0);
+    ep.consecutiveFailures += 1;
+    return Promise.resolve(ep.consecutiveFailures);
   }
 
   resetFailures(id: string): Promise<void> {
-    this.failures.delete(id);
+    const ep = this.endpoints.find((e) => e.id === id);
+    if (ep) ep.consecutiveFailures = 0;
     return Promise.resolve();
   }
 
-  autoDisable(id: string, reason: string, _at: number): Promise<void> {
+  autoDisable(id: string, reason: string, at: number): Promise<void> {
     // Can't persist to an immutable env — flip the in-memory copy so this process stops hammering a
     // dead endpoint, and log it. A restart re-reads env and re-enables (self-host reloads config anyway).
+    //
+    // `disabledAt`/`disabledReason` are stamped too: they are what distinguishes an endpoint the
+    // gate gave up on from one an operator turned off. Leaving them null made those two states
+    // indistinguishable to every reader, so nothing could tell the operator WHY it stopped.
     const ep = this.endpoints.find((e) => e.id === id);
-    if (ep) ep.enabled = false;
+    if (ep) {
+      ep.enabled = false;
+      ep.disabledAt = at;
+      ep.disabledReason = reason;
+    }
     console.error(`[tollgate] webhook endpoint ${id} auto-disabled this process: ${reason}`);
     return Promise.resolve();
   }

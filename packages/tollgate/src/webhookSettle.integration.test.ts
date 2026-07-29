@@ -14,6 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.EVENTS_PATH = join(tmpdir(), `naulon-webhook-settle-${process.pid}.jsonl`);
+// Deliveries are a durable journal now, so this needs the same per-run isolation the ledger has:
+// against the shared default, a sweep picks up a PREVIOUS run's still-pending delivery and sends
+// that one first, and the assertions below read the wrong event.
+process.env.WEBHOOK_DELIVERIES_PATH = join(tmpdir(), `naulon-webhook-deliveries-${process.pid}.jsonl`);
 process.env.PAYMENT_MODE = "mock";
 process.env.LICENSES_ENABLED = "true";
 process.env.RATE_LIMIT_RPM = "0";

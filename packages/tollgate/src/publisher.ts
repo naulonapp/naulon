@@ -13,6 +13,7 @@
  */
 import {
   getConfig,
+  readCrawlerPolicyFile,
   usdc,
   type Config,
   type CreditsResolver,
@@ -48,9 +49,15 @@ export function envPublisherResolver(cfg: Config = getConfig()): PublisherResolv
   const credits = buildCreditsResolver(cfg);
   const articlePrefixes = parsePrefixes(cfg.ARTICLE_PATH_PREFIXES);
   const price = usdc(cfg.DEFAULT_PRICE_USDC);
+  // Read once at construction, exactly as credits are: the gate loads its policy at boot
+  // and a later edit takes a restart. That is the contract credits.json already has, and
+  // the dashboard's restart-pending banner already exists to say so. Absent file ⇒
+  // undefined ⇒ classifier defaults — the behaviour every deploy had before this existed.
+  const crawlerPolicy = readCrawlerPolicyFile(cfg.CRAWLER_POLICY_PATH);
 
   return {
     async resolve(host: string): Promise<PublisherConfig> {
+      const { policy } = await crawlerPolicy;
       return {
         id: "default",
         originUrl: cfg.ORIGIN_URL,
@@ -61,6 +68,7 @@ export function envPublisherResolver(cfg: Config = getConfig()): PublisherResolv
         licenseIdentity: cfg.LICENSE_ISSUER ?? `naulon:${host}`,
         settlementSecret: cfg.CREDITS_SETTLEMENT_SECRET,
         coauthorSplit: cfg.COAUTHOR_ONCHAIN_SPLIT,
+        ...(policy ? { crawlerPolicy: policy } : {}),
       };
     },
   };

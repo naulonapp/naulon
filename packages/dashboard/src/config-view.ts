@@ -15,6 +15,25 @@ export interface ArticleConfig {
   wallets: string[];
 }
 
+/**
+ * Warnings carry a code, not just prose, because the Doctor has a dedicated check for
+ * most of these conditions and has to know which ones it already reports itself.
+ * Matching on the message text is what let the empty-fixture case render twice — once
+ * as a `fail` and once as a `warn`, counted twice on a screen whose whole value is an
+ * honest count. The code is the contract; the message stays free to be rewritten.
+ */
+export type ConfigWarningCode =
+  | "observations-off"
+  | "credits-api-dynamic"
+  | "credits-entry-invalid"
+  | "credits-empty"
+  | "credits-unreadable";
+
+export interface ConfigWarning {
+  code: ConfigWarningCode;
+  message: string;
+}
+
 export interface ConfigSummary {
   originUrl: string;
   priceUsdc: number;
@@ -27,8 +46,10 @@ export interface ConfigSummary {
   wallets: string[];
   observations: "off" | "jsonl" | "supabase";
   events: "jsonl" | "supabase";
+  /** Where the jsonl events log lives (EVENTS_PATH). Meaningless under the supabase backend. */
+  eventsPath: string;
   /** Operator-facing warnings — misconfig that would make the proxy quietly under-perform. */
-  warnings: string[];
+  warnings: ConfigWarning[];
 }
 
 const titleOf = (entry: unknown): string | undefined =>
@@ -38,10 +59,14 @@ const titleOf = (entry: unknown): string | undefined =>
 
 export async function summarizeConfig(): Promise<ConfigSummary> {
   const c = getConfig();
-  const warnings: string[] = [];
+  const warnings: ConfigWarning[] = [];
+  const warn = (code: ConfigWarningCode, message: string): void => {
+    warnings.push({ code, message });
+  };
 
   if (c.OBSERVATIONS_BACKEND === "off") {
-    warnings.push(
+    warn(
+      "observations-off",
       "OBSERVATIONS_BACKEND is off — the traffic panel stays empty. Set it to jsonl to record who was served, denied, and paid.",
     );
   }
@@ -52,7 +77,7 @@ export async function summarizeConfig(): Promise<ConfigSummary> {
 
   if (apiMode) {
     // A live /credits endpoint is per-slug — there's no list to enumerate.
-    warnings.push("Credits come from a live API — the article list is dynamic and not shown here.");
+    warn("credits-api-dynamic", "Credits come from a live API — the article list is dynamic and not shown here.");
   } else {
     try {
       const raw = JSON.parse(await readFile(c.CREDITS_FIXTURES, "utf8")) as Record<string, unknown>;
@@ -65,13 +90,13 @@ export async function summarizeConfig(): Promise<ConfigSummary> {
           w.forEach((x) => walletSet.add(x));
           articles.push({ slug, title: titleOf(entry), wallets: w });
         } catch (e) {
-          warnings.push(`credits entry "${slug}" is invalid: ${(e as Error).message.split("\n")[0]}`);
+          warn("credits-entry-invalid", `credits entry "${slug}" is invalid: ${(e as Error).message.split("\n")[0]}`);
         }
       }
       wallets = [...walletSet];
-      if (articles.length === 0) warnings.push("The credits fixture has no articles — nothing is tollable.");
+      if (articles.length === 0) warn("credits-empty", "The credits fixture has no articles — nothing is tollable.");
     } catch (e) {
-      warnings.push(`Could not read the credits fixture ${c.CREDITS_FIXTURES}: ${(e as Error).message}`);
+      warn("credits-unreadable", `Could not read the credits fixture ${c.CREDITS_FIXTURES}: ${(e as Error).message}`);
     }
   }
 
@@ -87,6 +112,7 @@ export async function summarizeConfig(): Promise<ConfigSummary> {
     wallets,
     observations: c.OBSERVATIONS_BACKEND,
     events: c.EVENTS_BACKEND,
+    eventsPath: c.EVENTS_PATH,
     warnings,
   };
 }

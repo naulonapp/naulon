@@ -14,16 +14,21 @@ npm run -w @naulon/dashboard dev      # → http://127.0.0.1:8403
 By default it binds `127.0.0.1`, so only the box owner sees it. That's the private
 ops console. Point a browser at it and you get five things.
 
+The sidebar carries the pages — **Overview**, **Ledger** under Money, and
+**Content** under Config — and at its foot, the live gate state.
+
 ## What each panel tells you
 
-**Health** (top right). A ping to the gate's `/healthz`. Green "gate up" means the
-proxy is answering. "gate down" means the console can reach itself but not the gate
-— check the gate process and `GATE_URL`.
+**Gate state** (sidebar, bottom). A ping to the gate's `/healthz`. "gate up" means
+the proxy is answering. "gate down" means the console can reach itself but not the
+gate — check the gate process and `GATE_URL`.
 
-**The tiles.** Traffic over the last 24h, straight from the gate's observation log:
+**The stat strip.** Traffic over the last 24h, straight from the gate's observation
+log:
 
 - **served free** — humans and allow-listed crawlers, passed through untolled.
 - **denied** — agents that got a 402 and walked away. This is scraping you stopped.
+- **blocked** — refused outright, without a price being offered.
 - **paid** — agents that settled and were served.
 - **payment failed** — an agent presented payment that failed verify/settle. A few
   is normal (a bad signer); a spike is worth investigating.
@@ -43,6 +48,41 @@ off here, your gate isn't doing what you think.
 
 **Warnings.** Misconfig that quietly under-performs — the commonest being the
 observation log switched off, which leaves the traffic panel blank.
+
+## "Is it actually tolling?" — Doctor and Test toll
+
+Two things answer the questions everyone has on day one.
+
+**Test toll** (a button on Overview and on Doctor) asks *your* gate for one of *your*
+tollable articles while pretending to be a crawler, and shows you exactly what came
+back:
+
+```
+402 Payment Required, with a signed quote. The toll works.
+GET http://127.0.0.1:8402/essays/on-stillness → 402 · agent (user-agent matched "gptbot") · 3ms
+```
+
+Anything other than a 402 is diagnosed rather than dumped. A `200` means the gate
+served a crawler for free, and it names the three real causes in the order they
+actually occur: the path isn't under `ARTICLE_PATH_PREFIXES`, the slug isn't in your
+credits source, or a `crawlerPolicy` is allow-listing that user-agent. A redirect
+means an edge is answering before the gate does. A `502` means the gate is up but
+your origin isn't.
+
+The probe leaves a real observation behind — it genuinely asked and was genuinely
+refused — so it shows up in Recent requests tagged **self-test**. That's deliberate:
+those rows are real denials and they do count toward "missed", and you should be able
+to tell which ones were you.
+
+**Doctor** (`/doctor`) is the preflight: every condition that decides whether this
+gate can earn, each with the fix attached, and passing checks shown too so you can
+see the thing is configured rather than merely quiet. It checks the gate, your
+origin, whether anything is tollable at all, both logs, the price, whether settlement
+is live or mocked, whether the gate is serving credits you've since edited, and
+whether the console itself is over-exposed.
+
+It reads config and GETs addresses that came from that config. It never writes,
+spends, or settles.
 
 ## Where articles, wallets, and prices come from
 
@@ -84,14 +124,14 @@ tab tells you so.
 
 ## Turning the traffic panel on
 
-The gate records nothing by default. To populate the tiles and the request feed:
+The gate records nothing by default. To populate the stat strip and the request feed:
 
 ```
 OBSERVATIONS_BACKEND=jsonl            # writes to data/observations.jsonl
 ```
 
 Observations are telemetry only — they never gate a request or move money. The
-console reads that file; the earnings tiles and the ledger read the event log
+console reads that file; the earnings figures and the ledger read the event log
 (`EVENTS_BACKEND`, on by default).
 
 ## Exposing it safely
@@ -110,6 +150,32 @@ Bind wider than loopback with neither auth nor public set and the dashboard
 real exposure, HTTP Basic is the floor; put it behind your own reverse proxy
 (Caddy, nginx) or an access gateway if you want more.
 
+### Why "it's on 127.0.0.1" isn't the whole story
+
+A loopback bind has no authentication — that's the point of the private mode, and
+it's fine against the network. It is *not* fine against your own browser. A page you
+visit can register a hostname, re-point it at `127.0.0.1`, and fetch the dashboard;
+the browser treats that as same-origin, so nothing is blocked and the attacker's
+script reads the response. That's DNS rebinding, and it's how "private" consoles
+leak.
+
+So the private console answers only to loopback hostnames. If you front a
+loopback-bound dashboard with a reverse proxy, name it:
+
+```
+DASHBOARD_ALLOWED_HOSTS=ops.example.com,dash.internal
+```
+
+Anything else gets a `403` naming the Host it refused. Authed mode skips the check —
+Basic already defeats rebinding, since your browser holds no credential for the
+attacker's origin — and so does public mode, which serves nothing worth stealing.
+
 The public page (`DASHBOARD_PUBLIC=true`, or `/ledger` from the ops console) is the
 shareable "authors are earning" view — the same live ledger with addresses
-truncated and nothing operational on it.
+truncated and nothing operational on it. It carries no console navigation, so it
+doesn't advertise routes it won't serve.
+
+Every byte the console loads comes off your own box. Its fonts ship in
+`packages/dashboard/src/public/fonts` (SIL OFL), so it runs under a strict
+`default-src 'self'` CSP and never calls a CDN — an air-gapped box serves it
+exactly as a connected one does.

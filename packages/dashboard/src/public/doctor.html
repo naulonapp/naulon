@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>naulon — doctor</title>
+<meta name="description" content="Preflight for a self-hosted naulon gate: every check that decides whether it can earn, with the fix attached." />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="shell-wrap">
+    <aside class="shell" id="shell"></aside>
+    <main class="main">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Doctor</p>
+          <h1 class="page-title headline" id="headline">Checking…</h1>
+          <p class="page-sub">Everything that decides whether this gate can earn, checked against what it actually loaded — not what the config says it should have.</p>
+        </div>
+        <div class="head-actions">
+          <button id="rerunBtn" class="btn">Re-run</button>
+          <button id="tollBtn" class="btn btn-primary">Test toll</button>
+        </div>
+      </div>
+
+      <div id="tollOut" aria-live="polite"></div>
+
+      <section class="stat-strip" id="counts">
+        <div class="stat"><div class="stat-k">passing</div><div class="stat-v pos" id="nPass">—</div></div>
+        <div class="stat"><div class="stat-k">worth a look</div><div class="stat-v warn" id="nWarn">—</div></div>
+        <div class="stat"><div class="stat-k">blocking</div><div class="stat-v" id="nFail">—</div></div>
+      </section>
+
+      <div class="section-head"><span class="rule"></span><h2>Checks</h2><span class="n" id="checkedAt"></span></div>
+      <div id="checks"></div>
+    </main>
+  </div>
+
+  <script type="module" src="/doctor.js"></script>
+</body>
+</html>

@@ -1,0 +1,679 @@
+/*
+ * naulon — self-host console.
+ *
+ * The published design system (https://naulon.app/brand) rendered for a zero-build,
+ * self-hostable artifact: the same tokens, the same three faces, the same primitives,
+ * with no framework and no off-origin request. The strict `default-src 'self'` CSP
+ * holds because every byte here is served from this origin.
+ *
+ * The one owned color is PUNCTUATION, not paint — the mark, the interactive primary,
+ * and the moment money lands. If a screen is mostly green, it is wrong.
+ */
+
+/* Faces. Variable latin subsets, committed under fonts/ (SIL OFL — see fonts/OFL.txt).
+   Fraunces is DISPLAY ONLY, >=28px. Hanken is the workhorse. JetBrains sets every
+   figure. */
+@font-face {
+  font-family: "Fraunces";
+  src: url("/fonts/fraunces-latin.woff2") format("woff2-variations");
+  font-weight: 300 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Hanken Grotesk";
+  src: url("/fonts/hanken-grotesk-latin.woff2") format("woff2-variations");
+  font-weight: 300 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2-variations");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Four elevation steps, so the UI reads with depth rather than one flat charcoal:
+     sidebar #050609 < background #07080b < card #11141c < surface-2 #1a1f29
+
+     All four are the hosted portal's, byte-for-byte — `--surface-2` is its `--secondary`.
+     It used to be #1a2030: bluer and a step lighter than the portal's #1a1f29, so any
+     surface painted with it read as a different product's grey. That is the same defect
+     `--muted` carried (a surface here, text there) and it hid for the same reason — it is
+     invisible until something paints a large area with it. */
+  --sidebar: #050609;
+  /* The sidebar's own two extra tokens, same values the hosted portal publishes —
+     the console had neither, so its nav had to invent its own active treatment. */
+  --sidebar-accent: #0e1218;
+  --sidebar-muted: #7c8593;
+  --bg: #07080b;
+  --card: #11141c;
+  --surface-2: #1a1f29;
+
+  --fg: #e9edf3;
+  /* `--muted-fg`, never `--muted`. Every value in this block is the published palette
+     (naulon.app/brand) verbatim, and in that set `--muted` is a SURFACE fill while
+     #8d96a3 is `--muted-foreground` — text. Keeping the short name here would have left
+     exactly one token meaning opposite things in the two codebases that share the
+     palette, which is worse than a longer name. */
+  --muted-fg: #8d96a3;
+  --faint: #6b7482;
+  --line: #242b39;
+  --line-strong: #2e3647;
+  --input: #313a4b;
+
+  --primary: #2bf5a0;
+  --primary-ink: #04130c;
+  --primary-soft: color-mix(in oklab, var(--primary) 14%, transparent);
+  --down: #ff476f;
+  --warning: #ffb020;
+  --info: #38bdf8;
+
+  --shadow-panel:
+    inset 0 1px 0 0 color-mix(in oklab, var(--fg) 7%, transparent),
+    0 1px 2px -1px rgb(0 0 0 / 0.6),
+    0 14px 32px -16px rgb(0 0 0 / 0.65);
+
+  --font-sans: "Hanken Grotesk", system-ui, -apple-system, sans-serif;
+  --font-serif: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius: 0.5rem;
+  --rail: 256px;   /* measured off the hosted portal's sidebar */
+  --motion: 180ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── shell ───────────────────────────────────────────────────────────────── */
+/* `min-width: 0` on both tracks: a grid item refuses to shrink below its content's
+   intrinsic width by default, so a wide row (the mobile rail, a long config path)
+   blows the track out and the whole PAGE scrolls sideways instead of the element. */
+.shell-wrap { display: grid; grid-template-columns: var(--rail) 1fr; min-height: 100vh; }
+.shell-wrap > * { min-width: 0; }
+
+.shell {
+  display: flex; flex-direction: column; gap: 26px;
+  padding: 22px 14px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 8px; text-decoration: none; color: inherit; }
+.brand-tile {
+  display: grid; place-items: center; flex: none;
+  width: 32px; height: 32px; border-radius: 7px;
+  background: var(--primary); color: var(--primary-ink);
+}
+.brand-tile svg { width: 58%; height: 58%; }
+.brand-word { display: flex; flex-direction: column; line-height: 1.15; }
+.brand-word b { font-family: var(--font-mono); font-weight: 500; font-size: 15px; letter-spacing: -0.01em; }
+.brand-role {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--muted-fg); margin-top: 2px;
+}
+
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-group {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--faint);
+  padding: 16px 8px 6px;
+}
+/* Measured off the hosted portal's sidebar rather than styled by eye: 36px tall,
+   8px/12px/8px/16px padding, 7px radius, 12px gap, 14px text — inactive at
+   --sidebar-muted weight 400, active filled with --sidebar-accent at weight 500.
+   The console used to differ on every one of those AND carry no icon at all, which
+   was the single loudest "these are two different products" signal. */
+.nav-link {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px 8px 16px; border-radius: 7px; min-height: 36px;
+  /* 20px, not the body's 1.5 — 14 × 1.5 = 21 rounds the row to 37px and the rail sits
+     one pixel off the portal's for every item. */
+  font-size: 14px; line-height: 20px; font-weight: 400;
+  color: var(--sidebar-muted); text-decoration: none;
+  transition: color var(--motion) var(--ease), background var(--motion) var(--ease);
+}
+.nav-ico { width: 16px; height: 16px; flex: none; }
+.nav-link:hover { color: var(--fg); background: color-mix(in oklab, var(--sidebar-accent) 60%, transparent); }
+.nav-link.on { color: var(--fg); font-weight: 500; background: var(--sidebar-accent); }
+
+.rail { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--line); }
+.gate-state {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted-fg);
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--primary); }
+.dot.off { background: var(--faint); }
+.dot.bad { background: var(--down); }
+.rail-link { display: block; margin-top: 10px; font-size: 12px; color: var(--muted-fg); text-decoration: none; }
+.rail-link:hover { color: var(--primary); }
+
+/* ── page head ───────────────────────────────────────────────────────────── */
+.main { padding: 34px 40px 64px; max-width: 1180px; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 26px; }
+/* 10px / 0.2em — the portal's measured eyebrow, not a nearby-looking 10.5 / 0.22. */
+.eyebrow {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--muted-fg);
+}
+/* Fraunces earns display size only — this is the smallest place it may appear. */
+.page-title { font-family: var(--font-serif); font-size: 48px; font-weight: 500; line-height: 1.05; letter-spacing: -0.025em; margin-top: 8px; }
+.page-sub { margin-top: 10px; max-width: 62ch; color: var(--muted-fg); }
+.head-actions { display: flex; align-items: center; gap: 10px; flex: none; }
+
+/* Section heads are SANS — a 20px serif reads fussy and breaks the display-only rule. */
+.section-head { display: flex; align-items: center; gap: 10px; margin: 34px 0 12px; }
+.section-head h2 { font-family: var(--font-sans); font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+/* The portal's section heads carry no ornament. The green dash here was invented,
+   and an invented flourish is exactly what makes two products read as unrelated.
+   Kept in the markup as a zero-width no-op so every page need not be re-cut. */
+.section-head .rule { display: none; }
+.section-head .n { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted-fg); }
+
+.cols { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; align-items: start; }
+
+/* ── surfaces ────────────────────────────────────────────────────────────── */
+.card {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); box-shadow: var(--shadow-panel);
+}
+.panel { overflow: hidden; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--card); box-shadow: var(--shadow-panel); }
+.panel-head { border-bottom: 1px solid var(--line); padding: 8px 14px; }
+.panel-foot { border-top: 1px solid var(--line); padding: 8px 14px; font-family: var(--font-mono); font-size: 11px; color: var(--muted-fg); }
+
+/* ONE container, hairline-divided cells — never N separate tiles with an orphan. */
+.stat-strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--card);
+}
+.stat { padding: 16px 18px; border-left: 1px solid var(--line); }
+.stat:first-child { border-left: 0; }
+.stat-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted-fg); }
+.stat-v { font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 26px; line-height: 1.15; margin-top: 8px; }
+.stat-v.pos { color: var(--primary); }
+.stat-v.warn { color: var(--warning); }
+.stat-v.bad { color: var(--down); }
+.stat-sub { font-size: 11.5px; color: var(--faint); margin-top: 5px; }
+
+.mono-figure { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-mono); }
+.dim { color: var(--faint); }
+.err { color: var(--down); }
+.ok { color: var(--primary); }
+.warn-txt { color: var(--warning); }
+
+.badge {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 2px; border: 1px solid var(--line-strong); color: var(--muted-fg); white-space: nowrap;
+}
+.badge.paid { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.served-free, .badge.agent-reread { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
+.badge.denied { color: var(--warning); border-color: color-mix(in oklab, var(--warning) 45%, transparent); }
+.badge.payment-failed, .badge.blocked { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
+.badge.citation { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
+.badge.read { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+
+.btn {
+  font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+  padding: 8px 14px; border-radius: 5px; cursor: pointer;
+  background: transparent; color: var(--fg); border: 1px solid var(--line-strong);
+  transition: background var(--motion) var(--ease), border-color var(--motion) var(--ease), opacity var(--motion);
+}
+.btn:hover { background: var(--surface-2); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.sm { padding: 5px 11px; font-size: 12px; }
+.btn.ghost { background: transparent; }
+.btn-primary { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); font-weight: 600; }
+.btn-primary:hover { background: color-mix(in oklab, var(--primary) 88%, white); }
+.btn:focus-visible, .nav-link:focus-visible, a:focus-visible, .seg-btn:focus-visible, .in:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--primary) 60%, transparent); outline-offset: 2px;
+}
+
+/* window selector */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.seg-btn {
+  font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.06em;
+  background: transparent; color: var(--muted-fg); border: 0; padding: 6px 12px; cursor: pointer;
+  border-left: 1px solid var(--line);
+  transition: color var(--motion) var(--ease), background var(--motion) var(--ease);
+}
+.seg-btn:first-child { border-left: 0; }
+.seg-btn:hover { color: var(--fg); }
+.seg-btn.on { color: var(--primary); background: var(--primary-soft); }
+
+/* The portal's empty-state shape: a dashed, tinted box with an icon tile. This used to be bare
+   centred text on the page background, which read as a gap in the layout rather than a deliberate
+   "there is nothing here yet" — the one state every fresh install spends its first hour in. */
+.empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 32px 16px; text-align: center; color: var(--faint);
+  border: 1px dashed color-mix(in oklab, var(--line-strong) 60%, transparent);
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--surface-2) 20%, transparent);
+}
+.empty .lead { font-size: 14px; font-weight: 500; color: var(--fg); }
+.empty-ico {
+  display: grid; place-items: center; width: 36px; height: 36px;
+  border: 1px solid color-mix(in oklab, var(--line-strong) 50%, transparent);
+  border-radius: 4px; background: var(--card); color: var(--muted-fg);
+}
+.empty-ico svg { width: 16px; height: 16px; }
+.empty code, .banner code { font-family: var(--font-mono); font-size: 12.5px; color: var(--primary); background: var(--surface-2); padding: 2px 7px; border-radius: 3px; }
+
+.banner {
+  border: 1px solid var(--line-strong); border-left: 2px solid var(--warning);
+  border-radius: 4px; background: var(--card); padding: 12px 16px; font-size: 13.5px; margin-bottom: 22px;
+}
+.banner b { font-weight: 600; }
+.banner.pending { border-left-color: var(--warning); }
+.banner.pending b { color: var(--warning); }
+.banner.synced { border-left-color: var(--primary); }
+.banner.synced b { color: var(--primary); }
+.confirm { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* ── page: ledger hero ───────────────────────────────────────────────────── */
+.hero-card { padding: 34px 32px; }
+.total {
+  font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums;
+  font-size: clamp(40px, 6vw, 68px); line-height: 1; letter-spacing: -0.02em;
+  margin-top: 14px; color: var(--fg);
+}
+.total .cur { color: var(--primary); font-size: 0.5em; vertical-align: 0.42em; margin-right: 0.06em; }
+.total .frac { color: var(--muted-fg); }
+.hero-sub { margin-top: 16px; font-size: 14px; color: var(--muted-fg); }
+.hero-sub b { font-family: var(--font-mono); font-weight: 500; color: var(--fg); }
+
+/* ── page: ledger rows ───────────────────────────────────────────────────── */
+.row {
+  display: grid; grid-template-columns: 26px 1fr auto; gap: 16px; align-items: center;
+  padding: 16px 0; border-bottom: 1px solid var(--line);
+}
+.rise { animation: rise 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 60ms); }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.rank { font-family: var(--font-mono); font-size: 13px; color: var(--faint); text-align: right; }
+.who .name { font-family: var(--font-mono); font-size: 16px; font-weight: 500; }
+.who .addr { font-family: var(--font-mono); font-size: 11px; color: var(--faint); letter-spacing: 0.03em; margin-top: 4px; }
+.who .meta { font-size: 12.5px; color: var(--muted-fg); margin-top: 5px; }
+.earned { text-align: right; min-width: 150px; }
+.earned .amt {
+  font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums;
+  font-size: 19px; color: var(--primary);
+}
+.earned .amt .frac { color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.bar {
+  height: 2px; margin-top: 9px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--primary), #7dffc9);
+  transform-origin: right; transform: scaleX(0);
+  animation: grow 1s var(--ease) forwards;
+}
+@keyframes grow { to { transform: scaleX(1); } }
+
+/* ── page: crossings feed ────────────────────────────────────────────────── */
+.feed { display: flex; flex-direction: column; }
+.cross { padding: 15px 0; border-bottom: 1px solid var(--line); }
+.cross.fresh { animation: flash 2.2s ease forwards; }
+@keyframes flash {
+  0% { opacity: 0; transform: translateX(-10px); background: var(--primary-soft); }
+  18% { opacity: 1; transform: none; }
+  100% { background: transparent; }
+}
+.cross .when { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
+.cross .line { margin-top: 5px; font-size: 15px; }
+.cross .line .agent { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted-fg); }
+.cross .line .verb { color: var(--muted-fg); }
+.cross .line .amt { font-family: var(--font-mono); color: var(--primary); font-weight: 600; }
+/* Slugs are mono, not display serif — Fraunces is >=28px only. */
+.cross .line .slug { font-family: var(--font-mono); font-size: 13.5px; color: var(--fg); }
+.cross .split { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.cross .split span { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-fg); }
+.cross .split span b { color: var(--primary); font-weight: 500; }
+.cross .prov { margin-top: 7px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--faint); }
+.cross .prov b { color: var(--muted-fg); font-weight: 500; }
+
+/* ── page: request feed ──────────────────────────────────────────────────── */
+.req { padding: 12px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: baseline; }
+.req.fresh { animation: flash 2.2s ease forwards; }
+.req .rt { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
+.req .rmid .slug { font-family: var(--font-mono); color: var(--fg); font-size: 13.5px; }
+.req .rmid .who { font-family: var(--font-mono); font-size: 11px; color: var(--muted-fg); margin-top: 3px; }
+.req .rmid .who .badge { color: var(--primary); }
+.req .rmid .who .bad { color: var(--down); }
+.req .rprice { font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+
+/* ── page: config panel ──────────────────────────────────────────────────── */
+.kv {
+  display: grid; grid-template-columns: 120px 1fr; gap: 4px 16px;
+  padding: 11px 0; border-bottom: 1px solid var(--line);
+  font-size: 13px; align-items: baseline;
+}
+.kv .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted-fg); }
+.kv .v { font-family: var(--font-mono); color: var(--fg); word-break: break-all; }
+.article { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.article .slug { font-family: var(--font-mono); color: var(--fg); }
+.article .w { font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+.warn-row {
+  padding: 11px 14px; margin: 8px 0; border-radius: 3px; font-size: 12.5px;
+  border: 1px solid color-mix(in oklab, var(--warning) 40%, transparent);
+  background: color-mix(in oklab, var(--warning) 10%, transparent);
+  color: var(--fg);
+}
+.warn-none { padding: 16px 0; color: var(--faint); }
+
+/* liveness cue — "updated Ns ago", pulses on each good poll */
+.freshness { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--faint); }
+.freshness.beat { animation: freshbeat 600ms var(--ease); }
+@keyframes freshbeat {
+  0% { color: var(--primary); }
+  100% { color: var(--faint); }
+}
+
+/* ── page: doctor ────────────────────────────────────────────────────────── */
+/* The headline is a whole sentence and it changes with the verdict, so it runs long.
+   30px keeps it a display moment (Fraunces' floor is 28) without shouting a
+   two-line paragraph at 40. */
+.page-title.headline { font-size: 30px; max-width: 22ch; }
+.check {
+  display: grid; grid-template-columns: 22px 1fr auto; gap: 14px; align-items: start;
+  padding: 15px 0; border-bottom: 1px solid var(--line);
+}
+.check > * { min-width: 0; }
+.check-mark {
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.5; text-align: center;
+  color: var(--faint);
+}
+.check.pass .check-mark { color: var(--primary); }
+.check.warn .check-mark { color: var(--warning); }
+.check.fail .check-mark { color: var(--down); }
+.check-label { font-size: 14.5px; font-weight: 500; }
+.check-detail { margin-top: 3px; font-family: var(--font-mono); font-size: 12px; color: var(--muted-fg); overflow-wrap: anywhere; }
+.check-fix { margin-top: 7px; font-size: 13px; color: var(--fg); border-left: 2px solid var(--line-strong); padding-left: 11px; }
+.check.fail .check-fix { border-left-color: color-mix(in oklab, var(--down) 55%, transparent); }
+.check.warn .check-fix { border-left-color: color-mix(in oklab, var(--warning) 55%, transparent); }
+.badge.pass { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.warn { color: var(--warning); border-color: color-mix(in oklab, var(--warning) 45%, transparent); }
+.badge.fail { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
+.toll-fix { margin-top: 7px; font-size: 13px; color: var(--muted-fg); }
+.toll-meta { margin-top: 8px; font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; }
+
+/* ── page: content editor ────────────────────────────────────────────────── */
+.scan { padding: 4px 0 8px; }
+.scan-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.fld { display: flex; flex-direction: column; gap: 7px; flex: 1; min-width: 260px; }
+.fld > span { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted-fg); }
+.in {
+  font-family: var(--font-mono); font-size: 13px; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--input); border-radius: 4px; padding: 9px 11px; width: 100%;
+  transition: border-color var(--motion) var(--ease);
+}
+.in:focus { outline: none; border-color: var(--primary); }
+.in.bad { border-color: var(--down); }
+.scan-out { margin-top: 12px; font-family: var(--font-mono); font-size: 12px; color: var(--muted-fg); min-height: 1em; }
+.scan-out b { color: var(--fg); }
+
+.thead, .crow {
+  display: grid; grid-template-columns: 1.1fr 0.8fr 1.5fr 28px; gap: 14px; align-items: center;
+}
+/* Same grid-blowout guard as .shell-wrap: a long wallet value or an un-breakable
+   label would otherwise widen the track and scroll the whole page sideways. */
+.thead > *, .crow > * { min-width: 0; overflow-wrap: anywhere; }
+.thead {
+  padding: 10px 0; margin-top: 4px; border-bottom: 1px solid var(--line-strong);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted-fg);
+}
+.crow { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.crow .slug { font-family: var(--font-mono); color: var(--fg); font-size: 13.5px; }
+.crow .in { padding: 7px 10px; font-size: 12.5px; }
+.crow .in.wallet { font-size: 11.5px; }
+.split-badge {
+  font-family: var(--font-mono); font-size: 11px; color: var(--info);
+  border: 1px solid color-mix(in oklab, var(--info) 35%, transparent); border-radius: 2px; padding: 2px 8px; justify-self: start;
+}
+.x { background: none; border: none; color: var(--faint); cursor: pointer; font-size: 14px; padding: 4px; transition: color var(--motion); }
+.x:hover { color: var(--down); }
+
+.actions { display: flex; gap: 12px; margin-top: 20px; }
+.save-out { margin-top: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--muted-fg); }
+.save-out .mono { color: var(--faint); }
+.save-out.flash { animation: flash 2.4s ease forwards; padding: 8px 10px; border-radius: 3px; }
+.err-row { color: var(--down); margin-top: 5px; }
+
+/* ── responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .cols { grid-template-columns: 1fr; gap: 32px; }
+}
+@media (max-width: 900px) {
+  .shell-wrap { grid-template-columns: 1fr; }
+  .shell { flex-direction: row; align-items: center; gap: 16px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  .shell .nav { flex-direction: row; }
+  .nav-group { display: none; }
+  .rail { margin: 0 0 0 auto; border-top: 0; padding-top: 0; display: flex; align-items: center; gap: 14px; }
+  .rail-link { margin-top: 0; white-space: nowrap; }
+  .main { padding: 24px 18px 48px; }
+  .page-head { flex-direction: column; gap: 16px; }
+  .earned { min-width: 0; }
+  .thead, .crow { grid-template-columns: 1fr 1.4fr 24px; }
+  .thead span:nth-child(2), .crow > .in[data-k="author"] { display: none; }
+}
+
+/* Respect the OS motion preference — everything that moves, stops. */
+@media (prefers-reduced-motion: reduce) {
+  .rise, .bar, .cross.fresh, .req.fresh, .crow.rise, .save-out.flash, .freshness.beat { animation: none !important; }
+  .bar { transform: scaleX(1); }
+}
+
+/* The teaching empty state — readable prose width, left-aligned inside a centered block. */
+.empty p { max-width: 46ch; margin: 0 auto; font-size: 12.5px; line-height: 1.65; color: var(--muted-fg); }
+.empty-foot { margin-top: 6px; font-size: 12px; color: var(--faint); }
+/* A row the operator's own Test toll produced — real traffic, but not a real crawler. */
+.badge.selftest { margin-left: 8px; color: var(--muted-fg); border-color: var(--line-strong); }
+
+/* ── traffic: requests + agents ─────────────────────────────────────────────
+   Green stays punctuation: it marks money that landed and a verified identity,
+   nothing else. Refusals are warning-amber, faults are down-red, and the rest of
+   the surface carries no colour at all. */
+
+.filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 18px 0 4px; }
+.filters .in { flex: 1; min-width: 220px; }
+
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 8px; }
+.two-col > * { min-width: 0; }
+
+/* A rollup row. NOT `.rank` — that is the ledger's right-aligned position number. */
+.roll {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 14px;
+  padding: 11px 14px; border-bottom: 1px solid var(--line); align-items: baseline;
+}
+.roll:last-child { border-bottom: 0; }
+/* Every child states BOTH its column and its row. `.roll-money` used to declare only
+   `grid-row: 1 / span 2`, so auto-placement put it in column 1 — the wide one — and
+   pushed the name into the 78px column on the right. The row read money-then-name, and
+   any slug longer than "live-proof" would have truncated. */
+.roll-name { grid-column: 1; grid-row: 1; font-size: 13px; color: var(--fg); overflow-wrap: anywhere; }
+.roll-meta { grid-column: 1; grid-row: 2; font-size: 11.5px; color: var(--faint); display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.roll-money { grid-column: 2; grid-row: 1 / span 2; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+.roll-money .pos { color: var(--primary); display: block; }
+.roll-money .dim { font-size: 11px; display: block; margin-top: 3px; }
+.panel-empty { padding: 22px 14px; color: var(--faint); font-size: 13px; }
+
+/* Missed earnings, split by cause — two figures that must never share a cell. */
+.cause-row { display: grid; grid-template-columns: 1fr 1fr; }
+.cause { padding: 16px 18px; border-left: 1px solid var(--line); }
+.cause:first-child { border-left: 0; }
+.cause .mono-figure { font-size: 24px; font-weight: 600; margin-top: 8px; line-height: 1.15; }
+.cause .mono-figure.bad { color: var(--down); }
+
+.req .rmid .reason { font-size: 10.5px; color: var(--faint); margin-top: 3px; overflow-wrap: anywhere; }
+
+/* Identity, on both traffic pages. `unsigned` is deliberately uncoloured: it is the
+   normal state of most crawler traffic, not a fault to be flagged. */
+.badge.verified { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.unsigned { color: var(--muted-fg); border-color: var(--line-strong); }
+.badge.masquerade { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
+
+.agent-row {
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.95fr) auto;
+  gap: 16px; padding: 15px 0; border-bottom: 1px solid var(--line); align-items: start;
+}
+.agent-row > * { min-width: 0; }
+.agent-id .roll-name { font-size: 13.5px; }
+.agent-id .roll-meta { margin-top: 5px; }
+/* SIX fixed columns, never `auto-fit`. Auto-fit orphaned the last cell onto a second
+   line — the same defect the old console's `.tile.wide` had — and, because two of the
+   six used to be conditional, the columns did not line up from one row to the next.
+   Every row now renders all six; a zero is information here ("0 blocked" is a fact). */
+.agent-nums { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0 10px; }
+.agent-nums .kv { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; }
+.agent-nums .kv .k { letter-spacing: 0.1em; font-size: 9.5px; white-space: nowrap; }
+.agent-nums .kv .v { font-size: 13px; }
+.agent-nums .kv .v.bad { color: var(--down); }
+.agent-nums .kv .v.zero { color: var(--faint); }
+.agent-money { text-align: right; }
+.agent-money .mono-figure { font-size: 17px; font-weight: 600; }
+.agent-money .mono-figure.pos { color: var(--primary); }
+
+/* ── crawlers ──────────────────────────────────────────────────────────────── */
+.crawl-cat {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--muted-fg); margin: 22px 0 8px;
+}
+.crawl-cat:first-child { margin-top: 8px; }
+.crawl {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 18px;
+  padding: 12px 0; border-bottom: 1px solid var(--line); align-items: center;
+}
+.crawl > * { min-width: 0; }
+.crawl-name { font-size: 14px; }
+.crawl-meta { font-size: 11.5px; color: var(--faint); margin-top: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.crawl-default { font-family: var(--font-mono); font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+.crawl-seg { flex: none; }
+.crawl-seg .seg-btn { padding: 5px 11px; font-size: 11.5px; }
+/* The caution spans the row: it is an argument, not a field label. */
+.crawl-caution {
+  grid-column: 1 / -1; margin-top: 2px; font-size: 12px; color: var(--warning);
+  border-left: 2px solid color-mix(in oklab, var(--warning) 55%, transparent); padding-left: 10px;
+}
+/* Inset, because it sits inside a .panel. A class, not a style attribute — the CSP is
+   `style-src 'self'` with no unsafe-inline, so an inline style is simply not applied. */
+.scan-inset { padding: 12px 14px; }
+#custom .kv { grid-template-columns: 1fr auto auto; align-items: center; }
+.badge.allow { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
+.badge.charge { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.block { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
+
+/* ── webhooks ──────────────────────────────────────────────────────────────── */
+/* Identity left, everything actionable right — the portal's own `justify-between` row shape.
+   This was three tracks (identity | numbers | action), and because the url chip never filled a
+   1.6fr identity track it opened a ~240px void mid-row, then a second gap before the button. Two
+   holes in a row that carries four short numbers. One flexible track and one hugging cluster
+   leaves a single, intentional gap. */
+.wh-ep {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px 24px; padding: 15px 0; border-bottom: 1px solid var(--line); align-items: center;
+}
+.wh-ep > * { min-width: 0; }
+.wh-ep-right { display: flex; align-items: center; gap: 24px; }
+.wh-ep-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* The url is the one field with no length bound — it wraps rather than widening the row.
+   A bordered chip, not bare text: the portal renders the same value as
+   `border-border/50 bg-secondary/40` mono, and a naked url next to a badge read as a
+   loose fragment instead of a field. */
+.wh-url {
+  font-size: 12.5px; color: var(--muted-fg); overflow-wrap: anywhere;
+  border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px;
+  background: color-mix(in oklab, var(--surface-2) 40%, transparent);
+}
+.wh-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.wh-chip {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-fg);
+  border: 1px solid var(--line-strong); border-radius: 3px; padding: 2px 6px;
+}
+.wh-ep-meta {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px;
+  font-size: 11.5px; color: var(--faint);
+}
+/* FOUR fixed columns, never auto-fit — the .agent-nums lesson: auto-fit orphaned the last cell onto
+   a second line and let columns disagree from one row to the next. A zero is information here. */
+.wh-ep-nums { display: grid; grid-template-columns: repeat(4, minmax(52px, auto)); gap: 0 14px; }
+.wh-ep-nums .kv { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; }
+.wh-ep-nums .kv .k { letter-spacing: 0.1em; font-size: 9.5px; white-space: nowrap; }
+.wh-ep-nums .kv .v { font-size: 13px; }
+.wh-ep-nums .kv .v.bad { color: var(--down); }
+.wh-ep-nums .kv .v.zero { color: var(--faint); }
+.wh-ep-act { text-align: right; }
+
+/* The env recipe in the empty state: a block of config to copy, so it keeps its own line breaks. */
+.wh-recipe {
+  margin: 10px 0; padding: 11px 13px; font-size: 11.5px; line-height: 1.6;
+  color: var(--fg); background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* The delivery log scrolls WITHIN its container rather than widening the page — the same fix the
+   portal's own delivery table carries, and what keeps the document free of horizontal overflow. */
+/* Carries the card surface, like every other container in this console (.card/.panel) — and like
+   the portal, whose delivery table lives inside the settings card. Without it the table floated on
+   the page background, and the /30 head tint composited over #07080b instead of #11141c, landing
+   several steps darker than the portal's identical rule. */
+.wh-scroll {
+  overflow-x: auto; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--card); box-shadow: var(--shadow-panel);
+}
+.wh-table { width: 100%; border-collapse: collapse; font-size: 12.5px; text-align: left; }
+/* A TINT, not a slab. The portal's delivery-table head is `bg-secondary/30` — 30% over the
+   card, a whisper of separation. Painting the token solid put a heavy blue band across a UI
+   that is otherwise built from hairlines, which is what made this table read as imported from
+   somewhere else. Same reasoning for the payload row's /20 below. */
+/* Type is `.thead`'s, the console's existing column-header idiom (used on /content): mono caps,
+   10px, 0.18em. This had invented 9.5px/0.14em — close enough to look like a mistake rather than
+   a decision, and one page's table disagreeing with another's is the same drift the duplicated
+   helpers caused. 10px is also the portal's own th size. */
+.wh-table th {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--muted-fg); font-weight: 400; padding: 10px 12px;
+  background: color-mix(in oklab, var(--surface-2) 30%, transparent);
+  border-bottom: 1px solid var(--line-strong); white-space: nowrap;
+}
+.wh-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.wh-table tbody tr:last-child td { border-bottom: 0; }
+.wh-table .dim { color: var(--faint); }
+.wh-row-act { text-align: right; white-space: nowrap; }
+.wh-link {
+  background: none; border: 0; padding: 0 0 0 14px; cursor: pointer;
+  font: inherit; font-size: 11.5px; color: var(--muted-fg);
+}
+.wh-link:hover { color: var(--fg); }
+.wh-link.accent { color: var(--primary); }
+.wh-link:disabled { opacity: 0.5; cursor: not-allowed; }
+.wh-payload-row td { background: color-mix(in oklab, var(--surface-2) 20%, transparent); }
+.wh-payload-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.wh-payload {
+  max-height: 260px; overflow: auto; margin: 0; padding: 10px 12px; font-size: 11px; line-height: 1.6;
+  color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 3px;
+}
+.wh-lasterr { margin-top: 8px; font-size: 11px; color: var(--down); overflow-wrap: anywhere; }
+
+@media (max-width: 1000px) {
+  .crawl { grid-template-columns: 1fr; align-items: start; }
+  .crawl-default { white-space: normal; }
+  .two-col, .cause-row { grid-template-columns: 1fr; }
+  .cause { border-left: 0; border-top: 1px solid var(--line); }
+  .cause:first-child { border-top: 0; }
+  .agent-row { grid-template-columns: 1fr; gap: 10px; }
+  .agent-money { text-align: left; }
+  .wh-ep { grid-template-columns: 1fr; gap: 12px; align-items: start; }
+  .wh-ep-right { flex-wrap: wrap; gap: 12px 24px; }
+  .wh-ep-act { text-align: left; }
+}

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>naulon — requests</title>
+<meta name="description" content="Every gated request this naulon gate decided on: served free, denied, blocked, paid or failed — with which path earned and which crawler took free." />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="shell-wrap">
+    <aside class="shell" id="shell"></aside>
+    <main class="main">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Traffic</p>
+          <h1 class="page-title">Requests</h1>
+          <p class="page-sub">Every decision the gate made, including the ones that earned nothing. The settlement ledger cannot see this half — it only knows about money that moved.</p>
+        </div>
+        <div class="head-actions">
+          <div class="seg" id="winSeg" role="group" aria-label="traffic window">
+            <button type="button" class="seg-btn" data-win="1h">1h</button>
+            <button type="button" class="seg-btn on" data-win="24h">24h</button>
+            <button type="button" class="seg-btn" data-win="7d">7d</button>
+          </div>
+          <button id="exportBtn" class="btn">Export CSV</button>
+        </div>
+      </div>
+
+      <div id="notice" aria-live="polite"></div>
+
+      <section class="stat-strip" id="verdicts"></section>
+
+      <div class="filters">
+        <input id="q" class="in" type="search" placeholder="Filter by path, host or agent" aria-label="Filter requests" />
+        <div class="seg" id="verdictSeg" role="group" aria-label="Filter by verdict"></div>
+      </div>
+
+      <div class="two-col">
+        <section class="panel">
+          <div class="panel-head"><span class="eyebrow">Top paths</span></div>
+          <div id="topPaths"></div>
+          <div class="panel-foot">by what they earned</div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><span class="eyebrow">Top agents</span></div>
+          <div id="topAgents"></div>
+          <div class="panel-foot">humans excluded — they read free</div>
+        </section>
+      </div>
+
+      <div class="section-head"><span class="rule"></span><h2>Missed earnings, by cause</h2></div>
+      <section class="panel">
+        <div id="missed"></div>
+        <div class="panel-foot">denied = they saw the price and walked · failed = they tried to pay and could not</div>
+      </section>
+
+      <div class="section-head"><span class="rule"></span><h2>The tail</h2><span class="n" id="tailCount"></span></div>
+      <div id="rows"></div>
+    </main>
+  </div>
+
+  <script type="module" src="/requests.js"></script>
+</body>
+</html>
