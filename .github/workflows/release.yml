@@ -174,11 +174,38 @@ jobs:
           (cd _wp && zip -qr ../_release/naulon.zip naulon)
           unzip -l _release/naulon.zip | tail -3
 
-      - name: GitHub Release (attach tarballs + the plugin zip)
+      # What makes the zip above reachable WITHOUT anyone downloading it by hand. The plugin is
+      # not on wordpress.org, so nothing publishes its version for it — this is that publisher,
+      # and `includes/class-naulon-updater.php` is the reader. It is derived entirely from the
+      # plugin's own headers and readme, so the version a site is OFFERED cannot drift from the
+      # version in the zip attached beside it, and it rides the same version-free redirector, so
+      # no URL anywhere is bumped per release.
+      #
+      # Both checks run in ci.yml on every push; here they are the last gate before the artifact
+      # is attached, because the failure they catch is invisible from the outside — the plugin
+      # rejects a manifest it distrusts, and a rejected manifest looks exactly like "you are up
+      # to date" on every install.
+      # Explicit rather than leaning on whatever PHP the runner image happens to ship: the
+      # contract check below is a release gate, and a gate that depends on an unpinned toolchain
+      # is a gate that can vanish in an image update without anyone touching this file.
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: none
+
+      - name: Pack the WordPress update manifest
+        run: |
+          set -euo pipefail
+          node scripts/wp-update-manifest.mjs --check
+          node scripts/wp-update-manifest.mjs --out=_release/naulon-update.json
+          php plugins/naulon/tests/manifest-contract.php _release/naulon-update.json
+
+      - name: GitHub Release (attach tarballs + the plugin zip + the update manifest)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
             _release/*.tgz
             _release/naulon.zip
+            _release/naulon-update.json
           generate_release_notes: true

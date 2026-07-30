@@ -2,8 +2,9 @@
 /**
  * Plugin Name:       naulon — citation toll
  * Plugin URI:        https://naulon.app
+ * Update URI:        https://naulon.app/wp/naulon
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
- * Version:           0.2.3
+ * Version:           0.3.0
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
@@ -26,9 +27,18 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NAULON_VERSION', '0.2.3' );
+define( 'NAULON_VERSION', '0.3.0' );
 define( 'NAULON_PLUGIN_FILE', __FILE__ );
 define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
+
+/**
+ * The same string as the `Update URI` header above, which core reads to decide WHICH filter
+ * carries this plugin's update check (`update_plugins_{hostname}`). The header is what core
+ * parses and the constant is what registers the filter, so the two must agree exactly or the
+ * check is routed to a hook nothing is listening on — a silent no-update. UpdaterTest asserts
+ * they cannot drift apart, the same way VersionTest guards the version.
+ */
+define( 'NAULON_UPDATE_URI', 'https://naulon.app/wp/naulon' );
 
 /**
  * Plain requires, not an autoloader: wordpress.org review prefers boring, greppable includes,
@@ -50,6 +60,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-enforcer.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cache.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cron.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-profile.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-updater.php';
 
 /**
  * Wire the plugin. Everything is hook-registration only — no work happens at load time, so a
@@ -61,6 +72,12 @@ function naulon_bootstrap() {
 	Naulon_Enforcer::instance()->register();
 	Naulon_Cron::instance()->register();
 	Naulon_Profile::instance()->register();
+
+	// Not inside the `is_admin()` block below: WordPress runs the update check from WP-Cron,
+	// which on most sites is spawned by a front-end request where `is_admin()` is false. An
+	// updater registered admin-only would only ever answer a check an administrator triggered
+	// by hand, which is most of the manual work this is here to remove.
+	Naulon_Updater::instance()->register();
 
 	// The admin surface is loaded only in the admin. Two thirds of this plugin's code renders
 	// screens, and none of it has any business being parsed on a reader's request.

@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.2.3
+Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -41,7 +41,7 @@ The whole protocol is open source. The connectivity field takes either a hosted 
 
 == Installation ==
 
-1. Install and activate the plugin.
+1. Install and activate the plugin. Later versions arrive on the Plugins screen like any other update — you only download a zip this once.
 2. Open **naulon → Setup** and paste your key.
 3. Click **Verify this site**. The plugin proves you own the domain by serving a challenge file and a meta tag — no DNS changes needed.
 4. Paste the credits address shown on that screen into your naulon account, so the service knows where to read your author data.
@@ -84,6 +84,21 @@ about human traffic. Human requests never contact the service at all.
 If you point the connectivity field at your own self-hosted gate instead of a key, the plugin
 talks only to that server and never to naulon.app.
 
+**Service:** GitHub (https://github.com), for updates only.
+
+This plugin is not listed on wordpress.org, so WordPress cannot ask wordpress.org whether a new
+version exists. Instead it reads a small file describing the current release, published beside the
+download on GitHub. This is the only outbound request the plugin makes before you enter a key.
+
+* When WordPress checks for plugin updates (twice a day, and when you click "Check again"), the
+  plugin fetches https://github.com/naulonapp/naulon/releases/latest/download/naulon-update.json.
+  It is a public file. **Nothing is sent** — no key, no domain, no site information — beyond the
+  request itself, and the answer is cached for six hours.
+* When you choose to install an update, WordPress downloads the release zip from the same place.
+
+GitHub terms of service: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+GitHub privacy statement: https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement
+
 Terms of service: https://naulon.app/terms
 Privacy policy: https://naulon.app/privacy
 
@@ -117,6 +132,10 @@ No. Your content never leaves your server. The plugin talks to the control plane
 
 No. Human requests are never recorded — not their address, not their browser, not the fact that they arrived. The Diagnostics screen lists recent decisions, and every line on it is a machine.
 
+= How do I update the plugin? =
+
+The same way as any other: **Dashboard → Updates**, or the notice on the Plugins screen. Turning on "Enable auto-updates" there works too. Because the plugin is not listed on wordpress.org it checks a small public file on GitHub instead of the wordpress.org API — that is the only difference, and it needs nothing from you. Version 0.3.0 is the first release that can do this, so if you are on an earlier one, install that one by hand and it is the last time.
+
 = I use a caching plugin. Does that matter? =
 
 Yes, and the plugin is direct about it. A page cache answers before any plugin runs, so a cached article can be handed to a crawler for free. Install the cache guard from Diagnostics — it stops agent responses being cached at all — then add the listed user agents to your caching plugin's own exclusion list, and use the check on that screen to confirm a crawler is actually being charged.
@@ -130,6 +149,10 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 5. Diagnostics — the caching check, recent decisions, and connection health.
 
 == Changelog ==
+
+= 0.3.0 =
+* Updates now arrive in WordPress. The Plugins screen tells you when a new version is out, updates in one click, and can update itself — no downloading a zip and uploading it over the top.
+* The details link on that notice opens the real changelog, so you can read what changed before you take it.
 
 = 0.2.3 =
 * A shared cache could hand a crawler the copy it made for a human, so a read that should have been paid was served free. The cache guard now varies on what the toll actually decides on.
@@ -150,8 +173,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Upgrade Notice ==
 
+= 0.3.0 =
+The last update you have to install by hand. From here WordPress offers new versions on the Plugins screen and can install them for you.
+
 = 0.2.3 =
-Stops a shared cache serving a paid read for free, and the toll test now names an edge block instead of two wrong causes. If you are on 0.1.0, this is the first update WordPress has been able to offer you — the one release that carried the plugin shipped it labelled 0.1.0, so no update ever appeared.
+Stops a shared cache serving a paid read for free, and the toll test now names an edge block instead of two wrong causes.
 
 = 0.2.0 =
 Stops a domain being charged twice when the fleet already tolls it, and notices when you withdraw a domain proof.
