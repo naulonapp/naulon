@@ -1,85 +1,71 @@
 /**
- * Per-client rate limiting — a DoS backstop for the gate.
+ * Per-client rate limiting for the gate — a DoS backstop.
  *
  * The tollgate does real work per request (classify, resolve credits, verify a
- * payment), so an unthrottled flood is a cheap way to exhaust it. A token bucket
- * per client smooths that: each client refills at RATE_LIMIT_RPM/min and may
- * burst up to RATE_LIMIT_BURST before getting a 429.
+ * payment), so an unthrottled flood is a cheap way to exhaust it. The bucket state
+ * machine and the client-identity rule both live in `@naulon/shared`
+ * (`rateLimitCore.ts` / `clientIdentity.ts`) because the operator console needs the
+ * same two, and a second copy of a limiter is a second set of off-by-ones. What is
+ * left here is the hono glue: pull the header, pull the socket peer, answer 429.
  *
- * Client identity is the socket peer IP by default. X-Forwarded-For is trusted
- * ONLY when TRUST_PROXY=true — otherwise any client spoofs the header and gets
- * its own private bucket, defeating the limit.
+ * In-memory + single-process. Behind multiple instances, either pin clients to an
+ * instance or move the buckets to a shared store.
  *
- * In-memory + single-process. Behind multiple instances, either pin clients to
- * an instance or move the buckets to a shared store.
+ * When the caller cannot be identified at all, this middleware FAILS OPEN rather
+ * than filing everyone under one placeholder key. Sharing a bucket would let a
+ * single client spend the whole allowance and have the limiter deny every other
+ * reader — the backstop becomes the outage. Failing open matches the gate's standing
+ * posture (see the fail-open error boundary in app.ts): a naulon-side gap must never
+ * turn a free human read into an error page. It warns once so the operator can fix
+ * the cause, which is virtually always TRUST_PROXY.
  */
 import type { Context, MiddlewareHandler } from "hono";
 import { getConnInfo } from "@hono/node-server/conninfo";
-import { getConfig } from "@naulon/shared";
+import {
+  createRateLimiter,
+  createUnidentifiedWarner,
+  getConfig,
+  resolveClientIdentity,
+} from "@naulon/shared";
 
 const cfg = getConfig();
 
-interface Bucket {
-  tokens: number;
-  last: number; // epoch ms of last refill
-}
+const limiter = createRateLimiter({
+  rpm: cfg.RATE_LIMIT_RPM,
+  burst: cfg.RATE_LIMIT_BURST,
+});
 
-const buckets = new Map<string, Bucket>();
-const refillPerMs = cfg.RATE_LIMIT_RPM / 60_000;
-const capacity = cfg.RATE_LIMIT_BURST;
+const warnOnce = createUnidentifiedWarner("rate limit");
 
-function clientKey(c: Context): string {
-  if (cfg.TRUST_PROXY) {
-    const xff = c.req.header("x-forwarded-for");
-    if (xff) return xff.split(",")[0]!.trim(); // leftmost = original client
-  }
-  // getConnInfo needs a node socket; it throws under a serverless adapter
-  // (Vercel) or app.request(). Degrade to a shared bucket rather than 500.
+/**
+ * The socket peer, or undefined. `getConnInfo` needs a node socket and throws under
+ * a serverless adapter or `app.request()` — absent is a real answer, not an error.
+ */
+function peerOf(c: Context): string | undefined {
   try {
-    return getConnInfo(c).remote.address ?? "unknown";
+    return getConnInfo(c).remote.address;
   } catch {
-    return "unknown";
+    return undefined;
   }
 }
-
-/** Take one token; returns remaining-seconds-to-wait if the bucket is empty. */
-function take(key: string, now: number): { allowed: boolean; retryAfter: number } {
-  let b = buckets.get(key);
-  if (!b) {
-    b = { tokens: capacity, last: now };
-    buckets.set(key, b);
-  }
-  b.tokens = Math.min(capacity, b.tokens + (now - b.last) * refillPerMs);
-  b.last = now;
-  if (b.tokens >= 1) {
-    b.tokens -= 1;
-    return { allowed: true, retryAfter: 0 };
-  }
-  return { allowed: false, retryAfter: Math.ceil((1 - b.tokens) / refillPerMs / 1000) };
-}
-
-// Periodic prune so idle clients don't accumulate. Bucket is stale once it would
-// have fully refilled.
-function sweep(now: number): void {
-  const fullRefillMs = capacity / refillPerMs;
-  for (const [k, b] of buckets) {
-    if (now - b.last > fullRefillMs) buckets.delete(k);
-  }
-}
-let lastSweep = 0;
 
 /** Hono middleware. No-op when RATE_LIMIT_RPM=0. */
 export function rateLimit(): MiddlewareHandler {
-  if (cfg.RATE_LIMIT_RPM === 0) {
+  if (!limiter.enabled) {
     return async (_c, next) => next();
   }
   return async (c, next) => {
-    const now = Date.now();
-    if (now - lastSweep > 60_000) {
-      sweep(now);
-      lastSweep = now;
+    const who = resolveClientIdentity({
+      xff: c.req.header("x-forwarded-for"),
+      peer: peerOf(c),
+      trustProxy: cfg.TRUST_PROXY,
+      hops: cfg.TRUST_PROXY_HOPS,
+    });
+    if (!who.ok) {
+      warnOnce(who.reason);
+      return next();
     }
-    const { allowed, retryAfter } = take(clientKey(c), now);
+    const { allowed, retryAfter } = limiter.take(who.key);
     if (!allowed) {
       return c.json({ error: "rate limit exceeded" }, 429, {
         "Retry-After": String(Math.max(1, retryAfter)),

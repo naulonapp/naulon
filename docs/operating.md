@@ -142,13 +142,26 @@ internet by accident, so exposure is deliberate:
 | You want | Set | Result |
 |---|---|---|
 | **Private** (default) | `DASHBOARD_BIND=127.0.0.1` | Full ops, box owner only. |
-| **Remote ops** | `DASHBOARD_BIND=0.0.0.0` + `DASHBOARD_AUTH=user:pass` | Full ops behind HTTP Basic. |
+| **Remote ops** | `DASHBOARD_AUTH=user:pass` (+ a wide bind, or a named host below) | Full ops behind HTTP Basic. |
 | **Public proof** | `DASHBOARD_PUBLIC=true` | Only the earnings page — wallets masked, every ops panel hidden. |
 
-Bind wider than loopback with neither auth nor public set and the dashboard
-**refuses to serve** — it won't leak wallets because you fat-fingered a bind. For
-real exposure, HTTP Basic is the floor; put it behind your own reverse proxy
-(Caddy, nginx) or an access gateway if you want more.
+Make the console reachable with neither auth nor public set and it **refuses to
+serve** — it won't leak wallets because you fat-fingered a bind. For real exposure,
+HTTP Basic is the floor; put it behind your own reverse proxy (Caddy, nginx) or an
+access gateway if you want more.
+
+"Reachable" means more than a wide bind, because `DASHBOARD_BIND` describes a socket
+and two real deployments have no socket to describe. A serverless host never calls
+`listen`, so the loopback default survives untouched while the console answers the
+open internet; a reverse proxy in front of a loopback bind is the same shape. Both
+announce themselves by needing a non-loopback name in `DASHBOARD_ALLOWED_HOSTS`
+(below) — so naming one is what counts as reachable, and doing it without a
+credential is refused.
+
+Failed sign-ins are metered per client (`DASHBOARD_AUTH_FAIL_RPM`, default 20/min,
+burst 10): Basic auth has no lockout of its own, so without that the password can be
+guessed at network speed. Only the rejections are charged, so using the console
+heavily — however hard you click — can never lock you out of it.
 
 ### Why "it's on 127.0.0.1" isn't the whole story
 
@@ -160,15 +173,23 @@ script reads the response. That's DNS rebinding, and it's how "private" consoles
 leak.
 
 So the private console answers only to loopback hostnames. If you front a
-loopback-bound dashboard with a reverse proxy, name it:
+loopback-bound dashboard with a reverse proxy, name it — and give it a credential in
+the same breath:
 
 ```
 DASHBOARD_ALLOWED_HOSTS=ops.example.com,dash.internal
+DASHBOARD_AUTH=user:pass
 ```
 
-Anything else gets a `403` naming the Host it refused. Authed mode skips the check —
-Basic already defeats rebinding, since your browser holds no credential for the
-attacker's origin — and so does public mode, which serves nothing worth stealing.
+Naming a non-loopback host is you telling naulon that something outside this box can
+address the console, so it stops treating the loopback bind as evidence of privacy
+and asks for a credential. Only naming loopback aliases (`localhost`, `::1`) keeps
+private mode as-is.
+
+Anything not on the list gets a `403` naming the Host it refused. Authed mode skips
+the check — Basic already defeats rebinding, since your browser holds no credential
+for the attacker's origin — and so does public mode, which serves nothing worth
+stealing.
 
 The public page (`DASHBOARD_PUBLIC=true`, or `/ledger` from the ops console) is the
 shareable "authors are earning" view — the same live ledger with addresses
