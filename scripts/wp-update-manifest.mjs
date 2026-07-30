@@ -38,8 +38,13 @@ const PACKAGE = `${RELEASES}/latest/download/naulon.zip`;
 /**
  * Listing art lives in `.wordpress-org/`, which `.distignore` deliberately keeps OUT of the
  * shipped zip (it belongs in the wordpress.org SVN `/assets`, never in the plugin). The update
- * row and the details modal still want it, so it is served raw from the default branch — pinned
- * to `main` rather than a tag so an image URL cannot 404 for a site running an older version.
+ * row still wants the icon, so it is served raw from the default branch — pinned to `main` rather
+ * than a tag so an image URL cannot 404 for a site running an older version.
+ *
+ * Only the ICON is published. The banner is not: core prints the plugin's name over the banner in
+ * the details modal, and our banner already carries the wordmark, so the name rendered twice and
+ * overlapped. Emitting a field nothing consumes would be worse than not emitting it — the plugin
+ * ignores unknown keys, so this stays out until the art has clear space for a title.
  */
 const ART = "https://raw.githubusercontent.com/naulonapp/naulon/main/plugins/naulon/.wordpress-org";
 
@@ -177,10 +182,6 @@ export function build() {
       "1x": `${ART}/icon-128x128.png`,
       "2x": `${ART}/icon-256x256.png`,
       svg: `${ART}/icon.svg`,
-    },
-    banners: {
-      low: `${ART}/banner-772x250.png`,
-      high: `${ART}/banner-1544x500.png`,
     },
     sections: {
       description: toHtml(section(readme, "Description")),
