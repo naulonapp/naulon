@@ -31,6 +31,7 @@ class Naulon_Admin_Diagnostics {
 		self::render_cache();
 		self::render_decisions();
 		self::render_connectivity();
+		self::render_data();
 		self::render_environment();
 
 		echo '</div>';
@@ -390,6 +391,88 @@ class Naulon_Admin_Diagnostics {
 	}
 
 	/* --------------------------------------------------------------------------------------- */
+	/* Your data if this plugin is deleted                                                      */
+	/* --------------------------------------------------------------------------------------- */
+
+	/**
+	 * The choice that used to be made for you, moved to where it can be made deliberately.
+	 *
+	 * WordPress runs a plugin's uninstall BEFORE it removes the files, so Delete is one click with
+	 * no undo and core's generic "files and data" as its only warning. This card states what would
+	 * be destroyed, in counts, and defaults to destroying none of it.
+	 *
+	 * @return void
+	 */
+	private static function render_data() {
+		$inventory = Naulon_Data::inventory();
+		$purge     = Naulon_Data::should_purge( Naulon_Settings::all() );
+
+		Naulon_Admin::card_open( __( 'Your data if this plugin is deleted', 'naulon' ) );
+
+		echo '<p class="naulon-state">';
+		if ( $purge ) {
+			Naulon_Admin::pill( 'bad', __( 'Deleting the plugin will erase this data', 'naulon' ) );
+		} else {
+			Naulon_Admin::pill( 'ok', __( 'Deleting the plugin keeps this data', 'naulon' ) );
+		}
+		echo '</p>';
+
+		echo '<table class="naulon-kv"><tbody>';
+		self::kv( __( 'Author wallet addresses', 'naulon' ), (string) number_format_i18n( $inventory['wallets'] ) );
+		self::kv(
+			__( 'Settlements recorded', 'naulon' ),
+			sprintf(
+				/* translators: 1: number of settlements, 2: total in USDC. */
+				__( '%1$s — %2$s USDC settled', 'naulon' ),
+				number_format_i18n( $inventory['settlements'] ),
+				$inventory['settled_total']
+			)
+		);
+		self::kv( __( 'Posts with a toll choice saved', 'naulon' ), (string) number_format_i18n( $inventory['tolled_posts'] ) );
+		echo '</tbody></table>';
+
+		echo '<p>' . esc_html__( 'WordPress removes a plugin\'s data before it removes its files, and it cannot be undone. By default this plugin keeps everything above when you delete it, so a mistaken Delete costs you nothing but a reinstall. Our own code goes either way: the cache guard and the hourly schedule are removed, because leaving them running for a plugin that is gone is a bug.', 'naulon' ) . '</p>';
+
+		if ( $purge ) {
+			echo '<p class="naulon-muted">' . esc_html__( 'You have asked for full removal. Export first — the wallet addresses were typed in by hand, and the settlement record is the only copy outside the chain.', 'naulon' ) . '</p>';
+		}
+
+		Naulon_Admin::actions_open();
+
+		Naulon_Admin::form_open( 'export_data', Naulon_Admin::PAGE_DIAGNOSTICS );
+		submit_button( __( 'Export wallets and earnings', 'naulon' ), 'secondary', 'submit', false );
+		Naulon_Admin::form_close();
+
+		Naulon_Admin::form_open( 'save_data_policy', Naulon_Admin::PAGE_DIAGNOSTICS );
+		printf(
+			'<label class="naulon-inline"><input type="checkbox" name="purge_on_uninstall" value="1" %s /> %s</label> ',
+			checked( $purge, true, false ),
+			esc_html__( 'Also erase my data when this plugin is deleted', 'naulon' )
+		);
+		submit_button( __( 'Save', 'naulon' ), 'secondary', 'submit', false );
+		Naulon_Admin::form_close();
+
+		Naulon_Admin::actions_close();
+
+		// The failure that motivated all of the above: a plugin directory the web server cannot
+		// write to cannot be updated OR deleted, and core reports it as a wall of unwritable
+		// filenames without ever mentioning ownership.
+		$unwritable = Naulon_Data::first_unwritable_dir();
+		if ( '' !== $unwritable ) {
+			echo '<p class="naulon-state">';
+			Naulon_Admin::pill( 'bad', __( 'WordPress cannot update or delete this plugin', 'naulon' ) );
+			echo '</p>';
+			echo '<p>' . sprintf(
+				/* translators: %s: absolute directory path. */
+				esc_html__( '%s is not writable by the web server, and removing or replacing a file needs write permission on the directory that holds it — not on the file. Until that is fixed, an update will report that files could not be copied and a delete will report that the plugin could not be fully removed. It usually means the plugin was installed by a different user (over SSH, or as root), so the fix is to give the directory back to the user PHP runs as.', 'naulon' ),
+				'<code>' . esc_html( $unwritable ) . '</code>'
+			) . '</p>';
+		}
+
+		Naulon_Admin::card_close();
+	}
+
+	/* --------------------------------------------------------------------------------------- */
 	/* Actions                                                                                  */
 	/* --------------------------------------------------------------------------------------- */
 
@@ -417,6 +500,54 @@ class Naulon_Admin_Diagnostics {
 				Naulon_Log::clear();
 				Naulon_Admin::notice( 'success', __( 'Cleared.', 'naulon' ) );
 				break;
+			case 'save_data_policy':
+				self::save_data_policy();
+				break;
+			case 'export_data':
+				self::export_data();
+				break;
 		}
+	}
+
+	/**
+	 * Store the delete-time data policy. Read as a checkbox, so absence means "keep" — the safe
+	 * direction, and the direction an unchecked box actually means.
+	 *
+	 * @return void
+	 */
+	private static function save_data_policy() {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Naulon_Admin::handle() ran check_admin_referer for this action before dispatching.
+		$purge = isset( $_POST['purge_on_uninstall'] ) && '1' === sanitize_text_field( wp_unslash( $_POST['purge_on_uninstall'] ) );
+
+		Naulon_Settings::update( array( Naulon_Data::PURGE_SETTING => $purge ) );
+
+		Naulon_Admin::notice(
+			$purge ? 'warning' : 'success',
+			$purge
+				? __( 'Saved. Deleting the plugin will now erase your wallets and earnings record — export a copy first.', 'naulon' )
+				: __( 'Saved. Deleting the plugin will keep your wallets and earnings record.', 'naulon' )
+		);
+	}
+
+	/**
+	 * Stream the export as a download and stop.
+	 *
+	 * Never written to disk: a file of payout addresses under `wp-content/uploads/` sits at a
+	 * guessable URL, which is a worse problem than the one the export solves. `exit` is required
+	 * because the dispatcher redirects back to the screen after every other action.
+	 *
+	 * @return void
+	 */
+	private static function export_data() {
+		$payload = Naulon_Data::export_payload();
+		$body    = wp_json_encode( $payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+		$name    = 'naulon-export-' . gmdate( 'Y-m-d' ) . '.json';
+
+		nocache_headers();
+		header( 'Content-Type: application/json; charset=utf-8' );
+		header( 'Content-Disposition: attachment; filename="' . $name . '"' );
+		header( 'Content-Length: ' . strlen( (string) $body ) );
+		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- a JSON download body, already encoded by wp_json_encode.
+		exit;
 	}
 }

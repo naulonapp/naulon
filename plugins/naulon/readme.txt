@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.3.0
+Stable tag: 0.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -132,6 +132,16 @@ No. Your content never leaves your server. The plugin talks to the control plane
 
 No. Human requests are never recorded — not their address, not their browser, not the fact that they arrived. The Diagnostics screen lists recent decisions, and every line on it is a machine.
 
+= What happens to my data if I delete the plugin? =
+
+It stays. Your authors' wallet addresses, your earnings record and your settings survive a delete, so reinstalling puts you back where you were. Only our own code goes: the cache guard drop-in and the hourly schedule, because leaving those running for a plugin that no longer exists is a bug.
+
+If you do want everything removed, **naulon → Diagnostics** has a box for it, next to a count of exactly what it would destroy and a button to export a copy first. That order is deliberate — WordPress removes a plugin's data before it removes the plugin's files, and it cannot be undone.
+
+= WordPress says it could not fully remove, or could not copy, the plugin's files =
+
+The plugin's folder is not writable by the user your web server runs as. Removing or replacing a file needs write permission on the folder holding it, not on the file, so one folder owned by someone else stops both updates and deletion. It usually means the plugin was installed by a different user — over SSH, or as root. **naulon → Diagnostics** names the exact folder; fix its ownership and both work again.
+
 = How do I update the plugin? =
 
 The same way as any other: **Dashboard → Updates**, or the notice on the Plugins screen. Turning on "Enable auto-updates" there works too. Because the plugin is not listed on wordpress.org it checks a small public file on GitHub instead of the wordpress.org API — that is the only difference, and it needs nothing from you. Version 0.3.0 is the first release that can do this, so if you are on an earlier one, install that one by hand and it is the last time.
@@ -149,6 +159,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 5. Diagnostics — the caching check, recent decisions, and connection health.
 
 == Changelog ==
+
+= 0.4.0 =
+* **Deleting the plugin no longer erases your data.** WordPress removes a plugin's data before it removes its files, so a delete that fails can still have wiped everything — and it did, on a real site. Your authors' wallet addresses and your earnings record now survive a delete, and full removal is a box you tick in advance, on a screen that shows what it would destroy.
+* Export your wallets and earnings to a file from **naulon → Diagnostics**, so nothing is one click from gone.
+* Diagnostics now tells you if the plugin's own folder is not writable by your web server — the reason an update reports that files could not be copied, or a delete reports that the plugin could not be fully removed. It names the folder and what to fix.
 
 = 0.3.0 =
 * Updates now arrive in WordPress. The Plugins screen tells you when a new version is out, updates in one click, and can update itself — no downloading a zip and uploading it over the top.
@@ -172,6 +187,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+
+= 0.4.0 =
+Deleting the plugin used to erase your authors' wallets and your earnings record, before it removed any files — so a delete that appeared to fail had already destroyed them. It now keeps your data unless you tick a box asking otherwise, and you can export it first.
 
 = 0.3.0 =
 The last update you have to install by hand. From here WordPress offers new versions on the Plugins screen and can install them for you.

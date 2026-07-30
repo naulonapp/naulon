@@ -243,6 +243,8 @@ class Naulon_Admin {
 			case 'remove_dropin':
 			case 'run_probe':
 			case 'clear_log':
+			case 'save_data_policy':
+			case 'export_data':
 				$this->require_cap( Naulon_Roles::MANAGE_SETTINGS );
 				Naulon_Admin_Diagnostics::handle( $action );
 				break;
