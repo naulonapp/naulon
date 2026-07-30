@@ -61,6 +61,7 @@ function peerOf(c: Context): string | undefined {
 export interface AuthThrottleOptions {
   rpm?: number;
   burst?: number;
+  maxBuckets?: number;
   trustProxy?: boolean;
   hops?: number;
   now?: () => number;
@@ -76,6 +77,7 @@ export function authThrottle(opts: AuthThrottleOptions = {}): MiddlewareHandler 
   const limiter = createRateLimiter({
     rpm: opts.rpm ?? cfg.DASHBOARD_AUTH_FAIL_RPM,
     burst: opts.burst ?? cfg.DASHBOARD_AUTH_FAIL_BURST,
+    maxBuckets: opts.maxBuckets ?? cfg.RATE_LIMIT_MAX_BUCKETS,
     now: opts.now,
   });
   if (!limiter.enabled) {

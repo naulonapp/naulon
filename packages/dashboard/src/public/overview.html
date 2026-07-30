@@ -19,14 +19,21 @@
           <h1 class="page-title">Your gate</h1>
           <p class="page-sub">One box, one origin. Humans read free; machines pay to read and cite. This console is read-only — articles, wallets and prices come from your credits source and env.</p>
         </div>
+        <!-- The freshness label comes FIRST on purpose. This row is pinned to the right
+             edge, so the width of its LAST child decides where every earlier child sits —
+             and this label's text is live: "updated now" through "updated 1h 24m ago" is
+             79px to 129px. Placed last, it dragged the window control and the Test toll
+             button 50px leftward as the clock ticked, then snapped them back on each poll.
+             A button that moves under the cursor. Placed first, its own left edge absorbs
+             the growth and the two things you click never move. -->
         <div class="head-actions">
+          <span class="freshness" id="freshness" aria-live="off"></span>
           <div class="seg" id="winSeg" role="group" aria-label="traffic window">
             <button type="button" class="seg-btn" data-win="1h">1h</button>
             <button type="button" class="seg-btn on" data-win="24h">24h</button>
             <button type="button" class="seg-btn" data-win="7d">7d</button>
           </div>
           <button id="tollBtn" class="btn">Test toll</button>
-          <span class="freshness" id="freshness" aria-live="off"></span>
         </div>
       </div>
 

@@ -68,6 +68,11 @@ const SWEEP_EVERY_MS = 60_000;
  * the sweep itself walks every entry, so a map allowed to reach millions turns into a
  * stall on the interval.
  *
+ * This constant is only the library's fallback. Both callers in this repo pass
+ * `RATE_LIMIT_MAX_BUCKETS` from the validated env, so an operator under real load can move
+ * it without a code change — the number here was chosen, not measured, and saying so in
+ * the one place it is written is cheaper than someone later trusting it as a finding.
+ *
  * Worth being explicit that this ceiling is the reason the previous shape never showed
  * the problem: when every caller collapsed into one key (the bug this limiter's identity
  * rule fixes) there was exactly one bucket to hold. Fixing the key had to come with a

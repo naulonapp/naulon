@@ -138,6 +138,16 @@ export const configSchema = z.object({
   // RATE_LIMIT_RPM/min; short bursts up to RATE_LIMIT_BURST are absorbed.
   RATE_LIMIT_RPM: z.coerce.number().int().nonnegative().default(120),
   RATE_LIMIT_BURST: z.coerce.number().int().positive().default(40),
+  // Ceiling on live per-client buckets — the gate's request limiter and the console's
+  // failed-sign-in budget both take it. Keying per client is what makes a limiter fair,
+  // and it is also what makes its key space as large as the caller's address space: a host
+  // with a routed IPv6 /64 can spend a fresh source address per request, so a flood would
+  // otherwise grow the map faster than the periodic sweep reclaims it. At the default,
+  // 50k buckets of two numbers plus a key is single-digit MB. Being over costs memory;
+  // being under costs accuracy, since a live client can be evicted early and start again
+  // with a full allowance. Raise it only for a deployment that genuinely sees more
+  // distinct addresses than this inside one refill window.
+  RATE_LIMIT_MAX_BUCKETS: z.coerce.number().int().positive().default(50_000),
   // Trust X-Forwarded-For for the client IP. Turn this ON whenever something sits
   // in front of the gate (a reverse proxy, or a serverless platform): with it off,
   // every request keys to the proxy's address and the whole deployment shares ONE
