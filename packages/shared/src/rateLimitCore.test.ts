@@ -78,3 +78,33 @@ test("idle buckets are swept, active ones are not", () => {
   assert.equal(l.size(), 1, "the fully-refilled bucket is gone; the new one remains");
   assert.equal(l.peek("active").allowed, false, "the surviving bucket is the active one");
 });
+
+// ── The key space is as large as the caller's address space ──────────────────────
+// Keying per client is what makes the limiter fair, and what makes the number of
+// buckets unbounded: a host with a routed IPv6 /64 can spend a fresh address per
+// request. Before the identity rule landed, every caller collapsed into one key, so
+// there was nothing to bound; fixing the key is what created the need for a ceiling.
+
+test("the bucket map never grows past its ceiling", () => {
+  const l = createRateLimiter({ rpm: 60, burst: 1, maxBuckets: 64 });
+  for (let i = 0; i < 5_000; i++) l.take(`2001:db8::${i.toString(16)}`);
+  assert.ok(l.size() <= 64, `expected at most 64 live buckets, got ${l.size()}`);
+});
+
+test("eviction is oldest-first, so the newest callers are still metered", () => {
+  const l = createRateLimiter({ rpm: 60, burst: 1, maxBuckets: 4 });
+  for (let i = 0; i < 40; i++) l.take(`10.0.0.${i}`);
+  assert.equal(l.peek("10.0.0.39").allowed, false, "the most recent caller keeps its spent bucket");
+  assert.equal(l.peek("10.0.0.0").allowed, true, "the oldest was evicted and starts fresh");
+});
+
+test("reaching the ceiling reclaims refilled buckets before evicting a live one", () => {
+  const c = clock();
+  const l = createRateLimiter({ rpm: 60, burst: 1, maxBuckets: 2, now: c.now });
+  l.take("idle-a");
+  l.take("idle-b");
+  c.advance(120_000); // both have fully refilled — they say nothing worth keeping
+  l.take("fresh");
+  assert.equal(l.size(), 1, "the sweep reclaimed the refilled pair instead of evicting");
+  assert.equal(l.peek("fresh").allowed, false, "and the live bucket is the one that survived");
+});

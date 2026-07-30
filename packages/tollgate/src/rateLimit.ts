@@ -30,13 +30,6 @@ import {
 
 const cfg = getConfig();
 
-const limiter = createRateLimiter({
-  rpm: cfg.RATE_LIMIT_RPM,
-  burst: cfg.RATE_LIMIT_BURST,
-});
-
-const warnOnce = createUnidentifiedWarner("rate limit");
-
 /**
  * The socket peer, or undefined. `getConnInfo` needs a node socket and throws under
  * a serverless adapter or `app.request()` — absent is a real answer, not an error.
@@ -49,8 +42,33 @@ function peerOf(c: Context): string | undefined {
   }
 }
 
+/**
+ * Overridable for tests; production passes nothing and takes the config.
+ *
+ * This middleware is mounted globally on every gate request (`app.ts`), which makes it
+ * the most-executed code in the process and the one that had no test of its own — the
+ * pure logic was covered in `@naulon/shared` while the glue that reads the headers and
+ * the env was not. Injecting the same knobs the console's budget already accepts
+ * (`authThrottle.ts`) is what makes the glue reachable from a test.
+ */
+export interface RateLimitOptions {
+  rpm?: number;
+  burst?: number;
+  trustProxy?: boolean;
+  hops?: number;
+  now?: () => number;
+}
+
 /** Hono middleware. No-op when RATE_LIMIT_RPM=0. */
-export function rateLimit(): MiddlewareHandler {
+export function rateLimit(opts: RateLimitOptions = {}): MiddlewareHandler {
+  const trustProxy = opts.trustProxy ?? cfg.TRUST_PROXY;
+  const hops = opts.hops ?? cfg.TRUST_PROXY_HOPS;
+  const limiter = createRateLimiter({
+    rpm: opts.rpm ?? cfg.RATE_LIMIT_RPM,
+    burst: opts.burst ?? cfg.RATE_LIMIT_BURST,
+    now: opts.now,
+  });
+  const warnOnce = createUnidentifiedWarner("rate limit");
   if (!limiter.enabled) {
     return async (_c, next) => next();
   }
@@ -58,8 +76,8 @@ export function rateLimit(): MiddlewareHandler {
     const who = resolveClientIdentity({
       xff: c.req.header("x-forwarded-for"),
       peer: peerOf(c),
-      trustProxy: cfg.TRUST_PROXY,
-      hops: cfg.TRUST_PROXY_HOPS,
+      trustProxy,
+      hops,
     });
     if (!who.ok) {
       warnOnce(who.reason);

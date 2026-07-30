@@ -13,7 +13,7 @@ import { access as fsAccess, constants as fsConstants } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getConfig } from "@naulon/shared";
 import { summarizeConfig, type ConfigSummary, type ConfigWarningCode } from "./config-view.ts";
-import { isLoopback } from "./access.ts";
+import { isLoopbackBind } from "./access.ts";
 import { parseAllowedHosts } from "./host-guard.ts";
 
 export type CheckStatus = "pass" | "warn" | "fail";
@@ -218,8 +218,18 @@ export function buildChecks(i: DoctorInput): Check[] {
   if (i.accessMode === "public") {
     checks.push(ok("exposure", "The console is not over-exposed", "Public earnings view — wallets masked, ops routes unmounted."));
   } else if (i.accessMode === "authed") {
-    checks.push(ok("exposure", "The console is not over-exposed", "Bound wide, behind HTTP Basic."));
-  } else if (isLoopback(i.bind)) {
+    // Authed no longer implies a wide bind: a credential is enforced wherever it is set,
+    // loopback included, so report the bind instead of assuming one.
+    checks.push(
+      ok(
+        "exposure",
+        "The console is not over-exposed",
+        isLoopbackBind(i.bind)
+          ? `Behind HTTP Basic, and bound loopback only (${i.bind}).`
+          : `Bound wide (${i.bind}), behind HTTP Basic.`,
+      ),
+    );
+  } else if (isLoopbackBind(i.bind)) {
     // Say what the Host allowlist ACTUALLY is. Claiming "loopback hostnames only" while
     // DASHBOARD_ALLOWED_HOSTS names three more is a lie on the one screen whose entire
     // job is to report posture — and it leaves the operator nothing to read when a

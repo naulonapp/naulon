@@ -18,6 +18,11 @@ export interface RateLimitOptions {
   burst: number;
   /** Clock, injectable for tests. */
   now?: () => number;
+  /**
+   * Hard ceiling on live buckets. See `MAX_BUCKETS` — this exists because keying per
+   * client makes the key space as large as the caller's address space.
+   */
+  maxBuckets?: number;
 }
 
 export interface RateLimitVerdict {
@@ -52,7 +57,35 @@ export interface RateLimiter {
 /** Sweep interval: buckets are only pruned this often, not on every request. */
 const SWEEP_EVERY_MS = 60_000;
 
-export function createRateLimiter({ rpm, burst, now = Date.now }: RateLimitOptions): RateLimiter {
+/**
+ * Ceiling on live buckets.
+ *
+ * Keying per client is what makes the limiter fair, and it is also what makes the key
+ * space unbounded: one entry per distinct address, and an address is cheap. A host with
+ * a routed IPv6 /64 can emit a different source address per request, so a flood creates
+ * a bucket per request instead of contending for one. The periodic sweep only drops
+ * buckets that have fully refilled, so between sweeps the map grows with the flood — and
+ * the sweep itself walks every entry, so a map allowed to reach millions turns into a
+ * stall on the interval.
+ *
+ * Worth being explicit that this ceiling is the reason the previous shape never showed
+ * the problem: when every caller collapsed into one key (the bug this limiter's identity
+ * rule fixes) there was exactly one bucket to hold. Fixing the key had to come with a
+ * bound on the keys.
+ *
+ * Over the ceiling, the oldest entry is evicted. Insertion order is what a Map already
+ * maintains, so eviction is O(1) and needs no second index; the cost is that an evicted
+ * client starts fresh, which is the same answer they would get from a sweep a moment
+ * later. Bounded memory under a flood beats exact accounting during one.
+ */
+const MAX_BUCKETS = 50_000;
+
+export function createRateLimiter({
+  rpm,
+  burst,
+  now = Date.now,
+  maxBuckets = MAX_BUCKETS,
+}: RateLimitOptions): RateLimiter {
   const enabled = rpm > 0;
   const refillPerMs = rpm / 60_000;
   const capacity = burst;
@@ -94,6 +127,16 @@ export function createRateLimiter({ rpm, burst, now = Date.now }: RateLimitOptio
       }
       let b = buckets.get(key);
       if (!b) {
+        // A new key under pressure: try reclaiming refilled buckets before evicting a
+        // live one, so ordinary traffic never pays the eviction cost.
+        if (buckets.size >= maxBuckets) {
+          sweep(t);
+          while (buckets.size >= maxBuckets) {
+            const oldest = buckets.keys().next().value;
+            if (oldest === undefined) break;
+            buckets.delete(oldest);
+          }
+        }
         b = { tokens: capacity, last: t };
         buckets.set(key, b);
       }

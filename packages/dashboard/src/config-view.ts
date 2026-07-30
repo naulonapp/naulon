@@ -67,7 +67,7 @@ export async function summarizeConfig(): Promise<ConfigSummary> {
   if (c.OBSERVATIONS_BACKEND === "off") {
     warn(
       "observations-off",
-      "OBSERVATIONS_BACKEND is off — the traffic panel stays empty. Set it to jsonl to record who was served, denied, and paid.",
+      "OBSERVATIONS_BACKEND is off — nothing is recorded, so the traffic panel stays empty AND every counter on the overview, earnings included, reads as unknown rather than as a number. Settled money is still on the Ledger. Set it to jsonl to record who was served, denied, and paid.",
     );
   }
 

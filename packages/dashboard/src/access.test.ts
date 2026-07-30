@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decideAccess } from "./access.ts";
+import { decideAccess, isLoopbackBind } from "./access.ts";
+import { isLoopbackHostname } from "./host-guard.ts";
 
 test("loopback bind → private, full ops, no auth", () => {
   for (const bind of ["127.0.0.1", "::1", "localhost"]) {
@@ -131,4 +132,51 @@ test("the serverless shape: nothing binds, so bind reads loopback while a public
   });
   assert.equal(d.serve, false);
   assert.equal(d.requireAuth, false); // refused outright, not "served behind auth"
+});
+
+// ── An explicit credential is never discarded ────────────────────────────────────
+// The loopback shortcut used to be checked first, so a console started WITH a
+// credential ran with none, and the boot line said `[private]`. Loopback is not a
+// trust boundary on a box with more than one user reaching 127.0.0.1.
+
+test("loopback bind + a valid credential → authed, not private", () => {
+  for (const bind of ["127.0.0.1", "::1", "localhost"]) {
+    const d = decideAccess({ bind, auth: "admin:secret", isPublic: false });
+    assert.equal(d.mode, "authed", `${bind} must not discard DASHBOARD_AUTH`);
+    assert.equal(d.requireAuth, true);
+    assert.equal(d.serve, true);
+    assert.equal(d.refuse, false);
+  }
+});
+
+test("the authed reason names the loopback bind rather than an empty host list", () => {
+  const d = decideAccess({ bind: "127.0.0.1", auth: "admin:secret", isPublic: false });
+  assert.match(d.reason, /loopback bind \(127\.0\.0\.1\) with DASHBOARD_AUTH set/);
+  assert.doesNotMatch(d.reason, /reachable as +with/, "no dangling host list");
+});
+
+test("a malformed credential on loopback still yields private, not a broken authed", () => {
+  // Nothing to enforce: basicAuth would be mounted with an empty password.
+  const d = decideAccess({ bind: "127.0.0.1", auth: "nopassword", isPublic: false });
+  assert.equal(d.mode, "private");
+  assert.equal(d.requireAuth, false);
+});
+
+test("the public flag still wins over a credential", () => {
+  // DASHBOARD_PUBLIC is itself an explicit choice, and the page it serves is masked.
+  const d = decideAccess({ bind: "127.0.0.1", auth: "admin:secret", isPublic: true });
+  assert.equal(d.mode, "public");
+  assert.equal(d.requireAuth, false);
+});
+
+test("a bind and a Host header answer 'is this loopback' differently, on purpose", () => {
+  // 0.0.0.0 is every interface when you BIND it and a local name when it arrives in a
+  // Host header. Unifying the two sets would either read a wide bind as private (the
+  // wallet leak) or refuse a legitimate local request, so this pins the divergence.
+  assert.equal(isLoopbackBind("0.0.0.0"), false, "binding every interface is not private");
+  assert.equal(isLoopbackHostname("0.0.0.0"), true, "but it is a local name in a Host header");
+  for (const both of ["127.0.0.1", "::1", "localhost"]) {
+    assert.equal(isLoopbackBind(both), true);
+    assert.equal(isLoopbackHostname(both), true);
+  }
 });

@@ -44,7 +44,41 @@ function renderHealth(h) {
   setGate(up, up ? "gate up" : "gate down — " + (h?.detail || "unreachable"));
 }
 
-function renderTiles(ops) {
+/**
+ * Every number on this row is computed from observations, and OBSERVATIONS_BACKEND
+ * defaults to `off`. With it off there is nothing to compute from, so a zero here is not
+ * a measurement — it is a missing one. The money tile was the worst of it: it read
+ * $0.000000 while the Ledger page showed real settled USDC from the same install, which
+ * is the console contradicting itself about money on the page the operator lands on.
+ * An unknown renders as an unknown.
+ */
+const TILE_IDS = ["#tHumans", "#tDenied", "#tBlocked", "#tPaid", "#tFailed", "#tEarned", "#tMissed"];
+/** Each tile's markup-declared classes, so the unknown state can hand them back. */
+const TILE_CLASS = new Map(TILE_IDS.map((id) => [id, $(id).className]));
+
+function renderUnknownTiles(ops) {
+  for (const id of TILE_IDS) {
+    const el = $(id);
+    el.textContent = "—";
+    // Strip the valence with the value. A dash left in the "paid" green or the "denied"
+    // amber still reads as a reading — measured at rgb(43,245,160) and rgb(255,176,32)
+    // before this line existed.
+    el.classList.remove("bad", "pos", "warn");
+    el.classList.add("dim");
+    el.title = "Not recorded — OBSERVATIONS_BACKEND is off";
+  }
+  $("#agentSplit").textContent = "not recorded";
+  const hrs = Math.round((ops.windowMs || 0) / 3_600_000);
+  $("#window").textContent = hrs > 24 ? `last ${Math.round(hrs / 24)}d` : `last ${hrs}h`;
+}
+
+function renderTiles(ops, observations) {
+  if (observations === "off") return renderUnknownTiles(ops);
+  for (const id of TILE_IDS) {
+    const el = $(id);
+    el.removeAttribute("title");
+    el.className = TILE_CLASS.get(id);
+  }
   const v = ops.byVerdict || {};
   countUp($("#tHumans"), ops.humans ?? 0, false);
   countUp($("#tDenied"), v["denied"] ?? 0, false);
@@ -91,7 +125,22 @@ function renderWarnings(warnings) {
     : `<div class="warn-none">Nothing to flag — the gate is configured to toll.</div>`;
 }
 
-function renderFeed(recent) {
+function renderFeed(recent, observations) {
+  if (observations === "off") {
+    // Not the fresh-gate state: with recording off, no crawler will ever put a row here,
+    // so promising one is a dead end. Name the switch instead, and say where the money
+    // that DID settle can still be read.
+    $("#feed").innerHTML = emptyState({
+      icon: "requests",
+      lead: "Traffic is not being recorded.",
+      body: [
+        `<span class="mono">OBSERVATIONS_BACKEND</span> is <span class="mono">off</span>, which is the default. The gate is still tolling and settling — it just isn't keeping the log this panel and the counters above are built from, so no request will appear here however many crawlers arrive.`,
+        `Set <span class="mono">OBSERVATIONS_BACKEND=jsonl</span> and restart the gate to start recording who was served, denied, and paid.`,
+      ],
+      foot: `Money that already settled is on the <a href="/ledger">Ledger</a> — that reads the event log, not this one.`,
+    });
+    return;
+  }
   if (!recent.length) {
     // The state every new install is in. Rather than an empty column, give them the
     // next action: prove the toll works, then check the config that decides it.
@@ -124,10 +173,10 @@ async function tick() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
     renderHealth(d.health);
-    renderTiles(d.ops);
+    renderTiles(d.ops, d.config.observations);
     renderConfig(d.config);
     renderWarnings(d.config.warnings || []);
-    renderFeed(d.ops.recent || []);
+    renderFeed(d.ops.recent || [], d.config.observations);
     firstPaint = false;
     lastUpdate = Date.now();
     paintFreshness();

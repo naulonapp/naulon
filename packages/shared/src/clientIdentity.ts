@@ -96,11 +96,26 @@ export function resolveClientIdentity({
     if (forwarded) return { ok: true, key: forwarded, source: "forwarded" };
   }
   if (peer) return { ok: true, key: peer, source: "peer" };
+
+  // No socket peer at all. That is not a missing fact to shrug at — it is itself
+  // evidence: a request cannot reach us over a socket we cannot see, so something
+  // adapter-shaped is in front (a serverless platform, `app.request`). A direct caller,
+  // the one whose X-Forwarded-For would be a forgery, always has a peer — so consulting
+  // the header only in this branch cannot be tricked by one.
+  //
+  // Worth being blunt about why this matters more than it looks: without it, the
+  // identity of every caller on a serverless deployment depended on the operator having
+  // set TRUST_PROXY, which defaults to false. That default silently removed per-client
+  // metering from the gate and the lockout from the console's Basic credential, on
+  // exactly the deployment shape that is exposed to the open internet. A control whose
+  // input has vanished must not degrade — including to "off".
+  if (xff) {
+    const forwarded = forwardedFor(xff, Math.max(1, hops));
+    if (forwarded) return { ok: true, key: forwarded, source: "forwarded" };
+  }
+
   return {
     ok: false,
-    reason: trustProxy
-      ? "no socket peer and no X-Forwarded-For — nothing identifies the caller"
-      : "no socket peer, and X-Forwarded-For is not trusted (set TRUST_PROXY=true " +
-        "if a reverse proxy or serverless platform sits in front and sets it)",
+    reason: "no socket peer and no X-Forwarded-For — nothing identifies the caller",
   };
 }

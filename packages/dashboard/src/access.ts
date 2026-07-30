@@ -5,9 +5,18 @@
  * this guards. The rule, in order:
  *
  *   public flag set        → serve the PUBLIC earnings view only (wallets masked)
+ *   a valid credential     → serve full ops behind HTTP Basic, wherever it is bound
  *   loopback-only reach    → serve the full private ops console (box owner only)
- *   reachable + auth       → serve full ops behind HTTP Basic
  *   reachable, no auth     → REFUSE. Don't start leaking; make the operator choose.
+ *
+ * The credential is checked BEFORE the loopback shortcut, and that order is the rule:
+ * an operator who sets `DASHBOARD_AUTH` has said "ask for this", and the answer to an
+ * explicit instruction is never to drop it. It used to be dropped — loopback matched
+ * first, so a console started with a credential ran with none and the boot line said
+ * `[private]`, which is how the operator would never find out. Loopback is not a trust
+ * boundary on a box with more than one user on it (a container sharing a network
+ * namespace, a dev machine with an SSH tunnel, another tenant's process): any of them
+ * reaches 127.0.0.1, and the ops plane serves wallets and takes writes.
  *
  * "Reachable" is the subtle part, and getting it from the bind address alone was a
  * hole. `DASHBOARD_BIND` describes a socket, and two real deployments have no socket
@@ -55,8 +64,21 @@ export interface AccessDecision {
   reason: string;
 }
 
-const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
-export const isLoopback = (bind: string): boolean => LOOPBACK.has(bind.trim());
+/**
+ * Is this BIND address loopback-only? A different question from `isLoopbackHostname`
+ * (host-guard.ts), and the two sets differ on purpose — `0.0.0.0` is every interface
+ * when you bind it and a local name when it arrives in a `Host` header. Naming them
+ * apart is the point: collapsing them would either make a wide bind read as private
+ * (a wallet leak) or reject a legitimate local request.
+ *
+ * Two more notions exist, both about a URL rather than a socket or a header:
+ * `content.ts`'s `isLoopbackOrigin` (may the crawler reach a private address?) and
+ * `enforce/botAuth.ts`'s inline check (may a bot-auth URL point back at us?). Four
+ * questions, four answers, none of them substitutable — so nothing pretends a single
+ * helper covers them, and the sets are allowed to differ.
+ */
+const LOOPBACK_BINDS = new Set(["127.0.0.1", "::1", "localhost"]);
+export const isLoopbackBind = (bind: string): boolean => LOOPBACK_BINDS.has(bind.trim());
 
 /** A usable Basic credential is exactly `user:pass`, both non-empty. */
 export const isValidAuth = (auth: string | undefined): auth is string => {
@@ -85,26 +107,32 @@ export function decideAccess({ bind, auth, isPublic, allowedHosts = [] }: Access
 
   const external = externalHosts(allowedHosts);
 
-  if (isLoopback(bind) && external.length === 0) {
-    return {
-      serve: true,
-      mode: "private",
-      requireAuth: false,
-      refuse: false,
-      reason: `loopback bind (${bind}) — private ops console`,
-    };
-  }
-
+  // Before the loopback shortcut, on purpose — see the note at the top of this file.
+  // A credential that was set and then ignored is worse than no credential, because the
+  // operator believes they have one.
   if (isValidAuth(auth)) {
-    const why = isLoopback(bind)
-      ? `reachable as ${external.join(", ")} with DASHBOARD_AUTH`
-      : "wide bind with DASHBOARD_AUTH";
+    const why =
+      external.length > 0
+        ? `reachable as ${external.join(", ")} with DASHBOARD_AUTH`
+        : isLoopbackBind(bind)
+          ? `loopback bind (${bind}) with DASHBOARD_AUTH set`
+          : "wide bind with DASHBOARD_AUTH";
     return {
       serve: true,
       mode: "authed",
       requireAuth: true,
       refuse: false,
       reason: `${why} — ops console behind HTTP Basic`,
+    };
+  }
+
+  if (isLoopbackBind(bind) && external.length === 0) {
+    return {
+      serve: true,
+      mode: "private",
+      requireAuth: false,
+      refuse: false,
+      reason: `loopback bind (${bind}) — private ops console`,
     };
   }
 
