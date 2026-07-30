@@ -30,6 +30,7 @@ packages/wayfarer      the paying research agent
 packages/attribution   batched settlement to authors
 packages/dashboard     live earnings view
 examples/meridian   reference publisher adapter — copy this to add your own
+plugins/naulon         the WordPress plugin (PHP, not part of the Node workspace)
 ```
 
 ## Common changes
@@ -39,6 +40,34 @@ examples/meridian   reference publisher adapter — copy this to add your own
 - **Add a payment rail** → implement `Settlement` (attribution) or `Buyer`
   (wayfarer); keep the `mock` path working.
 - **Persist events elsewhere** → implement `EventSink` (`@naulon/shared`).
+
+## The WordPress plugin
+
+`plugins/naulon` is PHP and `make test` cannot see it. It has two suites, and both
+run in CI on every push.
+
+```bash
+cd plugins/naulon
+composer install
+composer test                     # unit: the decision functions, no WordPress, instant
+
+bin/install-wp-tests.sh           # once: fetches WordPress + the PHPUnit test library
+WP_TESTS_DIR=/tmp/naulon-wordpress-tests-lib composer run test:integration
+```
+
+The installer needs a MySQL it can reach — pass `[db-name] [db-user] [db-pass]
+[db-host]` if yours is not `wordpress_test root root 127.0.0.1`, and set
+`SKIP_DB_CREATE=1` when the database already exists. It points the test WordPress at
+this working tree rather than a copy, so the integration suite runs the files you
+just edited.
+
+The integration suite is where anything that only means something against a real
+database is proven: that a cached update manifest is re-validated against the pinned
+download host on every read, and that deleting the plugin keeps the publisher's
+wallets and earnings. Do not move a test out of it to make it faster.
+
+`npx @wordpress/env start` still works if you want a browsable site, but its teardown
+has twice emptied the bind-mounted plugin directory — commit before you run it.
 
 ## Conventions
 

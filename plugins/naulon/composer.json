@@ -12,6 +12,12 @@
 	},
 	"scripts": {
 		"test": "phpunit",
+		"test:integration": "phpunit -c phpunit-integration.xml.dist",
 		"lint": "find . -path ./vendor -prune -o -name '*.php' -print -exec php -l {} \\;"
+	},
+	"scripts-descriptions": {
+		"test": "The unit suite: the decision functions, no WordPress, a tenth of a second.",
+		"test:integration": "The integration suite: needs WordPress and MySQL. Run bin/install-wp-tests.sh first.",
+		"lint": "Syntax-check every PHP file."
 	}
 }
