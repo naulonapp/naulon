@@ -24,13 +24,40 @@ class UpdaterCacheTest extends WP_UnitTestCase {
 		delete_site_transient( Naulon_Updater::TRANSIENT );
 		$this->requests = 0;
 
-		// Any fetch is a fact to assert on, not a real network call.
+		// Every fetch is a fact to assert on rather than a real network call — with ONE exception
+		// that is not politeness but necessity. `wp_update_plugins()` aborts outright when its own
+		// api.wordpress.org call fails (`wp-includes/update.php`: `if ( is_wp_error( $raw_response )
+		// || 200 !== … ) return;`) and the `Update URI` loop lives AFTER that return. Blocking that
+		// call would mean this suite never reaches the code it is testing — and it is worth knowing
+		// the same is true in production: a site that cannot reach wordpress.org gets no
+		// self-hosted update check either, because core never gets that far.
 		add_filter(
 			'pre_http_request',
-			function () {
+			function ( $preempt, $args, $url ) {
+				if ( false !== strpos( (string) $url, 'api.wordpress.org' ) ) {
+					return array(
+						'headers'  => array(),
+						'cookies'  => array(),
+						'filename' => null,
+						'response' => array(
+							'code'    => 200,
+							'message' => 'OK',
+						),
+						'body'     => wp_json_encode(
+							array(
+								'plugins'      => array(),
+								'translations' => array(),
+								'no_update'    => array(),
+							)
+						),
+					);
+				}
+
 				++$this->requests;
 				return new WP_Error( 'blocked', 'no network in tests' );
-			}
+			},
+			10,
+			3
 		);
 	}
 
