@@ -51,5 +51,9 @@ nav:
       - Settlement contract: settlement-contract.md
   - Operating a gate:
       - Operator console: operating.md
+      - Configuration: configuration.md
+      - Crawler policy: crawler-policy.md
+  - Buying:
+      - The agent side: buying.md
   - Protocol:
       - Citation License Token: citation-license.md

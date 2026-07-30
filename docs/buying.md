@@ -6,10 +6,10 @@ what it bought.
 
 There are two ways in, and they share a brain.
 
-- **[`@naulon/wayfarer`](../packages/wayfarer)** — the CLI agent. Give it a topic and
+- **[`@naulon/wayfarer`](https://github.com/naulonapp/naulon/tree/main/packages/wayfarer)** — the CLI agent. Give it a topic and
   a budget; it discovers candidates, ranks them by relevance per dollar, pays only the
   ones worth citing, and answers from what it bought.
-- **[`@naulon/wayfarer-mcp`](../packages/wayfarer-mcp)** — the same loop exposed over
+- **[`@naulon/wayfarer-mcp`](https://github.com/naulonapp/naulon/tree/main/packages/wayfarer-mcp)** — the same loop exposed over
   the Model Context Protocol, so any MCP client (Claude Code, Claude Desktop, Cursor,
   Windsurf, VS Code, Cline, or your own host) gets the tools directly.
 

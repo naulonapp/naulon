@@ -2,9 +2,9 @@
 
 Every environment variable the gate, the dashboard and the buying agent read, what
 each one does, and what happens if you leave it alone. The schema in
-[`packages/shared/src/config.ts`](../packages/shared/src/config.ts) is the source of
-truth; this page is the prose version of it, and a test fails the build if the two
-stop agreeing.
+[`packages/shared/src/config.ts`](https://github.com/naulonapp/naulon/blob/main/packages/shared/src/config.ts)
+is the source of truth; this page is the prose version of it, and a test fails the
+build if the two stop agreeing.
 
 ## How config is loaded
 
