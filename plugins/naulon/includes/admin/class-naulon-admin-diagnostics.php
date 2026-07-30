@@ -298,7 +298,7 @@ class Naulon_Admin_Diagnostics {
 		);
 		self::kv( __( 'PHP', 'naulon' ), PHP_VERSION );
 		self::kv( __( 'WordPress', 'naulon' ), get_bloginfo( 'version' ) );
-		self::kv( __( 'Plugin', 'naulon' ), NAULON_VERSION );
+		self::kv( __( 'Plugin', 'naulon' ), self::plugin_version_line() );
 		self::kv( __( 'WP-Cron', 'naulon' ), ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) ? __( 'disabled — run it from the system scheduler, or the heartbeat will not fire', 'naulon' ) : __( 'enabled', 'naulon' ) );
 		echo '</tbody></table>';
 
@@ -317,6 +317,53 @@ class Naulon_Admin_Diagnostics {
 		}
 
 		Naulon_Admin::card_close();
+	}
+
+	/**
+	 * The installed version, and whether a newer one is waiting.
+	 *
+	 * A bare version number answers "which build is this" but not the question an administrator on
+	 * a diagnostics screen is actually asking — "am I looking at a bug that is already fixed".
+	 * Both readings come from the update transient core maintains, so this reports exactly what the
+	 * Plugins screen would offer and never performs a check of its own: a diagnostics page that
+	 * fires an HTTP request on every load is slow precisely when the network is the thing being
+	 * diagnosed.
+	 *
+	 * @return string
+	 */
+	private static function plugin_version_line() {
+		$updates = get_site_transient( 'update_plugins' );
+		$file    = plugin_basename( NAULON_PLUGIN_FILE );
+
+		$offered = isset( $updates->response[ $file ]->new_version )
+			? (string) $updates->response[ $file ]->new_version
+			: '';
+
+		if ( '' !== $offered ) {
+			return sprintf(
+				/* translators: 1: installed version, 2: the newer version available. */
+				__( '%1$s — %2$s is available, install it from the Plugins screen', 'naulon' ),
+				NAULON_VERSION,
+				$offered
+			);
+		}
+
+		// Present in `no_update` means a check ran and this IS the current version. Absent from
+		// both means no check has completed yet — not the same thing, and saying "up to date"
+		// there would be a claim nothing has verified.
+		if ( isset( $updates->no_update[ $file ] ) ) {
+			return sprintf(
+				/* translators: %s: installed version. */
+				__( '%s — up to date', 'naulon' ),
+				NAULON_VERSION
+			);
+		}
+
+		return sprintf(
+			/* translators: %s: installed version. */
+			__( '%s — no update check has completed yet', 'naulon' ),
+			NAULON_VERSION
+		);
 	}
 
 	/**
