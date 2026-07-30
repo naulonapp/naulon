@@ -223,6 +223,30 @@ class UpdaterTest extends TestCase {
 		$this->assertNotSame( 'w.org', $host );
 	}
 
+	/**
+	 * No banner, on purpose. Core prints the plugin's name over the banner in the details modal
+	 * (`install_plugin_information()`), and our banner art already carries the wordmark — so sending
+	 * one rendered the name twice, overlapping itself. The icon carries no such overlay. If a
+	 * manifest starts offering banners again, this fails rather than quietly reintroducing it.
+	 */
+	public function test_no_banner_is_sent_while_the_art_duplicates_the_title() {
+		$manifest = $this->manifest(
+			array(
+				'icons'   => array( '1x' => 'https://example.test/icon.png' ),
+				'banners' => array( 'low' => 'https://example.test/banner.png' ),
+			)
+		);
+
+		$payload = Naulon_Updater::payload( $manifest, 'naulon/naulon.php', '7.0.2' );
+		$info    = Naulon_Updater::information( $manifest, '7.0.2' );
+
+		$this->assertArrayNotHasKey( 'banners', $payload );
+		$this->assertArrayNotHasKey( 'banners_rtl', $payload );
+		$this->assertArrayNotHasKey( 'banners', $info );
+		$this->assertSame( array( '1x' => 'https://example.test/icon.png' ), $payload['icons'] );
+		$this->assertSame( array( '1x' => 'https://example.test/icon.png' ), $info['icons'] );
+	}
+
 	public function test_information_builds_the_modal_shape() {
 		$info = Naulon_Updater::information( $this->manifest(), '7.0.2' );
 

@@ -307,8 +307,8 @@ class Naulon_Updater {
 	 *
 	 * `version` is the only field core requires; everything else here earns its place by
 	 * changing what a publisher sees. `tested`/`requires`/`requires_php` drive core's own
-	 * compatibility warnings, and `icons`/`banners` are why the update row looks like a real
-	 * plugin rather than an anonymous entry.
+	 * compatibility warnings, and the icon is why the update row looks like a real plugin rather
+	 * than an anonymous entry.
 	 *
 	 * Returned whether or not the version is newer — see decision 1 in the class docblock.
 	 * Everything reads from the arguments alone: no constant, no option, no global, which is what
@@ -338,10 +338,13 @@ class Naulon_Updater {
 			}
 		}
 
-		foreach ( array( 'icons', 'banners', 'banners_rtl' ) as $key ) {
-			if ( ! empty( $m[ $key ] ) && is_array( $m[ $key ] ) ) {
-				$payload[ $key ] = array_map( 'strval', $m[ $key ] );
-			}
+		// Icons only, deliberately — no banners. Core prints the plugin's NAME over the banner in
+		// the details modal (`install_plugin_information()`), and our banner art already carries the
+		// wordmark on the left, so sending one renders the name twice, overlapping. The icon has no
+		// such overlay and is what the plugins list and search cards actually use. Restore banners
+		// here once the art leaves clear space at the bottom-left for a title.
+		if ( ! empty( $m['icons'] ) && is_array( $m['icons'] ) ) {
+			$payload['icons'] = array_map( 'strval', $m['icons'] );
 		}
 
 		return $payload;
@@ -374,10 +377,9 @@ class Naulon_Updater {
 			}
 		}
 
-		foreach ( array( 'banners', 'icons' ) as $key ) {
-			if ( ! empty( $m[ $key ] ) && is_array( $m[ $key ] ) ) {
-				$info[ $key ] = array_map( 'strval', $m[ $key ] );
-			}
+		// See `payload()`: no banners while the art duplicates the title core overlays on it.
+		if ( ! empty( $m['icons'] ) && is_array( $m['icons'] ) ) {
+			$info['icons'] = array_map( 'strval', $m['icons'] );
 		}
 
 		if ( ! empty( $m['sections'] ) && is_array( $m['sections'] ) ) {

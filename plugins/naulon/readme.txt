@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.4.0
+Stable tag: 0.4.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.4.1 =
+* The update details window showed the plugin's name twice, once over the top of the other. Fixed.
+
 = 0.4.0 =
 * **Deleting the plugin no longer erases your data.** WordPress removes a plugin's data before it removes its files, so a delete that fails can still have wiped everything — and it did, on a real site. Your authors' wallet addresses and your earnings record now survive a delete, and full removal is a box you tick in advance, on a screen that shows what it would destroy.
 * Export your wallets and earnings to a file from **naulon → Diagnostics**, so nothing is one click from gone.
@@ -187,6 +190,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+
+= 0.4.1 =
+Cosmetic only: the update details window no longer prints the plugin's name over itself.
 
 = 0.4.0 =
 Deleting the plugin used to erase your authors' wallets and your earnings record, before it removed any files — so a delete that appeared to fail had already destroyed them. It now keeps your data unless you tick a box asking otherwise, and you can export it first.
