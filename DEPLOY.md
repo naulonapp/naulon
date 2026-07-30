@@ -175,6 +175,21 @@ wallet/faucet steps.)
   forge that header would have a socket. It is why per-client rate limiting and the
   console's failed-sign-in lockout both work on a serverless deploy out of the box;
   they used to be silently off there, since `TRUST_PROXY` defaults to false.
+- **A CDN in front of your proxy is where `TRUST_PROXY_HOPS` earns its caveat.** With
+  Cloudflare (or any CDN) ahead of your own reverse proxy, the trail reaching the gate
+  is `<client>, <cdn-edge>`: at `HOPS=1` the key is the **CDN's** address, so every
+  client arriving through one edge node shares a bucket. `HOPS=2` reads the client —
+  but only safely if the CDN is the *only* way in. Check before you raise it:
+
+  ```bash
+  curl -k --resolve your.host:443:<origin-ip> https://your.host/healthz
+  ```
+
+  A `200` there means the edge can be skipped, and a caller doing so lands exactly
+  where the CDN's entry would be — rotating a forged header then buys a fresh bucket
+  per request. Lock the origin first (mTLS / authenticated origin pulls, or a firewall
+  limited to the CDN's ranges), then raise the count. `HOPS=1` under-meters; a
+  bypassable `HOPS=2` doesn't meter at all.
 - **Tested fallback host.** If the Vercel build fights the monorepo, the
   `docker-compose.yml` runs the same two services on **Fly.io** or any small VPS
   with a persistent volume — there you can keep `EVENTS_BACKEND=jsonl` and a single
