@@ -76,3 +76,7 @@ require_once __DIR__ . '/../includes/class-naulon-cache.php';
 // publisher's server executes — the one place in this plugin where a wrong answer is remote code
 // execution. The fetch and its caching need WordPress, so they live in the wp-env suite.
 require_once __DIR__ . '/../includes/class-naulon-updater.php';
+// The uninstall policy: `should_purge` is a pure read over a settings array, and it guards a
+// path that drops a table. UninstallGuardTest also reads uninstall.php as text, which needs no
+// WordPress either. The outcomes against a real database live in the wp-env suite.
+require_once __DIR__ . '/../includes/class-naulon-data.php';

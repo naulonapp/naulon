@@ -78,6 +78,10 @@ class Naulon_Settings {
 				// set on the account — so it is recorded rather than re-guessed each render.
 				'last_toll_verdict'  => '',
 				'last_toll_check_at' => '',
+				// Deleting the plugin KEEPS your data unless this is switched on. WordPress runs
+				// uninstall before it removes the files, so a Delete that fails can still have
+				// wiped everything — the default refuses to make that possible. See Naulon_Data.
+				'purge_on_uninstall' => false,
 			),
 			$stored
 		);

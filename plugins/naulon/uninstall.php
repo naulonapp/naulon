@@ -1,15 +1,21 @@
 <?php
 /**
- * Uninstall — the only path that removes data.
+ * Uninstall.
  *
- * Deactivation deliberately keeps everything: a publisher who deactivates to debug a theme
- * conflict must not lose their authors' wallet addresses. Uninstall is the explicit "remove
- * this plugin and its data" action, so it removes the settings, the capabilities, and the
- * per-user wallets.
+ * This file deliberately performs no deletion of its own. Everything it could destroy sits behind
+ * one guarded call, because WordPress runs uninstall BEFORE it removes the plugin's files
+ * (`wp-admin/includes/plugin.php`: `uninstall_plugin()`, then `$wp_filesystem->delete()`) — so a
+ * Delete that visibly FAILS can still have wiped the data. That is not hypothetical: it happened
+ * to a real site whose plugin directory was owned by root, where the file removal failed, the
+ * plugin stayed listed as installed, and the wallets and the earnings table were already gone.
  *
- * Wallets are the sensitive part. Leaving them behind would strand payout addresses in a
- * database nobody is watching any more, which is worse than deleting them — an author can
- * always paste their address again.
+ * Default: your data stays. Deleting the plugin removes our code, not your authors' wallets or
+ * your record of what was paid. The opt-in for full removal lives on naulon → Diagnostics, next to
+ * live counts of what it would destroy, with an export beside it.
+ *
+ * `Naulon_Data` carries the policy and the reasoning. `UninstallGuardTest` asserts this file stays
+ * a delegation, so "nothing is destroyed unless the publisher asked in advance" is a property of
+ * the code rather than a promise in a comment.
  *
  * @package naulon
  */
@@ -18,6 +24,10 @@ defined( 'WP_UNINSTALL_PLUGIN' ) || exit;
 
 if ( ! defined( 'NAULON_PLUGIN_DIR' ) ) {
 	define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
+}
+if ( ! defined( 'NAULON_VERSION' ) ) {
+	// Uninstall runs without the plugin bootstrapping, and the export payload records a version.
+	define( 'NAULON_VERSION', 'uninstall' );
 }
 
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-settings.php';
@@ -29,25 +39,6 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-log.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cache.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cron.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-data.php';
 
-Naulon_Settings::delete_all();
-Naulon_Roles::remove_capabilities();
-Naulon_Log::clear();
-
-// The earnings ledger goes too. It is a record of money, so this is the one deletion worth
-// hesitating over — but a table left behind in a database nobody is watching is not a record
-// anybody can use, and the settlements themselves are on chain, which is the copy that lasts.
-Naulon_Ledger::drop();
-
-// The must-use cache guard is ours; leaving it would leave a file running on a site that no
-// longer has the plugin it belongs to.
-$naulon_dropin = Naulon_Cache::dropin_path();
-if ( file_exists( $naulon_dropin ) ) {
-	wp_delete_file_from_directory( $naulon_dropin, dirname( $naulon_dropin ) );
-}
-
-// Stop the heartbeat before the code that answers it disappears.
-Naulon_Cron::instance()->unschedule();
-
-delete_metadata( 'user', 0, Naulon_Credits::USER_WALLET_META, '', true );
-delete_post_meta_by_key( Naulon_Credits::POST_TOLL_META );
+Naulon_Data::uninstall();
