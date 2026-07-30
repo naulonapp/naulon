@@ -18,3 +18,5 @@ export * from "./csv.ts";
 export * from "./crawler-policy.ts";
 export * from "./crawlerPolicyFile.ts";
 export * from "./crawlerRegistry.ts";
+export * from "./clientIdentity.ts";
+export * from "./rateLimitCore.ts";

@@ -14,6 +14,12 @@
  * carries the ATTACKER's hostname in `Host` (that is what made it same-origin), so
  * an allowlist of loopback names plus whatever the operator declares kills it.
  *
+ * What the operator may declare here is itself bounded: naming a NON-loopback host
+ * means strangers can address this console, and access.ts refuses to run it without a
+ * credential (that combination used to be allowed, and was how "private" became
+ * public — see the access-policy note there). So in private mode this list only ever
+ * widens reach to names on this box.
+ *
  * Only PRIVATE mode is checked:
  *   - authed  — Basic auth already stops it; the browser holds no credential for the
  *               attacker's origin, so the rebound request 401s. Host-checking here
@@ -41,6 +47,14 @@ function hostnameOf(host: string): string {
   if (h.indexOf(":", firstColon + 1) !== -1) return h;
   return h.slice(0, firstColon);
 }
+
+/**
+ * Is this hostname one of the loopback names? The one owner of that question — the
+ * access policy asks it too, to tell "fronted by a proxy on this box" apart from
+ * "reachable by strangers" (see access.ts).
+ */
+export const isLoopbackHostname = (host: string): boolean =>
+  LOOPBACK_HOSTNAMES.has(hostnameOf(host));
 
 /** Parse `DASHBOARD_ALLOWED_HOSTS` — comma-separated, trimmed, lowercased, no blanks. */
 export function parseAllowedHosts(csv: string): string[] {

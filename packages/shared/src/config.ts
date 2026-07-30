@@ -138,12 +138,21 @@ export const configSchema = z.object({
   // RATE_LIMIT_RPM/min; short bursts up to RATE_LIMIT_BURST are absorbed.
   RATE_LIMIT_RPM: z.coerce.number().int().nonnegative().default(120),
   RATE_LIMIT_BURST: z.coerce.number().int().positive().default(40),
-  // Trust X-Forwarded-For for the client IP. Only enable behind a proxy you
-  // control — otherwise clients spoof their rate-limit identity. Default: off.
+  // Trust X-Forwarded-For for the client IP. Turn this ON whenever something sits
+  // in front of the gate (a reverse proxy, or a serverless platform): with it off,
+  // every request keys to the proxy's address and the whole deployment shares ONE
+  // rate-limit bucket, so any single caller can 429 everyone. The trail is read
+  // from the RIGHT (see clientIdentity.ts), so a client-forged entry is ignored —
+  // the proxy must still be one you control.
   TRUST_PROXY: z
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+  // How many trusted hops sit in front of the gate, counted outward. 1 = a single
+  // reverse proxy (Caddy/nginx) or one serverless platform edge. 2 = a CDN in front
+  // of that proxy. Only read when TRUST_PROXY=true; adding a hop is an env change,
+  // never a code change.
+  TRUST_PROXY_HOPS: z.coerce.number().int().positive().default(1),
   // Web Bot Auth: allow http:// + loopback key directories so a LOCAL signer
   // fixture can serve its directory from a loopback port. Test walks only —
   // never enable in production (the directory URL is attacker-supplied).
@@ -311,6 +320,12 @@ export const configSchema = z.object({
   // dashboard is bound wider than loopback. Unset + a non-loopback bind makes the
   // dashboard REFUSE to serve (fail-safe — it won't leak wallets by accident).
   DASHBOARD_AUTH: z.string().optional(),
+  // Failed-sign-in budget for that credential, per client. Basic auth has no lockout,
+  // so without this the password can be guessed at network speed for as long as the
+  // console is exposed. Only 401s are charged — a correct credential costs nothing, so
+  // an operator cannot lock themselves out by using the console hard. 0 disables.
+  DASHBOARD_AUTH_FAIL_RPM: z.coerce.number().int().nonnegative().default(20),
+  DASHBOARD_AUTH_FAIL_BURST: z.coerce.number().int().positive().default(10),
   // Opt in to the PUBLIC earnings view: a read-only "authors are earning" page
   // with wallets masked and every operational panel hidden. Off by default — the
   // ops console (health, traffic, config, wallets) is never public.

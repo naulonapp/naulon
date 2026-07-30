@@ -106,14 +106,27 @@ and `enforce/src/nonce.ts`.
 
 ## 3. Vercel project B — the dashboard
 
-Same import, **Root Directory:** `packages/dashboard`. Env vars are just the read
-side of the ledger:
+Same import, **Root Directory:** `packages/dashboard`. Env vars are the read side of
+the ledger, plus the two that make the exposure deliberate:
 
 | Key | Value |
 |---|---|
 | `EVENTS_BACKEND` | `supabase` |
 | `SUPABASE_URL` | same project as the gate |
 | `SUPABASE_SERVICE_KEY` | same |
+| `DASHBOARD_ALLOWED_HOSTS` | `dash.<site>` — the hostname you reach it on |
+| `DASHBOARD_AUTH` | `user:pass` — the credential for the ops console |
+
+Those last two are not optional here, and it is worth being clear why. This console
+shows payout wallets and earnings. On a box you would leave it on loopback and that
+is the whole story — but a serverless deployment never binds a socket, so "bound to
+127.0.0.1" stops meaning anything while the console answers the public internet.
+Naming a non-loopback host without a credential is refused at boot rather than
+served.
+
+If you want the shareable earnings page instead of the ops console, set
+`DASHBOARD_PUBLIC=true` and leave `DASHBOARD_AUTH` unset: wallets are masked and
+every operational panel is unmounted.
 
 Deploy. The page streams live from the same Supabase the gate writes to.
 

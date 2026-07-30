@@ -161,8 +161,9 @@ Your read-only window onto the gate: health, live toll traffic (served free /
 denied / paid), settlement earnings, and a config-sanity panel — so you can see
 your proxy actually working. It reads the gate's observation log (set
 `OBSERVATIONS_BACKEND=jsonl`) and event ledger. Private on `127.0.0.1` by default;
-exposing it wider needs `DASHBOARD_AUTH`, and `DASHBOARD_PUBLIC=true` serves only a
-masked public earnings page. Full guide: [docs/operating.md](./docs/operating.md).
+making it reachable at all — a wider bind, a reverse proxy, or a serverless deploy —
+needs `DASHBOARD_AUTH`, and `DASHBOARD_PUBLIC=true` serves only a masked public
+earnings page. Full guide: [docs/operating.md](./docs/operating.md).
 
 ### Settling payouts
 
@@ -407,9 +408,11 @@ The gate is built to sit on the public internet in front of a real site:
   ([`shared/credits.ts`](./packages/shared/src/credits.ts)).
 - **Dashboard exposure.** The operator console is read-only but shows wallets,
   earnings, and traffic, so exposure is deliberate. It binds `127.0.0.1` by default
-  (private). Bind wider (`DASHBOARD_BIND=0.0.0.0`) and it **requires**
-  `DASHBOARD_AUTH=user:pass` (HTTP Basic) — wide with no auth and not public, it
-  refuses to serve rather than leak. `DASHBOARD_PUBLIC=true` serves only a masked
+  (private). Make it reachable — a wide bind, or a non-loopback name in
+  `DASHBOARD_ALLOWED_HOSTS`, which is how a reverse proxy and a serverless deploy
+  both announce themselves — and it **requires** `DASHBOARD_AUTH=user:pass` (HTTP
+  Basic), refusing to serve rather than leak. Failed sign-ins are metered, since
+  Basic carries no lockout of its own. `DASHBOARD_PUBLIC=true` serves only a masked
   earnings page. The gate (`:8402`) is built to face the internet; the console
   (`:8403`) is not. See [docs/operating.md](./docs/operating.md).
 

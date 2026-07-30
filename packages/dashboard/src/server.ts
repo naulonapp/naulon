@@ -8,9 +8,12 @@
  *   /api/stream    SSE earnings snapshots
  *   /*.css /*.js   the view assets (same-origin → strict CSP holds)
  *
- * Access is decided ONCE at boot (see access.ts): loopback → private ops; wide +
- * DASHBOARD_AUTH → ops behind Basic; DASHBOARD_PUBLIC → earnings-only, masked;
- * wide + neither → refuse (don't leak wallets). That decision drives everything.
+ * Access is decided ONCE at boot (see access.ts): loopback-only reach → private ops;
+ * reachable + DASHBOARD_AUTH → ops behind Basic; DASHBOARD_PUBLIC → earnings-only,
+ * masked; reachable + neither → refuse (don't leak wallets). "Reachable" counts a
+ * non-loopback DASHBOARD_ALLOWED_HOSTS entry, not just a wide bind — a serverless
+ * deploy never binds at all, and used to read as private while facing the internet.
+ * That decision drives everything.
  */
 import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
@@ -37,6 +40,7 @@ import { runDoctor } from "./doctor.ts";
 import { buildWebhooksView, queuePing, resendDelivery } from "./webhooks.ts";
 import { runTollProbe } from "./test-toll.ts";
 import { decideAccess } from "./access.ts";
+import { authThrottle } from "./authThrottle.ts";
 import { isAllowedHost, parseAllowedHosts } from "./host-guard.ts";
 import { tileSvg } from "./brand.ts";
 import { RECENT_LIMIT } from "./constants.ts";
@@ -45,10 +49,16 @@ const cfg = getConfig();
 const sink = getSink();
 const PUBLIC = new URL("./public/", import.meta.url);
 
+// Parsed before the access decision because it is an INPUT to it: a non-loopback name
+// here means strangers can address this console, which a loopback bind would otherwise
+// hide (serverless, or a reverse proxy). See access.ts.
+const ALLOWED_HOSTS = parseAllowedHosts(cfg.DASHBOARD_ALLOWED_HOSTS);
+
 const ACCESS = decideAccess({
   bind: cfg.DASHBOARD_BIND,
   auth: cfg.DASHBOARD_AUTH,
   isPublic: cfg.DASHBOARD_PUBLIC,
+  allowedHosts: ALLOWED_HOSTS,
 });
 
 const isPublic = ACCESS.mode === "public";
@@ -137,19 +147,28 @@ app.use("*", async (c, next) => {
 // DNS-rebinding guard — before anything reads or renders. Private mode runs without
 // auth, so the Host allowlist is the only thing that stops a page the operator visits
 // from re-pointing its own hostname at 127.0.0.1 and reading the ops API same-origin.
-// See host-guard.ts for the full shape.
-const ALLOWED_HOSTS = parseAllowedHosts(cfg.DASHBOARD_ALLOWED_HOSTS);
+// See host-guard.ts for the full shape. ALLOWED_HOSTS is parsed above, next to the
+// access decision it feeds.
 app.use("*", async (c, next) => {
   if (!isAllowedHost(c.req.header("Host"), ALLOWED_HOSTS, ACCESS.mode)) {
     // The Host is echoed so the operator can see WHICH value was refused (a proxy
     // sending an unexpected name is the whole failure mode). It is attacker-controlled,
     // so it stays in a text/plain body under the nosniff + CSP set above — never
     // interpolated into HTML.
+    //
+    // The remedy has to be stated in FULL. Naming the host alone used to be enough,
+    // which quietly turned an unauthenticated console into a public one; now it is
+    // refused at boot, so telling the operator only half the fix would walk them from
+    // this 403 straight into a 503.
     return c.text(
       `naulon dashboard: refusing a request for Host "${c.req.header("Host") ?? "(absent)"}".\n\n` +
         `The private console has no authentication, so it answers only to loopback\n` +
-        `hostnames. If you reach it through a reverse proxy, add that hostname to\n` +
-        `DASHBOARD_ALLOWED_HOSTS (comma-separated).\n`,
+        `hostnames.\n\n` +
+        `Reaching it through a reverse proxy or a hosted platform is a real exposure,\n` +
+        `so it takes BOTH:\n\n` +
+        `  DASHBOARD_ALLOWED_HOSTS=<the hostname you use>   # name it (comma-separated)\n` +
+        `  DASHBOARD_AUTH=user:pass                         # and put a credential on it\n\n` +
+        `Or DASHBOARD_PUBLIC=true to serve only the masked earnings page.\n`,
       403,
     );
   }
@@ -161,6 +180,9 @@ if (ACCESS.refuse) {
   app.all("*", (c) => c.text(`naulon dashboard refused to start serving.\n\n${ACCESS.reason}\n`, 503));
 } else {
   if (ACCESS.requireAuth) {
+    // Order matters: the failed-sign-in budget has to see the 401 that basicAuth
+    // produces, so it wraps it rather than following it.
+    app.use("*", authThrottle());
     const [username, password] = (cfg.DASHBOARD_AUTH ?? "").split(/:(.*)/s);
     app.use("*", basicAuth({ username: username ?? "", password: password ?? "" }));
   }
