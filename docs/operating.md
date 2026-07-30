@@ -134,6 +134,16 @@ Observations are telemetry only — they never gate a request or move money. The
 console reads that file; the earnings figures and the ledger read the event log
 (`EVENTS_BACKEND`, on by default).
 
+**Know what the `jsonl` backend costs before you leave it on.** It appends one line
+per gated request and never rotates or expires anything, and the console re-reads and
+re-parses the *whole* file every second while an Overview tab is open. That is fine for
+a box serving thousands of gated requests and it is not fine at millions — the file
+grows without bound and the console gets slower in step with it. Today it is on you to
+prune or rotate `data/observations.jsonl`. This is the reason the default is `off`
+rather than an excess of caution; if you want recording that stays cheap at volume,
+point `OBSERVATIONS_BACKEND` at `supabase`, where retention is the table's problem and
+the console is not reading a growing file to answer a poll.
+
 ## Exposing it safely
 
 The console shows wallets, earnings, and traffic. It must not face the open

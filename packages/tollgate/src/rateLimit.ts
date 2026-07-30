@@ -54,6 +54,7 @@ function peerOf(c: Context): string | undefined {
 export interface RateLimitOptions {
   rpm?: number;
   burst?: number;
+  maxBuckets?: number;
   trustProxy?: boolean;
   hops?: number;
   now?: () => number;
@@ -66,6 +67,7 @@ export function rateLimit(opts: RateLimitOptions = {}): MiddlewareHandler {
   const limiter = createRateLimiter({
     rpm: opts.rpm ?? cfg.RATE_LIMIT_RPM,
     burst: opts.burst ?? cfg.RATE_LIMIT_BURST,
+    maxBuckets: opts.maxBuckets ?? cfg.RATE_LIMIT_MAX_BUCKETS,
     now: opts.now,
   });
   const warnOnce = createUnidentifiedWarner("rate limit");

@@ -377,7 +377,10 @@ body {
 .warn-none { padding: 16px 0; color: var(--faint); }
 
 /* liveness cue — "updated Ns ago", pulses on each good poll */
-.freshness { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--faint); }
+/* nowrap so a long relative time ('updated 1h 24m ago') can never wrap to a second
+   line and change the header row's height. It is the first child of a right-pinned
+   flex row (see overview.html) so its width is free to grow leftward. */
+.freshness { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--faint); white-space: nowrap; }
 .freshness.beat { animation: freshbeat 600ms var(--ease); }
 @keyframes freshbeat {
   0% { color: var(--primary); }

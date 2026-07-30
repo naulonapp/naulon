@@ -159,3 +159,19 @@ test("the socket peer identifies a caller when no proxy is trusted (the real-ser
     server.close();
   }
 });
+
+test("the bucket ceiling is threaded through to the limiter, not just declared", async () => {
+  // Observable end-to-end: with room for 2 buckets and a burst of 1, A spends its token,
+  // then B and C each need a bucket and evict A (oldest first) — so A is seen as new again.
+  // If the option stopped at the middleware boundary, A would still be throttled.
+  const app = appWith({ rpm: 60, burst: 1, trustProxy: true, maxBuckets: 2 });
+  assert.equal((await app.request("/", xff("10.1.1.1"))).status, 200, "A spends its only token");
+  assert.equal((await app.request("/", xff("10.1.1.1"))).status, 429, "A is throttled");
+  assert.equal((await app.request("/", xff("10.1.1.2"))).status, 200);
+  assert.equal((await app.request("/", xff("10.1.1.3"))).status, 200);
+  assert.equal(
+    (await app.request("/", xff("10.1.1.1"))).status,
+    200,
+    "A was evicted at the ceiling and starts fresh — proof the ceiling reached the limiter",
+  );
+});
