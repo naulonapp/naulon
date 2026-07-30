@@ -22,8 +22,22 @@ You run the toll proxy in front of a site.
 
 - **[operating.md](./operating.md)** — the operator console: health, live toll
   traffic, earnings, and config sanity — and how to expose it safely.
+- **[configuration.md](./configuration.md)** — every environment variable the gate,
+  the console and the agent read, what it does, and what happens if you leave it
+  alone. *The reference behind `.env.example`.*
+- **[crawler-policy.md](./crawler-policy.md)** — allow, charge or block per crawler,
+  what the policy file may not say (humans read free), and how verified bot identity
+  (Web Bot Auth) is checked.
 - **[DEPLOY.md](https://github.com/naulonapp/naulon/blob/main/DEPLOY.md)** — click-by-click to host the gate on Vercel +
   Supabase in front of a real site.
+
+### Buying
+
+You're on the paying side — an agent that reads and cites tolled sources.
+
+- **[buying.md](./buying.md)** — the wayfarer agent and the MCP server: the tools, the
+  spend envelope the model can't widen, discovery, and what a payment leaves you
+  holding.
 
 ### Protocol
 
