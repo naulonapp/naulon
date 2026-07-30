@@ -81,3 +81,58 @@ jobs:
       - name: Syntax-check against the declared PHP floor (7.4)
         working-directory: plugins/naulon
         run: find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  # The suite above is the unit one: decision functions, no WordPress. Everything that only means
+  # something against a real database lived in tests/integration and ran nowhere but a laptop, by
+  # hand, through wp-env. Two of those tests are load-bearing enough that leaving them there was a
+  # standing risk:
+  #
+  #   UpdaterCacheTest  — a cached update manifest is re-validated against the pinned download host
+  #                       on every read. A regression means a poisoned transient names the zip
+  #                       WordPress unpacks and executes.
+  #   UninstallDataTest — deleting the plugin keeps the publisher's wallets and earnings. A
+  #                       regression silently destroys customer data, which is the exact failure
+  #                       0.4.0 shipped to end.
+  #
+  # Real WordPress and a real MySQL, not wp-env: the images wp-env pulls cost more than the whole
+  # run, and bin/install-wp-tests.sh gives contributors the same environment locally.
+  plugin-integration:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: wordpress_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: composer
+
+      - name: Install dependencies
+        working-directory: plugins/naulon
+        run: composer install --no-interaction --no-progress
+
+      - name: Install WordPress and the PHPUnit test library
+        working-directory: plugins/naulon
+        env:
+          SKIP_DB_CREATE: "1" # the service container already made it
+        run: bin/install-wp-tests.sh wordpress_test root root 127.0.0.1:3306
+
+      - name: Test (integration — real WordPress, real database)
+        working-directory: plugins/naulon
+        env:
+          WP_TESTS_DIR: /tmp/naulon-wordpress-tests-lib
+        run: composer run test:integration
