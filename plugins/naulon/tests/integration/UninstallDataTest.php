@@ -18,7 +18,7 @@ class UninstallDataTest extends WP_UnitTestCase {
 	public function set_up() {
 		parent::set_up();
 
-		Naulon_Ledger::install();
+		Naulon_Ledger::maybe_install();
 
 		$this->author = self::factory()->user->create( array( 'role' => 'author' ) );
 		update_user_meta( $this->author, Naulon_Credits::USER_WALLET_META, '0x1111111111111111111111111111111111111111' );
@@ -36,10 +36,21 @@ class UninstallDataTest extends WP_UnitTestCase {
 		);
 	}
 
-	private function ledger_exists() {
-		global $wpdb;
-		$table = Naulon_Ledger::table();
-		return $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
+	/**
+	 * Whether the earnings table is still installed, observed through the ledger's own schema
+	 * marker rather than `SHOW TABLES`.
+	 *
+	 * Not a shortcut — `SHOW TABLES` cannot answer this here. The WordPress test suite rewrites
+	 * `CREATE TABLE` to `CREATE TEMPORARY TABLE` and `DROP TABLE` to `DROP TEMPORARY TABLE`
+	 * (`tests/phpunit/includes/abstract-testcase.php`), and MySQL never lists temporary tables in
+	 * `SHOW TABLES`. An assertion built on it would be measuring the harness. `drop()` deletes this
+	 * option in the same breath as the table, so the option is the honest observable for "did the
+	 * destructive path run".
+	 *
+	 * @return bool
+	 */
+	private function ledger_installed() {
+		return false !== get_option( Naulon_Ledger::DB_VERSION_OPTION, false );
 	}
 
 	public function test_the_default_is_to_keep_everything() {
@@ -49,7 +60,7 @@ class UninstallDataTest extends WP_UnitTestCase {
 
 		$this->assertFalse( $purged, 'uninstall reported a purge nobody asked for' );
 		$this->assertSame( 1, $this->wallet_rows(), 'the author wallet was destroyed' );
-		$this->assertTrue( $this->ledger_exists(), 'the earnings table was dropped' );
+		$this->assertTrue( $this->ledger_installed(), 'the earnings table was dropped' );
 		$this->assertNotFalse( get_option( Naulon_Settings::OPTION ), 'the settings were destroyed' );
 	}
 
@@ -60,7 +71,7 @@ class UninstallDataTest extends WP_UnitTestCase {
 
 		$this->assertTrue( $purged );
 		$this->assertSame( 0, $this->wallet_rows() );
-		$this->assertFalse( $this->ledger_exists() );
+		$this->assertFalse( $this->ledger_installed() );
 		$this->assertFalse( get_option( Naulon_Settings::OPTION ) );
 	}
 
@@ -83,6 +94,10 @@ class UninstallDataTest extends WP_UnitTestCase {
 	}
 
 	public function test_the_heartbeat_is_unscheduled_even_when_data_is_kept() {
+		// `ensure_scheduled()` refuses on an unconnected site — an install with no key must not
+		// phone home, which is a wordpress.org rule as well as the right default. So the
+		// precondition for this test is a connected site, not just a call to the scheduler.
+		Naulon_Settings::update( array( 'gate_url' => 'https://gate.example' ) );
 		Naulon_Cron::instance()->ensure_scheduled();
 		$this->assertNotFalse( wp_next_scheduled( Naulon_Cron::EVENT ) );
 
