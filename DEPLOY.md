@@ -87,7 +87,8 @@ and `enforce/src/nonce.ts`.
    | `SUPABASE_URL` | from step 1 | |
    | `SUPABASE_SERVICE_KEY` | from step 1 | secret |
    | `TOLLGATE_SECRET` | a random 32+ byte hex string | **required** multi-instance, so every instance signs nonces alike |
-   | `TRUST_PROXY` | `true` | you're behind Vercel's edge; lets rate-limit see the real client IP |
+   | `TRUST_PROXY` | `true` | you're behind Vercel's edge. Optional here — a serverless request has no socket, so the forwarded address is used either way — but set it so the same env works on a VPS |
+   | `TRUST_PROXY_HOPS` | `1` | trusted hops in front, counted outward. Leave at 1 unless a CDN sits in front of your proxy **and** the proxy refuses traffic that skips it; a bypassable outer hop makes a raised count forgeable |
    | `ORIGIN_URL` | `https://<site>` | the site the gate proxies to |
    | `ARTICLE_PATH_PREFIXES` | e.g. `essays` | which URL prefixes are gateable; match the site |
    | `DEFAULT_PRICE_USDC` | e.g. `0.001` | per machine read |
@@ -168,9 +169,12 @@ wallet/faucet steps.)
 - **Serverless gotchas.** The two spots most likely to need a tweak on Vercel are
   the `.ts`-extension imports and the npm-workspace install — check those first if
   the build fights the monorepo.
-- **`getConnInfo` on Vercel.** Client IP comes from the platform, not a raw
-  socket; `TRUST_PROXY=true` is what makes per-client rate limiting meaningful
-  there.
+- **`getConnInfo` on Vercel.** Client IP comes from the platform, not a raw socket,
+  so `getConnInfo` throws. That absence is treated as proof an edge is in front —
+  the forwarded address is used without `TRUST_PROXY`, because a caller that could
+  forge that header would have a socket. It is why per-client rate limiting and the
+  console's failed-sign-in lockout both work on a serverless deploy out of the box;
+  they used to be silently off there, since `TRUST_PROXY` defaults to false.
 - **Tested fallback host.** If the Vercel build fights the monorepo, the
   `docker-compose.yml` runs the same two services on **Fly.io** or any small VPS
   with a persistent volume — there you can keep `EVENTS_BACKEND=jsonl` and a single

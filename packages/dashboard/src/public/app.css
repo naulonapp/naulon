@@ -360,6 +360,10 @@ body {
   font-size: 13px; align-items: baseline;
 }
 .kv .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted-fg); }
+/* `break-all` is deliberate, though it splits a long path mid-token. `overflow-wrap:
+   anywhere` reads better per break and measured WORSE overall: it took the credits row
+   from 82px to 121px at 1440px wide, because natural break points leave more ragged
+   space. A 50%-taller row in a six-row table costs more than a clean hyphenation does. */
 .kv .v { font-family: var(--font-mono); color: var(--fg); word-break: break-all; }
 .article { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
 .article .slug { font-family: var(--font-mono); color: var(--fg); }

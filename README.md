@@ -397,8 +397,11 @@ The gate is built to sit on the public internet in front of a real site:
   deposit-backed Circle Gateway settlement is the chain-level guarantor.
 - **Rate limiting.** A per-client token bucket
   ([`rateLimit.ts`](./packages/tollgate/src/rateLimit.ts)) caps request floods.
-  Client identity is the socket peer IP; `X-Forwarded-For` is trusted only when
-  `TRUST_PROXY=true` (set it iff you run behind a proxy you control).
+  Client identity is the socket peer IP; `X-Forwarded-For` is trusted when
+  `TRUST_PROXY=true` (set it iff you run behind a proxy you control), and read from
+  the RIGHT of the trail, so a client-supplied entry is never the key. Where there is
+  no socket at all — a serverless adapter — the header is used regardless, because a
+  caller able to forge it would have had a socket.
 - **Header hygiene.** The proxy strips hop-by-hop and internal `x-naulon-*` /
   payment headers before forwarding upstream, and re-derives `X-Forwarded-*` /
   `Host` itself so a client can't spoof its origin IP or host to the backend.

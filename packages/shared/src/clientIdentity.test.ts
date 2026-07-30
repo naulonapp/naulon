@@ -67,13 +67,34 @@ test("hops below 1 is clamped, never an index off the end", () => {
   assert.equal(r.ok && r.key, "b");
 });
 
-// ── Unidentifiable is reported, never bucketed under a placeholder ───────────────
+// ── No socket peer is itself evidence of a proxy ─────────────────────────────────
+// A caller cannot reach us over a socket we cannot see, so an absent peer means
+// something adapter-shaped is in front. The header is then the only signal there is,
+// and using it beats the alternative: TRUST_PROXY defaults to false, so requiring it
+// removed metering entirely from serverless deployments — the ones on the open
+// internet.
 
-test("no peer and no trusted XFF → not ok, with a reason naming TRUST_PROXY", () => {
+test("no peer at all → the forwarded header is used even without TRUST_PROXY", () => {
   const r = resolveClientIdentity({ xff: "1.2.3.4", peer: undefined, trustProxy: false });
-  assert.equal(r.ok, false);
-  assert.match(r.ok === false ? r.reason : "", /TRUST_PROXY/);
+  assert.equal(r.ok, true);
+  assert.equal(r.ok && r.key, "1.2.3.4");
+  assert.equal(r.ok && r.source, "forwarded");
 });
+
+test("the inference reads from the right, exactly like the trusted path", () => {
+  const r = resolveClientIdentity({ xff: "forged, 198.51.100.7", peer: undefined, trustProxy: false });
+  assert.equal(r.ok && r.key, "198.51.100.7", "a caller's own claim sits on the left");
+});
+
+test("a caller WITH a socket peer can never be identified by its own header", () => {
+  // The forgeable case, and the reason the inference is scoped to a missing peer: a
+  // direct client always has one, so its X-Forwarded-For stays ignored.
+  const r = resolveClientIdentity({ xff: "1.2.3.4", peer: "203.0.113.99", trustProxy: false });
+  assert.equal(r.ok && r.key, "203.0.113.99");
+  assert.equal(r.ok && r.source, "peer");
+});
+
+// ── Unidentifiable is reported, never bucketed under a placeholder ───────────────
 
 test("no peer and no XFF at all → not ok", () => {
   const r = resolveClientIdentity({ xff: undefined, peer: undefined, trustProxy: true });

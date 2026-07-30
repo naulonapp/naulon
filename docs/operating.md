@@ -141,9 +141,14 @@ internet by accident, so exposure is deliberate:
 
 | You want | Set | Result |
 |---|---|---|
-| **Private** (default) | `DASHBOARD_BIND=127.0.0.1` | Full ops, box owner only. |
+| **Private** (default) | `DASHBOARD_BIND=127.0.0.1`, no credential | Full ops, box owner only. |
 | **Remote ops** | `DASHBOARD_AUTH=user:pass` (+ a wide bind, or a named host below) | Full ops behind HTTP Basic. |
 | **Public proof** | `DASHBOARD_PUBLIC=true` | Only the earnings page — wallets masked, every ops panel hidden. |
+
+Setting `DASHBOARD_AUTH` always enforces it, loopback or not. If you share the box —
+a container on the same network namespace, another user with an SSH tunnel, anything
+else that can reach `127.0.0.1` — that is how you keep the ops plane to yourself; a
+loopback bind is not a boundary between users on one machine.
 
 Make the console reachable with neither auth nor public set and it **refuses to
 serve** — it won't leak wallets because you fat-fingered a bind. For real exposure,
@@ -162,6 +167,12 @@ Failed sign-ins are metered per client (`DASHBOARD_AUTH_FAIL_RPM`, default 20/mi
 burst 10): Basic auth has no lockout of its own, so without that the password can be
 guessed at network speed. Only the rejections are charged, so using the console
 heavily — however hard you click — can never lock you out of it.
+
+If a deployment genuinely cannot tell callers apart (no socket and no forwarded
+address), the budget is shared across them rather than switched off, and the 429 says
+so. Sharing it means guesses from one caller can make another wait; that is a paused
+ops view, against an unlimited guessing rate at a page holding your wallets, and it
+resolves as soon as the forwarded address is readable.
 
 ### Why "it's on 127.0.0.1" isn't the whole story
 
