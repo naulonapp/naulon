@@ -61,28 +61,40 @@ export interface ClassifyPolicy {
 
 /**
  * Obvious crawler/agent UA fragments. Extend freely — this is a weak signal.
- * Verified against the operators' own published UA docs 2026-07-03 (Anthropic:
- * ClaudeBot/Claude-User/Claude-SearchBot; OpenAI: GPTBot/ChatGPT-User/
- * OAI-SearchBot/OAI-AdsBot). Dropped as undocumented: claude-web, anthropic-ai.
- * Dropped as unmatchable: google-extended (a robots.txt-only token — Google
- * documents NO UA string for it, so a UA fragment could never fire).
+ * Verified against the operators' own published UA docs 2026-07-03, re-verified
+ * 2026-08-03 (Anthropic: ClaudeBot/Claude-User/Claude-SearchBot; OpenAI:
+ * GPTBot/ChatGPT-User/OAI-SearchBot/OAI-AdsBot; Meta: five tokens; Amazon: three).
+ * Dropped as undocumented: claude-web, anthropic-ai. Dropped as unmatchable:
+ * google-extended (a robots.txt-only token — Google documents NO UA string for it,
+ * so a UA fragment could never fire).
  *
  * Two kinds of machine read are charged here:
  *   - training/bulk crawlers (gptbot, claudebot, ccbot, bytespider, amazonbot,
  *     applebot-extended, meta-externalagent);
  *   - user-triggered assistant fetches (chatgpt-user, claude-user,
- *     perplexity-user, perplexitybot) — the citation moment itself. These UAs are
+ *     perplexity-user, perplexitybot, meta-externalfetcher, amzn-user,
+ *     mistralai-user) — the citation moment itself. These UAs are
  *     machine-only (no human browser carries them), so charging them cannot toll
  *     a human; an x402-capable agent answers the 402 by paying, which is the
  *     product working, not a wall.
  *
+ * The three added 2026-08-03 are that same class, found by re-reading the operator
+ * docs: Meta-ExternalFetcher "fetches individual links at a user's request",
+ * Amzn-User answers "user actions, such as … Alexa queries that require up-to-date
+ * information", MistralAI-User retrieves mid-answer. Their operators' matching
+ * SEARCH tokens (meta-webindexer, amzn-searchbot) stay off this list on the rule
+ * below, and are named in the shared crawler registry so a publisher can charge
+ * them per-site if they disagree.
+ *
  * Note: pure search-indexer UAs (googlebot, bingbot, claude-searchbot,
- * oai-searchbot, …) are deliberately NOT here. Tolling a search crawler silently
- * deindexes the publisher — the opposite of what they want — so indexing reads
- * free by default. A publisher frees additional crawlers (or re-affirms search
- * ones) via `ClassifyPolicy.seoAllowlist`, or charges one via `chargeList`.
+ * oai-searchbot, meta-webindexer, amzn-searchbot, …) are deliberately NOT here.
+ * Tolling a search crawler silently deindexes the publisher — the opposite of what
+ * they want — so indexing reads free by default. A publisher frees additional
+ * crawlers (or re-affirms search ones) via `ClassifyPolicy.seoAllowlist`, or
+ * charges one via `chargeList`. The single documented exception is perplexitybot;
+ * the shared registry carries that reasoning.
  */
-const KNOWN_AGENT_UA = [
+export const KNOWN_AGENT_UA = [
   "gptbot",
   "chatgpt-user",
   "claudebot",
@@ -94,6 +106,9 @@ const KNOWN_AGENT_UA = [
   "amazonbot",
   "applebot-extended",
   "meta-externalagent",
+  "meta-externalfetcher",
+  "amzn-user",
+  "mistralai-user",
   "python-requests",
   "node-fetch",
   "axios",

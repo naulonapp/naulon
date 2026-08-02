@@ -31,6 +31,30 @@
  *     perplexity.ai, google.com, bing.com, apple.com, meta.com, amazon.com,
  *     bytedance.com, commoncrawl.org, archive.org, semrush.com, duckduckgo.com.
  *     Re-probe when operators announce Web Bot Auth support.
+ *
+ * Operator-doc re-verification (2026-08-03) — every operator page re-read, which is how
+ * the six additions below were found. The audit plane is what prompted it: one publisher's
+ * third-biggest traffic source was Meta-WebIndexer, and it had no row here at all, so it
+ * was neither charged nor refusable — it simply had no name.
+ *   • Meta documents FIVE tokens, this file listed one. Added Meta-WebIndexer (AI-search
+ *     index that cites and links back — free, like every other search indexer) and
+ *     Meta-ExternalFetcher (fetches a link "at a user's request" — the citation moment,
+ *     charged). Deliberately still absent: Meta-ExternalAds and FacebookExternalHit, which
+ *     validate ad landing pages and render link previews — neither reads content for an AI,
+ *     so neither belongs in a citation toll's vocabulary. Same reason OAI-AdsBot is absent.
+ *   • Amazon documents THREE, this file listed one. Added Amzn-SearchBot ("does not crawl
+ *     content for generative AI model training" — free) and Amzn-User (live fetch answering
+ *     a user's question — charged).
+ *   • Added MistralAI-User (user-triggered retrieval). Mistral publishes no training-crawler
+ *     token.
+ *   • Verified complete against their own docs, no change needed: OpenAI (GPTBot,
+ *     ChatGPT-User, OAI-SearchBot), Anthropic (ClaudeBot, Claude-User, Claude-SearchBot —
+ *     and still no anthropic-ai/claude-web), Apple (Applebot, Applebot-Extended).
+ *   • Known gap, deliberate: xAI (Grok-User/GrokBot), cohere-ai, YouBot, Diffbot and
+ *     omgili publish NO operator documentation page. The bar above is the operator's own
+ *     doc, cross-checked against Cloudflare Radar / darkvisitors — a token sourced only
+ *     from a third-party blog list is exactly the "never invent" this file forbids. Add
+ *     them when a primary source exists.
  */
 export type CrawlerCategory = "ai-training" | "ai-assistant" | "search" | "archiver" | "seo";
 
@@ -75,8 +99,19 @@ export const CRAWLER_REGISTRY: RegistryCrawler[] = [
   // KNOWN_AGENT_UA refresh (an x402-capable agent answers the 402 by paying).
   { id: "chatgpt-user", name: "ChatGPT-User", operator: "OpenAI", fragment: "chatgpt-user", category: "ai-assistant", defaultCharged: true, directoryHost: "chatgpt.com" },
   { id: "claude-user", name: "Claude-User", operator: "Anthropic", fragment: "claude-user", category: "ai-assistant", defaultCharged: true },
+  // PerplexityBot is a DELIBERATE divergence from its operator's doc, and the only entry in
+  // this file that is. Perplexity documents it as a search crawler "not used to crawl content
+  // for AI foundation models", which by the search rule below would read free. It is charged
+  // anyway: it is the crawler with the best-documented history of retrieving content while
+  // evading the controls a publisher set (Cloudflare's stealth-crawling investigation, cited
+  // in the 2026-06-23 identity research), so "it indexes for search" is not a promise this
+  // file will price on. Decision re-affirmed 2026-08-03. Perplexity-User — the citation
+  // moment — is charged on the ordinary assistant rule, not this one.
   { id: "perplexitybot", name: "PerplexityBot", operator: "Perplexity", fragment: "perplexitybot", category: "ai-assistant", defaultCharged: true },
   { id: "perplexity-user", name: "Perplexity-User", operator: "Perplexity", fragment: "perplexity-user", category: "ai-assistant", defaultCharged: true },
+  { id: "meta-externalfetcher", name: "Meta-ExternalFetcher", operator: "Meta", fragment: "meta-externalfetcher", category: "ai-assistant", defaultCharged: true },
+  { id: "amzn-user", name: "Amzn-User", operator: "Amazon", fragment: "amzn-user", category: "ai-assistant", defaultCharged: true },
+  { id: "mistralai-user", name: "MistralAI-User", operator: "Mistral", fragment: "mistralai-user", category: "ai-assistant", defaultCharged: true },
   // naulon's own buy-side citing agent (the wayfarer). Not in the gate's KNOWN_AGENT_UA
   // (defaultCharged:false) — it isn't auto-charged by UA; it answers a 402 by paying via
   // x402, custody-free. directoryHost is live + signature-valid (see the note above).
@@ -90,6 +125,8 @@ export const CRAWLER_REGISTRY: RegistryCrawler[] = [
   { id: "bingbot", name: "Bingbot", operator: "Microsoft", fragment: "bingbot", category: "search", defaultCharged: false },
   { id: "duckduckbot", name: "DuckDuckBot", operator: "DuckDuckGo", fragment: "duckduckbot", category: "search", defaultCharged: false },
   { id: "applebot", name: "Applebot", operator: "Apple", fragment: "applebot", category: "search", defaultCharged: false },
+  { id: "meta-webindexer", name: "Meta-WebIndexer", operator: "Meta", fragment: "meta-webindexer", category: "search", defaultCharged: false },
+  { id: "amzn-searchbot", name: "Amzn-SearchBot", operator: "Amazon", fragment: "amzn-searchbot", category: "search", defaultCharged: false },
   // Archivers
   { id: "ia-archiver", name: "Internet Archive", operator: "Internet Archive", fragment: "ia_archiver", category: "archiver", defaultCharged: false },
   // SEO tools
