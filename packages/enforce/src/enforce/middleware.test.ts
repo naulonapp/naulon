@@ -151,3 +151,104 @@ test("API mode: the hot path (no license header) never fetches the JWKS", async 
   await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
   assert.equal(jwksHits, 0, "no license presented ⇒ the JWKS is never fetched on the hot path");
 });
+
+// ── Audit plane ───────────────────────────────────────────────────────────────
+// An in-app site is the only witness to its own traffic. Until it reported, a
+// publisher enforcing in their own runtime had an Audit page that could show nothing
+// but the decisions the fleet proxy happened to see — i.e. none of theirs.
+
+/** Collect what the middleware reports. */
+function reporter() {
+  const seen: Array<Record<string, unknown>> = [];
+  return { seen, observe: (r: Record<string, unknown>) => void seen.push(r) };
+}
+
+const ua = (agent: string, extra: Record<string, string> = {}) => ({ "user-agent": agent, ...extra });
+
+test("a denied agent is reported with the price it walked away from", async () => {
+  const { seen, observe } = reporter();
+  const mw = naulonMiddleware({ ...opts, observe: observe as never });
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0") }));
+  assert.equal(out.response?.status, 402);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.verdict, "denied");
+  // The slug `decide()` derived (prefix stripped) — byte-identical to what the gate's
+  // proxy path writes, so a row from either plane reads the same downstream.
+  assert.equal(seen[0]?.slug, "x");
+  assert.equal(seen[0]?.classifiedAs, "agent");
+  assert.equal(seen[0]?.kind, "read");
+  // 5000 whole USDC in this fixture → integer micro on the wire.
+  assert.equal(seen[0]?.priceMicro, 5_000_000_000);
+  assert.equal((seen[0]?.agent as { ua: string }).ua, "GPTBot/1.0");
+});
+
+test("a human read is reported as served-free — the negative space the audit sells", async () => {
+  const { seen, observe } = reporter();
+  const mw = naulonMiddleware({ ...opts, observe: observe as never });
+  await mw(new Request("http://h/essays/x", { headers: ua("Mozilla/5.0 (real browser)") }));
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.verdict, "served-free");
+  assert.equal(seen[0]?.classifiedAs, "human");
+});
+
+test("a non-article is NOT reported — an asset request is not traffic on an article", async () => {
+  const { seen, observe } = reporter();
+  const mw = naulonMiddleware({ ...opts, observe: observe as never });
+  await mw(new Request("http://h/about", { headers: ua("GPTBot/1.0") }));
+  assert.equal(seen.length, 0);
+});
+
+test("a blocked crawler is reported", async () => {
+  const { seen, observe } = reporter();
+  const mw = naulonMiddleware({
+    ...opts,
+    publisher: { ...opts.publisher, crawlerPolicy: { block: ["BadBot"] } },
+    observe: observe as never,
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("BadBot/1.0") }));
+  assert.equal(out.response?.status, 403);
+  assert.equal(seen[0]?.verdict, "blocked");
+});
+
+test("a settled payment is NOT reported here — /verify owns the money verdicts", async () => {
+  const { seen, observe } = reporter();
+  const fakeFetch = (async () => new Response(JSON.stringify({ ok: true, licenseJws: "jws" }), { status: 200 })) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch, observe: observe as never });
+  const out = await mw(
+    new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "payment-signature": "eyJ4Ijp0cnVlfQ==" }) }),
+  );
+  assert.equal(out.response, null);
+  assert.equal(seen.length, 0);
+});
+
+test("a REFUSED payment is not reported here either — no client asserts its own money", async () => {
+  const { seen, observe } = reporter();
+  const fakeFetch = (async () => new Response(JSON.stringify({ ok: false, error: "bad sig" }), { status: 402 })) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch, observe: observe as never });
+  const out = await mw(
+    new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "payment-signature": "eyJ4Ijp0cnVlfQ==" }) }),
+  );
+  assert.equal(out.response?.status, 402);
+  assert.equal(seen.length, 0);
+});
+
+test("the /verify body carries the agent block, so the cloud's paid row can attribute it", async () => {
+  let sent: Record<string, unknown> = {};
+  const fakeFetch = (async (_url: string, init: RequestInit) => {
+    sent = JSON.parse(String(init.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
+  await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "payment-signature": "eyJ4Ijp0cnVlfQ==" }) }));
+  assert.equal((sent.agent as { ua: string }).ua, "GPTBot/1.0");
+  assert.ok((sent.agent as { classifyReason: string }).classifyReason);
+  // The settle contract is untouched — the block is additive.
+  assert.equal(sent.payment, "eyJ4Ijp0cnVlfQ==");
+  assert.equal(sent.resource, "http://h/essays/x");
+});
+
+test("without `observe` the middleware behaves exactly as before (no throw, no report)", async () => {
+  const mw = naulonMiddleware(opts);
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0") }));
+  assert.equal(out.response?.status, 402);
+});

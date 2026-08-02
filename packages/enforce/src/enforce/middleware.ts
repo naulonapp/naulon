@@ -26,6 +26,8 @@ import {
 } from "../decide.ts";
 import type { JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
+import type { DecideObs } from "../decide.ts";
+import type { ObservationReport, ObservationReporter, ReportableVerdict } from "./observation-sink.ts";
 
 export interface NaulonMiddlewareOptions {
   /**
@@ -63,6 +65,18 @@ export interface NaulonMiddlewareOptions {
      *  turns a paid re-read into a 402. */
     cacheTtlMs?: number;
   };
+  /**
+   * Audit plane: report each decision this runtime witnessed (`httpObservationSink`, or
+   * your own function). Optional — omit it and the middleware behaves exactly as before.
+   *
+   * Only the four verdicts nobody else can see are reported: served-free, agent-reread,
+   * denied, blocked. The money verdicts belong to the hosted `/verify`, which writes them
+   * from the settle outcome — so a paid read shows up on the Audit page whether or not
+   * this is wired, and no integration can report earnings it did not settle.
+   *
+   * Fire-and-forget: never awaited, so it cannot delay or fail a reader's response.
+   */
+  observe?: ObservationReporter;
 }
 
 export interface MiddlewareResult {
@@ -80,6 +94,23 @@ interface VerifyResponse {
   payer?: string;
   responseHeader?: string;
   licenseJws?: string;
+}
+
+/**
+ * The classifier's read of the caller, in the shape both audit hand-offs use — the
+ * `/observe` report and the `agent` block on the `/verify` body. One builder, because
+ * two copies of "how identity is spelled on the wire" is how they drift apart.
+ * Absent fields are omitted rather than sent as `null`: the receiver treats absence as
+ * "not observed", which is true, while `null` reads as "observed to be nothing".
+ */
+function agentOf(obs: DecideObs): NonNullable<ObservationReport["agent"]> {
+  return {
+    ...(obs.agentUa !== undefined ? { ua: obs.agentUa } : {}),
+    classifyReason: obs.classifyReason,
+    ...(obs.verified !== undefined ? { verified: obs.verified } : {}),
+    ...(obs.verifiedAgent !== undefined ? { verifiedAgent: obs.verifiedAgent } : {}),
+    ...(obs.sigInvalid !== undefined ? { sigInvalid: obs.sigInvalid } : {}),
+  };
 }
 
 export function naulonMiddleware(
@@ -120,6 +151,31 @@ export function naulonMiddleware(
     };
   })();
 
+  // Build one report from the facts `decide()` already carried back. `DecideObs` exists
+  // for exactly this (the gate builds its observation from the same fields) — the in-app
+  // path simply never used it, which is why an in-app site's audit page was empty.
+  const report = (
+    obs: DecideObs,
+    verdict: ReportableVerdict,
+    resource: string,
+    extra?: { kind?: "read" | "citation"; priceUsdc?: number },
+  ): void => {
+    if (!opts.observe) return;
+    const r: ObservationReport = {
+      resource,
+      slug: obs.slug,
+      verdict,
+      classifiedAs: obs.classifiedAs,
+      at: clock(),
+      agent: agentOf(obs),
+    };
+    if (extra?.kind !== undefined) r.kind = extra.kind;
+    // Whole USDC → integer micro-USDC on the wire. Rounded, never floored: the figure is
+    // "what this request would have paid", and a sub-micro price is a real toll.
+    if (extra?.priceUsdc !== undefined) r.priceMicro = Math.round(extra.priceUsdc * 1_000_000);
+    opts.observe(r);
+  };
+
   return async (req: Request): Promise<MiddlewareResult> => {
     const url = new URL(req.url);
     // Only resolve the gate JWKS when this request actually presents a license — a
@@ -137,16 +193,27 @@ export function naulonMiddleware(
     });
 
     switch (d.kind) {
-      // Human, free re-read, unknown/non-article: let the app render locally.
+      // Not a gated route at all (non-article / unknown article) — the gate emits no
+      // observation here either, and inventing one would put every asset request into
+      // the publisher's traffic figures.
       case "passthrough":
+        return { response: null };
+
+      // Human, or a free re-read on a license already paid for: the app renders locally.
       case "free":
+        report(d.obs, "served-free", req.url);
+        return { response: null };
+
       case "reread":
+        report(d.obs, "agent-reread", req.url, { kind: d.tollKind });
         return { response: null };
 
       case "blocked":
+        report(d.obs, "blocked", req.url);
         return { response: new Response("This crawler is refused by the publisher.", { status: 403 }) };
 
       case "payment-required":
+        report(d.obs, "denied", req.url, { kind: d.tollKind, priceUsdc: d.quote.price });
         return {
           response: new Response(null, {
             status: 402,
@@ -155,6 +222,16 @@ export function naulonMiddleware(
         };
 
       case "payment-presented": {
+        // No `report(...)` on this branch, deliberately: the hosted /verify writes the
+        // `paid` / `payment-failed` observation itself, from the settle outcome it owns.
+        // Reporting it here too would double-count, and a client that can assert "paid"
+        // is a client that can inflate its own earnings.
+        //
+        // The one uncovered case is /verify being UNREACHABLE below: no settle happened,
+        // so the cloud writes nothing, and this runtime has no verdict it is allowed to
+        // report. That request is missing from the audit page by design — it is an
+        // outage symptom, which the enforcement-status plane is where you read.
+        //
         // Custody-free settlement: the buyer's signature goes to the hosted
         // /verify, which settles buyer→author and mints the receipt.
         let body: VerifyResponse;
@@ -166,7 +243,16 @@ export function naulonMiddleware(
               authorization: `Bearer ${opts.apiKey}`,
               "content-type": "application/json",
             },
-            body: JSON.stringify({ payment: d.payment, legs: d.legs, quote: d.quote, resource: req.url }),
+            // `agent` is telemetry, not authorization: it lets the cloud attribute the
+            // `paid` observation it writes from this settle to the agent that actually
+            // paid, instead of "(unknown agent)". An older control plane ignores it.
+            body: JSON.stringify({
+              payment: d.payment,
+              legs: d.legs,
+              quote: d.quote,
+              resource: req.url,
+              agent: agentOf(d.obs),
+            }),
           });
           status = res.status;
           body = (await res.json().catch(() => ({}))) as VerifyResponse;
