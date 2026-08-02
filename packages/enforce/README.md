@@ -37,6 +37,16 @@ The decision kernel and the framework-agnostic middleware core:
 - `localQuoteSource(fn)` / `httpQuoteSource(url, key)` — pluggable price + payees.
 - The classification, Web Bot Auth, nonce, and proof primitives (`classify`,
   `verifyBotAuth`, …) and the x402 build side (`build402`, `buildRequirements`).
+- Cloudflare pay-per-crawl interop — `formatCrawlerPrice`, `parseCrawlerPrice`,
+  `declaredCrawlerBudget`, `crawlerBudgetVerdict`, `totalChargedMicro`, and the four
+  header constants (`crawler-max-price` / `crawler-exact-price` on the request,
+  `crawler-price` on a `402`, `crawler-charged` on a paid `200`). A crawler already
+  fluent in that vocabulary can price your origin with no change on its side. You
+  advertise in their vocabulary and settle in ours — x402/USDC, buyer→author — so
+  nothing here moves money or changes who is charged. Prices render at full precision
+  rather than Cloudflare's `USD XX.XX`: a citation toll is often sub-cent, and
+  `(0.001).toFixed(2)` would advertise a free read. It lives here rather than in
+  `tollgate` so a self-hosting publisher on the SDK gets it too.
 
 ### `@naulon/enforce/next`
 
