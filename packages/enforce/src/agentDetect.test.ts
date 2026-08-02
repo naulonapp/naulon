@@ -8,7 +8,8 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classify, type RequestSignals } from "./agentDetect.ts";
+import { CRAWLER_REGISTRY } from "@naulon/shared";
+import { classify, KNOWN_AGENT_UA, type RequestSignals } from "./agentDetect.ts";
 
 function signals(over: Partial<RequestSignals> = {}): RequestSignals {
   return {
@@ -139,5 +140,75 @@ test("absent verifiedAgent: verdicts are byte-identical to the pre-WBA classifie
     const without = classify(signals(over), policy);
     const withNull = classify(signals({ ...over, verifiedAgent: null }), policy);
     assert.deepEqual(withNull, without);
+  }
+});
+
+/* ── Operator-doc parity (2026-08-03) ──────────────────────────────────────────
+ * Two mirrors of one vocabulary, neither previously enforced: the shared crawler
+ * registry's `defaultCharged` claims to mirror this list, and the real UA strings
+ * operators ship are browser-prefixed, so a token that is merely PRESENT is not
+ * proof the classifier reaches it. */
+
+test("the user-triggered fetchers are charged, in the exact UA their operator publishes", () => {
+  // The 2026-08-03 additions, verbatim from each operator's own doc page (Meta's
+  // web-crawlers page, developer.amazon.com/amazonbot, and the docs.mistral.ai/robots
+  // endpoint MistralAI-User cites). Not paraphrased: a UA these fail on is a toll that
+  // silently does not happen.
+  const cases: Array<[string, string]> = [
+    ["meta-externalfetcher", "meta-externalfetcher/1.1 (+/documentation/sharing/webmasters/web-crawlers)"],
+    ["meta-externalfetcher", "meta-externalfetcher/1.1"],
+    ["amzn-user", "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Amzn-User/0.1) Chrome/W.X.Y.Z Safari/537.36"],
+    ["mistralai-user", "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-User/1.0; +https://docs.mistral.ai/robots)"],
+  ];
+  for (const [fragment, ua] of cases) {
+    // Accept: text/html because two of these wear a full browser UA — step 3 (known-bot)
+    // must keep running before step 4 (browser-shaped), or a browser-prefixed crawler
+    // reads free forever. That ordering is the whole reason these are reachable.
+    const v = classify(signals({ userAgent: ua, accept: "text/html" }));
+    assert.equal(v.kind, "agent", ua);
+    assert.match(v.reason, new RegExp(fragment));
+  }
+});
+
+test("their operators' SEARCH siblings still read free", () => {
+  // Meta and Amazon each ship a search indexer alongside the fetcher above. Tolling
+  // one deindexes the publisher, so they must stay human — and they are the reason
+  // adding the fetchers cannot be done by matching "meta-" or "amzn-".
+  for (const ua of [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 (compatible; meta-webindexer/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler))",
+    "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Amzn-SearchBot/0.1) Chrome/W.X.Y.Z Safari/537.36",
+  ]) {
+    assert.equal(classify(signals({ userAgent: ua, accept: "text/html" })).kind, "human", ua);
+  }
+});
+
+test("every registry row's defaultCharged matches this list — the mirror is enforced now", () => {
+  // CRAWLER_REGISTRY.defaultCharged has always been a hand-kept copy of KNOWN_AGENT_UA
+  // ("keep in sync when the gate list changes"), with nothing to notice when it wasn't.
+  // A wrong flag here is a lying UI: the Crawlers tab tells a publisher a crawler is
+  // already charged (or isn't) and the gate does the opposite.
+  for (const c of CRAWLER_REGISTRY) {
+    const charged = KNOWN_AGENT_UA.some((frag) => c.fragment.includes(frag));
+    assert.equal(
+      c.defaultCharged,
+      charged,
+      `${c.name} (${c.fragment}): registry says defaultCharged=${c.defaultCharged}, the gate list says ${charged}`,
+    );
+  }
+});
+
+test("no registry fragment is a substring of another that would shadow it", () => {
+  // applebot-extended/applebot and meta-externalagent/meta-externalfetcher are one
+  // typo apart from a bucket that silently swallows its sibling. Where one fragment
+  // does contain another, the specific one must sort first for a longest-first match
+  // to be able to reach it — the audit plane's agentKey depends on exactly that.
+  for (const a of CRAWLER_REGISTRY) {
+    for (const b of CRAWLER_REGISTRY) {
+      if (a.id === b.id || !a.fragment.includes(b.fragment)) continue;
+      assert.ok(
+        a.fragment.length > b.fragment.length,
+        `${a.fragment} contains ${b.fragment} but is not longer — one of them is unreachable`,
+      );
+    }
   }
 });

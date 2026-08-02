@@ -44,9 +44,9 @@ class Naulon_Agent {
 	 * assistant fetches (the citation moment itself). Both are machine-only UAs, so charging
 	 * them cannot toll a human.
 	 *
-	 * Pure search-indexer UAs (googlebot, bingbot, oai-searchbot, claude-searchbot…) are
-	 * deliberately absent: tolling a search crawler silently deindexes the publisher, which is
-	 * the opposite of what they want.
+	 * Pure search-indexer UAs (googlebot, bingbot, oai-searchbot, claude-searchbot,
+	 * meta-webindexer, amzn-searchbot…) are deliberately absent: tolling a search crawler
+	 * silently deindexes the publisher, which is the opposite of what they want.
 	 */
 	const KNOWN_AGENT_UA = array(
 		'gptbot',
@@ -60,6 +60,9 @@ class Naulon_Agent {
 		'amazonbot',
 		'applebot-extended',
 		'meta-externalagent',
+		'meta-externalfetcher',
+		'amzn-user',
+		'mistralai-user',
 		'python-requests',
 		'node-fetch',
 		'axios',
