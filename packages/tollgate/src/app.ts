@@ -197,12 +197,25 @@ function forwardHeaders(req: Request, clientIp: string, originHost: string): Hea
  * a served request into a 500). Strip C0 controls + DEL at the one place the text
  * meets the wire. Exported for direct testing — a live request can't smuggle
  * CR/LF through header parsing, so the guard is only observable as a unit.
+ *
+ * It also strips everything ABOVE ASCII, which the control-char version did not, and that gap was
+ * live: a header value is a ByteString, so `Headers.set` THROWS on any code point > 255 ("cannot
+ * convert argument to a ByteString"). The throw lands in the fail-open error boundary and the
+ * request a publisher was serving becomes a 503 — the exact "turns a served request into a 500"
+ * outcome this function's own docstring exists to prevent, entered through a different door. Caught
+ * 2026-08-04 by an em-dash in a new verdict string, which 503'd every response on that branch;
+ * `d.frag` (a publisher-written crawler-policy fragment) reaches here the same way and is not
+ * control-char-rejected on a self-hosted config.
+ *
+ * 128–255 are stripped rather than passed: they are legal in a ByteString but their meaning is
+ * charset-dependent on the wire, and a verdict header is diagnostic text nobody should be decoding.
+ * ASCII-or-space keeps it unambiguous.
  */
 export function headerSafe(text: string): string {
   let out = "";
   for (const ch of text) {
-    const c = ch.charCodeAt(0);
-    out += c < 32 || c === 127 ? " " : ch;
+    const c = ch.codePointAt(0) ?? 0;
+    out += c < 32 || c >= 127 ? " " : ch;
   }
   return out;
 }
@@ -597,8 +610,44 @@ export function createApp(
         );
       }
 
-      // Machine WITH a payment: verify + settle (custody-free), then serve.
+      // Machine WITH a payment: fetch what we sold, verify + settle (custody-free), then serve.
       case "payment-presented": {
+        // FETCH BEFORE SETTLE — never move money for a read the origin will not deliver.
+        //
+        // This used to settle first and proxy afterwards, so an origin that answered 404 left the
+        // buyer charged with nothing to show for it, and custody-free means there is no refund
+        // path: the money went buyer → author directly. Found live on 2026-08-04 —
+        // `fleetorigin.naulon.app` had moved its articles to `.html` suffixes while the catalog
+        // still declared the extensionless slugs (slug extraction strips the suffix, so BOTH URLs
+        // priced, and only one was servable). GPTBot was quoted 5000 micro-USDC on a URL the origin
+        // could not serve, and "GPTBot gets a 402" — the fleet walk's own success criterion —
+        // passed the whole time.
+        //
+        // Ordering, not an extra request: the proxy fetch already happened on this path, one line
+        // below the settle. Doing it first costs nothing and makes "money moved" imply "content was
+        // in hand". The unread body is held across the settle; article payloads are small and the
+        // settle is ~1s, so the upstream connection is not meaningfully strained.
+        //
+        // SAFE METHODS ONLY. The gated route is `app.all("*")`, so a non-GET could reach here, and
+        // reordering would let the origin perform a side effect for a request that never pays. A
+        // GET/HEAD is idempotent and side-effect-free, which is the entire article-read surface
+        // this defect lives on; anything else keeps the original settle-then-proxy order.
+        const safeMethod = c.req.method === "GET" || c.req.method === "HEAD";
+        let prefetched: Response | undefined;
+        if (safeMethod) {
+          prefetched = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+          if (!prefetched.ok) {
+            // The payment is untouched — no nonce consumed, no leg settled — so the buyer's signed
+            // authorization stays valid and reusable. They get the origin's own status, unpaid.
+            emitObs(d.obs, "unservable", { kind: d.tollKind, price: usdc(d.quote.price) });
+            prefetched.headers.set(
+              "X-Naulon-Verdict",
+              headerSafe(`agent not charged: origin could not serve (${prefetched.status})`),
+            );
+            return stampGateCacheHeaders(prefetched, { noStore: true });
+          }
+        }
+
         // The settlement tail — the exact same code path the hosted /verify runs.
         const settled = await settleAndAttribute({ payment: d.payment, legs: d.legs, quote: d.quote, publisher, host, now });
         if (!settled.ok) {
@@ -624,7 +673,11 @@ export function createApp(
         // Audit plane: the paid outcome on the same timeline as denials/free reads.
         emitObs(d.obs, "paid", { kind: d.quote.kind, price: usdc(d.quote.price) });
 
-        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+        // Reuse the response we already hold on the safe-method path; only a non-GET reaches the
+        // origin here (see the ordering note above).
+        const res =
+          prefetched ??
+          (await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning));
         if (settled.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, settled.responseHeader);
         if (settled.licenseJws) res.headers.set(LICENSE_HEADER, settled.licenseJws);
         // Only on the settled path: `crawler-charged` is a claim that money moved, so
