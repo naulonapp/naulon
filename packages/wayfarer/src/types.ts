@@ -27,6 +27,20 @@ export interface Candidate {
   priceUsdc?: number;
   /** Indicative citation price (USDC). Advisory — the 402 is the truth. */
   citationPriceUsdc?: number;
+  /**
+   * WHY this candidate matched: the search found the query's terms inside the article's full
+   * text, where the free teaser does not show them. Strong evidence — the buyer's own words are
+   * in the good it is about to pay for. Set by a catalog/directory that searches bodies; absent
+   * from a plain RSS source, which does not search at all.
+   */
+  matchedInBody?: boolean;
+  /**
+   * WHY this candidate matched, weaker: it is near the query in meaning, and the query's terms
+   * are NOT present anywhere. A near-miss returned because nothing better existed is exactly
+   * this, so treat it as a reason to read the teaser carefully rather than as a reason to pay.
+   * Never set together with `matchedInBody`.
+   */
+  matchedSemantic?: boolean;
 }
 
 /** A candidate after the tollgate has quoted a price for it. The author split is

@@ -2183,3 +2183,56 @@ test("initialSpentUsdc seeds the running total so a silent reconnect does not re
   assert.ok(q.settlement, "the spend envelope also carries the settlement block");
   assert.equal(q.settlement.token.symbol, "USDC");
 });
+
+test("naulon_discover surfaces the match-evidence flags (the SDK strips anything undeclared)", async () => {
+  // Until 2026-08-03 the outputSchema declared only slug/title/summary/url, so `matchedInBody` —
+  // which the fleet directory had been sending ever since it gained body search — was silently
+  // dropped from structuredContent by schema validation. The hosted /ask agent saw the evidence
+  // for a candidate; a stdio buyer paying its own money did not. Declaring the fields IS the fix,
+  // so this test is the thing that keeps them declared.
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify([
+        { slug: "body", title: "In the body", summary: "teaser", matchedInBody: true },
+        { slug: "near", title: "Nearby", summary: "teaser", matchedSemantic: true },
+        { slug: "plain", title: "Plain", summary: "teaser" },
+      ]),
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    await withEnv(
+      { RSS_URL: undefined, PUBLISHER_URL: undefined, CATALOG_URL: `http://127.0.0.1:${port}/catalog` },
+      async () => {
+        const client = await connectedClient();
+        const res = await client.callTool({ name: "naulon_discover", arguments: { topic: "anything" } });
+        const out = res.structuredContent as { candidates: Record<string, unknown>[] };
+        const by = (slug: string): Record<string, unknown> =>
+          out.candidates.find((c) => c.slug === slug) as Record<string, unknown>;
+        assert.equal(by("body").matchedInBody, true, "a body hit reaches the buyer");
+        assert.equal(by("body").matchedSemantic, undefined);
+        assert.equal(by("near").matchedSemantic, true, "a semantic near-miss is labelled as one");
+        assert.equal(by("near").matchedInBody, undefined);
+        assert.equal(by("plain").matchedInBody, undefined, "an unflagged source carries no flag");
+        assert.equal(by("plain").matchedSemantic, undefined);
+      },
+    );
+  } finally {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      server.closeAllConnections?.();
+    });
+  }
+});
+
+test("the naulon_discover description tells the model what the two evidence flags mean", async () => {
+  const client = await connectedClient();
+  const { tools } = await client.listTools();
+  const d = tools.find((t) => t.name === "naulon_discover");
+  const text = d?.description ?? "";
+  assert.match(text, /matchedInBody/, "the strong signal is named");
+  assert.match(text, /matchedSemantic/, "the weak one too");
+  assert.match(text, /do not\s+pay one that is off-topic/i, "…and what to do about the weak one");
+});
