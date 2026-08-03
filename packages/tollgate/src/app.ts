@@ -636,6 +636,14 @@ export function createApp(
         let prefetched: Response | undefined;
         if (safeMethod) {
           prefetched = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+          // Anything outside 2xx, not just 404 — and each non-2xx family is correct to refuse on:
+          // a 3xx means the content moved and the agent should pay at wherever it went; a 304 means
+          // they already hold it and there is no body to sell; a 5xx means the origin is broken,
+          // which is the publisher's outage to fix and not a sale. The rule is simply that we bill
+          // for delivered content, so "did the origin deliver" is the only question asked.
+          //
+          // The body an unpaid agent sees here is the origin's own error page — the same bytes a
+          // human reading free would get on that URL, so refusing the charge exposes nothing new.
           if (!prefetched.ok) {
             // The payment is untouched — no nonce consumed, no leg settled — so the buyer's signed
             // authorization stays valid and reusable. They get the origin's own status, unpaid.
