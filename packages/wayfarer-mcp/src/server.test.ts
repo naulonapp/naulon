@@ -337,6 +337,34 @@ test("naulon_status reports wallet, discovery source, and a plain next step", as
   assert.ok(typeof s.nextStep === "string" && s.nextStep.length > 0);
 });
 
+// PROD 2026-08-03 — the "fund the wrong wallet" trap. `naulon_status` is documented as the run-FIRST
+// tool and its nextStep says "Fund this wallet (0x…)". On the hosted mount it was reporting
+// `getWallet().address` — the fleet's own env-derived key — while every toll is actually signed by the
+// injected session EOA. A buyer following that instruction funds an address that never pays, and the
+// reads keep failing with an on-chain shortfall. `payerAddress()` (used by the quote + pay probes since
+// the custody-free path landed) is the correct accessor; status was the one caller that never migrated.
+test("naulon_status reports the PAYER address (injected session EOA), not the env wallet", async () => {
+  await withEnv({ BUYER_PRIVATE_KEY: undefined }, async () => {
+    const session: MemoSigner = {
+      address: "0x000000000000000000000000000000000000BEEF",
+      async signTypedData() { return `0x${"11".repeat(65)}` as `0x${string}`; },
+    };
+    const client = await connectedClientWith({ signer: session });
+    const res = await client.callTool({ name: "naulon_status", arguments: {} });
+    const s = res.structuredContent as { wallet: string; nextStep: string };
+    assert.equal(
+      s.wallet.toLowerCase(), session.address.toLowerCase(),
+      "status must report the address that actually signs tolls, not the process env wallet",
+    );
+    // The nextStep is the instruction a human/agent acts on — it must name the same address, or the
+    // buyer funds one wallet while a different one pays.
+    assert.match(
+      s.nextStep, new RegExp(session.address, "i"),
+      "nextStep tells the buyer which wallet to fund — it must be the payer",
+    );
+  });
+});
+
 test("naulon_status.nextStep for fleet-default: no single pay-gate implied — discovery is fleet-wide, payment is per-publisher", async () => {
   await withEnv(
     { CATALOG_URL: undefined, RSS_URL: undefined, PUBLISHER_URL: undefined, TOLLGATE_URL: undefined },
