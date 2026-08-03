@@ -652,7 +652,14 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     },
     async () => {
       const cfg = getConfig();
-      const wallet = getWallet().address;
+      // The address that ACTUALLY signs tolls — the injected session EOA on the hosted path, the env
+      // wallet on BYO-key. NOT `getWallet()`: on a custody-free deploy (no BUYER_PRIVATE_KEY, which is
+      // the correct hosted posture) that resolves to the throwaway MOCK dev key, whose private key is
+      // public. This tool is documented "run this FIRST" and its nextStep says "Fund this wallet (0x…)",
+      // so reporting the wrong address does not merely confuse — it directs a buyer to fund an address
+      // that never pays their tolls and that anyone can sweep. Prod 2026-08-03 reported
+      // 0xF0c9…a6F5 (the mock key) while every toll was signed by the session EOA.
+      const wallet = payerAddress();
       const fleetDefault = isFleetDefaultDiscovery(cfg);
       // Amendment (wp2-brief): never imply a single universal pay-gate exists for the fleet
       // default — discovery is fleet-WIDE, but payment is authorized per-publisher (the trusted
