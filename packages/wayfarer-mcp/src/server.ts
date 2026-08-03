@@ -688,8 +688,11 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       description:
         "Score how relevant each candidate is to the topic, from its free teaser alone — a 0..1 " +
         "relevance plus a one-line rationale. Pass the candidates you got from naulon_discover (or a " +
-        "curated subset). This is FREE and judges the teaser text only; it does not fetch or pay for " +
-        "any content. Use it to decide what is worth quoting and paying for.",
+        "curated subset), and pass them back WHOLE — `matchedInBody` / `matchedSemantic` tell the " +
+        "scorer WHY the search returned each one, and dropping them makes a body-matched source with " +
+        "a terse teaser look identical to a near-miss with a keyword-ish one. FREE: it reads the " +
+        "teaser and those flags, never paid content, and it fetches and pays for nothing. " +
+        "Use it to decide what is worth quoting and paying for.",
       inputSchema: {
         topic: z.string().min(1).describe("The research topic to score relevance against."),
         candidates: z
@@ -698,10 +701,22 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               slug: z.string(),
               title: z.string(),
               summary: z.string().describe("The free teaser to judge — title + summary, no paid content."),
+              // Declared for the same reason naulon_discover declares them on the way out: an
+              // undeclared key is stripped by schema validation. Without these two lines the
+              // evidence survives discovery and dies one tool later, and the scorer is back to
+              // judging a summary it was never safe to judge alone.
+              matchedInBody: z
+                .boolean()
+                .optional()
+                .describe("From naulon_discover: the topic's words are inside this source's full text."),
+              matchedSemantic: z
+                .boolean()
+                .optional()
+                .describe("From naulon_discover: near the topic in meaning only — its words are absent."),
             }),
           )
           .min(1)
-          .describe("Candidates to appraise (typically from naulon_discover)."),
+          .describe("Candidates to appraise — pass naulon_discover's rows through unmodified."),
       },
       outputSchema: {
         appraised: z.array(
@@ -716,8 +731,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ topic, candidates }) => {
-      // Relevance is judged from the teaser text only — price plays no part, so we
-      // appraise with a zero price and drop it from the output.
+      // Price plays no part in relevance, so appraise at zero and drop it from the output. The
+      // spread carries the match-evidence flags through to the scorer — that is the point of
+      // declaring them above.
       const priced = candidates.map((c) => ({ ...c, price: usdc(0) }));
       const scored = await appraise(topic, priced);
       const appraised = scored.map((a) => ({
