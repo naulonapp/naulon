@@ -2236,3 +2236,28 @@ test("the naulon_discover description tells the model what the two evidence flag
   assert.match(text, /matchedSemantic/, "the weak one too");
   assert.match(text, /do not\s+pay one that is off-topic/i, "…and what to do about the weak one");
 });
+
+test("naulon_appraise accepts the match-evidence flags and scores WITH them", async () => {
+  // The input-side twin of the discover bug: an undeclared key is stripped by schema validation,
+  // so before this the evidence survived naulon_discover and died one tool later. Both candidates
+  // carry the same uninformative teaser — only the reported evidence differs, so any score gap
+  // proves the flags reached the scorer.
+  const client = await connectedClient();
+  const res = await client.callTool({
+    name: "naulon_appraise",
+    arguments: {
+      topic: "egyptian iconography",
+      candidates: [
+        { slug: "body", title: "A study", summary: "Notes from the archive.", matchedInBody: true },
+        { slug: "near", title: "A study", summary: "Notes from the archive.", matchedSemantic: true },
+      ],
+    },
+  });
+  const { appraised } = res.structuredContent as { appraised: { slug: string; relevance: number; rationale: string }[] };
+  const by = (slug: string) => appraised.find((a) => a.slug === slug)!;
+  assert.ok(
+    by("body").relevance > by("near").relevance,
+    "identical teasers, different evidence → different scores, or the flags never arrived",
+  );
+  assert.match(by("body").rationale, /full text/);
+});
