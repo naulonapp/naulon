@@ -551,7 +551,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "catalog endpoint — set RSS_URL, PUBLISHER_URL, or CATALOG_URL, or use the hosted endpoint). " +
         "Returns FREE public teasers only — slug, title, and summary — with no content and no payment. " +
         "Call this first to see what is available before appraising, quoting, or paying. If no source " +
-        "is configured it refuses with setup guidance rather than inventing sources.",
+        "is configured it refuses with setup guidance rather than inventing sources. " +
+        "A candidate may carry WHY it matched: `matchedInBody` means your terms are inside the paid " +
+        "text (strong — the teaser just does not show it), `matchedSemantic` means only that it is " +
+        "near your query in meaning and your terms are absent (weak — judge the teaser, and do not " +
+        "pay one that is off-topic). Discovery returns the best available matches, never a promise " +
+        "that any of them answers your question.",
       inputSchema: {
         topic: z.string().min(1).describe("The research topic to find candidate sources for."),
       },
@@ -569,6 +574,25 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
                   "Canonical URL this source is served from (from the RSS <link> / catalog / directory). " +
                     "Pass it back to naulon_quote / naulon_pay_and_read so the toll targets the real link " +
                     "(e.g. /articles/<slug>) instead of a reconstructed /essays/<slug> path.",
+                ),
+              // Why the source matched. A directory that searches article bodies sets exactly one of
+              // these; an RSS source sets neither (it does not search). They must be DECLARED here or
+              // the SDK strips them from structuredContent — which is what happened until 2026-08-03:
+              // the fleet directory had been sending matchedInBody since it gained body search, and no
+              // stdio buyer ever saw it. The hosted agent had the evidence; a self-host buyer did not.
+              matchedInBody: z
+                .boolean()
+                .optional()
+                .describe(
+                  "STRONG: your query's terms appear inside this source's full text, which the free " +
+                    "teaser may not show. A flag only — the body itself stays behind the toll.",
+                ),
+              matchedSemantic: z
+                .boolean()
+                .optional()
+                .describe(
+                  "WEAK: this source is close to your query in meaning, but your terms do NOT appear " +
+                    "in it. Judge it on the title and teaser; a near-miss looks exactly like this.",
                 ),
             }),
           )

@@ -183,3 +183,30 @@ test("rssSource returns [] (honest empty) when a valid feed parses to zero candi
     f.restore();
   }
 });
+
+test("catalogSource carries the match-evidence flags through verbatim", async () => {
+  // A directory that searches article bodies tells the buyer WHY each row matched. Those flags are
+  // what separate "your words are in the paid text" from "this is merely nearby in meaning" — the
+  // difference a buyer is about to spend money on. The source must not drop them.
+  const fetchMock = async (): Promise<Response> =>
+    new Response(
+      JSON.stringify([
+        { slug: "body", title: "B", summary: "s", matchedInBody: true },
+        { slug: "near", title: "N", summary: "s", matchedSemantic: true },
+        { slug: "plain", title: "P", summary: "s" },
+      ]),
+      { status: 200 },
+    );
+  const prev = globalThis.fetch;
+  globalThis.fetch = fetchMock as typeof fetch;
+  try {
+    const cands = await catalogSource("https://x.test/api/catalog").discover("topic");
+    assert.equal(cands[0]?.matchedInBody, true);
+    assert.equal(cands[0]?.matchedSemantic, undefined);
+    assert.equal(cands[1]?.matchedSemantic, true);
+    assert.equal(cands[1]?.matchedInBody, undefined);
+    assert.equal(cands[2]?.matchedInBody, undefined, "a source with no evidence flag carries none");
+  } finally {
+    globalThis.fetch = prev;
+  }
+});
