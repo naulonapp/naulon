@@ -20,5 +20,6 @@ export * from "./crawler-policy.ts";
 export * from "./crawlerPolicyFile.ts";
 export * from "./crawlerRegistry.ts";
 export * from "./clientIdentity.ts";
+export * from "./externalScheme.ts";
 export * from "./rateLimitCore.ts";
 export * from "./untrusted.ts";

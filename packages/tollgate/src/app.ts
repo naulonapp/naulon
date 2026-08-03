@@ -30,6 +30,7 @@ import {
   botAuthKeyFromSeed,
   BOT_AUTH_DIRECTORY_CONTENT_TYPE,
   BOT_AUTH_DIRECTORY_PATH,
+  externalSchemeOf,
   getConfig,
   signBotAuth,
   signBotAuthDirectory,
@@ -174,7 +175,12 @@ function forwardHeaders(req: Request, clientIp: string, originHost: string): Hea
   for (const [k, v] of req.headers) {
     if (!STRIP_HEADERS.has(k.toLowerCase())) out.set(k, v);
   }
-  const proto = new URL(req.url).protocol.replace(":", "");
+  // The scheme the BUYER used, not the one this socket saw. The inbound header is
+  // stripped above as untrusted, then re-derived here — but "what the socket saw" is
+  // plain HTTP behind a TLS-terminating edge, so the origin was being told `http` for
+  // an `https` read. An origin that builds absolute URLs (canonical tags, redirects,
+  // its own credits links) from this header would build them wrong.
+  const proto = externalSchemeOf(req, { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS });
   out.set("x-forwarded-for", clientIp);
   out.set("x-forwarded-proto", proto);
   out.set("x-forwarded-host", req.headers.get("host") ?? originHost);
