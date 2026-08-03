@@ -87,6 +87,20 @@ export interface AttributedEvent {
    * neither filters nor drains on it, and every existing ledger row stays valid.
    */
   publisherId?: string;
+  /**
+   * The Host header this toll was collected on — the same identity the gate routes by, and the
+   * same field `ObservationEvent` has carried since it existed.
+   *
+   * Optional for the same reason `publisherId` is: it is an embedding seam, and every ledger row
+   * written before it existed stays valid. The single-tenant core neither filters nor drains on it.
+   *
+   * Why it is worth having: a publisher can serve MANY hosts, and without this the ledger can only
+   * answer "has this publisher been paid recently", never "has THIS host been paid recently". A
+   * resolver-based deploy that classifies per host then has to attribute a whole tenant's traffic
+   * to each of its hosts — so a domain that has never been read once reads as actively earning. The
+   * settle tail knows the host at the moment it writes the row; nothing downstream can recover it.
+   */
+  host?: string;
   slug: string;
   kind: TollKind;
   amount: Usdc;

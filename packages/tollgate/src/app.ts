@@ -600,7 +600,7 @@ export function createApp(
       // Machine WITH a payment: verify + settle (custody-free), then serve.
       case "payment-presented": {
         // The settlement tail — the exact same code path the hosted /verify runs.
-        const settled = await settleAndAttribute({ payment: d.payment, legs: d.legs, quote: d.quote, publisher, now });
+        const settled = await settleAndAttribute({ payment: d.payment, legs: d.legs, quote: d.quote, publisher, host, now });
         if (!settled.ok) {
           // Carry WHY, classified. `settled.error` goes to the buyer in the 402 body below (they are
           // entitled to the detail); the publisher's audit row gets the closed-set reason, so a

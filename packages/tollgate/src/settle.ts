@@ -51,12 +51,22 @@ export interface SettleArgs {
   legs: SettlementLegReq[];
   quote: Quote;
   publisher: PublisherConfig;
+  /**
+   * The Host this toll was collected on — stamped onto the `AttributedEvent`.
+   *
+   * REQUIRED, unlike the event field it feeds. The field is optional so historical rows stay
+   * valid; the argument is required because a caller cannot settle without knowing which host it
+   * just tolled, and an optional one would let a caller silently write host-less rows that no
+   * downstream reader can repair. Both call sites (the gate's proxy handler and the hosted
+   * `/verify`) have it in scope already.
+   */
+  host: string;
   /** Single timestamp shared with the advertised 402 (build402) — pass decide()'s `now`. */
   now: number;
 }
 
 export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult> {
-  const { payment, legs, quote: q, publisher, now } = args;
+  const { payment, legs, quote: q, publisher, host, now } = args;
 
   const result = await verifyAndSettle(payment, legs, now, publisher.id);
   if (!result.ok) return { ok: false, error: result.error };
@@ -81,6 +91,9 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     // Attribute the event to the resolved publisher (the default resolver's id is
     // "default"). A single optional tag; the single-tenant drain never reads it.
     publisherId: publisher.id,
+    // The host that was tolled. A publisher can serve many; without this the ledger can only say
+    // the PUBLISHER earned recently, never which of its domains did.
+    host,
     slug: q.slug,
     kind: q.kind,
     amount: usdc(q.price),
