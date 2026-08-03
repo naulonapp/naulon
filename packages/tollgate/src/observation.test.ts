@@ -101,6 +101,33 @@ test("a human read, an agent denial, and an agent payment each emit the right ob
   assert.ok(typeof pay!.price === "number" && pay!.price > 0, "paid carries the settled price");
 });
 
+// PROD 2026-08-03 — the audit plane counted four `payment-failed` rows and could not say why, so a
+// publisher's own settlement misconfiguration was indistinguishable from four broke buyers. The
+// verdict alone is not the product; the reason is.
+test("a failed payment records WHY — the classified reason, never the raw settle error", async () => {
+  const failed = await app.request("/essays/on-stillness", {
+    headers: { "x-naulon-agent": "tester", [PAYMENT_SIGNATURE_HEADER]: "not-a-decodable-payment" },
+  });
+  assert.equal(failed.status, 402, "an undecodable payment is refused, nothing served");
+
+  const all = await waitForObs((obs) => obs.some((o) => o.verdict === "payment-failed"));
+  const fail = all.find((o) => o.verdict === "payment-failed");
+
+  assert.ok(fail, "a payment-failed observation is emitted");
+  assert.equal(fail!.failureReason, "malformed_payment", "the reason is carried, classified");
+  assert.equal(fail!.classifiedAs, "agent");
+
+  // The publisher-facing guarantee: the raw error names legs, payees and amounts; none of that may
+  // ride along into an audit row another party reads.
+  assert.doesNotMatch(String(fail!.failureReason), /0x[0-9a-fA-F]{6,}/, "no address in the reason");
+  assert.doesNotMatch(String(fail!.failureReason), /\s/, "the reason is a bare code, not prose");
+
+  // And the reason belongs ONLY to the failing verdict — a paid/served row must not carry one.
+  for (const o of all.filter((x) => x.verdict !== "payment-failed")) {
+    assert.equal(o.failureReason, undefined, `${o.verdict} must have no failureReason`);
+  }
+});
+
 test("observations are scoped to the resolved publisher (publisherId stamped)", async () => {
   const all = await waitForObs((obs) => obs.length > 0);
   // The default env resolver stamps a single publisher id on every observation —

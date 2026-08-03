@@ -1,4 +1,5 @@
 export * from "./types.ts";
+export * from "./paymentfailure.ts";
 export * from "./publisher.ts";
 export * from "./config.ts";
 export * from "./attribution.ts";
