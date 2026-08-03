@@ -27,7 +27,8 @@ export { discover } from "./discover.ts";
 export { resolvedDiscoverySourceUrl } from "./discovery.ts";
 
 // ── appraise ────────────────────────────────────────────────────────────────
-export { appraise } from "./appraise.ts";
+export { appraise, buildAppraisePrompt, evidenceLine, parseRelevance } from "./appraise.ts";
+export type { AppraisalSubject, AppraisePromptOptions } from "./appraise.ts";
 
 // ── quote + pay (the Buyer seam) ────────────────────────────────────────────
 export {
