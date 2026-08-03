@@ -123,3 +123,17 @@ test("headerSafe strips C0 controls + DEL, keeps legal header text", () => {
   assert.equal(headerSafe("tab\tand\x00nul\x7f"), "tab and nul ");
   assert.equal(headerSafe('human (seo allowlist matched "legacy-bot v2")'), 'human (seo allowlist matched "legacy-bot v2")');
 });
+
+/* A header value is a ByteString: `Headers.set` THROWS on any code point > 255, the throw lands in
+ * the fail-open boundary, and a served request becomes a 503 — the same "turns a served request
+ * into a 500" outcome the control-char strip exists to prevent, through a different door. Caught
+ * live 2026-08-04 by an em-dash in a verdict string. `d.frag` is a publisher-written crawler-policy
+ * fragment and reaches the same header, so this is reachable from config, not just from our own
+ * source text. */
+test("headerSafe strips everything above ASCII — a header value is a ByteString", () => {
+  assert.equal(headerSafe("agent not charged \u2014 origin could not serve (404)"), "agent not charged   origin could not serve (404)");
+  assert.equal(headerSafe("blocked (\"\u00e9milie-bot\")"), 'blocked (" milie-bot")');
+  assert.equal(headerSafe("emoji \u{1F600} bot"), "emoji   bot", "astral chars are one code point, not two");
+  // And the result must actually be settable, which is the whole point.
+  assert.doesNotThrow(() => new Headers().set("X-Naulon-Verdict", headerSafe("caf\u00e9 \u2014 \u{1F600}")));
+});

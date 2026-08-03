@@ -138,6 +138,16 @@ export type ObservationVerdict =
   | "blocked"
   /** An agent presented payment that failed verify/settle — never served. */
   | "payment-failed"
+  /**
+   * An agent presented a payment we chose NOT to take, because the origin could not serve the
+   * read. Nothing was charged and the origin's own status was passed back.
+   *
+   * Distinct from `payment-failed`: the PAYMENT was fine, the SALE was not. It is the publisher's
+   * only signal that their catalog prices something their origin does not serve — invisible from
+   * every other angle, because the quote is well-formed, the buyer is solvent, and the toll
+   * "works". Before this existed the money moved first and the buyer received the origin's 404.
+   */
+  | "unservable"
   /** An agent paid; content served + license minted. Mirrors an `AttributedEvent`. */
   | "paid";
 
