@@ -193,8 +193,15 @@ export async function payeeRefusedOrNull(quoted: Quoted, guard?: PayGuard): Prom
  * through to a retryable `rejected`, telling the agent to retry a pay that can only fail again.
  *
  *   grant_exceeded · leg_too_large · no_session      → needs_topup   (fund the session)
+ *   insufficient_on_chain                             → needs_topup   (fund it ON THE NAMED CHAIN)
  *   grant_expired                                     → grant_expired (renew — funds intact)
  *   bad_from · chain_mismatch · payee_not_allowed     → rejected      (a config error a top-up can't fix)
+ *   funding_unreadable                                → origin_error  (infrastructure, not the buyer)
+ *
+ * `insufficient_on_chain` shares `needs_topup` with the grant codes because the remedy is the same
+ * ACT — put money in — but not the same PLACE: the grant may be healthy while the session address
+ * holds nothing on the chain that 402 advertised. The chain is in the refusal message, and an agent
+ * relaying this must relay that message rather than say "raise your grant cap", which would be wrong.
  *
  * Returns null when the message is NOT a known signer code (a real socket / unknown throw the
  * caller should surface as `origin_error`). Never retryable: every signer refusal needs a
@@ -211,7 +218,17 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     // envelope — topping the grant / retrying the same amount changes nothing, so they are terminal.
     case "sub_cap_exceeded":
     case "daily_budget_exceeded":
+    // The session address holds too little on the chain the 402 advertised. The GRANT may be fine —
+    // this is real coins missing at a real address, caught before the irreversible reserve debits for
+    // a payment that could never settle. Not retryable: the balance does not change by asking again.
+    case "insufficient_on_chain":
       return { errorCode: "needs_topup", retryable: false };
+    case "funding_unreadable":
+      // The balance could NOT be read (RPC / Gateway API fault) — not a shortfall and not the buyer's
+      // fault, so it must not render as "you are out of money". Nothing was charged. Deliberately not
+      // retryable despite being transient: one skipped citation is cheap, while an auto-retry loop
+      // against a flapping endpoint spends the session's whole budget on nothing.
+      return { errorCode: "origin_error", retryable: false };
     case "grant_expired":
       return { errorCode: "grant_expired", retryable: false };
     case "bad_from":

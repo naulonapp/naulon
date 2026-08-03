@@ -290,6 +290,22 @@ test("classifySignerRefusal maps fundable refusals to needs_topup (not retryable
   }
 });
 
+test("classifySignerRefusal routes an unfunded ADVERTISED chain to needs_topup, not to rejected", () => {
+  // The session's grant can be healthy while its address holds nothing on the chain that 402 named.
+  // Left unrecognised this fell through to a retryable `rejected` — the agent would re-sign a payment
+  // that can never settle, and (before the cloud-side guard) each attempt debited the grant.
+  const c = classifySignerRefusal("insufficient_on_chain (holds 0.0006 USDC on base, read costs 1.00)");
+  assert.equal(c?.errorCode, "needs_topup", "the remedy is funding — but on the chain the message names");
+  assert.equal(c?.retryable, false, "a balance does not change by asking again");
+});
+
+test("classifySignerRefusal does NOT report an unreadable balance as the buyer being out of money", () => {
+  const c = classifySignerRefusal("funding_unreadable (could not read the session's base balance)");
+  assert.equal(c?.errorCode, "origin_error", "an RPC/Gateway fault is infrastructure, not a shortfall");
+  assert.notEqual(c?.errorCode, "needs_topup", "telling a funded buyer to top up is the wrong remedy");
+  assert.equal(c?.retryable, false, "transient, but a retry loop against a flapping endpoint is worse");
+});
+
 test("classifySignerRefusal maps a lapsed grant to grant_expired (renew, not retryable)", () => {
   const c = classifySignerRefusal("grant_expired (remaining 4990000)");
   assert.equal(c?.errorCode, "grant_expired", "funds intact — the WINDOW lapsed; remedy is renew, not top-up");
