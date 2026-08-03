@@ -12,6 +12,7 @@
 // existing `from "@naulon/shared"` import keeps resolving unchanged.
 import { walletAddress } from "@naulon/sdk";
 import type { WalletAddress, ArticleCredits, Contributor, CreditsResolver } from "@naulon/sdk";
+import type { PaymentFailureReason } from "./paymentfailure.ts";
 export { walletAddress };
 export type { WalletAddress, ArticleCredits, Contributor, CreditsResolver };
 
@@ -160,6 +161,16 @@ export interface ObservationEvent {
   sigInvalid?: boolean;
   /** The quoted price (paid → settled; denied/payment-failed → what they'd have paid = "earnings missed"). */
   price?: Usdc;
+  /**
+   * WHY a `payment-failed` failed — set only on that verdict, absent on every other. A closed set
+   * ({@link PaymentFailureReason}), never the raw settle error, because this is shown to the
+   * publisher and the raw string carries a counterparty address and leg amounts.
+   *
+   * Without it the audit plane counts failures it cannot explain: prod 2026-08-03 showed four
+   * `payment-failed` rows that were indistinguishable from four broke buyers, when the real cause
+   * was the publisher's own `settlement_network` pointing at a chain no buyer was funded on.
+   */
+  failureReason?: PaymentFailureReason;
   /** epoch ms — passed in by the caller (no ambient clock in shared code). */
   at: number;
 }

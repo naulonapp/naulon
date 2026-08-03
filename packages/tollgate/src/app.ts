@@ -36,6 +36,8 @@ import {
   type BotAuthKey,
   usdc,
   type ObservationVerdict,
+  type PaymentFailureReason,
+  classifyPaymentFailure,
   type PublisherResolver,
   type TollKind,
   type Usdc,
@@ -509,7 +511,7 @@ export function createApp(
     // Audit plane: one observation per gated-route decision, built from the facts
     // decide() carried back (telemetry only, never gates). Default sink off → no-op.
     // `at` is stamped per emit, exactly as before the extraction.
-    const emitObs = (obs: DecideObs, v: ObservationVerdict, extra?: { kind?: TollKind; price?: Usdc }): void =>
+    const emitObs = (obs: DecideObs, v: ObservationVerdict, extra?: { kind?: TollKind; price?: Usdc; failureReason?: PaymentFailureReason }): void =>
       observe({
         id: randomUUID(),
         publisherId: publisher.id,
@@ -524,6 +526,8 @@ export function createApp(
         verifiedAgent: obs.verifiedAgent,
         sigInvalid: obs.sigInvalid,
         price: extra?.price,
+        // Only ever set on `payment-failed` — the other verdicts have no failure to explain.
+        failureReason: extra?.failureReason,
         at: Date.now(),
       });
 
@@ -592,7 +596,14 @@ export function createApp(
         // The settlement tail — the exact same code path the hosted /verify runs.
         const settled = await settleAndAttribute({ payment: d.payment, legs: d.legs, quote: d.quote, publisher, now });
         if (!settled.ok) {
-          emitObs(d.obs, "payment-failed", { kind: d.tollKind, price: usdc(d.quote.price) });
+          // Carry WHY, classified. `settled.error` goes to the buyer in the 402 body below (they are
+          // entitled to the detail); the publisher's audit row gets the closed-set reason, so a
+          // counterparty address or leg amount can never reach it.
+          emitObs(d.obs, "payment-failed", {
+            kind: d.tollKind,
+            price: usdc(d.quote.price),
+            failureReason: classifyPaymentFailure(settled.error),
+          });
           return stampGateCacheHeaders(
             c.json({ error: settled.error }, 402, {
               [PAYMENT_REQUIRED_HEADER]: d.header,
