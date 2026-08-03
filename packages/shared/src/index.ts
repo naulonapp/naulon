@@ -20,3 +20,4 @@ export * from "./crawlerPolicyFile.ts";
 export * from "./crawlerRegistry.ts";
 export * from "./clientIdentity.ts";
 export * from "./rateLimitCore.ts";
+export * from "./untrusted.ts";
