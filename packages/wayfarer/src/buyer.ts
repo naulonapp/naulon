@@ -196,6 +196,7 @@ export async function payeeRefusedOrNull(quoted: Quoted, guard?: PayGuard): Prom
  *   insufficient_on_chain                             → needs_topup   (fund it ON THE NAMED CHAIN)
  *   grant_expired                                     → grant_expired (renew — funds intact)
  *   bad_from · chain_mismatch · payee_not_allowed     → rejected      (a config error a top-up can't fix)
+ *   cross_plane                                       → rejected      (testnet vs mainnet — not fundable)
  *   funding_unreadable                                → origin_error  (infrastructure, not the buyer)
  *
  * `insufficient_on_chain` shares `needs_topup` with the grant codes because the remedy is the same
@@ -240,6 +241,11 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     // made the /ask agent burn its one retry re-signing a doomed pay.
     case "below_floor":
     case "nonce_reused":
+    // The session and the publisher are on different MONEY PLANES (testnet vs mainnet). Belongs here
+    // and not in needs_topup: a testnet session can never hold mainnet USDC, so "fund it" is not a
+    // remedy — acting on that advice means spending real money to satisfy a test. The fix is a
+    // session on the publisher's plane, which is config, exactly what this bucket is for.
+    case "cross_plane":
       return { errorCode: "rejected", retryable: false };
     default:
       return null;

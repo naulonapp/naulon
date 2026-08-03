@@ -306,6 +306,15 @@ test("classifySignerRefusal does NOT report an unreadable balance as the buyer b
   assert.equal(c?.retryable, false, "transient, but a retry loop against a flapping endpoint is worse");
 });
 
+test("classifySignerRefusal does NOT tell a cross-plane buyer to fund anything", () => {
+  // A testnet session meeting a mainnet publisher. `needs_topup` here would read as actionable and
+  // would mean: spend REAL money to satisfy a session set up as a test.
+  const c = classifySignerRefusal("cross_plane (session on arcTestnet, publisher settles on base)");
+  assert.equal(c?.errorCode, "rejected", "the remedy is a session on the publisher's plane, not funding");
+  assert.notEqual(c?.errorCode, "needs_topup");
+  assert.equal(c?.retryable, false);
+});
+
 test("classifySignerRefusal maps a lapsed grant to grant_expired (renew, not retryable)", () => {
   const c = classifySignerRefusal("grant_expired (remaining 4990000)");
   assert.equal(c?.errorCode, "grant_expired", "funds intact — the WINDOW lapsed; remedy is renew, not top-up");
