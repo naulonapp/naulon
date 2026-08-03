@@ -25,6 +25,9 @@ import { licensing } from "./license.ts";
 import { revocations } from "./revocation.ts";
 import { verifyPopProof } from "./pop.ts";
 import {
+  externalSchemeOf,
+  externalUrl,
+  type ExternalSchemeOpts,
   getConfig,
   popBoundAddress,
   verifyLicense,
@@ -139,13 +142,26 @@ export function signalsFrom(req: Request): RequestSignals {
  * `authority` is the resolved tenant Host — the same identity the gate routes by —
  * so a signature over `@authority` binds to the host being tolled.
  */
-export function requestFactsFrom(req: Request, host: string): RequestFacts {
+export function requestFactsFrom(
+  req: Request,
+  host: string,
+  /** Proxy-trust settings. Defaults to the process config; passed explicitly by tests
+   *  so this stays a pure function of its arguments rather than of ambient env. */
+  trust: ExternalSchemeOpts = { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS },
+): RequestFacts {
   const url = new URL(req.url);
+  // `@target-uri` is a SIGNED component: the agent signed the URI it requested, which is
+  // the public `https://` one. Reconstructing it from the socket scheme yields `http://`
+  // behind a TLS-terminating edge, so the signature base differs by one character and
+  // verification fails — silently downgrading a properly-signed agent to unverified.
+  // `@authority` (host only) was never affected, which is why this hid: an agent that
+  // covers `@authority` verified fine and one that covers `@target-uri` did not.
+  const proto = externalSchemeOf(req, trust);
   return {
     authority: host,
     method: req.method,
     path: url.pathname,
-    targetUri: `${url.protocol}//${host}${url.pathname}${url.search}`,
+    targetUri: `${proto}://${host}${url.pathname}${url.search}`,
     headers: Object.fromEntries(req.headers.entries()),
   };
 }
@@ -328,7 +344,14 @@ export async function decide(input: DecideInput): Promise<Decision> {
   const q = await quote(publisher, slug, tollKind);
   if (!q) return { kind: "passthrough", verdict: "unknown-article" }; // unknown article — don't gate.
 
-  const { legs, header } = build402(q, new URL(raw.url).toString(), now);
+  // The resource identifier goes into a SIGNED quote, so it must be the URL the buyer
+  // actually fetched — not the one this process observed. TLS terminates at the edge in
+  // every real deployment, so `raw.url` reads `http:` for an `https:` read.
+  const { legs, header } = build402(
+    q,
+    externalUrl(raw, { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS }),
+    now,
+  );
 
   const payment = raw.headers.get(PAYMENT_SIGNATURE_HEADER);
   return payment

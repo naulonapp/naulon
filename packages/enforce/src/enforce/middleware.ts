@@ -24,7 +24,7 @@ import {
   LICENSE_HEADER,
   type LicenseVerification,
 } from "../decide.ts";
-import type { JwkSet } from "@naulon/shared";
+import { externalUrl, getConfig, type JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
 import type { DecideObs } from "../decide.ts";
 import type { ObservationReport, ObservationReporter, ReportableVerdict } from "./observation-sink.ts";
@@ -118,6 +118,7 @@ export function naulonMiddleware(
 ): (req: Request) => Promise<MiddlewareResult> {
   const doFetch = opts.fetchImpl ?? fetch;
   const clock = opts.now ?? Date.now;
+  const cfg = getConfig();
 
   // API-mode license verification: a cached fetcher for the minting gate's JWKS. Built
   // once; each request reuses the cached keys until the TTL lapses, then refetches. On a
@@ -178,6 +179,16 @@ export function naulonMiddleware(
 
   return async (req: Request): Promise<MiddlewareResult> => {
     const url = new URL(req.url);
+    // ONE resource identifier per request, computed once. It reaches four different
+    // consumers — the price lookup, every observation, the settle call to the cloud,
+    // and (via decide → build402) the signed 402 — and they must agree byte for byte:
+    // the cloud joins the settle's `resource` to the observation it already wrote.
+    // `req.url` was used at each site independently, which meant a TLS-terminating
+    // proxy in front made all four say `http://` for an `https://` read.
+    const resource = externalUrl(req, {
+      trustProxy: cfg.TRUST_PROXY,
+      hops: cfg.TRUST_PROXY_HOPS,
+    });
     // Only resolve the gate JWKS when this request actually presents a license — a
     // human read or a first-time agent 402 carries none, so the hot path never fetches.
     const licenseVerification =
@@ -188,7 +199,7 @@ export function naulonMiddleware(
       path: url.pathname + url.search,
       publisher: opts.publisher as never,
       now: clock(),
-      quote: (publisher, slug, kind) => opts.quote.quote(publisher, slug, kind, { resource: req.url }),
+      quote: (publisher, slug, kind) => opts.quote.quote(publisher, slug, kind, { resource }),
       ...(licenseVerification ? { licenseVerification } : {}),
     });
 
@@ -201,19 +212,19 @@ export function naulonMiddleware(
 
       // Human, or a free re-read on a license already paid for: the app renders locally.
       case "free":
-        report(d.obs, "served-free", req.url);
+        report(d.obs, "served-free", resource);
         return { response: null };
 
       case "reread":
-        report(d.obs, "agent-reread", req.url, { kind: d.tollKind });
+        report(d.obs, "agent-reread", resource, { kind: d.tollKind });
         return { response: null };
 
       case "blocked":
-        report(d.obs, "blocked", req.url);
+        report(d.obs, "blocked", resource);
         return { response: new Response("This crawler is refused by the publisher.", { status: 403 }) };
 
       case "payment-required":
-        report(d.obs, "denied", req.url, { kind: d.tollKind, priceUsdc: d.quote.price });
+        report(d.obs, "denied", resource, { kind: d.tollKind, priceUsdc: d.quote.price });
         return {
           response: new Response(null, {
             status: 402,
@@ -250,7 +261,7 @@ export function naulonMiddleware(
               payment: d.payment,
               legs: d.legs,
               quote: d.quote,
-              resource: req.url,
+              resource,
               agent: agentOf(d.obs),
             }),
           });
