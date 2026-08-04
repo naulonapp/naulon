@@ -7,7 +7,7 @@
  * (see memo.test.ts); gateway N-leg is a documented follow-up.
  */
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 process.env.SETTLEMENT_NETWORK = "baseSepolia";
@@ -173,6 +173,54 @@ test("gatewayBuyer keeps a genuine signing/payload error as a payment error (not
   } finally {
     globalThis.fetch = real;
   }
+});
+
+// ── Withdraw ──────────────────────────────────────────────────────────────
+// `gatewayWithdraw` wraps the SDK's `withdraw()` — same-chain `withdraw()` is instant
+// (no 7-day delay); the trustless initiate/complete pair is emergency-use-only, for a
+// Circle API outage. `transfer()` is a deprecated one-line alias for the identical
+// call (`transfer(amount, chain, recipient) => withdraw(amount, { chain, recipient })`)
+// — don't mock that one instead. No network: `GatewayClient`'s constructor only sets
+// up lazy viem clients (no I/O happens until a method is actually called), so mocking
+// just the `withdraw` prototype method keeps this test at the seam, same "no network"
+// discipline as the rest of this file.
+const { gatewayWithdraw } = await import("./gateway.ts");
+
+test("gatewayWithdraw calls withdraw() same-chain, forwards the amount + recipient unmodified, and doesn't invent a maxFee", async (t) => {
+  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
+  const calls: Array<{ amount: string; options: unknown }> = [];
+  t.after(() => mock.restoreAll());
+  mock.method(GatewayClient.prototype, "withdraw", async function (amount: string, options: unknown) {
+    calls.push({ amount, options });
+    const opts = options as { chain?: string; recipient?: string };
+    return {
+      mintTxHash: "0xmint",
+      amount: 10_000_000n,
+      formattedAmount: amount,
+      sourceChain: opts.chain,
+      destinationChain: opts.chain,
+      recipient: opts.recipient,
+    };
+  });
+
+  const to = "0x2222222222222222222222222222222222222222";
+  const result = await gatewayWithdraw({
+    chain: "baseSepolia",
+    privateKey: generatePrivateKey(),
+    to,
+    amountUsdc: "10",
+  });
+
+  assert.equal(calls.length, 1, "withdraw() must be called exactly once");
+  assert.equal(calls[0]?.amount, "10", "the amount must be forwarded unmodified");
+  assert.deepEqual(
+    calls[0]?.options,
+    { chain: "baseSepolia", recipient: to },
+    "the full options object must be EXACTLY { chain: <source chain>, recipient: <to> } — " +
+      "same-chain by construction, recipient forwarded unmodified, and no maxFee invented " +
+      "at this layer (a future added option must fail this assertion, not slip in silently)",
+  );
+  assert.equal(result.recipient, to, "the SDK's WithdrawResult is returned to the caller as-is");
 });
 
 // ── Settlement-confirmation seam ─────────────────────────────────────────────
