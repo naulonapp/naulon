@@ -299,6 +299,17 @@ test("classifySignerRefusal routes an unfunded ADVERTISED chain to needs_topup, 
   assert.equal(c?.retryable, false, "a balance does not change by asking again");
 });
 
+test("classifySignerRefusal routes a gateway-rail shortfall to needs_topup too, not to origin_error", () => {
+  // The gateway-rail sibling of insufficient_on_chain (a chain with no memo predeploy, e.g. Base): the
+  // session's Circle Gateway balance for that chain is too little. Left unrecognised this fell through
+  // to the DEFAULT branch — `origin_error` AND retryable:true — which is worse than the on-chain case
+  // ever was: the caller would re-sign (and re-debit) the same doomed payment on the very next attempt,
+  // exactly the 2026-08-03 incident shape (four debits, zero reads), just one layer earlier.
+  const c = classifySignerRefusal("insufficient_gateway_balance (session's base Gateway balance is 0.0005 USDC, read costs 1.00)");
+  assert.equal(c?.errorCode, "needs_topup", "the remedy is funding — depositing into the Gateway Wallet");
+  assert.equal(c?.retryable, false, "a Gateway balance does not change by asking again");
+});
+
 test("classifySignerRefusal does NOT report an unreadable balance as the buyer being out of money", () => {
   const c = classifySignerRefusal("funding_unreadable (could not read the session's base balance)");
   assert.equal(c?.errorCode, "origin_error", "an RPC/Gateway fault is infrastructure, not a shortfall");
