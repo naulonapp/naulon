@@ -176,34 +176,32 @@ test("gatewayBuyer keeps a genuine signing/payload error as a payment error (not
 });
 
 // ── Withdraw ──────────────────────────────────────────────────────────────
-// `gatewayWithdraw` wraps the SDK's `transfer()` — Circle's own doc comments call
-// `transfer()` with the same source and destination chain the normal, instant
-// withdrawal path (the trustless initiate/complete pair is emergency-use-only, for
-// a Circle API outage). No network: `GatewayClient`'s constructor only sets up lazy
-// viem clients (no I/O happens until a method is actually called), so mocking just
-// the `transfer` prototype method keeps this test at the seam, same "no network"
+// `gatewayWithdraw` wraps the SDK's `withdraw()` — same-chain `withdraw()` is instant
+// (no 7-day delay); the trustless initiate/complete pair is emergency-use-only, for a
+// Circle API outage. `transfer()` is a deprecated one-line alias for the identical
+// call (`transfer(amount, chain, recipient) => withdraw(amount, { chain, recipient })`)
+// — don't mock that one instead. No network: `GatewayClient`'s constructor only sets
+// up lazy viem clients (no I/O happens until a method is actually called), so mocking
+// just the `withdraw` prototype method keeps this test at the seam, same "no network"
 // discipline as the rest of this file.
 const { gatewayWithdraw } = await import("./gateway.ts");
 
-test("gatewayWithdraw calls transfer() same-chain and forwards recipient unmodified", async (t) => {
+test("gatewayWithdraw calls withdraw() same-chain, forwards the amount + recipient unmodified, and doesn't invent a maxFee", async (t) => {
   const { GatewayClient } = await import("@circle-fin/x402-batching/client");
-  const calls: Array<{ amount: string; destinationChain: string; recipient?: string }> = [];
+  const calls: Array<{ amount: string; options: unknown }> = [];
   t.after(() => mock.restoreAll());
-  mock.method(
-    GatewayClient.prototype,
-    "transfer",
-    async function (amount: string, destinationChain: string, recipient?: string) {
-      calls.push({ amount, destinationChain, recipient });
-      return {
-        mintTxHash: "0xmint",
-        amount: 10_000_000n,
-        formattedAmount: amount,
-        sourceChain: destinationChain,
-        destinationChain,
-        recipient,
-      };
-    },
-  );
+  mock.method(GatewayClient.prototype, "withdraw", async function (amount: string, options: unknown) {
+    calls.push({ amount, options });
+    const opts = options as { chain?: string; recipient?: string };
+    return {
+      mintTxHash: "0xmint",
+      amount: 10_000_000n,
+      formattedAmount: amount,
+      sourceChain: opts.chain,
+      destinationChain: opts.chain,
+      recipient: opts.recipient,
+    };
+  });
 
   const to = "0x2222222222222222222222222222222222222222";
   const result = await gatewayWithdraw({
@@ -213,14 +211,15 @@ test("gatewayWithdraw calls transfer() same-chain and forwards recipient unmodif
     amountUsdc: "10",
   });
 
-  assert.equal(calls.length, 1, "transfer() must be called exactly once");
-  assert.equal(calls[0]?.amount, "10");
-  assert.equal(
-    calls[0]?.destinationChain,
-    "baseSepolia",
-    "same-chain withdrawal: the destination chain passed to transfer() must equal the source chain",
+  assert.equal(calls.length, 1, "withdraw() must be called exactly once");
+  assert.equal(calls[0]?.amount, "10", "the amount must be forwarded unmodified");
+  assert.deepEqual(
+    calls[0]?.options,
+    { chain: "baseSepolia", recipient: to },
+    "the full options object must be EXACTLY { chain: <source chain>, recipient: <to> } — " +
+      "same-chain by construction, recipient forwarded unmodified, and no maxFee invented " +
+      "at this layer (a future added option must fail this assertion, not slip in silently)",
   );
-  assert.equal(calls[0]?.recipient, to, "recipient must be forwarded to transfer() unmodified, never rewritten");
   assert.equal(result.recipient, to, "the SDK's WithdrawResult is returned to the caller as-is");
 });
 

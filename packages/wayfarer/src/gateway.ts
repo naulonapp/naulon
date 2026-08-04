@@ -205,10 +205,17 @@ export async function gatewayDeposit(opts: GatewayDepositOpts): Promise<DepositR
 
 /**
  * Withdraw from the Gateway unified balance back to a normal address. Same-chain by
- * construction — `transfer()` with source === destination is Circle's documented normal
- * withdrawal (the trustless initiate/complete pair is emergency-only, for a Circle API
- * outage). SDK lazy, so the mock/memo paths never pull it in — same discipline as
- * `gatewayDeposit`.
+ * construction — `withdraw()` to the source chain is instant (no 7-day delay); the
+ * trustless initiate/complete pair is emergency-only, for a Circle API outage. `chain`
+ * is passed explicitly even though `withdraw()` already defaults to the source chain
+ * when `options.chain` is omitted — the same-chain intent is the whole point of this
+ * wrapper, so it stays legible and testable rather than inherited from a default.
+ * `maxFee` is left at the SDK default (2.01 USDC) — inventing a fee ceiling at this
+ * layer is a product decision this wrapper hasn't been given.
+ * NOTE: `transfer()` is a one-line deprecated alias for this same call
+ * (`transfer(amount, chain, recipient) => withdraw(amount, { chain, recipient })`) —
+ * don't "helpfully" switch back to it.
+ * SDK lazy, so the mock/memo paths never pull it in — same discipline as `gatewayDeposit`.
  */
 export async function gatewayWithdraw(opts: {
   chain: SupportedChainName;
@@ -219,7 +226,7 @@ export async function gatewayWithdraw(opts: {
 }): Promise<WithdrawResult> {
   const { GatewayClient } = await import("@circle-fin/x402-batching/client");
   const client = new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey });
-  return client.transfer(opts.amountUsdc, opts.chain, opts.to);
+  return client.withdraw(opts.amountUsdc, { chain: opts.chain, recipient: opts.to });
 }
 
 /** Read the wallet + Gateway balances for a key — the preflight a deposit script shows before it moves
