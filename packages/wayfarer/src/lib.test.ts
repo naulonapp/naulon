@@ -29,6 +29,7 @@ test("the package is importable by name and exposes the buy-side pipeline API", 
 
   // out-of-band Gateway funding — the custody-free cloud path deposits here, not in init()
   assert.equal(typeof wayfarer.gatewayDeposit, "function");
+  assert.equal(typeof wayfarer.gatewayWithdraw, "function");
   assert.equal(typeof wayfarer.gatewayBalances, "function");
   // settlement-confirmation seam — the authoritative "did the settle land" check
   assert.equal(typeof wayfarer.gatewayTransferStatus, "function");

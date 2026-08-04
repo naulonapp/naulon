@@ -47,6 +47,7 @@ export { mockBuyer } from "./pay.ts";
 export {
   gatewayBuyer,
   gatewayDeposit,
+  gatewayWithdraw,
   gatewayBalances,
   gatewayTransferStatus,
   gatewayTransfers,
