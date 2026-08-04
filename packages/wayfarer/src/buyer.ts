@@ -192,17 +192,20 @@ export async function payeeRefusedOrNull(quoted: Quoted, guard?: PayGuard): Prom
  * must NOT be run through the 402 classifier, where `grant_exceeded`/`no_session` would fall
  * through to a retryable `rejected`, telling the agent to retry a pay that can only fail again.
  *
- *   grant_exceeded · leg_too_large · no_session      → needs_topup   (fund the session)
- *   insufficient_on_chain                             → needs_topup   (fund it ON THE NAMED CHAIN)
- *   grant_expired                                     → grant_expired (renew — funds intact)
- *   bad_from · chain_mismatch · payee_not_allowed     → rejected      (a config error a top-up can't fix)
- *   cross_plane                                       → rejected      (testnet vs mainnet — not fundable)
- *   funding_unreadable                                → origin_error  (infrastructure, not the buyer)
+ *   grant_exceeded · leg_too_large · no_session          → needs_topup   (fund the session)
+ *   insufficient_on_chain · insufficient_gateway_balance  → needs_topup   (fund it ON THE NAMED CHAIN/RAIL)
+ *   grant_expired                                         → grant_expired (renew — funds intact)
+ *   bad_from · chain_mismatch · payee_not_allowed         → rejected      (a config error a top-up can't fix)
+ *   cross_plane                                           → rejected      (testnet vs mainnet — not fundable)
+ *   funding_unreadable                                    → origin_error  (infrastructure, not the buyer)
  *
- * `insufficient_on_chain` shares `needs_topup` with the grant codes because the remedy is the same
- * ACT — put money in — but not the same PLACE: the grant may be healthy while the session address
- * holds nothing on the chain that 402 advertised. The chain is in the refusal message, and an agent
- * relaying this must relay that message rather than say "raise your grant cap", which would be wrong.
+ * `insufficient_on_chain` / `insufficient_gateway_balance` share `needs_topup` with the grant codes
+ * because the remedy is the same ACT — put money in — but not the same PLACE, and not even the same
+ * RAIL: the grant may be healthy while the session address holds nothing on the memo-rail chain that
+ * 402 advertised (`insufficient_on_chain`), or nothing in its Circle Gateway balance for a gateway-rail
+ * chain (`insufficient_gateway_balance`) — two distinct remedies (top up the address vs. deposit into
+ * the Gateway Wallet) sharing one bucket here because BOTH are "go fund it", never "raise your grant
+ * cap". The chain is in the refusal message, and an agent relaying this must relay that message.
  *
  * Returns null when the message is NOT a known signer code (a real socket / unknown throw the
  * caller should surface as `origin_error`). Never retryable: every signer refusal needs a
@@ -219,10 +222,16 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     // envelope — topping the grant / retrying the same amount changes nothing, so they are terminal.
     case "sub_cap_exceeded":
     case "daily_budget_exceeded":
-    // The session address holds too little on the chain the 402 advertised. The GRANT may be fine —
-    // this is real coins missing at a real address, caught before the irreversible reserve debits for
-    // a payment that could never settle. Not retryable: the balance does not change by asking again.
+    // The session address holds too little on the chain the 402 advertised (memo rail). The GRANT may
+    // be fine — this is real coins missing at a real address, caught before the irreversible reserve
+    // debits for a payment that could never settle. Not retryable: the balance does not change by
+    // asking again.
     case "insufficient_on_chain":
+    // The gateway-rail sibling of the above: the session's Circle Gateway balance for this chain's
+    // domain is too little. Same bucket, same reason — a top-up (deposit) is the fix either way, and
+    // leaving this unclassified was itself a bug: it fell through to `origin_error`+retryable, which
+    // re-signs (and re-debits) a payment that cannot settle instead of stopping.
+    case "insufficient_gateway_balance":
       return { errorCode: "needs_topup", retryable: false };
     case "funding_unreadable":
       // The balance could NOT be read (RPC / Gateway API fault) — not a shortfall and not the buyer's
