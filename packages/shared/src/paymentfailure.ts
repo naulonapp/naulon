@@ -10,8 +10,8 @@
  *
  * TWO writers emit `payment-failed`, and they must agree or the Audit page lies about which failure
  * it saw: the OSS gate's own settle tail (`tollgate/src/app.ts`, fleet-proxied traffic) and the
- * cloud's `/verify` BFF (`naulon-cloud/src/enforce-verify.ts`, self-hosted runtimes reporting in).
- * The classifier therefore lives HERE, in shared, consumed by both — one judgement, one owner. A
+ * hosted `/verify` BFF a control plane built on this core mounts (self-hosted runtimes reporting
+ * in). The classifier therefore lives HERE, in shared, consumed by both — one judgement, one owner. A
  * second copy would drift, and a drifted copy is worse than none because the page is trusted.
  *
  * ## Why a closed enum and not the error string

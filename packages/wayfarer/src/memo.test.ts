@@ -292,7 +292,7 @@ test("a socket throw during pay surfaces as a retryable origin_error, not needs_
 
 // ── #1 — the ATOMIC batch seam (assembleMemoPayment) ────────────────────────────────────────────────
 // A multi-leg toll signed by a BATCH-capable injected signer must sign EVERY leg in ONE call, so the
-// host reserves them atomically (no stranded sibling leg — naulon-cloud 0122). Every other case — a
+// host reserves them atomically (no stranded sibling leg). Every other case — a
 // single-leg toll, a signer WITHOUT a batch method (env-key / mock / OSS) — must fall through to the
 // per-leg path, byte-identical to before the seam existed.
 const OP = "0x3333333333333333333333333333333333333333";

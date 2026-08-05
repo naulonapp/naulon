@@ -139,10 +139,10 @@ command: npx   args: ["-y", "@naulon/wayfarer-mcp"]
 
 ## Hosted endpoint (no local wallet)
 
-naulon-cloud exposes the same brain over **Streamable HTTP** at `/_naulon/mcp`,
-authenticated with an agent token — tolls are signed by naulon's custody-free
-session key, so **no private key ever touches your machine**. This endpoint also
-adds the cloud-only `naulon_ask` tool + its `ask` prompt.
+The hosted naulon service exposes the same brain over **Streamable HTTP** at
+`/_naulon/mcp`, authenticated with an agent token — tolls are signed by naulon's
+custody-free session key, so **no private key ever touches your machine**. This
+endpoint also adds the hosted-only `naulon_ask` tool + its `ask` prompt.
 
 Clients that support remote/HTTP MCP with headers:
 

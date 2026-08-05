@@ -92,7 +92,7 @@ test("observed variants carry obs facts for the caller's audit plane", async () 
 
 const GATE_KEY = loadSigningKey(); // stands in for the hosted gate's LICENSE_SIGNING_KEY
 const GATE_JWKS = jwksOf([GATE_KEY]); // what /.well-known/naulon-jwks.json serves
-const GATE_ISS = "naulon:inneraxiom.com"; // the gate's licenseIdentity for this publisher
+const GATE_ISS = "naulon:publisher.example"; // the gate's licenseIdentity for this publisher
 
 // licenseEntitlesRead verifies with the REAL clock (verifyLicense reads Date.now()), not
 // decide's injected `now`, so fixtures must be minted relative to real time — an unexpired
