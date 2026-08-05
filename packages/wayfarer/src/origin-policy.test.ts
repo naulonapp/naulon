@@ -71,24 +71,24 @@ test("an unparseable gate names the config key to fix", () => {
 // (decide.test.ts) cover which hosts actually get paid.
 
 test("a stated allowlist defers off-gate identity to spendGate", () => {
-  ok(authorizeOrigin({ target: "https://inneraxiom.com/articles/x", gate: GATE, allowDomains: ["inneraxiom.com"] }));
+  ok(authorizeOrigin({ target: "https://publisher.example/articles/x", gate: GATE, allowDomains: ["publisher.example"] }));
 });
 
 test("deferral is not adjudication — an off-list host also passes identity", () => {
   // spendGate refuses this one. If authorizeOrigin refused it too, the allow/deny rules
   // would exist twice and could drift; that is precisely what happened before.
-  ok(authorizeOrigin({ target: "https://evil.example/x", gate: GATE, allowDomains: ["inneraxiom.com"] }));
+  ok(authorizeOrigin({ target: "https://evil.example/x", gate: GATE, allowDomains: ["publisher.example"] }));
 });
 
 test("setting an allowlist does not silently drop the gate itself", () => {
-  ok(authorizeOrigin({ target: `${GATE}/x`, gate: GATE, allowDomains: ["inneraxiom.com"] }));
+  ok(authorizeOrigin({ target: `${GATE}/x`, gate: GATE, allowDomains: ["publisher.example"] }));
 });
 
 test("an EMPTY allowlist is a stated boundary, and defers like any other", () => {
   // `![]` is false, so an empty array already bypassed the pin before this refactor.
   // Deferring preserves that exactly — and spendGate reads an empty allowlist as
   // deny-by-default, so nothing becomes payable that was not payable before.
-  ok(authorizeOrigin({ target: "https://inneraxiom.com/x", gate: GATE, allowDomains: [] }));
+  ok(authorizeOrigin({ target: "https://publisher.example/x", gate: GATE, allowDomains: [] }));
 });
 
 test("an invalid target is still rejected even when an allowlist is stated", () => {
@@ -109,5 +109,5 @@ test("with no gate and no allowlist, identity defers — there is no boundary to
 
 test("with no gate, a stated allowlist is the whole boundary", () => {
   // The hosted fleet case: the cloud names its tenant set and has no single gate.
-  ok(authorizeOrigin({ target: "https://inneraxiom.com/x", allowDomains: ["inneraxiom.com"] }));
+  ok(authorizeOrigin({ target: "https://publisher.example/x", allowDomains: ["publisher.example"] }));
 });

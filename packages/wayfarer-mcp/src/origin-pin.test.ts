@@ -120,7 +120,7 @@ test("an unparseable configured gate names TOLLGATE_URL as the thing to fix", as
 
 test("an explicitly allowed domain is payable off-gate — the allowlist REPLACES the pin", async () => {
   // Was the DRIFT characterization: the MCP pin used unconditional host:port equality and
-  // ignored policy.allowDomains, so a directory-supplied publisher URL (inneraxiom.com) was
+  // ignored policy.allowDomains, so a directory-supplied publisher URL (publisher.example) was
   // unpayable over the hosted MCP no matter how the gate was configured. `authorizeOrigin`
   // now defers to spendGate when the operator has stated a domain boundary, matching
   // decide.ts. This expectation is the inversion that unification was for.

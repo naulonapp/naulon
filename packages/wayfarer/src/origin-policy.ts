@@ -15,7 +15,7 @@
  * the configured gate, because a different port is a different service and must not
  * satisfy the pin. That is the whole of its authority.
  *
- * It does NOT own domain policy. An allowlist names domains ("inneraxiom.com"), and
+ * It does NOT own domain policy. An allowlist names domains ("publisher.example"), and
  * which of them are payable — along with deny lists, per-domain caps, the kill switch
  * and human approval — belongs to `spendGate`, the one shared evaluator. Stating an
  * allowlist therefore REPLACES the gate pin rather than stacking with it: the operator

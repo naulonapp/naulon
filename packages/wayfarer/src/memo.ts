@@ -47,8 +47,8 @@ export interface MemoSigner {
   signTypedData(args: MemoTypedData): Promise<`0x${string}`>;
   /**
    * OPTIONAL batch sign — sign EVERY leg of a multi-leg toll (operator fee, co-author split) in ONE
-   * call, so a batch-capable host can RESERVE them atomically (all-or-nothing, no stranded sibling leg —
-   * naulon-cloud migration 0122 / `signSessionMemoBatch`). Returns one signature per input, index-aligned.
+   * call, so a batch-capable host can RESERVE them atomically (all-or-nothing, no stranded sibling
+   * leg). Returns one signature per input, index-aligned.
    *
    * A signer WITHOUT this method (a local env-key `PrivateKeyAccount`, the OSS self-host path, or a mock)
    * falls back to per-leg signing via {@link assembleMemoPayment} — safe there precisely because those
