@@ -51,3 +51,45 @@ test("httpQuoteSource: non-ok (500) fails open → null (never gate a reader)", 
   const qs = httpQuoteSource("http://cloud/_naulon/quote", "nln_live_test", fakeFetch);
   assert.equal(await qs.quote({}, "essays/x", "read", ctx), null);
 });
+
+// Failing open is invisible by construction: the origin answers 200, the reader is happy, and the
+// money quietly stops. Prod, 2026-08-04 — a publisher's key stopped resolving (its tenant had been
+// closed and recreated) and every priced article was served free for a day, with nothing in either
+// runtime saying so. Every failure now reports; a 204 (the deliberate don't-gate signal) never does.
+test("httpQuoteSource: a REJECTED key fails open AND reports it", async () => {
+  const seen: { status: number; resource: string; reason: string }[] = [];
+  const fakeFetch = (async () => new Response("unauthorized", { status: 401 })) as unknown as typeof fetch;
+  const qs = httpQuoteSource("http://cloud/_naulon/quote", "nln_live_dead", fakeFetch, (f) => seen.push(f));
+  assert.equal(await qs.quote({}, "essays/x", "read", ctx), null, "a reader is never blocked by our outage");
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.status, 401);
+  assert.equal(seen[0]?.resource, "http://h/essays/x", "the report names the resource whose toll just stopped");
+});
+
+// The worse half of the same bug: an unreachable control plane used to THROW out of quote(), through
+// decide(), and out of the publisher's middleware — turning our outage into a 500 on their site, for
+// humans included. Fail open, report, never propagate.
+test("httpQuoteSource: an unreachable control plane fails open instead of throwing", async () => {
+  const seen: { status: number; reason: string }[] = [];
+  const fakeFetch = (async () => { throw new Error("ECONNREFUSED"); }) as unknown as typeof fetch;
+  const qs = httpQuoteSource("http://cloud/_naulon/quote", "nln_live_test", fakeFetch, (f) => seen.push(f));
+  assert.equal(await qs.quote({}, "essays/x", "read", ctx), null);
+  assert.equal(seen[0]?.status, 0, "no response at all");
+  assert.match(seen[0]?.reason ?? "", /ECONNREFUSED/);
+});
+
+test("httpQuoteSource: a 200 that is not a Quote is a broken plane, not a free article", async () => {
+  const seen: unknown[] = [];
+  const fakeFetch = (async () => new Response("<html>gateway error</html>", { status: 200 })) as unknown as typeof fetch;
+  const qs = httpQuoteSource("http://cloud/_naulon/quote", "nln_live_test", fakeFetch, (f) => seen.push(f));
+  assert.equal(await qs.quote({}, "essays/x", "read", ctx), null);
+  assert.equal(seen.length, 1);
+});
+
+test("httpQuoteSource: a 204 is NOT reported — it is the deliberate don't-gate signal", async () => {
+  const seen: unknown[] = [];
+  const fakeFetch = (async () => new Response(null, { status: 204 })) as unknown as typeof fetch;
+  const qs = httpQuoteSource("http://cloud/_naulon/quote", "nln_live_test", fakeFetch, (f) => seen.push(f));
+  assert.equal(await qs.quote({}, "essays/x", "read", ctx), null);
+  assert.deepEqual(seen, []);
+});
