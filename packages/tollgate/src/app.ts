@@ -659,6 +659,16 @@ export function createApp(
         // The settlement tail — the exact same code path the hosted /verify runs.
         const settled = await settleAndAttribute({ payment: d.payment, legs: d.legs, quote: d.quote, publisher, host, now });
         if (!settled.ok) {
+          // Let the origin's body go. This is the ONE branch that prefetches and then does not
+          // serve what it fetched: the success path below hands `prefetched` to the client, and the
+          // `!prefetched.ok` branch above returns the response itself. Here we return a fresh 402
+          // and the fetched body would simply fall out of scope — and an unread undici body holds
+          // its socket out of the pool until GC finalises it, so a run of failing payments leaks one
+          // connection each against the publisher's own origin.
+          //
+          // Failure is ignored on purpose: the body may already be errored or the peer gone, and
+          // nothing about releasing it should change what the buyer is told about their payment.
+          await prefetched?.body?.cancel().catch(() => {});
           // Carry WHY, classified. `settled.error` goes to the buyer in the 402 body below (they are
           // entitled to the detail); the publisher's audit row gets the closed-set reason, so a
           // counterparty address or leg amount can never reach it.
