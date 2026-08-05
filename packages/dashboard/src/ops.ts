@@ -6,16 +6,11 @@
  * self-hoster their proxy is actually working — distinct from the earnings
  * ledger, which only sees settled money.
  */
+import { OBSERVATION_VERDICTS } from "@naulon/shared";
 import type { ObservationEvent, ObservationVerdict } from "@naulon/shared";
 
-const VERDICTS: ObservationVerdict[] = [
-  "served-free",
-  "agent-reread",
-  "denied",
-  "blocked",
-  "payment-failed",
-  "paid",
-];
+/** From shared, never re-typed — see the note on `OBSERVATION_VERDICTS`. */
+const VERDICTS: readonly ObservationVerdict[] = OBSERVATION_VERDICTS;
 
 export interface OpsSummary {
   /** Window the traffic figures cover (ms). */

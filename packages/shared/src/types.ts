@@ -152,6 +152,44 @@ export type ObservationVerdict =
   | "paid";
 
 /**
+ * The same vocabulary at RUNTIME — the one list anything that enumerates verdicts builds on.
+ *
+ * A union cannot be iterated, so every consumer that needed to count or render verdicts
+ * hand-wrote its own copy, and three of them drifted: adding `unservable` above left the
+ * dashboard's `traffic.ts`, `ops.ts` and `public/shell.js` on six entries. Both aggregators skip
+ * a verdict they do not know (`if (o.verdict in byVerdict)`), so the new verdict counted toward
+ * the total and toward none of the bars — the bars silently stopped summing. tsc could not see
+ * it: those zero-maps are built with `Object.fromEntries(...) as Record<ObservationVerdict,
+ * number>`, and a cast is a promise, not a check.
+ *
+ * The assertion below makes this list and the union one thing. Adding a member to either without
+ * the other is a type error, not a runtime surprise.
+ *
+ * Order is presentation order — free → refused → money.
+ */
+export const OBSERVATION_VERDICTS = [
+  "served-free",
+  "agent-reread",
+  "denied",
+  "blocked",
+  "payment-failed",
+  "unservable",
+  "paid",
+] as const satisfies readonly ObservationVerdict[];
+
+/** True only when A and B are the same type in both directions. */
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+/** Compile-time exhaustiveness: `OBSERVATION_VERDICTS` covers `ObservationVerdict` and nothing
+ *  more. `satisfies` above already rejects an entry that is not a verdict; this rejects a verdict
+ *  the list forgot — the direction that actually broke. */
+const _verdictListIsExhaustive: MutuallyAssignable<
+  ObservationVerdict,
+  (typeof OBSERVATION_VERDICTS)[number]
+> = true;
+void _verdictListIsExhaustive;
+
+/**
  * One gated-request observation. Telemetry only — it never gates a request or
  * moves money; emitting it must never change a serving decision. Higher volume
  * and lower value than `AttributedEvent`, so a sink is expected to TTL/sample it.

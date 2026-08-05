@@ -89,8 +89,23 @@ export const el = (tag, attrs = {}, html = "") => {
 // live here for the same reason $/esc/fmt6 do: the moment a second page carried its
 // own copy of these, the copies started disagreeing.
 
-/** The six verdicts, in the order the operator reads them (free → refused → money). */
-export const VERDICTS = ["served-free", "agent-reread", "denied", "blocked", "payment-failed", "paid"];
+/**
+ * The verdicts, in the order the operator reads them (free → refused → money).
+ *
+ * This file is served to the browser, so it cannot import `OBSERVATION_VERDICTS` from
+ * `@naulon/shared` the way `traffic.ts` and `ops.ts` now do — it is the one copy that has to stay
+ * a copy. `verdict-parity.test.ts` reads this file and fails if it drifts from shared, which is
+ * how `unservable` was caught missing from all three of these maps.
+ */
+export const VERDICTS = [
+  "served-free",
+  "agent-reread",
+  "denied",
+  "blocked",
+  "payment-failed",
+  "unservable",
+  "paid",
+];
 
 /** Short labels for the counter strip — the raw verdict is the badge's own text. */
 export const VERDICT_LABEL = {
@@ -99,11 +114,14 @@ export const VERDICT_LABEL = {
   denied: "denied",
   blocked: "blocked",
   "payment-failed": "failed",
+  unservable: "unservable",
   paid: "paid",
 };
 
-/** Verdicts that mean something went wrong, so a non-zero count can go red. */
-export const VERDICT_BAD = new Set(["blocked", "payment-failed"]);
+/** Verdicts that mean something went wrong, so a non-zero count can go red.
+ *  `unservable` belongs here: it means the catalog prices a read the origin cannot serve, which
+ *  is the publisher's own misconfiguration and the only place it is visible. */
+export const VERDICT_BAD = new Set(["blocked", "payment-failed", "unservable"]);
 
 /**
  * Who made this request, as escaped HTML. Verified agents get their directory host, a
