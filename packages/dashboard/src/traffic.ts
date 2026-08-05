@@ -12,6 +12,7 @@
  * Everything here is pure: observations and a clock in, plain data out. No fs, no
  * config, no Date.now — so every branch is testable without a gate or a log file.
  */
+import { OBSERVATION_VERDICTS } from "@naulon/shared";
 import type { ObservationEvent, ObservationVerdict } from "@naulon/shared";
 
 /** How an agent's identity was established. The Agents page is built on this split. */
@@ -91,14 +92,9 @@ export interface TrafficReport {
   missed: MissedByCause;
 }
 
-export const VERDICTS: readonly ObservationVerdict[] = [
-  "served-free",
-  "agent-reread",
-  "denied",
-  "blocked",
-  "payment-failed",
-  "paid",
-] as const;
+/** Re-exported from shared, never re-typed. A local copy of this list is what silently dropped
+ *  `unservable` from every bar while it still counted toward the total. */
+export const VERDICTS: readonly ObservationVerdict[] = OBSERVATION_VERDICTS;
 
 /** Narrow an untrusted query value to a verdict, or undefined. */
 export function parseVerdict(v: string | undefined): ObservationVerdict | undefined {
