@@ -19,10 +19,16 @@ import { test } from "node:test";
  *
  * Describing the hosted service in the abstract is fine and expected ("a control plane built on
  * this core", "the hosted naulon service"). What is banned is the private NAME.
+ *
+ * Scope is the whole repository, not `packages/`. It walked only `packages/` until 2026-08-05,
+ * which left the root README, `docs/` (the published mkdocs site), `examples/`, `scripts/`,
+ * `plugins/` and the workflows unguarded — every one of them public, and the docs site more
+ * widely read than any tarball. Three of the four original leaks happened to be inside
+ * `packages/`; nothing but luck put them there.
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PACKAGES = join(HERE, "..", "..");
+const REPO = join(HERE, "..", "..", "..");
 
 /** Assembled at runtime so this file does not match its own rule. */
 const BANNED: { pattern: RegExp; what: string }[] = [
@@ -31,8 +37,23 @@ const BANNED: { pattern: RegExp; what: string }[] = [
   { pattern: new RegExp(["inner", "axiom"].join(""), "i"), what: "the private reference publisher" },
 ];
 
-const SCANNED = /\.(ts|tsx|js|mjs|md|json)$/;
-const SKIP_DIRS = new Set(["node_modules", "dist", "build", ".next", "coverage", "vendor"]);
+const SCANNED = /\.(ts|tsx|js|mjs|cjs|md|json|yml|yaml|php|txt|sh)$/;
+
+/**
+ * Build output and third-party trees only. `.git` is skipped because history is not something a
+ * test can fix — a name already committed is redacted going forward, never rewritten (this repo
+ * does not rewrite history), so failing on it would leave a permanently red suite that teaches
+ * people to ignore the guard.
+ */
+const SKIP_DIRS = new Set([
+  "node_modules",
+  "dist",
+  "build",
+  ".next",
+  "coverage",
+  "vendor",
+  ".git",
+]);
 
 function* walk(dir: string): Generator<string> {
   for (const entry of readdirSync(dir)) {
@@ -46,13 +67,13 @@ function* walk(dir: string): Generator<string> {
 test("no published file names the private control plane or the private publisher", () => {
   const offences: string[] = [];
 
-  for (const file of walk(PACKAGES)) {
+  for (const file of walk(REPO)) {
     if (file === fileURLToPath(import.meta.url)) continue; // this file spells them on purpose
     const lines = readFileSync(file, "utf8").split("\n");
     for (const [i, line] of lines.entries()) {
       for (const { pattern, what } of BANNED) {
         if (pattern.test(line)) {
-          offences.push(`${relative(PACKAGES, file)}:${i + 1} names ${what}\n    ${line.trim()}`);
+          offences.push(`${relative(REPO, file)}:${i + 1} names ${what}\n    ${line.trim()}`);
         }
       }
     }
