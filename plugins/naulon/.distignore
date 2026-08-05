@@ -6,6 +6,7 @@
 /.wp-env.json
 /.phpunit.result.cache
 /tests
+/bin
 /vendor
 /composer.json
 /composer.lock

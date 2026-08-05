@@ -46,10 +46,16 @@ jobs:
       # This step asks the one question no unit test can, because it needs git history:
       # did the version MOVE relative to what was last released? v0.2.2 is the only tag
       # that has ever carried the plugin and it shipped labelled 0.1.0, so WordPress
-      # offered no installed site the update. Coupling the plugin to the tag is
-      # deliberately NOT the rule — the npm packages version themselves (see the
-      # idempotent publish below), so that would be a discipline this repo does not
-      # otherwise keep.
+      # offered no installed site the update. Coupling the plugin version to the TAG is
+      # deliberately not the rule — only "it moved" is.
+      #
+      # This block used to end by saying the npm packages version themselves, and used
+      # that as the reason not to check them. They did not. Between 2026-07-10 and
+      # 2026-08-05, four packages took 8 months of changes — including two security
+      # fixes — while their versions stood still, so three tags published nothing and
+      # `npm install` served none of it. The idempotent publish below is what made it
+      # silent: an unchanged version is skipped, which is indistinguishable from a
+      # successful release in the log. The step after this one is that missing check.
       - name: Plugin version moved with the plugin
         run: |
           set -euo pipefail
@@ -90,6 +96,63 @@ jobs:
             exit 1
           fi
           echo "plugin changed since $prev and the version moved: $prev_hdr → $hdr"
+
+      # The same question, asked of each published package: did it change since the last
+      # release without its version moving? If so the idempotent publish below will skip
+      # it and say "already published" — a green run that ships nothing.
+      #
+      # Test files are excluded from the comparison because they are excluded from the
+      # build (`exclude: ["src/**/*.test.ts"]` in each package tsconfig) and the tarball
+      # ships `dist` only. A test-only change genuinely alters nothing a consumer can
+      # install, and a guard that demands a bump for it teaches people to bump for
+      # nothing — which is how a guard stops being read.
+      #
+      # Whether the internal `@naulon/*` ranges still resolve after a bump is NOT asked
+      # here: packages/shared/src/releaseRanges.test.ts owns that and runs on every PR,
+      # which is earlier and cheaper than tag time. One owner per rule.
+      - name: npm package versions moved with their packages
+        run: |
+          set -euo pipefail
+
+          case "${GITHUB_REF:-}" in
+            refs/tags/*) ;;
+            *) echo "not a tag build — drift check does not apply"; exit 0 ;;
+          esac
+
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -z "$prev" ]; then
+            echo "no previous tag — first release, nothing to compare"
+            exit 0
+          fi
+          echo "previous tag: $prev"
+
+          version_at() { git show "$1:packages/$2/package.json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version"; }
+          failed=0
+
+          for pkg in sdk shared enforce wayfarer wayfarer-mcp; do
+            now=$(node -p "require('./packages/${pkg}/package.json').version")
+
+            # A package that did not exist at the previous tag has nothing to compare.
+            if ! git cat-file -e "$prev:packages/${pkg}/package.json" 2>/dev/null; then
+              echo "→ ${pkg}: new since $prev (${now})"
+              continue
+            fi
+
+            if git diff --quiet "$prev" "${GITHUB_REF_NAME}" -- "packages/${pkg}" ":(exclude)packages/${pkg}/**/*.test.ts"; then
+              echo "→ ${pkg}: unchanged since $prev (${now})"
+              continue
+            fi
+
+            was=$(version_at "$prev" "$pkg")
+            if [ "$now" = "$was" ]; then
+              echo "::error::packages/${pkg} changed since ${prev} but @naulon/${pkg} is still ${now} — the publish below will skip it as already published, so nobody can install the change. Bump packages/${pkg}/package.json (and any internal range pointing at it)."
+              failed=1
+            else
+              echo "→ ${pkg}: changed and the version moved: ${was} → ${now}"
+            fi
+          done
+
+          exit "$failed"
 
       - uses: actions/setup-node@v4
         with:
