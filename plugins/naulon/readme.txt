@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.4.1
+Stable tag: 0.4.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.4.2 =
+* Three more agent user-agents are now charged: Meta's external fetcher, Amazon's user-triggered fetcher and Mistral's. They were reading your articles for free because the plugin only knew one of Meta's five tokens. Search indexers are still never charged.
+
 = 0.4.1 =
 * The update details window showed the plugin's name twice, once over the top of the other. Fixed.
 
@@ -190,6 +193,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+
+= 0.4.2 =
+Meta's external fetcher, Amazon's user-triggered fetcher and Mistral's were reading your articles free. This charges them. Nothing else changes.
 
 = 0.4.1 =
 Cosmetic only: the update details window no longer prints the plugin's name over itself.
