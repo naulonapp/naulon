@@ -2265,6 +2265,42 @@ test("the naulon_discover description tells the model what the two evidence flag
   assert.match(text, /do not\s+pay one that is off-topic/i, "…and what to do about the weak one");
 });
 
+/**
+ * The case the description described for neither flag, which is the one that misleads.
+ *
+ * `body: fullHit && !headHit` (directory `src/directory/filter.ts:37`), so a candidate whose TITLE
+ * matched the query carries `matchedInBody: false` — the strongest evidence available, wearing the
+ * exact shape of a plain RSS source that never searched at all. A model reading only "strong" and
+ * "weak" reasonably infers that neither flag means weaker than weak, and skips the best candidate
+ * in the response.
+ *
+ * The two readings are separable from the response alone — a sibling candidate carrying any flag
+ * proves the source searches — so the description has to carry that rule, not just admit the
+ * ambiguity.
+ */
+test("the naulon_discover description explains the BOTH-FALSE case, which is either the best match or no signal", async () => {
+  const client = await connectedClient();
+  const { tools } = await client.listTools();
+  const text = tools.find((t) => t.name === "naulon_discover")?.description ?? "";
+  assert.match(text, /neither flag/i, "the both-false case is named at all");
+  assert.match(text, /title or teaser/i, "…and identified as a head match, the strongest result");
+  assert.match(text, /other candidate/i, "…with the rule that separates it from a non-searching source");
+  assert.match(text, /RSS/i, "…which is what a non-searching source is");
+});
+
+test("the both-false rule is repeated on BOTH field describes, since a model may read only one", async () => {
+  const client = await connectedClient();
+  const { tools } = await client.listTools();
+  const schema = tools.find((t) => t.name === "naulon_discover")?.outputSchema;
+  const props = (schema as { properties?: Record<string, unknown> } | undefined)?.properties;
+  const fields = (
+    (props?.candidates as { items?: { properties?: Record<string, { description?: string }> } } | undefined)?.items
+      ?.properties ?? {}
+  ) as Record<string, { description?: string }>;
+  assert.match(fields.matchedInBody?.description ?? "", /title or teaser/i);
+  assert.match(fields.matchedSemantic?.description ?? "", /both-false/i);
+});
+
 test("naulon_appraise accepts the match-evidence flags and scores WITH them", async () => {
   // The input-side twin of the discover bug: an undeclared key is stripped by schema validation,
   // so before this the evidence survived naulon_discover and died one tool later. Both candidates
