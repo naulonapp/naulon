@@ -553,9 +553,16 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "Call this first to see what is available before appraising, quoting, or paying. If no source " +
         "is configured it refuses with setup guidance rather than inventing sources. " +
         "A candidate may carry WHY it matched: `matchedInBody` means your terms are inside the paid " +
-        "text (strong — the teaser just does not show it), `matchedSemantic` means only that it is " +
-        "near your query in meaning and your terms are absent (weak — judge the teaser, and do not " +
-        "pay one that is off-topic). Discovery returns the best available matches, never a promise " +
+        "text but NOT in the title or teaser (strong — the teaser just does not show it), " +
+        "`matchedSemantic` means only that it is near your query in meaning and your terms are " +
+        "absent (weak — judge the teaser, and do not pay one that is off-topic). " +
+        "NEITHER flag set means one of two opposite things, so read it against the rest of the " +
+        "response: if any OTHER candidate here carries a flag, this source searches, and no flag is " +
+        "the STRONGEST result of all — your terms matched the title or teaser, which is why no " +
+        "body-only or semantic explanation was needed. If NO candidate in the response carries a " +
+        "flag, the source does not search (a plain RSS feed), and the absence says nothing at all — " +
+        "judge every candidate on its teaser. " +
+        "Discovery returns the best available matches, never a promise " +
         "that any of them answers your question.",
       inputSchema: {
         topic: z.string().min(1).describe("The research topic to find candidate sources for."),
@@ -575,24 +582,36 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
                     "Pass it back to naulon_quote / naulon_pay_and_read so the toll targets the real link " +
                     "(e.g. /articles/<slug>) instead of a reconstructed /essays/<slug> path.",
                 ),
-              // Why the source matched. A directory that searches article bodies sets exactly one of
+              // Why the source matched. A directory that searches article bodies sets AT MOST one of
               // these; an RSS source sets neither (it does not search). They must be DECLARED here or
               // the SDK strips them from structuredContent — which is what happened until 2026-08-03:
               // the fleet directory had been sending matchedInBody since it gained body search, and no
               // stdio buyer ever saw it. The hosted agent had the evidence; a self-host buyer did not.
+              //
+              // NEITHER flag is the case the schema never described, and it is the ambiguous one:
+              // `body: fullHit && !headHit` (directory `src/directory/filter.ts:37`), so a candidate
+              // whose TITLE matched carries false — the strongest evidence there is, wearing the same
+              // shape as a source that never searched at all. The tool description above carries the
+              // rule that separates them (look at whether any sibling candidate carries a flag);
+              // each field repeats it, because an agent may read one describe() and not the other.
               matchedInBody: z
                 .boolean()
                 .optional()
                 .describe(
-                  "STRONG: your query's terms appear inside this source's full text, which the free " +
-                    "teaser may not show. A flag only — the body itself stays behind the toll.",
+                  "STRONG: your query's terms appear inside this source's full text but NOT in its " +
+                    "title or teaser, which is why the flag is needed at all. A flag only — the body " +
+                    "itself stays behind the toll. ABSENT/false does NOT mean a weak match: a title " +
+                    "or teaser hit also reads false, and is stronger than this. See the tool " +
+                    "description for how to tell that apart from a source that does not search.",
                 ),
               matchedSemantic: z
                 .boolean()
                 .optional()
                 .describe(
                   "WEAK: this source is close to your query in meaning, but your terms do NOT appear " +
-                    "in it. Judge it on the title and teaser; a near-miss looks exactly like this.",
+                    "in it. Judge it on the title and teaser; a near-miss looks exactly like this. " +
+                    "ABSENT/false with `matchedInBody` also absent is the both-false case — see the " +
+                    "tool description; it is either the strongest match or no signal, never a weak one.",
                 ),
             }),
           )
