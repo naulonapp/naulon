@@ -652,7 +652,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "no network calls beyond resolving local config.",
       inputSchema: {},
       outputSchema: {
-        wallet: z.string().describe("The buyer wallet address (0x…40 hex) that pays every toll."),
+        wallet: z
+          .string()
+          .optional()
+          .describe(
+            "The buyer wallet address (0x…40 hex) that pays every toll. ABSENT when this process has " +
+              "no wallet it can honestly name — a hosted mount with no session open, or a deploy with " +
+              "neither BUYER_PRIVATE_KEY nor BUYER_ADDRESS. Absent is the truthful answer, never an " +
+              "address to fund; `ready` is false and `nextStep` says how to get one.",
+          ),
         tollgate: z
           .string()
           .optional()
@@ -678,25 +686,49 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // so reporting the wrong address does not merely confuse — it directs a buyer to fund an address
       // that never pays their tolls and that anyone can sweep. Prod 2026-08-03 reported
       // 0xF0c9…a6F5 (the mock key) while every toll was signed by the session EOA.
-      const wallet = payerAddress();
+      // …and when there is NO signer to name, name none. `payerAddress()` falls back to
+      // `getWallet()`, which without BUYER_PRIVATE_KEY is the DERIVED DEV KEY — deterministic from
+      // a fixed public seed (`wallet.ts` devDemoKey), so its private key is effectively public and
+      // anything sent there is sweepable by anyone. That is the ordinary state of a hosted mount
+      // with no session open: no `railSigners` are injected, so this tool used to answer
+      // `ready: true` and "Fund this wallet (0x…)" for an in-process key that dies with the
+      // process. Measured in prod 2026-08-06: 0xF0c9…a6F5, an address in no wallet row anywhere.
+      //
+      // An operator-supplied BUYER_ADDRESS is a different case and stays reportable: the key is
+      // still the dev one (so it cannot sign), but the ADDRESS is a real wallet its owner chose,
+      // which is the legacy no-sign demo path.
+      const envWallet = getWallet();
+      const namableEnvAddress = envWallet.mock && !cfg.BUYER_ADDRESS ? undefined : envWallet.address;
+      const wallet = hostedSigner?.address ?? namableEnvAddress;
       const fleetDefault = isFleetDefaultDiscovery(cfg);
-      // Amendment (wp2-brief): never imply a single universal pay-gate exists for the fleet
-      // default — discovery is fleet-WIDE, but payment is authorized per-publisher (the trusted
-      // directory's own discovered domains, spendGate-capped — WP-2 T2), not one gate.
       // The funding phrase is network-aware: a testnet gate is faucet-funded play-money, a
       // mainnet gate is real USDC — never tell an operator to "fund with testnet USDC" on mainnet.
       const net = activeNetwork();
       const fundHint = net.testnet
         ? `with testnet USDC (play-money, no fiat value) — e.g. faucet.circle.com/Arc-Testnet — or connect a token`
         : `with real USDC on ${net.chainName} (mainnet — real money) — or connect a funded token`;
-      const nextStep = fleetDefault
-        ? `Fund this wallet (${wallet}) ${fundHint}. ` +
-          `Discovery is fleet-wide (the naulon directory); payment is authorized per-publisher for whatever it ` +
+      // Two independent facts, said in two clauses, so neither is lost when the other changes.
+      // WHO PAYS: an address to fund, or — when there is none — how to get one, with no address
+      // printed at all. A model relays whatever hex string this field contains, so printing the
+      // dev key here IS the vulnerability; saying nothing is the only safe answer.
+      const fundClause = wallet
+        ? `Fund this wallet (${wallet}) ${fundHint}.`
+        : `No buyer wallet is resolvable here yet — nothing can be paid, and this server has no address ` +
+          `to give you, so do not fund one on its word. If you reached this through a hosted naulon mount, ` +
+          `open a spending session in your naulon buyer wallet and reconnect; if you run this server ` +
+          `yourself, set BUYER_PRIVATE_KEY (or BUYER_ADDRESS for a read-only demo). Whichever wallet you ` +
+          `end up with will need funding ${fundHint}. Free tools (discover, appraise, quote) work meanwhile.`;
+      // WHERE IT PAYS. Amendment (wp2-brief): never imply a single universal pay-gate exists for
+      // the fleet default — discovery is fleet-WIDE, but payment is authorized per-publisher (the
+      // trusted directory's own discovered domains, spendGate-capped — WP-2 T2), not one gate.
+      const configClause = fleetDefault
+        ? `Discovery is fleet-wide (the naulon directory); payment is authorized per-publisher for whatever it ` +
           `discovers (each publisher's own toll, capped by your spend policy) — there is no single pay-gate to configure.`
         : `Confirm your configured gate (TOLLGATE_URL${cfg.TOLLGATE_URL ? ` = ${cfg.TOLLGATE_URL}` : " is not set yet"}) ` +
-          `is reachable and that this wallet (${wallet}) is funded ${fundHint.replace(/ — .*$/, "")} to pay it.`;
+          `is reachable${wallet ? ` and that this wallet can pay it` : ``}.`;
+      const nextStep = `${fundClause} ${configClause}`;
       return structured({
-        wallet,
+        ...(wallet ? { wallet } : {}),
         ...(cfg.TOLLGATE_URL ? { tollgate: cfg.TOLLGATE_URL } : {}),
         discovery: resolvedDiscoverySourceUrl(),
         ready: Boolean(wallet),
