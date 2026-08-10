@@ -18,6 +18,7 @@
 import { createHash } from "node:crypto";
 import {
   activeNetwork,
+  arcPreviewHeaders,
   getConfig,
   networkByCaip2,
   relayerKeyFor,
@@ -97,16 +98,18 @@ export function facilitatorBearer(net: SettlementNetwork): string | undefined {
 }
 
 /** The auth + Arc-preview header map for a network's facilitator calls: `authorization`
- *  when a bearer is configured (see `facilitatorBearer`), plus the Arc private-mainnet
- *  preview header when `net.chainName === "arc"`. Empty object when neither applies (the
- *  testnet facilitator works keyless). Pure + exported so it's unit-testable without
- *  module-mocking the SDK's dynamic import — `getFacilitator` is the only production
- *  caller, so this IS the code that runs, not a parallel copy. */
+ *  when a bearer is configured (see `facilitatorBearer`), plus whatever preview headers
+ *  the chain needs (`arcPreviewHeaders` — Arc mainnet only). Empty object when neither
+ *  applies (the testnet facilitator works keyless). Pure + exported so it's unit-testable
+ *  without module-mocking the SDK's dynamic import — `getFacilitator` is the only
+ *  production caller, so this IS the code that runs, not a parallel copy.
+ *
+ *  The Arc header string is NOT spelled here: `@naulon/shared` owns it, so this path and
+ *  wayfarer's GatewayClient path cannot drift (SDK 3.3.0 deleted the SDK's own copy). */
 export function facilitatorHeaders(net: SettlementNetwork): Record<string, string> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...arcPreviewHeaders(net.chainName) };
   const bearer = facilitatorBearer(net);
   if (bearer) headers.authorization = `Bearer ${bearer}`;
-  if (net.chainName === "arc") headers["X-ARC-PRIVATE-MAINNET-ENABLED"] = "true";
   return headers;
 }
 
