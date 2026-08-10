@@ -328,13 +328,19 @@ test("naulon_discover returns free catalog teasers (no payment)", async () => {
 
 // ── WP-2 T3 — naulon_status: the "run first" tool ─────────────────────────────
 
+// The BYO-key shape: a real key set ⇒ a real address reported. It used to pass with NO key too,
+// because the reported address was then the derived dev key — which is exactly the bug below, so
+// this test now supplies the key it was always really about.
 test("naulon_status reports wallet, discovery source, and a plain next step", async () => {
-  const client = await connectedClient();
-  const res = await client.callTool({ name: "naulon_status", arguments: {} });
-  const s = res.structuredContent as { wallet: string; discovery: string; tollgate?: string; ready: boolean; nextStep: string };
-  assert.match(s.wallet, /^0x[0-9a-fA-F]{40}$/);
-  assert.equal(s.discovery, "https://gate.naulon.app/directory", "zero-config discovery defaults to the fleet directory");
-  assert.ok(typeof s.nextStep === "string" && s.nextStep.length > 0);
+  await withEnv({ BUYER_PRIVATE_KEY: `0x${"7".repeat(64)}` }, async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({ name: "naulon_status", arguments: {} });
+    const s = res.structuredContent as { wallet: string; discovery: string; tollgate?: string; ready: boolean; nextStep: string };
+    assert.match(s.wallet, /^0x[0-9a-fA-F]{40}$/);
+    assert.equal(s.ready, true);
+    assert.equal(s.discovery, "https://gate.naulon.app/directory", "zero-config discovery defaults to the fleet directory");
+    assert.ok(typeof s.nextStep === "string" && s.nextStep.length > 0);
+  });
 });
 
 // PROD 2026-08-03 — the "fund the wrong wallet" trap. `naulon_status` is documented as the run-FIRST
@@ -362,6 +368,40 @@ test("naulon_status reports the PAYER address (injected session EOA), not the en
       s.nextStep, new RegExp(session.address, "i"),
       "nextStep tells the buyer which wallet to fund — it must be the payer",
     );
+  });
+});
+
+// The other half of the same trap, and the worse one. With NO injected signer and NO
+// BUYER_PRIVATE_KEY — the ordinary state of a hosted mount before the buyer opens a session —
+// `getWallet()` returns the DERIVED DEV KEY, whose private key is a public constant. Status used to
+// answer `ready: true` and "Fund this wallet (0x…)" for it: an address that dies with the process
+// and that anyone can sweep. Measured in prod 2026-08-06 as 0xF0c9…a6F5, in no wallet row anywhere.
+test("naulon_status names NO wallet when the only candidate is the derived dev key", async () => {
+  await withEnv({ BUYER_PRIVATE_KEY: undefined, BUYER_ADDRESS: undefined }, async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({ name: "naulon_status", arguments: {} });
+    const s = res.structuredContent as { wallet?: string; ready: boolean; nextStep: string };
+    assert.equal(s.wallet, undefined, "an unfundable in-process key must not be reported as the wallet");
+    assert.equal(s.ready, false, "ready must not claim a payer exists");
+    assert.doesNotMatch(
+      s.nextStep, /0x[0-9a-fA-F]{40}/,
+      "nextStep must print no address at all — every address it could print here is unfundable",
+    );
+    assert.match(s.nextStep, /session|BUYER_PRIVATE_KEY/i, "it must say how to get a real one");
+  });
+});
+
+// An operator-supplied BUYER_ADDRESS is the legacy no-sign demo: the dev key still signs (so PoP
+// won't match), but the ADDRESS is a real wallet its owner chose. That one stays reportable —
+// the rule is "never invent an address", not "never report a mock-keyed one".
+test("naulon_status still reports an operator-supplied BUYER_ADDRESS", async () => {
+  const chosen = "0x00000000000000000000000000000000000000AA";
+  await withEnv({ BUYER_PRIVATE_KEY: undefined, BUYER_ADDRESS: chosen }, async () => {
+    const client = await connectedClient();
+    const res = await client.callTool({ name: "naulon_status", arguments: {} });
+    const s = res.structuredContent as { wallet?: string; ready: boolean };
+    assert.equal(s.wallet?.toLowerCase(), chosen.toLowerCase());
+    assert.equal(s.ready, true);
   });
 });
 
