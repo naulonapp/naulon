@@ -16,7 +16,7 @@
     "@naulon/enforce": "*",
     "@naulon/sdk": "*",
     "@naulon/shared": "*",
-    "@circle-fin/x402-batching": "^3.2.0",
+    "@circle-fin/x402-batching": "^3.3.0",
     "@hono/node-server": "^2.0.4",
     "@x402/core": "^2.6.0",
     "@x402/evm": "^2.6.0",

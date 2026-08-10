@@ -258,6 +258,39 @@ export function relayerKeyFor(net: SettlementNetwork): string | undefined {
   return net.testnet ? cfg.RELAYER_PRIVATE_KEY : cfg.RELAYER_PRIVATE_KEY_MAINNET;
 }
 
+/** The header that opts a call into Arc's private-mainnet preview, before Arc mainnet
+ *  is publicly available. We own this string because Circle stopped owning it: SDK
+ *  `@circle-fin/x402-batching` 3.2.0 exported `ARC_PRIVATE_MAINNET_HEADER` +
+ *  `arcPrivateMainnetHeaders()`, and 3.3.0 DELETED both, replacing the dedicated
+ *  `arcPrivateMainnet?: boolean` config on the Gateway client and the facilitator client
+ *  with a generic `headers?: Record<string, string>` bag. */
+export const ARC_PRIVATE_MAINNET_HEADER = "X-ARC-PRIVATE-MAINNET-ENABLED";
+
+/** The preview headers a Gateway/facilitator call needs for `chain`: the Arc
+ *  private-mainnet opt-in on Arc MAINNET only, `{}` everywhere else (including
+ *  `arcTestnet` — the public testnet needs no opt-in).
+ *
+ *  This is the single owner of that rule. Two call sites depend on it and they used to
+ *  disagree in kind: the facilitator path spelled the literal itself, while the Gateway
+ *  client path never spelled it at all and inherited SDK 3.2.0's implicit
+ *  `config.arcPrivateMainnet ?? config.chain === "arc"` default. 3.3.0 deleted that
+ *  default, so an inherited header became a MISSING header — visible only on the first
+ *  Arc-mainnet call, and only on the funding half (deposit/withdraw/balances) while
+ *  settle kept working. Both sides now ask this function, so neither can drift from the
+ *  other.
+ *
+ *  Narrows on the chain NAME, not on `net.testnet` or a memo capability — the preview is
+ *  an Arc-mainnet enrollment fact, unrelated to what the chain can do.
+ *
+ *  Takes a bare `string`, not `NetworkName`: the SDK's own `SupportedChainName` is WIDER
+ *  than this registry (it carries 12 testnets NETWORKS deliberately omits — sepolia,
+ *  arbitrumSepolia, polygonAmoy, …), so a `NetworkName` parameter would reject the
+ *  wayfarer call sites that pass an SDK chain name through. Narrowing it properly would
+ *  mean importing the SDK's type here, and `shared` stays SDK-free by design. */
+export function arcPreviewHeaders(chain: string): Record<string, string> {
+  return chain === "arc" ? { [ARC_PRIVATE_MAINNET_HEADER]: "true" } : {};
+}
+
 /** The Gateway batching x402 `extra` block, naming the verifying contract. */
 export function gatewayExtra(net: SettlementNetwork = activeNetwork()): Record<string, unknown> {
   return { name: "GatewayWalletBatched", version: "1", verifyingContract: net.gatewayWallet };

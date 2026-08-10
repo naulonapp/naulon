@@ -20,7 +20,7 @@
  * deposits via the SDK `GatewayClient` for backwards compatibility.
  */
 import { type Address, type Hex, type TypedDataDomain } from "viem";
-import { activeNetwork, getConfig } from "@naulon/shared";
+import { activeNetwork, arcPreviewHeaders, getConfig } from "@naulon/shared";
 // Type-only (erased at runtime) — the SDK itself is loaded lazily so the mock path never pulls it in.
 import type {
   Balances,
@@ -142,8 +142,7 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
       // reported the "0x" placeholder until the first pay — agent.ts logs `wallet ${address}`
       // BEFORE init(), so an operator saw `wallet 0x` instead of the real derived address.
       await getSigner();
-      const { GatewayClient } = await import("@circle-fin/x402-batching/client");
-      const client = new GatewayClient({ chain: activeNetwork().chainName, privateKey: envAccountKey() });
+      const client = await newGatewayClient(activeNetwork().chainName, envAccountKey());
       console.log(`  depositing ${cfg.DEPOSIT_AMOUNT_USDC} USDC into the Gateway Wallet...`);
       const result = await client.deposit(cfg.DEPOSIT_AMOUNT_USDC);
       console.log(`  deposit tx ${result.depositTxHash}`);
@@ -181,6 +180,35 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
   };
 }
 
+/**
+ * The `GatewayClient` constructor config for a chain + key. Pure + exported for direct
+ * unit testing, the same discipline as tollgate's `facilitatorHeaders` — the six SDK call
+ * sites below all build their client through `newGatewayClient`, so this IS the config
+ * that runs, not a parallel copy.
+ *
+ * `headers` is the load-bearing part. SDK 3.2.0 turned the Arc private-mainnet header on
+ * by itself (`config.arcPrivateMainnet ?? config.chain === "arc"`); 3.3.0 deleted that
+ * default along with the whole `arcPrivateMainnet` option, so a client built with only
+ * `{chain, privateKey}` now sends nothing. Passing it explicitly keeps Arc-mainnet
+ * funding calls behaving exactly as they did on 3.2.0, and — unlike the old default —
+ * says so out loud at a spot a reader can find.
+ */
+export function gatewayClientConfig(
+  chain: SupportedChainName,
+  privateKey: Hex,
+): { chain: SupportedChainName; privateKey: Hex; headers: Record<string, string> } {
+  return { chain, privateKey, headers: arcPreviewHeaders(chain) };
+}
+
+/** One owner for every `GatewayClient` construction in this module: the lazy SDK import
+ *  (so the mock/memo paths never pull the SDK in) plus `gatewayClientConfig`. Six wrappers
+ *  used to repeat both, which is how the deleted 3.3.0 default would have gone missing in
+ *  six places at once. */
+async function newGatewayClient(chain: SupportedChainName, privateKey: Hex) {
+  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
+  return new GatewayClient(gatewayClientConfig(chain, privateKey));
+}
+
 /** Options for a standalone out-of-band Gateway deposit. */
 export interface GatewayDepositOpts {
   chain: SupportedChainName;
@@ -198,8 +226,7 @@ export interface GatewayDepositOpts {
  * script/operator calls. SDK loaded lazily so the mock/memo paths never pull it in.
  */
 export async function gatewayDeposit(opts: GatewayDepositOpts): Promise<DepositResult> {
-  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
-  const client = new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey });
+  const client = await newGatewayClient(opts.chain, opts.privateKey);
   return client.deposit(opts.amountUsdc);
 }
 
@@ -224,8 +251,7 @@ export async function gatewayWithdraw(opts: {
   /** USDC amount as a DECIMAL string, e.g. "10.5". */
   amountUsdc: string;
 }): Promise<WithdrawResult> {
-  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
-  const client = new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey });
+  const client = await newGatewayClient(opts.chain, opts.privateKey);
   return client.withdraw(opts.amountUsdc, { chain: opts.chain, recipient: opts.to });
 }
 
@@ -236,8 +262,7 @@ export async function gatewayWithdraw(opts: {
 export async function gatewayBalances(
   opts: { chain: SupportedChainName; privateKey: Hex; address?: Address },
 ): Promise<Balances> {
-  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
-  return new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey }).getBalances(opts.address);
+  return (await newGatewayClient(opts.chain, opts.privateKey)).getBalances(opts.address);
 }
 
 /**
@@ -249,8 +274,7 @@ export async function gatewayBalances(
 export async function gatewayTransferStatus(
   opts: { chain: SupportedChainName; privateKey: Hex; id: string },
 ): Promise<TransferResponse> {
-  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
-  return new GatewayClient({ chain: opts.chain, privateKey: opts.privateKey }).getTransferById(opts.id);
+  return (await newGatewayClient(opts.chain, opts.privateKey)).getTransferById(opts.id);
 }
 
 /**
@@ -262,8 +286,7 @@ export async function gatewayTransfers(
   opts: { chain: SupportedChainName; privateKey: Hex } & SearchTransfersParams,
 ): Promise<SearchTransfersResponse> {
   const { chain, privateKey, ...params } = opts;
-  const { GatewayClient } = await import("@circle-fin/x402-batching/client");
-  return new GatewayClient({ chain, privateKey }).searchTransfers(params);
+  return (await newGatewayClient(chain, privateKey)).searchTransfers(params);
 }
 
 /** The one bit a caller settling buyer→author needs from a transfer's lifecycle: did the money land? */

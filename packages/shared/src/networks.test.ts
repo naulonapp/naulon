@@ -14,6 +14,8 @@ import { afterEach, test } from "node:test";
 import { resetConfig } from "./config.ts";
 import {
   activeNetwork,
+  ARC_PRIVATE_MAINNET_HEADER,
+  arcPreviewHeaders,
   ARC_TESTNET,
   gatewayExtra,
   getNetwork,
@@ -177,6 +179,29 @@ test("modular-wallet capability is present exactly on the modular-supported chai
   for (const name of ["sei", "sonic", "hyperEvm", "worldChain", "arc"] as NetworkName[]) {
     assert.equal(supportsModularWallet(NETWORKS[name]), false, `${name} must be API-buyers-only`);
   }
+});
+
+// The SDK used to own this rule and then deleted it (3.2.0 exported
+// `arcPrivateMainnetHeaders()`; 3.3.0 removed it and the `arcPrivateMainnet` option that
+// defaulted it on for `chain === "arc"`). These pin OUR copy, since both the facilitator
+// path (tollgate `facilitatorHeaders`) and the funding path (wayfarer
+// `gatewayClientConfig`) now read it from here.
+test("the Arc preview header is sent on arc MAINNET and nowhere else — arcTestnet included", () => {
+  assert.deepEqual(arcPreviewHeaders("arc"), { "X-ARC-PRIVATE-MAINNET-ENABLED": "true" });
+  for (const name of ALL) {
+    if (name === "arc") continue;
+    assert.deepEqual(arcPreviewHeaders(name), {}, `${name} must not opt into the Arc preview`);
+  }
+  // Chains the SDK supports but this registry deliberately omits (12 extra testnets) reach
+  // this function too — via wayfarer's SupportedChainName, which is wider than NetworkName.
+  assert.deepEqual(arcPreviewHeaders("sepolia"), {});
+});
+
+test("the Arc preview header name is the exact string Circle's facilitator reads", () => {
+  // Was `ARC_PRIVATE_MAINNET_HEADER` in the SDK until 3.3.0 deleted it; a rename here is a
+  // silent 'not enrolled' on Arc mainnet, so the literal is asserted, not referenced.
+  assert.equal(ARC_PRIVATE_MAINNET_HEADER, "X-ARC-PRIVATE-MAINNET-ENABLED");
+  assert.equal(Object.keys(arcPreviewHeaders("arc"))[0], ARC_PRIVATE_MAINNET_HEADER);
 });
 
 test("arc mainnet ships WITHOUT a memo field until the predeploy is verified on mainnet", () => {
