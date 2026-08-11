@@ -77,6 +77,20 @@ export interface Fetched {
    *  generic rejection); false for a hard stop (insufficient funds — fund first).
    *  Absent on success. */
   retryable?: boolean;
+  /**
+   * The gate returned a COMPLETE HTTP response and took no payment — a 402 refusal, or a non-2xx it
+   * declined to serve. Nothing settled, and that is *known* rather than assumed.
+   *
+   * ABSENT means unknown, never "it was paid". A request that throws mid-flight — a socket reset
+   * after the gate already settled, a connection that died with the response in transit — is
+   * genuinely ambiguous, so the flag is deliberately not set there.
+   *
+   * It exists because a caller that reserved spend BEFORE signing needs to know whether it may give
+   * that reserve back. Releasing on a guess would refund allowance for money that actually moved, so
+   * the distinction is carried from the one place that knows it rather than inferred downstream from
+   * `errorCode`, where a gate 503 and a dead socket both read as `origin_error`.
+   */
+  unpaid?: boolean;
 }
 
 /**
