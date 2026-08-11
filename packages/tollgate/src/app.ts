@@ -166,6 +166,90 @@ const STRIP_HEADERS = new Set([
   "x-real-ip",
 ]);
 
+/** Statuses the Fetch spec forbids a body on — `new Response(bytes, { status })` THROWS for these,
+ *  so the paid path must not try to re-wrap one. There are no bytes at risk on any of them either,
+ *  which is why skipping them costs the guarantee below nothing. */
+const NULL_BODY_STATUS = new Set([204, 205, 304]);
+
+/** Connection and framing headers that must NOT survive re-wrapping a buffered body. They describe
+ *  the ORIGIN's connection (RFC 7230 §6.1) and its chunked framing, and undici really does expose
+ *  them on a fetch Response. Replaying `transfer-encoding: chunked` over a fixed in-memory buffer
+ *  declares a framing the response no longer has: the server emits a self-contradicting message and
+ *  the buyer's fetch dies mid-read with a bare "fetch failed". `content-length` goes too, so the
+ *  runtime recomputes it for the bytes actually being sent. (Measured 2026-08-11 — an in-process
+ *  `app.request()` never crosses a socket, so no unit test can see this; only a real listener can.) */
+const CONNECTION_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "content-length",
+]);
+
+/** Ceiling on a prefetched body. Orders of magnitude above any article; a response past it is not
+ *  something a citation toll should hold in memory, and refusing to SELL it beats settling against
+ *  bytes we might never finish receiving. */
+const MAX_PREFETCH_BYTES = 8 * 1024 * 1024;
+/** Deadline for having the WHOLE body in hand. An origin that cannot finish inside this has not
+ *  delivered, and the buyer must not be charged for waiting on it. It also bounds the gate: without
+ *  it, one origin that opens a body and never closes it would pin a paid request open forever. */
+const PREFETCH_BODY_TIMEOUT_MS = 15_000;
+
+/**
+ * Drain an origin response into memory, bounded by {@link MAX_PREFETCH_BYTES} and
+ * {@link PREFETCH_BODY_TIMEOUT_MS}, and hand back a replayable Response over those exact bytes.
+ *
+ * Returns `null` when the body could not be fully read — too large, too slow, or the socket died
+ * mid-stream. The paid path treats that identically to an origin that could not serve: refused, and
+ * never charged. Truncation is never reported as success, which is why the deadline sets a flag
+ * instead of trusting the cancelled read: `reader.cancel()` makes a pending `read()` resolve
+ * `{done: true}`, and believing that would return a HALF body as if it were whole.
+ */
+async function materializeBody(res: Response): Promise<Response | null> {
+  if (!res.body || NULL_BODY_STATUS.has(res.status)) return res;
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let timedOut = false;
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    void reader.cancel().catch(() => {});
+  }, PREFETCH_BODY_TIMEOUT_MS);
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_PREFETCH_BYTES) {
+        void reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null; // socket reset mid-body, or the deadline cancelled us
+  } finally {
+    clearTimeout(deadline);
+  }
+  if (timedOut) return null;
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const headers = new Headers();
+  for (const [key, value] of res.headers) {
+    if (!CONNECTION_HEADERS.has(key.toLowerCase())) headers.append(key, value);
+  }
+  return new Response(body, { status: res.status, statusText: res.statusText, headers });
+}
+
 /**
  * Build the header set to send upstream: the client's headers minus everything
  * in STRIP_HEADERS, plus gate-controlled forwarding facts and the origin's Host.
@@ -636,6 +720,42 @@ export function createApp(
         let prefetched: Response | undefined;
         if (safeMethod) {
           prefetched = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+          // The bytes must be IN HAND before the money moves, and until now "prefetched" only ever
+          // meant the HEADERS arrived. `proxyToOrigin` hands back a STREAMING response, and an
+          // article origin answers chunked (no content-length), so nothing is necessarily buffered
+          // at this point. Holding that unread stream across `settleAndAttribute` below — an
+          // on-chain settle, ~1s and sometimes several — lets the upstream connection be recycled,
+          // closed, or time out inside the window, and the body then reads as ZERO BYTES on the
+          // client: status 200, a minted license, a real settlementRef, and nothing to read.
+          //
+          // Measured on the local rig 2026-08-11 — roughly 40% of paid reads returned
+          // `ok=true license=true contentLen=0`, and the /ask agent above cited those empty sources
+          // as though it had read them. Money moved, no content, nobody told.
+          //
+          // Reading the body here is what makes the ordering note above true as written: "money
+          // moved" now implies the bytes were in hand, not merely promised. The cost is one article
+          // body held in memory per in-flight paid read — precisely what that note already assumed
+          // when it said article payloads are small.
+          if (prefetched.ok) {
+            const materialized = await materializeBody(prefetched);
+            if (!materialized) {
+              // The read failed BEFORE anything settled, which is the whole point of doing it here:
+              // the buyer's signed authorization is untouched and reusable, exactly as in the
+              // non-2xx branch below. An origin that cannot deliver its own bytes is an origin that
+              // could not serve, and we bill only for delivered content.
+              emitObs(d.obs, "unservable", { kind: d.tollKind, price: usdc(d.quote.price) });
+              return stampGateCacheHeaders(
+                new Response("origin body could not be read", {
+                  status: 502,
+                  headers: {
+                    "X-Naulon-Verdict": headerSafe("agent not charged: origin body could not be read"),
+                  },
+                }),
+                { noStore: true },
+              );
+            }
+            prefetched = materialized;
+          }
           // Anything outside 2xx, not just 404 — and each non-2xx family is correct to refuse on:
           // a 3xx means the content moved and the agent should pay at wherever it went; a 304 means
           // they already hold it and there is no body to sell; a 5xx means the origin is broken,

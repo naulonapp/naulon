@@ -1,18 +1,21 @@
 /**
- * A PREFETCHED BODY WE DO NOT SERVE MUST BE RELEASED.
+ * A PREFETCHED BODY MUST NEVER BE LEFT DANGLING.
  *
- * The paid path fetches the origin BEFORE settling, so money never moves for a read the origin
- * will not deliver (see `unservableRead.test.ts`). That leaves exactly one branch that fetches and
- * then does not serve what it fetched: settle FAILS after a 2xx prefetch. There the gate returns a
- * fresh 402 and the origin's response simply falls out of scope.
+ * The paid path fetches the origin BEFORE settling, so money never moves for a read the origin will
+ * not deliver (see `unservableRead.test.ts`). The hazard that creates: an unread undici body holds
+ * its socket out of the connection pool until GC finalises it, so a run of failing payments leaks
+ * one connection each — against the publisher's own origin, which is the thing this gate exists to
+ * shield. Nothing fails, nothing logs; the pool just quietly narrows.
  *
- * An unread undici body holds its socket out of the connection pool until GC finalises it, so a run
- * of failing payments leaks one connection each — against the publisher's own origin, which is the
- * thing this gate exists to shield. Nothing fails, nothing logs; the pool just quietly narrows.
+ * HOW THIS IS SATISFIED CHANGED (2026-08-11). It used to be a `body.cancel()` on the one branch that
+ * fetches and then does not serve — settle FAILS after a 2xx prefetch. The gate now DRAINS the body
+ * into memory the moment it arrives, before settling at all (`materializeBody`), because holding an
+ * unread chunked stream across an on-chain settle was returning ZERO-BYTE bodies to buyers who had
+ * already paid (`paidBodyMaterialized.test.ts`). Draining subsumes the release: a fully-read body
+ * has already returned its socket to the pool, on every branch, including this one.
  *
- * This asserts the release directly, by giving the fake origin a body whose `cancel()` is
- * observable. Asserting it any other way would mean asserting on a GC finaliser, which is not
- * testable.
+ * So the invariant is unchanged and the assertion moved with the mechanism: after a failed settle,
+ * the origin's body must have been consumed to completion, not abandoned.
  */
 import assert from "node:assert/strict";
 import { test, before, after } from "node:test";
@@ -37,6 +40,7 @@ type PublisherResolver = import("@naulon/shared").PublisherResolver;
 const AUTHOR = walletAddress("0x0000000000000000000000000000000000000001");
 const PAYER = "0x1234567890abcdef1234567890abcdef12345678";
 const AGENT = { host: "release.example", "user-agent": "GPTBot/1.0" };
+const BODY = "<html>origin</html>";
 
 const PUB: PublisherConfig = {
   id: "release",
@@ -57,16 +61,25 @@ const app = createApp({
   },
 } satisfies PublisherResolver);
 
-/** Set by the fake origin's body when the gate releases it. */
+/** Set by the fake origin's body once the gate has read it to EOF — i.e. the socket is reusable. */
+let drained = false;
+/** Set if the gate abandons the body by cancelling it instead of reading it. */
 let cancelled = false;
 const realFetch = globalThis.fetch;
 
 before(() => {
   globalThis.fetch = (async () => {
+    drained = false;
     cancelled = false;
+    // Chunked and finite, like a real origin: enqueue, then close. The previous fixture deliberately
+    // never closed, which was only safe while nobody read the body here — now that the gate drains
+    // it up front, a body with no EOF is an origin stall, and that case has its own coverage in
+    // `paidBodyMaterialized.test.ts`.
     const body = new ReadableStream<Uint8Array>({
       start(c) {
-        c.enqueue(new TextEncoder().encode("<html>origin</html>"));
+        c.enqueue(new TextEncoder().encode(BODY));
+        c.close();
+        drained = true;
       },
       cancel() {
         cancelled = true;
@@ -99,25 +112,20 @@ async function quoteThenPay(path: string, corrupt: boolean): Promise<Response> {
   });
 }
 
-test("a settle failure releases the prefetched origin body", async () => {
+test("a settle failure does not leave the prefetched origin body dangling", async () => {
   const res = await quoteThenPay("/essays/release-me", true);
 
   assert.equal(res.status, 402, "an underpaid settle must refuse, not serve");
-  assert.equal(cancelled, true, "the prefetched origin body was dropped without being released");
+  assert.equal(drained, true, "the origin body was abandoned unread — that is the socket leak");
+  assert.equal(cancelled, false, "it should be consumed, not cancelled — draining is what frees the socket");
 });
 
-test("the happy path does NOT cancel it — the body is what gets served", async () => {
-  // The control. Without it, `cancelled` could be true because the gate cancels EVERY prefetch,
-  // which would mean the assertion above passes while the paid read returns nothing.
+test("the happy path serves those same bytes", async () => {
+  // The control. Without it, the assertion above would pass on a gate that refused every paid read.
   const res = await quoteThenPay("/essays/serve-me", false);
 
   assert.equal(res.status, 200, "a correctly paid read must be served");
-
-  // Read ONE chunk rather than `.text()`. The fake origin's stream is deliberately left open — a
-  // closed stream's `cancel()` is a spec no-op that never reaches the underlying source, which
-  // would make the test above unable to observe anything. So the body has no EOF to wait for, and
-  // `.text()` would hang forever.
-  const { value } = await res.body!.getReader().read();
-  assert.equal(new TextDecoder().decode(value), "<html>origin</html>", "the served body is the origin's");
-  assert.equal(cancelled, false, "the served body must not have been cancelled");
+  // `.text()` now terminates, which is itself the fix: the body reaching the buyer is a finite
+  // in-memory buffer, not a stream still owned by the upstream socket.
+  assert.equal(await res.text(), BODY, "the served body is the origin's");
 });
