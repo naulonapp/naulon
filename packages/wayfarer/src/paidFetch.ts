@@ -72,12 +72,18 @@ export async function runPaidFetch(
     const error = err instanceof Error ? err.message : String(err);
     return { ok: false, error, errorCode: "origin_error", retryable: true };
   }
+  // Both branches below hold a COMPLETE response from a gate that did not serve, so nothing settled
+  // and `unpaid` records that as knowledge. The throw paths above and the body-read failure below
+  // stay silent on it: once the request is on the wire, "it never settled" and "it settled and I
+  // lost the answer" are the same observation from here.
   if (res.status === 402) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     const error = body.error ?? "payment rejected";
-    return { ok: false, error, ...classifyPaymentError(error) };
+    return { ok: false, error, unpaid: true, ...classifyPaymentError(error) };
   }
-  if (!res.ok) return { ok: false, error: `origin returned ${res.status}`, errorCode: "origin_error", retryable: true };
+  if (!res.ok) {
+    return { ok: false, error: `origin returned ${res.status}`, errorCode: "origin_error", retryable: true, unpaid: true };
+  }
   let settlementRef: string | undefined;
   const respHeader = res.headers.get("payment-response");
   if (respHeader) {
