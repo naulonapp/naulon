@@ -60,23 +60,11 @@ import { rateLimit } from "./rateLimit.ts";
 import { settleAndAttribute } from "./settle.ts";
 import { envPublisherResolver } from "./publisher.ts";
 
-// Re-exported for downstream embedding: a host that injects its own resolver via
-// `createApp` can run the settlement drain over a chosen scope (secret/origin) —
-// the optional parameter the single-tenant default never needs. See settlementSink.
-export { drainSettlements, type DrainScope } from "./settlementSink.ts";
-// The delivery-state seam behind the drain: per-event ack / attempt / dead-letter state,
-// kept out of the append-only settlement ledger. A downstream fleet consumes this to
-// surface DEAD-LETTERED settlements to an operator and revive them — the money is parked
-// and visible, never dropped, so a control plane needs a read + a revive.
-export {
-  getSettlementDeliveryStore,
-  setSettlementDeliveryStore,
-  memorySettlementDeliveryStore,
-  backoffMs,
-  type SettlementDeliveryStore,
-  type DeliveryState,
-  type FailureInput,
-} from "./settlementDelivery.ts";
+// The origin-mirror seams (`drainSettlements`/`DrainScope` and the whole
+// `settlementDelivery` delivery-state surface) were exported here until WH-1 P3. They are gone:
+// a settled toll is reported once, as a webhook (`webhookSink.ts`), and the delivery state that
+// needs an operator's attention lives in the unified webhook delivery store — which a downstream
+// fleet already reads and revives per delivery. Two engines for one fact is what this removes.
 // The deferred extra-leg drain (O5/O1): a downstream fleet runs this per-publisher to
 // settle the buyer-authorized extra legs the gate verified-but-deferred on the request
 // path. Scoped by `publisherId` for multi-tenant isolation. See pendingLegs / x402.

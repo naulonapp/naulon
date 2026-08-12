@@ -33,7 +33,6 @@ function publisher(overrides: Partial<PublisherConfig> = {}): PublisherConfig {
     citationMultiplier: 5,
     credits: oneArticle,
     licenseIdentity: "naulon:test",
-    settlementSecret: undefined,
     ...overrides,
   };
 }

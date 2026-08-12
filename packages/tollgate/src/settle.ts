@@ -26,7 +26,6 @@ import {
 } from "@naulon/shared";
 import { licensing, type Quote, type SettlementLegReq } from "@naulon/enforce";
 import { record } from "./eventLog.ts";
-import { emitSettlement } from "./settlementSink.ts";
 import { emitSettlementWebhook } from "./webhookSink.ts";
 import { verifyAndSettle } from "./x402.ts";
 
@@ -137,16 +136,12 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     console.error("[tollgate] ledger write failed (payment already settled on-chain):", err);
   });
 
-  // Report the settlement to the publisher's earnings ledger (wire #3). Fire and
-  // forget — never delay the agent's content on the publisher's RTT; the background
-  // drain guarantees eventual delivery if this attempt misses. Dark without the
-  // publisher's settlement secret; idempotent on event.id; never throws.
-  void emitSettlement(event, publisher.settlementSecret, publisher.originUrl).catch((err: unknown) => {
-    console.error("[tollgate] settlement emit threw (payment already settled):", err);
-  });
-
-  // Wire #4, self-host webhooks — runs alongside the origin-mirror above (P3 removes the mirror).
-  // Host is derived from the publisher origin so a hostFilter can match; dark-safe + never throws.
+  // Wire #4, self-host webhooks — the ONLY settlement report now. The origin-mirror that used to
+  // run beside it (`emitSettlement` → POST ${originUrl}/api/credits/settlement, HMAC-signed) is
+  // gone: it was a second delivery mechanism for the same fact, with its own retry engine, its own
+  // delivery-state store and its own secret, and a publisher had to implement a receiver endpoint
+  // to get what a webhook subscription now gives them. Host is derived from the publisher origin so
+  // a hostFilter can match; dark-safe + never throws.
   const webhookHost = (() => {
     try {
       return new URL(publisher.originUrl).host;

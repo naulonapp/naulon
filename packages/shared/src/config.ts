@@ -51,8 +51,6 @@ const DEFAULT_PAYOUTS_PATH = join(REPO_ROOT, "data/payouts.jsonl");
 const DEFAULT_LICENSE_STORE = join(REPO_ROOT, "data/wayfarer-licenses.json");
 const DEFAULT_CREDITS_FIXTURES = join(REPO_ROOT, "examples/meridian/credits.json");
 const DEFAULT_CRAWLER_POLICY = join(REPO_ROOT, "data/crawler-policy.json");
-const DEFAULT_SETTLEMENT_OUTBOX = join(REPO_ROOT, "data/settlement-outbox.jsonl");
-const DEFAULT_SETTLEMENT_DELIVERY_STATE = join(REPO_ROOT, "data/settlement-delivery.jsonl");
 const DEFAULT_WEBHOOK_DELIVERIES = join(REPO_ROOT, "data/webhook-deliveries.jsonl");
 
 // Exported so config validation (e.g. the licensing superRefine) is unit-testable
@@ -195,60 +193,20 @@ export const configSchema = z.object({
   // route. Absent or unreadable ⇒ no policy, i.e. classifier defaults, which is the
   // behaviour every existing deploy already has.
   CRAWLER_POLICY_PATH: z.string().default(DEFAULT_CRAWLER_POLICY),
-  // Shared HMAC secret for the naulon → publisher settlement emit (POST
-  // ${ORIGIN_URL}/api/credits/settlement). Must match the publisher's value. When
-  // unset the emit is dark — the gate still tolls and serves; it just doesn't
-  // report earnings (keeps the no-creds mock loop working, per hard rule).
-  CREDITS_SETTLEMENT_SECRET: z.string().optional(),
-  // Crash-safe at-least-once delivery for the settlement emit. The hot path
-  // tries once; a background drain re-sends anything not yet acked. The outbox
-  // is an append-only log of acked event ids — durable across restarts, and
-  // only an optimization (a lost outbox just re-POSTs, which IA dedupes).
-  SETTLEMENT_OUTBOX_PATH: z.string().default(DEFAULT_SETTLEMENT_OUTBOX),
-  // Bounded retry budget per event inside the drain (the hot path is always 1).
-  SETTLEMENT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
-  // Per-attempt POST timeout (ms) — a hung IA must never stall the gate.
-  SETTLEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(4000),
-  // How often the background drain sweeps for unacked events. 0 disables it
-  // (e.g. serverless, where a cron drives the drain instead of a live loop).
-  SETTLEMENT_DRAIN_INTERVAL_MS: z.coerce.number().int().nonnegative().default(60_000),
-
   // Self-host webhook endpoints: JSON array of { url, secret, events?, hostFilter? }. Unset ⇒ the
-  // webhook emit is dark (no store, no sweep, no POST), like the origin-mirror with no secret. Parsed
+  // webhook emit is dark (no store, no sweep, no POST). Parsed
   // + validated by parseWebhookEndpointsEnv (kept a raw string here so a bad value fails loud there
   // with a field-specific message rather than a wall of zod).
   NAULON_WEBHOOK_ENDPOINTS: z.string().optional(),
 
   // How often the webhook sweep sends due deliveries (ms). 0 = disabled (serverless drives it via a
-  // cron hitting the sweep instead). Mirrors SETTLEMENT_DRAIN_INTERVAL_MS.
+  // cron hitting the sweep instead).
   WEBHOOK_SWEEP_INTERVAL_MS: z.coerce.number().int().nonnegative().default(30_000),
   // Where webhook deliveries live. A JSONL journal rather than process memory for two reasons: a
   // gate restart used to drop every unsent delivery, and the dashboard is a SEPARATE process that
   // can only see gate state through a file (same seam as EVENTS_PATH / OBSERVATIONS_PATH).
   WEBHOOK_DELIVERIES_PATH: z.string().default(DEFAULT_WEBHOOK_DELIVERIES),
 
-  // ── Settlement DELIVERY STATE (the cross-sweep retry plane) ──
-  // Where per-event delivery state (acked / attempts / next attempt / dead-letter)
-  // lives. "file" = process-local JSONL beside the outbox (the self-host, no-creds
-  // default — the gate must stay dark-by-default and creds-free). "supabase" = a
-  // shared table, so a multi-instance fleet agrees on what has been delivered and
-  // the drain selects only DUE work server-side instead of re-filtering the whole
-  // lifetime ledger every tick. Same SettlementDeliveryStore seam either way.
-  SETTLEMENT_DELIVERY_BACKEND: z.enum(["file", "supabase"]).default("file"),
-  SETTLEMENT_DELIVERY_STATE_PATH: z.string().default(DEFAULT_SETTLEMENT_DELIVERY_STATE),
-  // Cross-sweep attempt budget. Distinct from SETTLEMENT_MAX_ATTEMPTS, which is the
-  // ladder WITHIN one sweep: this counts SWEEPS. Once an event has failed this many
-  // sweeps it is DEAD-LETTERED — parked and surfaced to an operator, never dropped.
-  // The money is still owed; a dead letter is a visibility state, not a deletion.
-  SETTLEMENT_MAX_DELIVERY_ATTEMPTS: z.coerce.number().int().positive().default(10),
-  // Exponential cross-sweep backoff: next = now + min(base * 2^(attempts-1), cap).
-  // 1m → 2m → 4m → … capped at 6h, so a dead publisher is retried ~10 times over
-  // roughly two days before it parks, instead of being re-POSTed every 60s forever.
-  SETTLEMENT_RETRY_BASE_MS: z.coerce.number().int().positive().default(60_000),
-  SETTLEMENT_RETRY_BACKOFF_CAP_MS: z.coerce.number().int().positive().default(21_600_000),
-  // Hard cap on how many due events one sweep pulls. Bounds both the RPC and the
-  // work a single tick does; the next tick picks up the remainder.
-  SETTLEMENT_DRAIN_BATCH: z.coerce.number().int().positive().default(500),
 
   // Wayfarer
   BUYER_ADDRESS: z.string().optional(),
@@ -379,7 +337,6 @@ export const configSchema = z.object({
   SUPABASE_EVENTS_TABLE: z.string().default("naulon_events"),
   SUPABASE_NONCES_TABLE: z.string().default("naulon_nonces"),
   SUPABASE_PENDING_LEGS_TABLE: z.string().default("naulon_pending_legs"),
-  SUPABASE_SETTLEMENT_DELIVERY_TABLE: z.string().default("naulon_settlement_delivery"),
   SUPABASE_REVOCATIONS_TABLE: z.string().default("naulon_revocations"),
   // Where gated-request OBSERVATIONS go (the audit/observability plane — who was
   // served free / denied / paid). "off" (default) records nothing, so the open
@@ -465,7 +422,6 @@ export const configSchema = z.object({
     cfg.EVENTS_BACKEND === "supabase" ||
     cfg.NONCE_BACKEND === "supabase" ||
     cfg.PENDING_LEGS_BACKEND === "supabase" ||
-    cfg.SETTLEMENT_DELIVERY_BACKEND === "supabase" ||
     cfg.OBSERVATIONS_BACKEND === "supabase";
   if (usesSupabase) {
     for (const key of ["SUPABASE_URL", "SUPABASE_SERVICE_KEY"] as const) {
