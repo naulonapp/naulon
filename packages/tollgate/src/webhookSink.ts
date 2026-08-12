@@ -1,10 +1,10 @@
 // packages/tollgate/src/webhookSink.ts — the self-host webhook emit, wire #4. The OSS counterpart to
 // cloud's server-side dispatch: a lazy module-level singleton builds the core dispatch over an
 // EnvConfigStore (NAULON_WEBHOOK_ENDPOINTS) + the in-memory delivery store + the HTTP sender. Dark by
-// default — no endpoints ⇒ no singleton, no timer, no POST — exactly like settlementSink with no secret.
+// default — no endpoints ⇒ no singleton, no timer, no POST.
 //
-// Runs ALONGSIDE the origin-mirror (settlementSink.ts) in P2; P3 removes the origin-mirror and this
-// becomes the only settlement-notification path.
+// It ran ALONGSIDE the origin-mirror (settlementSink.ts) through P2. WH-1 P3 deleted the mirror, so
+// this is now the ONLY settlement-notification path the gate has.
 
 import { getConfig, parseWebhookEndpointsEnv, type AttributedEvent } from "@naulon/shared";
 import {
