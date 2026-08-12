@@ -12,8 +12,8 @@ You run a site and want machines to pay to read or cite it.
   self-check before you go live.
 - **[credits-api.md](./credits-api.md)** — the `GET /credits/:slug` contract: a
   slug in, an author-wallet split out, `404` = free. *Who gets paid.*
-- **[settlement-contract.md](./settlement-contract.md)** — the signed
-  `POST /api/credits/settlement` naulon sends you when a payment settles. *Your
+- **[settlement-notifications.md](./settlement-notifications.md)** — the signed
+  `settlement.completed` webhook naulon sends you when a payment settles. *Your
   earnings ledger, and the HMAC trust boundary.*
 
 ### Operating a gate
@@ -48,7 +48,7 @@ You're on the paying side — an agent that reads and cites tolled sources.
 
 ---
 
-The wire contracts (`credits-api`, `settlement-contract`, `citation-license`) are
+The wire contracts (`credits-api`, `settlement-notifications`, `citation-license`) are
 the breaking-change boundary self-hosters depend on. The runnable counterparts:
 [`packages/sdk/examples/next-credits/`](https://github.com/naulonapp/naulon/tree/main/packages/sdk/examples/next-credits) for
 the publisher side, [`examples/meridian/`](https://github.com/naulonapp/naulon/tree/main/examples/meridian) for a full toll.

@@ -1,10 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createExpressSettlementReceiver } from "./settlement-receiver.ts";
+import { createExpressWebhookReceiver } from "./webhook-receiver.ts";
 import { memoryIdempotencyStore } from "../idempotency.ts";
-import { makeSignedSettlementFixture } from "../crypto/fixture.ts";
+import { signPayload } from "../crypto/webhook.ts";
 
-const SECRET = "shh-test-secret";
+const SECRET = "whsec_test";
+
+/** A signed delivery, as the sender writes it. */
+function signed(over: Record<string, unknown> = {}) {
+  const rawBody = JSON.stringify({
+    id: "dlv_1",
+    type: "settlement.completed",
+    eventId: "evt_1",
+    createdAt: 1_700_000_000_000,
+    data: {},
+    ...over,
+  });
+  const t = Math.floor(Date.now() / 1000);
+  return { rawBody, headers: { "naulon-signature": signPayload(SECRET, rawBody, t) } };
+}
 
 /** Minimal Express res double — records the status + sent body + headers. */
 function fakeRes() {
@@ -24,10 +38,10 @@ function fakeReq(rawBody: string, headers: Record<string, string>) {
   return { params: {}, headers, body: Buffer.from(rawBody, "utf8") };
 }
 
-test("valid signed settlement → 200, onEvent runs once, deduped:false", async () => {
-  const { rawBody, headers } = makeSignedSettlementFixture({ secret: SECRET });
+test("valid signed delivery → 200, onEvent runs once, deduped:false", async () => {
+  const { rawBody, headers } = signed();
   const seen: string[] = [];
-  const handler = createExpressSettlementReceiver({
+  const handler = createExpressWebhookReceiver({
     secrets: [SECRET],
     idempotency: memoryIdempotencyStore(),
     onEvent: async (e) => { seen.push(e.eventId); },
@@ -39,10 +53,10 @@ test("valid signed settlement → 200, onEvent runs once, deduped:false", async 
   assert.equal(seen.length, 1);
 });
 
-test("replay within skew window → 200 deduped:true, onEvent NOT re-run", async () => {
-  const { rawBody, headers } = makeSignedSettlementFixture({ secret: SECRET });
+test("redelivery → 200 deduped:true, onEvent NOT re-run", async () => {
+  const { rawBody, headers } = signed();
   const seen: string[] = [];
-  const handler = createExpressSettlementReceiver({
+  const handler = createExpressWebhookReceiver({
     secrets: [SECRET],
     idempotency: memoryIdempotencyStore(),
     onEvent: async (e) => { seen.push(e.eventId); },
@@ -55,11 +69,11 @@ test("replay within skew window → 200 deduped:true, onEvent NOT re-run", async
   assert.equal(seen.length, 1, "onEvent must not run twice for the same eventId");
 });
 
-test("tampered signature → 401, onEvent never runs", async () => {
-  const { rawBody, headers } = makeSignedSettlementFixture({ secret: SECRET });
+test("wrong secret → 401, onEvent never runs", async () => {
+  const { rawBody, headers } = signed();
   let ran = false;
-  const handler = createExpressSettlementReceiver({
-    secrets: ["a-different-secret"],
+  const handler = createExpressWebhookReceiver({
+    secrets: ["whsec_other"],
     idempotency: memoryIdempotencyStore(),
     onEvent: async () => { ran = true; },
   });
@@ -70,8 +84,8 @@ test("tampered signature → 401, onEvent never runs", async () => {
 });
 
 test("req.body is a parsed object (no express.raw) → throws a clear error", async () => {
-  const { headers } = makeSignedSettlementFixture({ secret: SECRET });
-  const handler = createExpressSettlementReceiver({
+  const { headers } = signed();
+  const handler = createExpressWebhookReceiver({
     secrets: [SECRET],
     idempotency: memoryIdempotencyStore(),
     onEvent: async () => {},
@@ -86,7 +100,7 @@ test("req.body is a parsed object (no express.raw) → throws a clear error", as
 
 test("empty secrets array is rejected at construction", () => {
   assert.throws(
-    () => createExpressSettlementReceiver({ secrets: [], idempotency: memoryIdempotencyStore(), onEvent: async () => {} }),
+    () => createExpressWebhookReceiver({ secrets: [], idempotency: memoryIdempotencyStore(), onEvent: async () => {} }),
     /at least one secret/,
   );
 });

@@ -48,7 +48,7 @@ nav:
   - Getting your site tolled:
       - Integration guide: integration-guide.md
       - Credits API contract: credits-api.md
-      - Settlement contract: settlement-contract.md
+      - Settlement notifications: settlement-notifications.md
   - Operating a gate:
       - Operator console: operating.md
       - Configuration: configuration.md

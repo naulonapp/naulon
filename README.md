@@ -197,13 +197,13 @@ kind of publisher (a different origin, path prefix, and a deeper credits graph),
 proving the same core is publisher-agnostic with zero code changed.
 
 For building the publisher side, the kit `@naulon/sdk` packages both
-endpoints — the credits resolver and the HMAC-verified settlement receiver — with
+endpoints — the credits resolver and the HMAC-verified webhook receiver — with
 drop-in adapters for Next.js (`/next`) and Express (`/express`), and a
 `naulon-kit check` CLI that conformance-tests your live `/credits` endpoint against
 the contract. Start with the
 [integration guide](./docs/integration-guide.md); the two wire contracts are
 [credits-api.md](./docs/credits-api.md) and
-[settlement-contract.md](./docs/settlement-contract.md), and a runnable consumer is
+[settlement-notifications.md](./docs/settlement-notifications.md), and a runnable consumer is
 in [`packages/sdk/examples/next-credits/`](./packages/sdk/examples/next-credits).
 
 ### Webhooks (settlement notifications)
@@ -218,10 +218,15 @@ NAULON_WEBHOOK_ENDPOINTS='[{"url":"https://you.example/naulon-hook","secret":"wh
 
 Each endpoint gets a `Naulon-Signature: t=<unix>,v1=<hex>` header — HMAC-SHA256 over
 `${t}.${rawBody}`, keyed by your `secret`. Verify it with `verifyPayload` from
-`@naulon/shared` (already installed with the gate), or reimplement the ~10 lines:
-reject if the timestamp is outside your tolerance, recompute the HMAC, constant-time
-compare. Endpoints must be HTTPS; delivery retries with backoff and is a no-op when
-the env is unset.
+`@naulon/sdk`, or take the whole receiver (verify + the mandatory dedupe) with
+`createWebhookReceiver`. Endpoints must be HTTPS; delivery retries with backoff and is
+a no-op when the env is unset. Full contract:
+[settlement-notifications.md](./docs/settlement-notifications.md).
+
+**This is the only settlement-notification path.** The gate used to *also* POST a
+signed settlement straight at the publisher's origin; that wire was deleted (WH-1 P3)
+along with `CREDITS_SETTLEMENT_SECRET` and the eleven `SETTLEMENT_*` knobs that tuned
+it. One fact, one delivery mechanism.
 
 ## What's here
 

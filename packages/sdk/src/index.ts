@@ -1,15 +1,14 @@
 /**
  * @naulon/sdk — the naulon publisher contract.
  *
- * One source of truth for the credits + settlement wire: the types a publisher
- * produces/consumes, the validators that guard the money-routing boundary, the
- * HMAC sign/verify pair, and the credits resolvers. Runtime deps: `zod` +
- * `node:crypto` only — self-contained, so an external publisher installs one
- * thing. Framework adapters live behind subpath exports (added in a later phase).
+ * One source of truth for the two wires a publisher speaks: the credits graph it
+ * serves, and the signed webhook it receives when something happens on its account
+ * (a settlement landing, an anomaly firing). Runtime deps: `zod` + `node:crypto`
+ * only — self-contained, so an external publisher installs one thing. Framework
+ * adapters live behind subpath exports (`/next`, `/express`).
  */
 export * from "./contract/index.ts";
-export * from "./crypto/sign.ts";
-export * from "./crypto/verify.ts";
+export * from "./crypto/webhook.ts";
 export * from "./crypto/fixture.ts";
 export * from "./resolver/types.ts";
 export * from "./resolver/http.ts";

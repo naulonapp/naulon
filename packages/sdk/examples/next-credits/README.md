@@ -6,7 +6,7 @@ never call a naulon URL from here.
 
 ```
 app/api/credits/[slug]/route.ts        GET  — who to pay for a slug (404 = free read)
-app/api/credits/settlement/route.ts    POST — record a settled payout (HMAC-verified)
+app/api/naulon-hook/route.ts           POST — the signed settlement webhook (HMAC-verified)
 credits.json                           the static credits fixture this demo resolves against
 ```
 
@@ -14,7 +14,7 @@ credits.json                           the static credits fixture this demo reso
 
 ```bash
 npm install next react react-dom @naulon/sdk
-CREDITS_SETTLEMENT_SECRET=dev-secret npm run dev
+NAULON_WEBHOOK_SECRET=whsec_dev npm run dev
 ```
 
 Then:
@@ -26,13 +26,13 @@ curl localhost:3000/api/credits/on-stillness
 curl -i localhost:3000/api/credits/anything-else
 ```
 
-To exercise the settlement receiver offline (no production POST), feed it a signed
+To exercise the webhook receiver offline (no production delivery), feed it a signed
 fixture from the SDK:
 
 ```ts
-import { makeSignedSettlementFixture } from "@naulon/sdk";
-const { rawBody, headers } = makeSignedSettlementFixture({ secret: "dev-secret" });
-await fetch("http://localhost:3000/api/credits/settlement", { method: "POST", headers, body: rawBody });
+import { makeSignedWebhookFixture } from "@naulon/sdk";
+const { rawBody, headers } = makeSignedWebhookFixture({ secret: "whsec_dev" });
+await fetch("http://localhost:3000/api/naulon-hook", { method: "POST", headers, body: rawBody });
 // → 200 {"ok":true,"deduped":false}; POST the same bytes again → {"deduped":true}.
 ```
 
@@ -42,6 +42,8 @@ await fetch("http://localhost:3000/api/credits/settlement", { method: "POST", he
   your own `CreditsResolver` (a DB/CMS lookup).
 - **Replace `memoryIdempotencyStore()`** — it is NOT durable (lost on restart,
   useless across instances). Back `claim(eventId)` with a DB unique constraint on
-  the event id, or you risk a double payout on a replay within the 5-minute window.
-- Rotate the settlement secret by passing `secrets: [newSecret, oldSecret]` for the
+  the event id, or a redelivery counts the same payout twice.
+- Rotate the webhook secret by passing `secrets: [newSecret, oldSecret]` for the
   overlap window, then drop the old one.
+- Register the endpoint: `NAULON_WEBHOOK_ENDPOINTS` on your own gate, or
+  Settings → API & webhooks as a cloud tenant.

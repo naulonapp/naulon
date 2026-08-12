@@ -1,17 +1,17 @@
 # Integration guide — getting your site tolled
 
-> Start to finish with `@naulon/sdk`: serve the credits endpoint, receive
-> settlements, and self-check before you go live. Two endpoints, both on your side —
-> naulon calls you. Works the same whether you run your own gate or sit behind the
-> cloud fleet; only where you *declare* your URLs differs.
+> Start to finish with `@naulon/sdk`: serve the credits endpoint, receive the
+> settlement webhook, and self-check before you go live. Two endpoints, both on your
+> side — naulon calls you. Works the same whether you run your own gate or sit behind
+> the cloud fleet; only where you *declare* your URLs differs.
 
 ## What you're building
 
-naulon needs two things from your site, and gives you one back:
+naulon needs one thing from your site, and gives you one back:
 
 ```
-1. GET  /credits/:slug                 you serve → who to pay for a slug (or 404 = free)
-2. POST /api/credits/settlement        you serve → naulon reports a settled payment
+1. GET  /credits/:slug        you serve → who to pay for a slug (or 404 = free)
+2. POST <your webhook URL>    you serve → naulon reports a settled payment
 ```
 
 Both are **receive-side**: naulon (your gate, or the fleet) calls *you*. You never
@@ -22,7 +22,7 @@ sequenceDiagram
     participant Ag as AI agent
     participant Gate as naulon gate (yours or the fleet)
     participant Cr as Your /credits/:slug
-    participant Set as Your settlement receiver
+    participant Hook as Your webhook endpoint
 
     Ag->>Gate: request an article
     Gate->>Cr: GET /credits/:slug — who to pay?
@@ -30,10 +30,13 @@ sequenceDiagram
     Gate-->>Ag: 402 · price · payees
     Ag->>Gate: sign USDC, retry
     Note over Gate: verify + settle on-chain
-    Gate->>Set: POST settlement (HMAC-signed)
-    Set-->>Gate: 200, deduped on event id
     Gate-->>Ag: 200 content
+    Gate->>Hook: POST settlement.completed (HMAC-signed, out of band)
+    Hook-->>Gate: 200, deduped on eventId
 ```
+
+The webhook is deliberately **out of band** — it is sent by a background sweep, not
+on the request path, so a slow receiver of yours can never delay a reader.
 
 ## Install
 
@@ -46,7 +49,7 @@ Next.js adapters live at `@naulon/sdk/next` and treat `next` as an optional
 peer; they're plain web-standard `Request → Response` handlers, so they also drop
 into any framework that speaks the Fetch API. On **Express**, use
 `@naulon/sdk/express` instead — `createExpressCreditsRoute` and
-`createExpressSettlementReceiver` are the same logic wrapped for `(req, res)`. They're
+`createExpressWebhookReceiver` are the same logic wrapped for `(req, res)`. They're
 a thin bridge over the web-standard handlers, so the contract behaves identically; the
 one thing to get right is mounting the receiver with `express.raw({ type: "*/*" })` so
 the HMAC sees the exact bytes (see Step 2).
@@ -74,19 +77,22 @@ Remember the one rule that trips people up: **return 404 for anything you don't 
 tolled.** A 404 is read-for-free, not an error. Drafts, member-only posts, and
 wallet-less authors all 404.
 
-## Step 2 — receive settlements
+## Step 2 — receive the settlement webhook
 
-Record payments as your earnings ledger. Full contract, including the status-code
-semantics and rotation: [settlement-contract.md](./settlement-contract.md).
+Record payments as your earnings ledger. Full contract, including the retry semantics
+and secret rotation: [settlement-notifications.md](./settlement-notifications.md).
 
 ```ts
-// app/api/credits/settlement/route.ts
-import { createSettlementReceiver } from "@naulon/sdk/next";
+// app/api/naulon-hook/route.ts
+import { createWebhookReceiver } from "@naulon/sdk/next";
 
-export const POST = createSettlementReceiver({
-  secrets: [process.env.SETTLEMENT_SECRET!],   // an array — see rotation in the contract doc
-  idempotency: myDurableStore,                 // REQUIRED, durable — see below
-  onEvent: async (event) => { await savePayout(event); },
+export const POST = createWebhookReceiver({
+  secrets: [process.env.NAULON_WEBHOOK_SECRET!],  // an array — see rotation in the contract doc
+  idempotency: myDurableStore,                    // REQUIRED, durable — see below
+  onEvent: async (event) => {
+    if (event.type !== "settlement.completed") return;
+    await savePayout(event.data);
+  },
 });
 ```
 
@@ -96,33 +102,36 @@ signature:
 
 ```ts
 import express from "express";
-import { createExpressSettlementReceiver } from "@naulon/sdk/express";
+import { createExpressWebhookReceiver } from "@naulon/sdk/express";
 
 app.post(
-  "/api/credits/settlement",
+  "/naulon-hook",
   express.raw({ type: "*/*" }),                 // raw bytes, not express.json()
-  createExpressSettlementReceiver({ secrets: [process.env.SETTLEMENT_SECRET!], idempotency: myDurableStore, onEvent: savePayout }),
+  createExpressWebhookReceiver({ secrets: [process.env.NAULON_WEBHOOK_SECRET!], idempotency: myDurableStore, onEvent: savePayout }),
 );
 ```
 
-**Idempotency is not optional here.** An authentic settlement POST is replayable for
-five minutes (the signature's skew window), so a receiver with no dedupe can pay
-twice. Back the store's `claim(eventId)` with a database unique constraint on the
-event id. The SDK's `memoryIdempotencyStore()` exists for local dev only and is not
-durable — do not ship it.
+**Idempotency is not optional here.** Delivery is at-least-once and an authentic POST
+stays replayable for the signature's skew window, so a receiver with no dedupe can
+count a payout twice. Back the store's `claim(eventId)` with a database unique
+constraint on the event id. The SDK's `memoryIdempotencyStore()` exists for local dev
+only and is not durable — do not ship it.
+
+**And if your write fails, fail the response.** Any non-2xx is retried with backoff;
+a 200 on a row you never wrote is how a settlement disappears silently.
 
 ## Step 3 — self-check before you go live
 
-A settlement receiver should never be tested by POSTing to production, so there's no
-dry-run. Instead, sign a fixture offline and run it through your own receiver in your
-test suite:
+A money-adjacent receiver should never be tested by POSTing to production, so there's
+no dry-run. Instead, sign a fixture offline and run it through your own receiver in
+your test suite:
 
 ```ts
-import { makeSignedSettlementFixture } from "@naulon/sdk";
+import { makeSignedWebhookFixture } from "@naulon/sdk";
 
-const { rawBody, headers } = makeSignedSettlementFixture({ secret: process.env.SETTLEMENT_SECRET! });
+const { rawBody, headers } = makeSignedWebhookFixture({ secret: process.env.NAULON_WEBHOOK_SECRET! });
 // → POST these into your receiver; assert 200 + a written payout.
-// → POST them AGAIN; assert deduped, nothing paid twice.
+// → POST them AGAIN; assert deduped, nothing recorded twice.
 ```
 
 For the credits side, the SDK ships a CLI that does exactly this against your running
@@ -132,11 +141,11 @@ returns `404`:
 ```bash
 npx naulon-kit check https://your-site.example/api --slug a-real-slug
 # add --token <t> if your endpoint is bearer-gated;
-# add --secret <s> to also print a signed settlement fixture for the test above.
+# add --secret <s> to also print a signed webhook fixture for the test above.
 ```
 
 It checks the 404 *shape*, not your *policy* — it can't know which slugs you mean to
-keep free. Settlement is never POSTed to a live receiver; `--secret` just prints the
+keep free. A webhook is never POSTed to a live receiver; `--secret` just prints the
 offline fixture.
 
 ## Declaring your URLs to naulon
@@ -150,8 +159,9 @@ differs. The managed fleet — if you don't want to run a gate yourself — is
 | Who calls your endpoints | your own gate | the fleet |
 | Where you set your `/credits` URL | the gate's `CREDITS_API_URL` env | the onboarding flow |
 | `/credits` reachability | may be internal/localhost (gate is co-located) | must be public internet — set a bearer `CREDITS_API_TOKEN` |
-| Settlement secret | you generate it; set it in the gate and your receiver | it's issued to you; paste it into your receiver |
-| Settlement POST comes from | your gate | the fleet |
+| Where you register your webhook | the gate's `NAULON_WEBHOOK_ENDPOINTS` env | Settings → API & webhooks |
+| Webhook secret | you generate it and put it in that JSON | it's issued once when you create the endpoint |
+| The webhook comes from | your gate | the fleet |
 
 Either way the code in Steps 1–2 is identical. If you have no endpoint at all, a
 static credits map (a `fixtureResolver`, or the tenant inline-credits option) lets
@@ -159,16 +169,16 @@ you toll a small site without hosting anything dynamic.
 
 ## Production checklist
 
-- [ ] Settlement `idempotency` is backed by a **durable** unique constraint on
+- [ ] The webhook `idempotency` is backed by a **durable** unique constraint on
       `eventId` — not the in-memory store.
 - [ ] The credits endpoint is served over TLS with its bearer token set; it's a
       money-routing trust boundary (a swapped wallet reroutes a payment).
 - [ ] No wallet-less or placeholder addresses leak into a credits response — omit
       the author or 404 the slug until a real wallet exists.
-- [ ] You can rotate the settlement secret without downtime (pass `[new, old]`
-      during the overlap).
-- [ ] Your receiver returns **401** for signature/clock problems and **400** for
-      malformed bodies, so the gate's retries behave.
+- [ ] You can rotate the webhook secret without downtime (pass `[new, old]` during
+      the overlap).
+- [ ] Your handler returns a **non-2xx** when it fails to write. A 200 stops the
+      retries, so answering it on a failed write drops the notification for good.
 
 ## Reference
 

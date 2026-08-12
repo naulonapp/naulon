@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { signPayload, verifyPayload } from "./sign.ts";
+import { signPayload, verifyPayload } from "./webhook.ts";
 
 const SECRET = "whsec_test_abc";
 const BODY = JSON.stringify({ id: "d1", type: "anomaly.detected", data: { a: 1 } });
