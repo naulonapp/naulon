@@ -5,5 +5,5 @@
  * adapters use structural req/res types so they need no `@types/express` to build.
  */
 export { createExpressCreditsRoute } from "./credits-route.ts";
-export { createExpressSettlementReceiver } from "./settlement-receiver.ts";
+export { createExpressWebhookReceiver } from "./webhook-receiver.ts";
 export type { ExpressReqLike, ExpressResLike, ExpressHandler } from "./_bridge.ts";

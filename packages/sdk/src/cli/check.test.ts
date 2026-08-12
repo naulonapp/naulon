@@ -85,7 +85,7 @@ test("--token is forwarded as a Bearer header on the credits fetch", async () =>
   assert.equal(sawAuth, "Bearer tkn-123");
 });
 
-test("--secret produces a signed settlement fixture for offline receiver testing", async () => {
+test("--secret produces a signed webhook fixture for offline receiver testing", async () => {
   const out = await runCheck({
     baseUrl: "https://site.test/api",
     slug: "on-stillness",
@@ -94,6 +94,6 @@ test("--secret produces a signed settlement fixture for offline receiver testing
     fetchImpl: fetchFor({ "/api/credits/on-stillness": { status: 200, body: VALID_CREDITS } }),
   });
   assert.ok(out.fixture, "a fixture should be emitted when --secret is given");
-  assert.match(out.fixture!.headers["x-naulon-signature"], /^sha256=/);
-  assert.ok(out.fixture!.rawBody.length > 0);
+  assert.match(out.fixture!.headers["naulon-signature"], /^t=\d+,v1=[0-9a-f]{64}$/);
+  assert.equal(JSON.parse(out.fixture!.rawBody).type, "settlement.completed");
 });

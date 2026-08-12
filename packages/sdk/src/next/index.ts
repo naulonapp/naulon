@@ -5,5 +5,5 @@
  * nothing from `next`); the subpath name signals the intended consumer. `next` is
  * an OPTIONAL peer dependency.
  */
-export * from "./settlement-receiver.ts";
+export * from "./webhook-receiver.ts";
 export * from "./credits-route.ts";

@@ -9,12 +9,13 @@
  *   2. GET <baseUrl>/credits/<random> returns 404 — the deliberate "free read" signal.
  *      (This checks the 404 *syntax*, never *policy*: the CLI can't know which slug
  *      SHOULD be free.)
- * Settlement is never POSTed to a live receiver (a money path gets no public "pretend"
- * mode). With --secret the CLI prints a signed fixture you feed into YOUR receiver in
- * YOUR test harness and assert a 200 + a written payout.
+ * A webhook is never POSTed to a live receiver (a money-adjacent path gets no public
+ * "pretend" mode). With --secret the CLI prints a signed `settlement.completed`
+ * delivery you feed into YOUR receiver in YOUR test harness and assert a 200 + a
+ * written row.
  */
 import { parseCredits } from "../contract/credits.ts";
-import { makeSignedSettlementFixture } from "../crypto/fixture.ts";
+import { makeSignedWebhookFixture } from "../crypto/fixture.ts";
 
 export interface CheckResult {
   name: string;
@@ -24,7 +25,7 @@ export interface CheckResult {
 
 export interface RunCheckOutcome {
   checks: CheckResult[];
-  fixture?: ReturnType<typeof makeSignedSettlementFixture>;
+  fixture?: ReturnType<typeof makeSignedWebhookFixture>;
   allPassed: boolean;
 }
 
@@ -70,7 +71,7 @@ export async function runCheck(opts: {
   }
 
   const outcome: RunCheckOutcome = { checks, allPassed: checks.every((c) => c.ok) };
-  if (opts.secret) outcome.fixture = makeSignedSettlementFixture({ secret: opts.secret });
+  if (opts.secret) outcome.fixture = makeSignedWebhookFixture({ secret: opts.secret });
   return outcome;
 }
 
@@ -105,9 +106,8 @@ export async function checkMain(argv: string[]): Promise<number> {
   });
   for (const c of out.checks) console.log(`${c.ok ? "PASS" : "FAIL"}  ${c.name}  —  ${c.detail}`);
   if (out.fixture) {
-    console.log("\nSigned settlement fixture (POST to YOUR receiver in YOUR test harness — never production):");
-    console.log(`  x-naulon-timestamp: ${out.fixture.headers["x-naulon-timestamp"]}`);
-    console.log(`  x-naulon-signature: ${out.fixture.headers["x-naulon-signature"]}`);
+    console.log("\nSigned webhook fixture (POST to YOUR receiver in YOUR test harness — never production):");
+    console.log(`  naulon-signature: ${out.fixture.headers["naulon-signature"]}`);
     console.log(`  body: ${out.fixture.rawBody}`);
   }
   console.log(out.allPassed ? "\n✓ all checks passed" : "\n✗ one or more checks failed");

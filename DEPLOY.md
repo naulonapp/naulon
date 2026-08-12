@@ -97,7 +97,7 @@ and `enforce/src/nonce.ts`.
    | `PAYMENT_MODE` | `mock` or `gateway` | start `mock` to prove the path, switch to `gateway` once a wallet is funded |
    | `CREDITS_API_URL` *or* `CREDITS_FIXTURES` | author resolution | how slugs map to wallets — see `examples/meridian` |
    | `LICENSE_SIGNING_KEY` | an Ed25519 PKCS8 PEM | **secret; required** once `PAYMENT_MODE=gateway` *or* any `*_BACKEND=supabase` — an ephemeral key breaks license verification across instances. Generate: `node -e "const{generateKeyPairSync}=require('crypto');console.log(generateKeyPairSync('ed25519',{privateKeyEncoding:{type:'pkcs8',format:'pem'}}).privateKey)"` |
-   | `CREDITS_SETTLEMENT_SECRET` | shared HMAC string | **secret**; must match the publisher's settlement-receiver value, so it can verify the signed earnings POST. Leave blank → earnings emit is dark (the gate still tolls + serves) |
+   | `NAULON_WEBHOOK_ENDPOINTS` | JSON array | where settlements are reported: `[{"url":"https://…","secret":"whsec_…","events":["settlement.completed"]}]`. Contains a **secret**. Leave blank → the webhook plane is dark (the gate still tolls + serves) |
    | `RELAYER_PRIVATE_KEY` | an EOA private key | **secret**; only when `SETTLEMENT_NETWORK` is a memo-capable chain (Arc) — the EOA that pays gas to self-relay the buyer's transfer through the Memo contract. It pays gas but never touches the funds (custody-free holds). Leave blank on Base |
 
    Add the Arc/Circle vars (`CIRCLE_API_KEY`, `GATEWAY_API_URL`, …) only when you

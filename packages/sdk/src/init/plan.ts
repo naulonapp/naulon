@@ -107,7 +107,7 @@ function renderEnv(a: InitAnswers): string {
       `# gateway mode settles real USDC. Fill these before it can settle — see .env.example:`,
       `#   RELAYER_PRIVATE_KEY=   (Arc memo self-relay; pays gas, never touches transferred funds)`,
       `#   CIRCLE_API_KEY=        (Circle Gateway; testnet facilitator needs no key)`,
-      `# CREDITS_SETTLEMENT_SECRET is optional — unset keeps the earnings emit dark (still tolls).`,
+      `# To be TOLD when money lands, subscribe a signed webhook: NAULON_WEBHOOK_ENDPOINTS (see .env.example).`,
     );
   } else {
     lines.push(

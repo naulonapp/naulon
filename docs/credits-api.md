@@ -66,7 +66,7 @@ Weights normalize to integer **micro-USDC** shares; the rounding remainder is
 assigned to the largest share so the parts always sum to the whole (no dust). The
 on-chain payment leg pays the **primary author** as a single `payTo`, while the full
 recursive co-author split is recorded on the settlement event (see
-[settlement-contract.md](./settlement-contract.md)). Money is never floated — it is
+[settlement-notifications.md](./settlement-notifications.md)). Money is never floated — it is
 integer micro-USDC end to end.
 
 ## Building it

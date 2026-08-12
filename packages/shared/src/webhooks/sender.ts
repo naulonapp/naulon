@@ -14,7 +14,7 @@ import { lookup as dnsLookupCb } from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import type { LookupFunction } from "node:net";
-import { signPayload } from "./sign.ts";
+import { signPayload } from "@naulon/sdk";
 import { renderWire, type CanonicalEvent } from "./transform.ts";
 import type { WebhookChannelType, WebhookEventType } from "./types.ts";
 

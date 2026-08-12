@@ -1,45 +1,46 @@
 /**
  * Offline conformance helper. A publisher feeds the output into THEIR own receiver
- * in THEIR test harness and asserts a 200 + a written payout — proving their
- * integration without ever POSTing to production (there is no dry-run path; a
- * money receiver gets no public "pretend" mode). The CLI prints this fixture.
+ * in THEIR test harness and asserts a 200 + a written row — proving their
+ * integration without ever needing a real settlement to happen. The CLI prints this
+ * fixture (`naulon-kit check … --secret whsec_…`).
+ *
+ * The body is a real `settlement.completed` delivery envelope, signed the way the
+ * sender signs it, so a receiver that accepts this accepts production traffic.
  */
-import { signSettlement } from "./sign.ts";
-import type { SettlementBody } from "../contract/settlement.ts";
+import { signPayload } from "./webhook.ts";
+import type { WebhookEnvelope } from "../contract/webhook.ts";
 
-/** A valid sample body (Σ splits === gross, exactly one primary) — passes settlementBodySchema. */
-const SAMPLE_BODY: SettlementBody = {
-  eventId: "11111111-2222-4333-8444-555555555555",
-  slug: "on-stillness",
-  txHash: "0xfeed",
-  chainId: 5042002,
-  currency: "USDC",
-  grossAmount: "5000",
-  paidTo: "0x1111111111111111111111111111111111111111" as SettlementBody["paidTo"],
-  payer: "0x3333333333333333333333333333333333333333" as SettlementBody["paidTo"],
-  settledAt: "2023-11-14T22:13:20.000Z",
-  splits: [
-    {
-      authorId: "mira",
-      wallet: "0x1111111111111111111111111111111111111111" as SettlementBody["paidTo"],
-      amount: "5000",
-      weight: 1000,
-      primary: true,
-    },
-  ],
+/** A representative delivery — the `detailed` settlement body, one author leg. */
+const SAMPLE_ENVELOPE: WebhookEnvelope = {
+  id: "11111111-2222-4333-8444-555555555555",
+  type: "settlement.completed",
+  eventId: "66666666-7777-4888-8999-aaaaaaaaaaaa",
+  createdAt: 1_700_000_000_000,
+  data: {
+    tenant: "your-site",
+    host: "your-site.example",
+    window: { toMs: 1_700_000_000_000, spanMs: 60_000 },
+    citations: { settled: 1 },
+    gross: { microUsdc: 5000, usdc: "0.005000" },
+    legs: [
+      {
+        role: "author",
+        payTo: "0x1111111111111111111111111111111111111111",
+        microUsdc: 5000,
+        settled: true,
+        settlementRef: "0xfeed",
+      },
+    ],
+    settlementRefs: ["0xfeed"],
+  },
 };
 
-export function makeSignedSettlementFixture(opts: {
+export function makeSignedWebhookFixture(opts: {
   secret: string;
-  body?: SettlementBody;
+  envelope?: WebhookEnvelope;
   now?: number;
-}): { rawBody: string; headers: { "x-naulon-timestamp": string; "x-naulon-signature": string } } {
-  const body = opts.body ?? SAMPLE_BODY;
-  const rawBody = JSON.stringify(body);
+}): { rawBody: string; headers: { "naulon-signature": string } } {
+  const rawBody = JSON.stringify(opts.envelope ?? SAMPLE_ENVELOPE);
   const now = opts.now ?? Math.floor(Date.now() / 1000);
-  const { timestamp, signature } = signSettlement(rawBody, opts.secret, now);
-  return {
-    rawBody,
-    headers: { "x-naulon-timestamp": timestamp, "x-naulon-signature": signature },
-  };
+  return { rawBody, headers: { "naulon-signature": signPayload(opts.secret, rawBody, now) } };
 }

@@ -10,16 +10,30 @@ import assert from "node:assert/strict";
 import express from "express";
 import type { AddressInfo } from "node:net";
 import { createExpressCreditsRoute } from "./credits-route.ts";
-import { createExpressSettlementReceiver } from "./settlement-receiver.ts";
+import { createExpressWebhookReceiver } from "./webhook-receiver.ts";
 import { memoryIdempotencyStore } from "../idempotency.ts";
-import { makeSignedSettlementFixture } from "../crypto/fixture.ts";
+import { signPayload } from "../crypto/webhook.ts";
 import type { ArticleCredits } from "../contract/index.ts";
 
-const SECRET = "integration-secret";
+const SECRET = "whsec_integration";
 const CREDITS = {
   slug: "on-stillness", title: "On Stillness",
   contributors: [{ authorId: "ava", wallet: "0x1111111111111111111111111111111111111111" }],
 } as unknown as ArticleCredits;
+
+/** A signed delivery, exactly as the sender writes it on the wire. */
+function delivery(over: Record<string, unknown> = {}) {
+  const rawBody = JSON.stringify({
+    id: "dlv_1",
+    type: "settlement.completed",
+    eventId: "evt_1",
+    createdAt: 1_700_000_000_000,
+    data: { tenant: "acme", announced: 1 },
+    ...over,
+  });
+  const t = Math.floor(Date.now() / 1000);
+  return { rawBody, headers: { "naulon-signature": signPayload(SECRET, rawBody, t) } };
+}
 
 /** Stand up a real express app with both adapters; return its base URL + a teardown. */
 async function serve() {
@@ -29,15 +43,15 @@ async function serve() {
     resolve: async (slug: string) => (slug === "on-stillness" ? CREDITS : undefined),
   }));
   app.post(
-    "/api/credits/settlement",
+    "/naulon-hook",
     express.raw({ type: "*/*" }),
-    createExpressSettlementReceiver({ secrets: [SECRET], idempotency: memoryIdempotencyStore(), onEvent: async (e) => { seen.push(e.eventId); } }),
+    createExpressWebhookReceiver({ secrets: [SECRET], idempotency: memoryIdempotencyStore(), onEvent: async (e) => { seen.push(e.eventId); } }),
   );
   // The footgun: express.json() parses + discards the raw bytes → adapter must fail loud.
   app.post(
-    "/bad/settlement",
+    "/bad/naulon-hook",
     express.json(),
-    createExpressSettlementReceiver({ secrets: [SECRET], idempotency: memoryIdempotencyStore(), onEvent: async () => {} }),
+    createExpressWebhookReceiver({ secrets: [SECRET], idempotency: memoryIdempotencyStore(), onEvent: async () => {} }),
   );
   const server = await new Promise<import("node:http").Server>((res) => {
     const s = app.listen(0, () => res(s));
@@ -46,20 +60,20 @@ async function serve() {
   return { base: `http://127.0.0.1:${port}`, seen, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
-test("real express: valid settlement → 200 + onEvent once; replay → deduped; tamper → 401", async () => {
+test("real express: valid delivery → 200 + onEvent once; redelivery → deduped; tamper → 401", async () => {
   const { base, seen, close } = await serve();
   try {
-    const fx = makeSignedSettlementFixture({ secret: SECRET });
-    const r1 = await fetch(`${base}/api/credits/settlement`, { method: "POST", headers: fx.headers, body: fx.rawBody });
+    const fx = delivery();
+    const r1 = await fetch(`${base}/naulon-hook`, { method: "POST", headers: fx.headers, body: fx.rawBody });
     assert.equal(r1.status, 200);
     assert.deepEqual(await r1.json(), { ok: true, deduped: false });
     assert.equal(seen.length, 1);
 
-    const r2 = await fetch(`${base}/api/credits/settlement`, { method: "POST", headers: fx.headers, body: fx.rawBody });
+    const r2 = await fetch(`${base}/naulon-hook`, { method: "POST", headers: fx.headers, body: fx.rawBody });
     assert.deepEqual(await r2.json(), { ok: true, deduped: true });
-    assert.equal(seen.length, 1, "replay must not re-pay");
+    assert.equal(seen.length, 1, "a redelivery must not run the handler twice");
 
-    const r3 = await fetch(`${base}/api/credits/settlement`, { method: "POST", headers: fx.headers, body: fx.rawBody + " " });
+    const r3 = await fetch(`${base}/naulon-hook`, { method: "POST", headers: fx.headers, body: fx.rawBody + " " });
     assert.equal(r3.status, 401, "tampered raw bytes must fail the HMAC");
   } finally { await close(); }
 });
@@ -79,8 +93,8 @@ test("real express: credits 200 for a known slug, 404 (free) for an unknown one"
 test("real express: mounting the receiver behind express.json() fails loud (not a silent 401)", async () => {
   const { base, close } = await serve();
   try {
-    const fx = makeSignedSettlementFixture({ secret: SECRET });
-    const res = await fetch(`${base}/bad/settlement`, { method: "POST", headers: { ...fx.headers, "content-type": "application/json" }, body: fx.rawBody });
+    const fx = delivery();
+    const res = await fetch(`${base}/bad/naulon-hook`, { method: "POST", headers: { ...fx.headers, "content-type": "application/json" }, body: fx.rawBody });
     assert.equal(res.status, 500, "express.json() discards the raw bytes → the adapter throws, surfaced as 500");
   } finally { await close(); }
 });

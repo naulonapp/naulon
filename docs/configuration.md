@@ -78,31 +78,20 @@ A few rules are enforced across variables rather than on one of them:
 | `BOT_AUTH_SIGNATURE_AGENT` | unset | The directory host the agent advertises in `Signature-Agent`. It has to actually serve your directory. |
 | `BOT_AUTH_ALLOW_HTTP` | `false` | Allow `http://` and loopback key directories so a local signer fixture can serve one. Test walks only — the directory URL is attacker-supplied, so never enable this in production. |
 
-## Reporting earnings to the publisher
+## Reporting earnings to the publisher (webhooks)
 
-The gate POSTs a signed settlement to `${ORIGIN_URL}/api/credits/settlement` when a
-payment lands. Contract: [settlement-contract.md](./settlement-contract.md).
+The gate tells you a payment landed with a signed `settlement.completed` webhook.
+Contract: [settlement-notifications.md](./settlement-notifications.md).
 
-| Variable | Default | What it does |
-|---|---|---|
-| `CREDITS_SETTLEMENT_SECRET` | unset | Shared HMAC secret for that POST; it has to match the publisher's. Unset, the emit is dark — the gate still tolls and serves, it just doesn't report earnings. |
-| `SETTLEMENT_OUTBOX_PATH` | `data/settlement-outbox.jsonl` | Append-only log of acked event ids, so delivery survives a restart. Losing it only causes a re-POST, which the receiver dedupes. |
-| `SETTLEMENT_MAX_ATTEMPTS` | `5` | Retry budget per event **within** one drain sweep. The hot path always tries exactly once. |
-| `SETTLEMENT_TIMEOUT_MS` | `4000` | Per-attempt POST timeout, so a hung receiver can't stall the gate. |
-| `SETTLEMENT_DRAIN_INTERVAL_MS` | `60000` | How often the background drain sweeps for unacked events. `0` disables the loop — the right setting on serverless, where a cron drives the drain instead. |
-| `SETTLEMENT_DELIVERY_BACKEND` | `file` | Where per-event delivery state lives. `file` is a process-local JSONL beside the outbox (the credential-free self-host default). `supabase` is a shared table, so a multi-instance fleet agrees on what has been delivered and the drain selects only due work server-side. |
-| `SETTLEMENT_DELIVERY_STATE_PATH` | `data/settlement-delivery.jsonl` | Path for that state on the `file` backend. |
-| `SETTLEMENT_MAX_DELIVERY_ATTEMPTS` | `10` | Attempt budget **across** sweeps. Past it, an event is dead-lettered: parked and surfaced to an operator, never dropped. The money is still owed — a dead letter is a visibility state, not a deletion. |
-| `SETTLEMENT_RETRY_BASE_MS` | `60000` | Base of the cross-sweep backoff: `next = now + min(base × 2^(attempts-1), cap)`. |
-| `SETTLEMENT_RETRY_BACKOFF_CAP_MS` | `21600000` (6h) | Cap on that backoff. With the defaults a dead publisher is retried about ten times over roughly two days, instead of being re-POSTed every 60s forever. |
-| `SETTLEMENT_DRAIN_BATCH` | `500` | Hard cap on how many due events one sweep pulls. The next tick picks up the rest. |
-
-## Webhooks
+There used to be a second wire here — a signed POST to
+`${ORIGIN_URL}/api/credits/settlement`, tuned by eleven `SETTLEMENT_*` variables. It
+is **deleted**, along with `CREDITS_SETTLEMENT_SECRET`. If your `.env` still sets any
+of them, they are ignored; the webhook below is the only notification path.
 
 | Variable | Default | What it does |
 |---|---|---|
 | `NAULON_WEBHOOK_ENDPOINTS` | unset | JSON array of `{ url, secret, events?, hostFilter? }`. Unset, the webhook plane is entirely dark — no store, no sweep, no POST. It is kept as a raw string here so a bad value fails with a field-specific message instead of a wall of zod. |
-| `WEBHOOK_SWEEP_INTERVAL_MS` | `30000` | How often due deliveries are sent. `0` disables the loop for serverless, same as the settlement drain. |
+| `WEBHOOK_SWEEP_INTERVAL_MS` | `30000` | How often due deliveries are sent. `0` disables the loop — the right setting on serverless, where a cron drives the sweep instead. |
 | `WEBHOOK_DELIVERIES_PATH` | `data/webhook-deliveries.jsonl` | Where deliveries live. A journal rather than process memory, because a gate restart used to drop every unsent delivery and because the dashboard is a separate process that can only see gate state through a file. |
 
 ## Storage backends

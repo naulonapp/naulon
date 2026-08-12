@@ -72,7 +72,7 @@ has twice emptied the bind-mounted plugin directory — commit before you run it
 ## Conventions
 
 - **Money is integer micro-USDC** in any split or settlement math — never a float
-  (the wire shapes are in [`docs/settlement-contract.md`](./docs/settlement-contract.md)).
+  (the wire shapes are in [`docs/settlement-notifications.md`](./docs/settlement-notifications.md)).
 - **Config is zod-validated and fails loud** at boot — a new env var gets a sane
   default and an `.env.example` line.
 - **TypeScript strict**; relative imports keep the `.ts` extension (NodeNext + tsx).
