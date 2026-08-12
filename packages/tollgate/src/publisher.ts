@@ -66,7 +66,6 @@ export function envPublisherResolver(cfg: Config = getConfig()): PublisherResolv
         citationMultiplier: cfg.CITATION_MULTIPLIER,
         credits: await credits,
         licenseIdentity: cfg.LICENSE_ISSUER ?? `naulon:${host}`,
-        settlementSecret: cfg.CREDITS_SETTLEMENT_SECRET,
         coauthorSplit: cfg.COAUTHOR_ONCHAIN_SPLIT,
         ...(policy ? { crawlerPolicy: policy } : {}),
       };

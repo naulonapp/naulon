@@ -102,13 +102,6 @@ export interface PublisherConfig {
   /** Public catalog enumeration endpoint (GET → Candidate[] or {entries,nextCursor}). Optional. */
   catalogUrl?: string;
   /**
-   * HMAC secret for the settlement emit to this publisher's earnings ledger.
-   * Undefined leaves the emit dark — the gate still tolls and serves; it just
-   * doesn't report earnings. (Keeps the no-creds mock loop working, per the hard
-   * rule that the loop must run with no secrets.)
-   */
-  settlementSecret?: string;
-  /**
    * Static per-tenant credential the gate presents to the origin on every proxied
    * fetch, as `X-Naulon-Origin-Auth: <value>`, so an origin behind its own bot/rate
    * edge can recognize fleet traffic and skip challenging it. Undefined = origin

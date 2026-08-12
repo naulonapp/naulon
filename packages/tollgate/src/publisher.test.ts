@@ -47,7 +47,6 @@ const PUBLISHER_A: PublisherConfig = {
     contributors: [{ authorId: "anna", wallet: walletAddress(WALLET_A) }],
   }),
   licenseIdentity: "naulon:a.example",
-  settlementSecret: undefined,
 };
 
 const PUBLISHER_B: PublisherConfig = {
@@ -62,7 +61,6 @@ const PUBLISHER_B: PublisherConfig = {
     contributors: [{ authorId: "ben", wallet: walletAddress(WALLET_B) }],
   }),
   licenseIdentity: "naulon:b.example",
-  settlementSecret: undefined,
 };
 
 // A publisher whose prefix carries a regex metachar — a DB-backed resolver can feed
@@ -79,7 +77,6 @@ const PUBLISHER_C: PublisherConfig = {
     contributors: [{ authorId: "cara", wallet: walletAddress(WALLET_A) }],
   }),
   licenseIdentity: "naulon:c.example",
-  settlementSecret: undefined,
 };
 
 /** Route by Host; an unrecognized host returns undefined (gate → 502). */
