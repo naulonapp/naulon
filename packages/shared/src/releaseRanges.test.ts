@@ -18,13 +18,17 @@ import { test } from "node:test";
  * Only an installing consumer would ever see it, which is the worst place to find out.
  *
  * Unpublished workspace-internal packages use `*` and are exempt — they are never resolved from
- * a registry.
+ * a registry. The exemption is on the DEPENDENT being private, not on the string `*` itself: a
+ * PUBLISHED package asking for `*` ships a range that resolves whatever is newest at install time,
+ * including a future breaking minor it was never tested against. `@naulon/enforce` acquired exactly
+ * that (`"@naulon/sdk": "*"`, added when the article-key rule moved into the SDK) and this guard
+ * waved it through, because it only ever asked what the range said.
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGES = join(HERE, "..", "..");
 
-type Pkg = { name: string; version: string; dependencies?: Record<string, string> };
+type Pkg = { name: string; version: string; private?: boolean; dependencies?: Record<string, string> };
 
 function readPackages(): Map<string, { pkg: Pkg; dir: string }> {
   const out = new Map<string, { pkg: Pkg; dir: string }>();
@@ -57,14 +61,26 @@ export function caretSatisfies(range: string, version: string): boolean {
   return vPatch >= rPatch;
 }
 
-test("every internal @naulon/* range resolves the version in this tree", () => {
-  const packages = readPackages();
+/**
+ * The rule itself, over a package map rather than over the filesystem — so the negative cases can
+ * be asserted against a synthetic tree. A guard whose only test is "the real repo is fine today"
+ * passes just as happily when the check has stopped checking anything.
+ */
+export function rangeOffences(packages: Map<string, { pkg: Pkg; dir: string }>): string[] {
   const offences: string[] = [];
 
   for (const [name, { pkg, dir }] of packages) {
     for (const [dep, range] of Object.entries(pkg.dependencies ?? {})) {
       if (!dep.startsWith("@naulon/")) continue;
-      if (range === "*") continue; // workspace-internal, never registry-resolved
+      if (range === "*") {
+        // Fine from a private package — nothing installs it, so nothing resolves the range.
+        if (pkg.private) continue;
+        offences.push(
+          `packages/${dir}/package.json: ${name} is PUBLISHED and wants ${dep}@*, which resolves ` +
+            `whatever is newest at install time. Pin it to the caret range of the version in this tree.`,
+        );
+        continue;
+      }
       const target = packages.get(dep);
       if (!target) {
         offences.push(`packages/${dir}/package.json depends on ${dep}, which is not in this workspace`);
@@ -79,6 +95,12 @@ test("every internal @naulon/* range resolves the version in this tree", () => {
     }
   }
 
+  return offences;
+}
+
+test("every internal @naulon/* range resolves the version in this tree", () => {
+  const offences = rangeOffences(readPackages());
+
   assert.equal(
     offences.length,
     0,
@@ -86,6 +108,33 @@ test("every internal @naulon/* range resolves the version in this tree", () => {
       `On a 0.x version a caret is minor-tight — ^0.1.2 will not take 0.2.0. Bump the range in the ` +
       `same change as the version, or a consumer installs a mismatched pair.`,
   );
+});
+
+test("a `*` range is exempt from a private package and an offence from a published one", () => {
+  const tree = (dependentIsPrivate: boolean) =>
+    new Map([
+      ["@naulon/sdk", { pkg: { name: "@naulon/sdk", version: "0.2.0" }, dir: "sdk" }],
+      [
+        "@naulon/dependent",
+        {
+          pkg: {
+            name: "@naulon/dependent",
+            version: "1.0.0",
+            ...(dependentIsPrivate ? { private: true } : {}),
+            dependencies: { "@naulon/sdk": "*" },
+          },
+          dir: "dependent",
+        },
+      ],
+    ]);
+
+  // tollgate/dashboard/attribution: never installed from a registry, so the range never resolves.
+  assert.deepEqual(rangeOffences(tree(true)), []);
+
+  // enforce's shape. `*` takes the next breaking minor of a 0.x package sight unseen.
+  const published = rangeOffences(tree(false));
+  assert.equal(published.length, 1);
+  assert.match(published[0]!, /is PUBLISHED and wants @naulon\/sdk@\*/);
 });
 
 test("caretSatisfies pins the minor on a zero-major and floats it above", () => {
