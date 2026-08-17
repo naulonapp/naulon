@@ -11,11 +11,16 @@
  * `_embed` page times out where the bare page is ~1.4 MiB / 2 s). So each page tries `_embed`
  * first, and on a fetch failure (timeout, or a body past the fetcher's 8 MiB cap that won't
  * parse) falls back to the BARE listing for that page — you still capture the full catalog
- * (slug/title/date), only the author NAMES are lost, so resolution falls to `defaultWallet`
- * (money is never inferred). A partial-but-complete catalog beats failing on the biggest sites.
+ * (url/title/date). A partial-but-complete catalog beats failing on the biggest sites.
+ *
+ * A bare listing drops `_embedded` but STILL carries each post's numeric `author` id, so the
+ * names are recoverable: fetch the origin's public user directory (`/wp-json/wp/v2/users`) ONCE,
+ * lazily, memoized, and join id → name. Without that join an `_embed`-timeout site yields a
+ * catalog where every article is unmapped — the whole crawl lands on the human's desk. Only when
+ * `/users` is disabled (privacy plugins → 401/403 or a non-array body) do the names fall through,
+ * and then resolution falls to `defaultWallet`; money is never inferred either way.
  */
-import type { AdapterContext, DiscoveredArticle, DiscoveredAuthor, SourceAdapter } from "../types.ts";
-import { deriveSlug } from "../../contract/slug.ts";
+import type { AdapterContext, ArticleCandidate, DiscoveredAuthor, SourceAdapter } from "../types.ts";
 
 const PER_PAGE = 50;
 const MAX_PAGES = 40; // ≤ 2000 posts/crawl
@@ -24,9 +29,30 @@ interface WpPost {
   link?: string;
   date_gmt?: string;
   title?: { rendered?: string };
+  excerpt?: { rendered?: string };
+  /** The numeric author id a BARE listing carries (no `_embedded`). Dropping it is what used to
+   *  make an `_embed`-timeout crawl produce an entirely unmapped catalog. */
+  author?: number;
   _embedded?: { author?: Array<{ name?: string; id?: number; slug?: string }> };
 }
 
+/** One row of `/wp-json/wp/v2/users` — the id → name directory joined onto bare posts. */
+interface WpUser {
+  id?: number;
+  name?: string;
+  slug?: string;
+}
+
+/** WP renders excerpts as HTML with a "Continue reading" tail; strip tags, collapse, cap. */
+function excerptOf(post: WpPost): string | undefined {
+  const s = (post.excerpt?.rendered ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return s ? s.slice(0, 500) : undefined;
+}
+
+/** Authors embedded on a rich (`_embed`) post. Bare posts have none — the id join recovers them. */
 function authorsOf(post: WpPost): DiscoveredAuthor[] {
   const out: DiscoveredAuthor[] = [];
   for (const a of post._embedded?.author ?? []) {
@@ -34,6 +60,28 @@ function authorsOf(post: WpPost): DiscoveredAuthor[] {
     if (name) out.push({ name, externalId: a?.id !== undefined ? String(a.id) : a?.slug });
   }
   return out;
+}
+
+/** Fetch the origin's public user directory → `id → name`. One call per crawl (the caller
+ *  memoizes). A disabled or blocked `/users` (privacy plugins → 401/403, or a non-array body)
+ *  yields an EMPTY map, never a throw — the join then recovers nothing and author resolution
+ *  falls to `defaultWallet`, which is the same place a nameless post already landed.
+ *  Same-origin, so the guarded fetcher covers it and no capability is required. */
+async function fetchUsersMap(ctx: AdapterContext): Promise<Map<number, string>> {
+  const map = new Map<number, string>();
+  try {
+    const res = await ctx.fetch(new URL("/wp-json/wp/v2/users?per_page=100", ctx.origin).toString());
+    if (!res.ok) return map;
+    const body = await res.json();
+    if (!Array.isArray(body)) return map;
+    for (const u of body as WpUser[]) {
+      const name = (u?.name ?? "").trim();
+      if (u?.id !== undefined && name) map.set(u.id, name);
+    }
+  } catch {
+    // fetch/parse failure → empty map (silent fall-through, not a crawl failure)
+  }
+  return map;
 }
 
 /** One page of posts, or a sentinel: `"stop"` = no more pages (WP 400 / non-array / empty is
@@ -59,6 +107,7 @@ async function fetchPostsPage(ctx: AdapterContext, page: number, embed: boolean)
 export const wordpressAdapter: SourceAdapter = {
   id: "wordpress",
   rank: 100, // real author objects → outranks feeds
+  curated: true, // the REST posts endpoint lists real articles, not every URL
   async detect(ctx) {
     try {
       const res = await ctx.fetch(new URL("/wp-json/wp/v2/posts?per_page=1", ctx.origin).toString());
@@ -69,11 +118,19 @@ export const wordpressAdapter: SourceAdapter = {
     }
   },
   async discover(ctx) {
-    const out: DiscoveredArticle[] = [];
+    const out: ArticleCandidate[] = [];
     // Try `_embed` (author names) until it fails once; a site that times out an `_embed` page
     // times out every one, so latch to bare after the first failure rather than eating the
     // fetcher timeout on all MAX_PAGES pages (that turned a big embed-hostile site into minutes).
     let useEmbed = true;
+    // The users directory — fetched LAZILY (only when a bare post needs it) and memoized to one
+    // call per crawl. A healthy `_embed` site never touches `/users`; an empty result caches too,
+    // so a disabled endpoint is not re-probed once per page.
+    let usersMap: Map<number, string> | null = null;
+    const ensureUsers = async (): Promise<Map<number, string>> => {
+      if (usersMap === null) usersMap = await fetchUsersMap(ctx);
+      return usersMap;
+    };
     for (let page = 1; page <= MAX_PAGES; page++) {
       let posts = await fetchPostsPage(ctx, page, useEmbed);
       if (posts === "error" && useEmbed) {
@@ -97,14 +154,21 @@ export const wordpressAdapter: SourceAdapter = {
       if (posts === "stop" || posts.length === 0) break;
       for (const post of posts) {
         const link = (post.link ?? "").trim();
-        const slug = link ? deriveSlug(link, ctx.articlePrefixes) : null;
-        if (!link || !slug) continue;
+        if (!link) continue;
         const date = (post.date_gmt ?? "").trim();
+        let authors = authorsOf(post);
+        if (authors.length === 0 && post.author !== undefined) {
+          // Bare mode: resolve the numeric author id through the once-per-crawl users directory.
+          // A miss (id absent, or `/users` disabled) leaves `[]` → resolution falls to
+          // `defaultWallet`, and an unmapped article is reported rather than tolled to a guess.
+          const name = (await ensureUsers()).get(post.author);
+          if (name) authors = [{ name, externalId: String(post.author) }];
+        }
         out.push({
-          slug,
           url: link,
           title: (post.title?.rendered ?? "").trim(),
-          authors: authorsOf(post), // bare pages have no `_embedded` → [] → resolves to defaultWallet
+          summary: excerptOf(post),
+          authors,
           // WP date_gmt has no zone suffix; it IS UTC → append Z before parsing.
           publishedAt: date && Number.isFinite(Date.parse(`${date}Z`)) ? new Date(`${date}Z`).toISOString() : undefined,
         });

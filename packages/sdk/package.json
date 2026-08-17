@@ -39,6 +39,10 @@
     "./crawl": {
       "types": "./dist/crawl/index.d.ts",
       "import": "./dist/crawl/index.js"
+    },
+    "./crawl/testing": {
+      "types": "./dist/crawl/testing.d.ts",
+      "import": "./dist/crawl/testing.js"
     }
   },
   "bin": {

@@ -2,14 +2,14 @@
  * crawl/adapters/sitemap.ts — the sitemap.xml URL-discovery adapter.
  *
  * The other always-available fallback. A sitemap is a flat list of URLs (and an INDEX is a
- * list of sitemaps); it carries no author or title, so this adapter yields URL + slug +
- * lastmod only — author resolution then falls to `defaultWallet`. Include/exclude globs do
- * the article filtering, since a sitemap lists every URL, not just articles. Index recursion
+ * list of sitemaps); it carries no author or title, so this adapter yields URL + lastmod only —
+ * author resolution then falls to `defaultWallet`. Include/exclude globs do the article
+ * filtering, since a sitemap lists every URL, not just articles — that is this adapter's own
+ * concern and stays here, unlike slug derivation, which the orchestrator owns. Index recursion
  * is depth- and child-count-capped to bound a hostile or huge sitemap.
  */
-import type { AdapterContext, DiscoveredArticle, SourceAdapter } from "../types.ts";
+import type { AdapterContext, ArticleCandidate, SourceAdapter } from "../types.ts";
 import { parseXml, toArray, textOf } from "../xml.ts";
-import { deriveSlug } from "../../contract/slug.ts";
 import { passesGlobs } from "../glob.ts";
 
 const CONVENTIONAL_PATHS = ["/sitemap.xml", "/sitemap_index.xml", "/sitemap-index.xml"];
@@ -74,8 +74,8 @@ async function collectUrls(ctx: AdapterContext, xml: string, depth: number): Pro
   return out;
 }
 
-function toArticles(ctx: AdapterContext, urls: RawUrl[]): DiscoveredArticle[] {
-  const out: DiscoveredArticle[] = [];
+function toCandidates(ctx: AdapterContext, urls: RawUrl[]): ArticleCandidate[] {
+  const out: ArticleCandidate[] = [];
   const seen = new Set<string>();
   for (const { loc, lastmod } of urls) {
     let pathname: string;
@@ -85,11 +85,9 @@ function toArticles(ctx: AdapterContext, urls: RawUrl[]): DiscoveredArticle[] {
       continue;
     }
     if (!passesGlobs(pathname, ctx.config.includeGlobs, ctx.config.excludeGlobs)) continue;
-    const slug = deriveSlug(loc, ctx.articlePrefixes);
-    if (!slug || seen.has(slug)) continue;
-    seen.add(slug);
+    if (seen.has(loc)) continue; // an index can list the same URL from two child sitemaps
+    seen.add(loc);
     out.push({
-      slug,
       url: loc,
       title: "", // sitemaps carry no title — the merge falls back to the slug
       authors: [], // no author signal → resolution falls to defaultWallet
@@ -102,12 +100,13 @@ function toArticles(ctx: AdapterContext, urls: RawUrl[]): DiscoveredArticle[] {
 export const sitemapAdapter: SourceAdapter = {
   id: "sitemap",
   rank: 5, // lowest — no author/title, pure URL discovery
+  curated: false, // a sitemap lists EVERY URL, so prefixes must never be inferred from it
   async detect(ctx) {
     return (await rootSitemap(ctx)) !== null;
   },
   async discover(ctx) {
     const xml = await rootSitemap(ctx);
     if (!xml) return [];
-    return toArticles(ctx, await collectUrls(ctx, xml, 0));
+    return toCandidates(ctx, await collectUrls(ctx, xml, 0));
   },
 };

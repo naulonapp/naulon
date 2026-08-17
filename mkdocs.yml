@@ -55,5 +55,7 @@ nav:
       - Crawler policy: crawler-policy.md
   - Buying:
       - The agent side: buying.md
+  - Extending:
+      - Writing a crawl adapter: crawl-adapters.md
   - Protocol:
       - Citation License Token: citation-license.md
