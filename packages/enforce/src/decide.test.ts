@@ -57,6 +57,26 @@ test("non-article path → passthrough", async () => {
   assert.equal(d.kind, "passthrough");
 });
 
+// A malformed percent-escape in the path used to throw URIError out of slugFromPath, before
+// any verdict existed — so the gate's catch-all handler answered 500 to a request that is a
+// plain passthrough. Node delivers `GET /essays/100%` to the handler verbatim (no rejection,
+// no normalization), so this is one raw request away from any tolled site, and it costs the
+// publisher a 5xx on a URL of their own origin. Now: no throw, no article, straight through.
+test("malformed percent-escape in the path → passthrough, never a throw", async () => {
+  for (const path of ["/essays/100%", "/essays/%zz", "/essays/%"]) {
+    const req = new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } });
+    const d = await decide({ raw: req, host: "h", path, publisher: basePublisher, now: 1, quote: quoteOf });
+    assert.equal(d.kind, "passthrough", `${path} must pass through`);
+  }
+});
+
+test("site mode: a malformed percent-escape stays free too", async () => {
+  const pub = { ...basePublisher, gateScope: { mode: "site", excludePrefixes: [] } };
+  const req = new Request("http://h/blog/x", { headers: { "user-agent": "GPTBot/1.0" } });
+  const d = await decide({ raw: req, host: "h", path: "/blog/100%", publisher: pub, now: 1, quote: quoteOf });
+  assert.equal(d.kind, "passthrough");
+});
+
 test("blocked crawler → blocked (403) before classify", async () => {
   const pub = { ...basePublisher, crawlerPolicy: { block: ["BadBot"] } };
   const req = new Request("http://h/essays/x", { headers: { "user-agent": "BadBot/2.0" } });

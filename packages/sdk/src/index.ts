@@ -19,3 +19,6 @@ export * from "./idempotency.ts";
 export { runCrawl, type CrawlOptions, type CrawlResult } from "./crawl/crawl.ts";
 export { makeGuardedFetcher } from "./crawl/fetcher.ts";
 export type { CrawlConfig, DiscoveredArticle, SourceAdapterId } from "./crawl/types.ts";
+// The engine's own building blocks — glob matching and the one feed-reading config —
+// are the `@naulon/sdk/crawl` subpath, not this barrel: `toArray`/`textOf` are names
+// no publisher contract should claim at the root.

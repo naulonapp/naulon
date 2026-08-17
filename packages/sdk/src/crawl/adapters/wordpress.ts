@@ -15,7 +15,7 @@
  * (money is never inferred). A partial-but-complete catalog beats failing on the biggest sites.
  */
 import type { AdapterContext, DiscoveredArticle, DiscoveredAuthor, SourceAdapter } from "../types.ts";
-import { deriveSlug } from "../slug.ts";
+import { deriveSlug } from "../../contract/slug.ts";
 
 const PER_PAGE = 50;
 const MAX_PAGES = 40; // ≤ 2000 posts/crawl

@@ -24,6 +24,7 @@ import type { Quote } from "./pricing.ts";
 import { licensing } from "./license.ts";
 import { revocations } from "./revocation.ts";
 import { verifyPopProof } from "./pop.ts";
+import { slugFromPath, slugFromSitePath } from "@naulon/sdk/slug";
 import {
   externalSchemeOf,
   externalUrl,
@@ -166,57 +167,13 @@ export function requestFactsFrom(
   };
 }
 
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Compiled article-path matchers, memoized per prefix set — a gate sees a handful
-// of distinct prefix configs, not one per request, so we compile each regex once
-// and reuse it. Prefixes are escaped before interpolation: an injected resolver may
-// feed untrusted publisher prefixes here, so a literal `new RegExp(prefix)` would be
-// a regex injection / ReDoS hole.
-const articleReCache = new Map<string, RegExp>();
-function articleRe(prefixes: string[]): RegExp {
-  const key = prefixes.join("|");
-  let re = articleReCache.get(key);
-  if (!re) {
-    re = new RegExp(`^/(?:${prefixes.map(escapeRe).join("|")})/([^/?#]+)`);
-    articleReCache.set(key, re);
-  }
-  return re;
-}
-
-/** Article slug from a path like /essays/on-stillness, using the publisher's prefixes. */
-export function slugFromPath(path: string, prefixes: string[]): string | null {
-  // Never treat the gate's own control routes as articles, whatever the
-  // configured prefixes are.
-  if (path.startsWith("/.well-known/") || path.startsWith("/licenses/")) return null;
-  // Drop empty prefixes — an empty alternative would make the regex match `//x`
-  // or any leading slash and gate routes the publisher never opted in.
-  const clean = prefixes.filter(Boolean);
-  if (clean.length === 0) return null;
-  const m = path.match(articleRe(clean));
-  return m ? decodeURIComponent(m[1]!) : null;
-}
-
-const STATIC_EXT_RE = /\.(css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|mp4|webm|mp3|pdf|txt|xml|json)$/i;
-const DISCOVERY_RE = /^\/(robots\.txt|sitemap[^/]*|rss[^/]*|atom[^/]*|feed[^/]*|favicon\.ico)$/i;
-
-/**
- * Site-mode slug: the full decoded pathname, or null for the surfaces that must
- * stay free — gate control routes, discovery (robots/sitemaps/feeds/favicon),
- * static assets by extension (deliberately including .txt/.xml/.json: machine-
- * readable surfaces never toll — the conservative humans/discovery-free bias),
- * and the publisher's own excludePrefixes.
- */
-export function slugFromSitePath(path: string, excludePrefixes: string[]): string | null {
-  const pathname = path.split(/[?#]/, 1)[0]!;
-  if (pathname.startsWith("/.well-known/") || pathname.startsWith("/licenses/")) return null;
-  if (DISCOVERY_RE.test(pathname) || STATIC_EXT_RE.test(pathname)) return null;
-  const clean = excludePrefixes.filter(Boolean);
-  if (clean.some((p) => pathname === `/${p}` || pathname.startsWith(`/${p}/`))) return null;
-  return decodeURIComponent(pathname);
-}
+// The article-key rule is NOT implemented here. It has exactly one owner —
+// `@naulon/sdk/slug`, the bottom of the package graph — because the key the gate
+// derives from a request path must be byte-identical to the key a crawler writes and
+// the key a publisher's credits API answers at. Re-exported so `@naulon/enforce`'s
+// public surface is unchanged for anyone already importing them from here.
+export { deriveSlug, deriveSiteSlug, decodeSlug } from "@naulon/sdk/slug";
+export { slugFromPath, slugFromSitePath };
 
 /**
  * The classification facts an observed decision carries so the caller can emit a
