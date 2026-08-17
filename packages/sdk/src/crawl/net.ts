@@ -1,16 +1,20 @@
 /**
- * crawl/net.ts — the SSRF guard for the crawler's network seam.
+ * crawl/net.ts — THE SSRF guard. One owner, every outbound seam.
  *
- * `naulon crawl` fetches whatever URL an adapter derives from a publisher's origin
- * (feed paths, `/wp-json`, sitemap `<loc>`s). Without a guard that is a pointable-at-
- * anything footgun: a hostile or misconfigured feed could name `http://169.254.169.254`
- * (cloud metadata) or `http://10.0.0.5` (an internal service) and the crawler would
- * happily fetch it. So every connection is CIDR-checked against the private/loopback/
- * link-local ranges, and — because a plain check-then-connect leaves a DNS-rebind window
- * — the socket connects through `guardedLookup`, which validates the ACTUAL resolved IP.
+ * Two places in this tree point a socket at a host someone else chose: the crawler
+ * fetches whatever URL an adapter derives from a publisher's origin (feed paths,
+ * `/wp-json`, sitemap `<loc>`s), and the webhook sender POSTs to a customer-supplied
+ * endpoint. Both are pointable-at-anything footguns — a hostile or misconfigured value
+ * could name `http://169.254.169.254` (cloud metadata) or `http://10.0.0.5` (an internal
+ * service). So every connection is CIDR-checked against the private/loopback/link-local
+ * ranges, and — because a plain check-then-connect leaves a DNS-rebind window — the
+ * socket connects through `guardedLookup`, which validates the ACTUAL resolved IP.
  *
- * This is a standalone port of the cloud webhook sender's SSRF machinery, with no cloud
- * dependencies, so the open-source gate carries the same threat model as the hosted one.
+ * It lives here, in the zero-dependency bottom package, and is reached through the
+ * `@naulon/sdk/net` subpath. Until 2026-08-17 `@naulon/shared`'s webhook sender carried a
+ * byte-identical copy (written when it could not depend on this package; it can now).
+ * Two copies of a blocklist is one blocklist plus a hole waiting for the next range
+ * somebody adds to only one of them.
  */
 import { lookup as dnsLookupCb } from "node:dns";
 import type { LookupFunction } from "node:net";
@@ -63,6 +67,14 @@ export function isBlockedTarget(host: string): boolean {
   if (v4 !== null) return isPrivateV4(v4);
   if (host.includes(":")) return isBlockedV6(host);
   return false;
+}
+
+/** True when `host` is an IP LITERAL (v4 or v6) rather than a DNS name. `isBlockedTarget`
+ *  answers "is this literal blocked" and returns false for a name, which is the right
+ *  answer but not a way to tell the two apart — a caller that must resolve-then-check
+ *  needs to know whether there is anything to resolve. */
+export function isIpLiteral(host: string): boolean {
+  return ipToInt(host) !== null || host.includes(":");
 }
 
 /**

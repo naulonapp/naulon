@@ -30,6 +30,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
+    "@naulon/sdk": "*",
     "@naulon/shared": "^0.2.0",
     "viem": "^2.52.2"
   },

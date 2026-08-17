@@ -9,7 +9,7 @@
  */
 import type { AdapterContext, DiscoveredArticle, SourceAdapter } from "../types.ts";
 import { parseXml, toArray, textOf } from "../xml.ts";
-import { deriveSlug } from "../slug.ts";
+import { deriveSlug } from "../../contract/slug.ts";
 import { passesGlobs } from "../glob.ts";
 
 const CONVENTIONAL_PATHS = ["/sitemap.xml", "/sitemap_index.xml", "/sitemap-index.xml"];

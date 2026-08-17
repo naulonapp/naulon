@@ -9,7 +9,7 @@
  */
 import type { AdapterContext, DiscoveredArticle, DiscoveredAuthor, SourceAdapter } from "../types.ts";
 import { parseXml, toArray, textOf } from "../xml.ts";
-import { deriveSlug } from "../slug.ts";
+import { deriveSlug } from "../../contract/slug.ts";
 
 /** Conventional feed paths, richest first. Probed only when no explicit `feedUrl` is set.
  *  `/feed/` (trailing slash) is WordPress's canonical feed — `/feed` 301-redirects to it, and the

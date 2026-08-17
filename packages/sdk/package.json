@@ -27,6 +27,14 @@
     "./cli": {
       "types": "./dist/cli/check.d.ts",
       "import": "./dist/cli/check.js"
+    },
+    "./slug": {
+      "types": "./dist/contract/slug.d.ts",
+      "import": "./dist/contract/slug.js"
+    },
+    "./net": {
+      "types": "./dist/crawl/net.d.ts",
+      "import": "./dist/crawl/net.js"
     }
   },
   "bin": {

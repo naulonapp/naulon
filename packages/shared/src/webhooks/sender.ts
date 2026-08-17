@@ -10,11 +10,10 @@
 // `allowPrivateTargets` knob only ever relaxes raw (local catchers in dev) — never chat.
 
 import { lookup } from "node:dns/promises";
-import { lookup as dnsLookupCb } from "node:dns";
 import http from "node:http";
 import https from "node:https";
-import type { LookupFunction } from "node:net";
 import { signPayload } from "@naulon/sdk";
+import { guardedLookup, isBlockedTarget, isIpLiteral } from "@naulon/sdk/net";
 import { renderWire, type CanonicalEvent } from "./transform.ts";
 import type { WebhookChannelType, WebhookEventType } from "./types.ts";
 
@@ -44,53 +43,14 @@ export interface WebhookSender {
 
 /* ── SSRF guard (raw) ─────────────────────────────────────────────────────────── */
 
-function ipToInt(ip: string): number | null {
-  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return null;
-  const octets = m.slice(1).map(Number);
-  if (octets.some((o) => o > 255)) return null;
-  return ((octets[0]! << 24) | (octets[1]! << 16) | (octets[2]! << 8) | octets[3]!) >>> 0;
-}
-
-// [networkInt, maskBits] — the private/loopback/link-local v4 ranges (design §6).
-const PRIVATE_V4: ReadonlyArray<[number, number]> = [
-  [ipToInt("127.0.0.0")!, 8], // loopback
-  [ipToInt("10.0.0.0")!, 8], // private
-  [ipToInt("172.16.0.0")!, 12], // private
-  [ipToInt("192.168.0.0")!, 16], // private
-  [ipToInt("169.254.0.0")!, 16], // link-local (incl. 169.254.169.254 cloud metadata)
-  [ipToInt("0.0.0.0")!, 8], // "this" network
-  [ipToInt("100.64.0.0")!, 10], // CGNAT
-];
-
-function isPrivateV4(ipInt: number): boolean {
-  return PRIVATE_V4.some(([net, bits]) => {
-    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
-    return (ipInt & mask) === (net & mask);
-  });
-}
-
-function isBlockedV6(ip: string): boolean {
-  const h = ip.toLowerCase();
-  if (h === "::1" || h === "::") return true; // loopback / unspecified
-  if (h.startsWith("fe80")) return true; // link-local
-  if (h.startsWith("fc") || h.startsWith("fd")) return true; // unique-local fc00::/7
-  // IPv4-mapped (::ffff:a.b.c.d) — unwrap and check as v4.
-  const mapped = h.match(/::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (mapped) {
-    const v4 = ipToInt(mapped[1]!);
-    return v4 !== null && isPrivateV4(v4);
-  }
-  return false;
-}
-
-/** True if `host` is a literal IP in a blocked range. (DNS names are resolved by guardTarget.) */
-export function isBlockedTarget(host: string): boolean {
-  const v4 = ipToInt(host);
-  if (v4 !== null) return isPrivateV4(v4);
-  if (host.includes(":")) return isBlockedV6(host);
-  return false; // a hostname — not a literal; resolved-and-checked in guardTarget
-}
+// The blocked-range table and the connect-time guarded lookup are NOT implemented here.
+// They have one owner — `@naulon/sdk/net` — because the crawler's fetch seam and this
+// webhook seam are the same threat model with the same answer, and a range added to one
+// copy but not the other is a hole nobody would notice. (They were byte-identical
+// duplicates until 2026-08-17; `@naulon/shared` already depends on `@naulon/sdk`, so the
+// "standalone port, no dependencies" reason the copy was written for no longer holds.)
+// Re-exported because this module's public surface already spelled them.
+export { isBlockedTarget, guardedLookup };
 
 async function resolvePrivateCheck(
   host: string,
@@ -99,7 +59,7 @@ async function resolvePrivateCheck(
   if (allowPrivate) return { ok: true };
   if (isBlockedTarget(host)) return { ok: false, error: `blocked target (private/loopback): ${host}` };
   // A hostname: resolve and reject if ANY answer is in a blocked range.
-  if (ipToInt(host) === null && !host.includes(":")) {
+  if (!isIpLiteral(host)) {
     let addrs: { address: string }[];
     try {
       addrs = await lookup(host, { all: true });
@@ -161,29 +121,11 @@ function parseRetryAfter(value: string | null, nowMs: number): number | undefine
   return undefined;
 }
 
-/* ── anti-DNS-rebinding: a connect-time guarded lookup (no TOCTOU) ─────────────── */
-
-// guardTarget resolves-and-checks the host, but a plain fetch then RE-RESOLVES at connect — a
-// malicious customer domain can rebind between the two (return a public IP to the check, a private
-// IP to the connect). The fix: make the lookup the socket ACTUALLY uses the one that enforces the
-// guard. node http(s).request honors a `lookup` option, so the validated IP is the connected IP —
-// the check/connect window is closed. allowPrivate (raw-only dev knob) relaxes it; chat passes false.
-export function guardedLookup(allowPrivate: boolean): LookupFunction {
-  return (hostname, options, callback) => {
-    dnsLookupCb(hostname, { all: true, family: options.family ?? 0 }, (err, addresses) => {
-      if (err) return callback(err, "", 0);
-      for (const a of addresses) {
-        if (!allowPrivate && isBlockedTarget(a.address)) {
-          return callback(new Error(`blocked target (private/loopback): ${a.address}`), "", 0);
-        }
-      }
-      if (options.all) return callback(null, addresses);
-      const first = addresses[0];
-      if (!first) return callback(new Error("dns resolution returned no address"), "", 0);
-      callback(null, first.address, first.family);
-    });
-  };
-}
+// anti-DNS-rebinding: `guardTarget` resolves-and-checks the host, but a plain fetch then
+// RE-RESOLVES at connect — a malicious customer domain can rebind between the two (a public IP
+// to the check, a private IP to the connect). `guardedLookup` (imported above, owned by
+// `@naulon/sdk/net`) is passed as the request's `lookup`, so the validated IP is the connected
+// IP and the window is closed. allowPrivate (raw-only dev knob) relaxes it; chat passes false.
 
 const MAX_BODY = 2048;
 

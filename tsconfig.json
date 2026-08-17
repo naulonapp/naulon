@@ -12,6 +12,8 @@
   "compilerOptions": {
     "paths": {
       "@naulon/sdk": ["./packages/sdk/src/index.ts"],
+      "@naulon/sdk/slug": ["./packages/sdk/src/contract/slug.ts"],
+      "@naulon/sdk/net": ["./packages/sdk/src/crawl/net.ts"],
       "@naulon/shared": ["./packages/shared/src/index.ts"],
       "@naulon/enforce": ["./packages/enforce/src/index.ts"],
       "@naulon/wayfarer": ["./packages/wayfarer/src/lib.ts"]
