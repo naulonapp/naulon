@@ -14,6 +14,129 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.6.0
+
+Ships `@naulon/sdk` 0.2.0 · `@naulon/shared` 0.3.0 · `@naulon/enforce` 0.3.0 ·
+`@naulon/wayfarer` 0.3.0 · `@naulon/wayfarer-mcp` 0.4.0 — every published package.
+
+Two things move in this release. The settlement notification a publisher receives is now
+a signed webhook and only a signed webhook; the origin-mirror POST is deleted, not
+deprecated. And the crawl engine became a seam: a host with its own adapters implements
+an interface instead of forking the crawler, and can prove its adapter conforms.
+
+Every version here is a `0.x` minor, so a caret range is minor-tight — `^0.2.0` will not
+resolve `0.3.0`. Anything depending on `@naulon/shared` or `@naulon/wayfarer` needs its
+range bumped in the same change, not just an `npm update`.
+
+### Breaking
+
+- **`@naulon/sdk` — the settlement receiver is gone; receive a webhook instead.**
+  `createSettlementReceiver` (`/next`) and `createExpressSettlementReceiver`
+  (`/express`) are replaced by `createWebhookReceiver` and
+  `createExpressWebhookReceiver`, which hand you a `WebhookEnvelope` instead of a
+  `SettlementBody` and take a different options shape: `secrets` is an ARRAY (one per
+  live secret during a rotation overlap), the handler is `onEvent` and sees every event
+  type rather than settlements only, and `idempotency` is **required** — delivery is
+  at-least-once, so the receiver dedupes on `eventId` or double-counts.
+  `memoryIdempotencyStore()` satisfies the type for dev and is not durable; back it with
+  a unique constraint in production. Also removed:
+  `signSettlement` / `verifySettlement` / `SignedSettlement` / `VerifyResult` /
+  `MAX_SKEW_SECONDS` (now `signPayload` / `verifyPayload` / `WEBHOOK_SIGNATURE_HEADER` /
+  `WEBHOOK_MAX_SKEW_SECONDS`), the `contract/settlement.ts` types and schemas
+  (`SettlementBody`, `SettlementSplit`, `settlementBodySchema`, `settlementSplitSchema`,
+  `CONTRACT_VERSION`), and `makeSignedSettlementFixture` (now
+  `makeSignedWebhookFixture`). A publisher who wants to know that money moved subscribes
+  a `raw` endpoint to `settlement.completed`; `docs/settlement-notifications.md` is the
+  migration. The old path stopped being served by the gate in the same change, so
+  leaving the receiver mounted does not keep it working — it goes quiet.
+- **`@naulon/shared` — the settlement emit and its whole retry plane are deleted.**
+  `buildSettlementBody` and the `settlementEmit` barrel export are gone, as is
+  `PublisherConfig.settlementSecret`. Twelve env vars stop being read:
+  `CREDITS_SETTLEMENT_SECRET`, `SETTLEMENT_OUTBOX_PATH`, `SETTLEMENT_MAX_ATTEMPTS`,
+  `SETTLEMENT_TIMEOUT_MS`, `SETTLEMENT_DRAIN_INTERVAL_MS`, `SETTLEMENT_DELIVERY_BACKEND`,
+  `SETTLEMENT_DELIVERY_STATE_PATH`, `SETTLEMENT_MAX_DELIVERY_ATTEMPTS`,
+  `SETTLEMENT_RETRY_BASE_MS`, `SETTLEMENT_RETRY_BACKOFF_CAP_MS`, `SETTLEMENT_DRAIN_BATCH`
+  and `SUPABASE_SETTLEMENT_DELIVERY_TABLE`. The config schema ignores unknown keys, so a
+  deploy that still sets them boots fine — they are inert, not fatal, which means nothing
+  will tell you the notifications stopped. Set `NAULON_WEBHOOK_ENDPOINTS` before you
+  upgrade, not after.
+- **`@naulon/shared` now depends on `@naulon/sdk`.** `signPayload` / `verifyPayload` are
+  re-exported from there rather than reimplemented here, so the bytes a publisher
+  verifies come from the same function that produced them. Same names, same output; the
+  only visible change is one more package in the install graph.
+
+### Added
+
+- **`@naulon/sdk/crawl` — the adapter seam.** A host that crawls sources the built-ins
+  don't cover implements `SourceAdapter` and hands it to `selectAdapter`, instead of
+  copying the engine to add a source. The subpath exports the port
+  (`SourceAdapter`, `AdapterContext`, `ArticleCandidate`), the registry (`ADAPTERS`,
+  `adapterById`, `canRun`, `selectAdapter`), the SSRF-guarded fetcher
+  (`makeGuardedFetcher`), author→wallet resolution (`resolveAuthorWallet`,
+  `validWallet`), and the two decisions every front-door makes before an adapter runs —
+  glob matching (`matchGlob`, `passesGlobs`) and the one feed-parser config (`parseXml`,
+  `toArray`, `textOf`). `docs/crawl-adapters.md` is the guide.
+- **`@naulon/sdk/crawl/testing` — the contract, executable.** `runConformance` supplies
+  the network and measures what an adapter actually did; `assertConformance` fails the
+  test. It is a separate subpath so a test-only surface never lands in a runtime bundle.
+- **Adapters declare what they need, and a host grants it.** `AdapterRequirements` +
+  `HostCapabilities`: an adapter requiring a secret or an off-origin fetch is filtered
+  out before `detect` on a host that cannot satisfy it — it cannot fetch, log, or
+  half-run. The `naulon crawl` CLI grants nothing, so a keyed adapter is inert there by
+  construction rather than by convention.
+- **Adapters can no longer key an article.** `discover` returns `ArticleCandidate[]`;
+  the orchestrator derives the gate key once prefixes are known and reports how many it
+  could not key (`CrawlResult.unkeyable` — a big number usually means the wrong
+  `articlePrefixes`). Previously an adapter could emit a key the gate cannot reproduce —
+  an article that silently never tolls.
+- **`@naulon/sdk/slug` — one owner for the article key.** `deriveSlug`, `deriveSiteSlug`,
+  `decodeSlug`, `slugFromPath`, `slugFromSitePath`, at the bottom of the package graph,
+  because the key the gate derives from a request path must be byte-identical to the one
+  a crawler writes and the one a credits API answers at. `@naulon/sdk/net` is the same
+  move for the SSRF blocklist.
+- **`@naulon/shared` — `arcPreviewHeaders(chain)` and `ARC_PRIVATE_MAINNET_HEADER`.** The
+  Arc private-mainnet opt-in has an owner here because Circle stopped having one (see
+  below).
+- **`@naulon/wayfarer` — `Fetched.unpaid`.** True when the gate returned a complete
+  response and took nothing, so a caller that reserved spend before signing knows it may
+  release the reserve. Deliberately absent — never `false` — when a request throws
+  mid-flight, because "it never settled" and "it settled and I lost the answer" are the
+  same observation from there.
+
+### Fixed
+
+- **`@naulon/wayfarer` — Arc-mainnet funding calls silently stopped opting into the
+  preview.** `@circle-fin/x402-batching` 3.3.0 deleted `arcPrivateMainnet` and the
+  implicit `config.chain === "arc"` default that came with it, so a client built with
+  `{chain, privateKey}` sent no header. Every `GatewayClient` in the package is now built
+  through one constructor that passes `headers` explicitly. Visible only on the funding
+  half — deposit, withdraw, balances — while settle kept working.
+- **`@naulon/wayfarer-mcp` — `naulon_status` no longer offers a wallet nobody can pay
+  from.** With no session and no `BUYER_PRIVATE_KEY` it fell back to the derived dev key,
+  whose private key is effectively public, and told the operator to fund it. `wallet` is
+  now optional and absent is the answer; `ready` is false and `nextStep` says how to get
+  one.
+- **`@naulon/wayfarer-mcp` — the discovery match evidence described the misleading
+  case.** Neither `matchedInBody` nor `matchedSemantic` set means either the strongest
+  possible match (your terms hit the title) or no signal at all (the source does not
+  search), and the schema had never said which.
+
+### Changed
+
+- **`@naulon/enforce` no longer implements the article-key rule** — `slugFromPath` and
+  `slugFromSitePath` are re-exported from `@naulon/sdk/slug`, so its public surface is
+  unchanged for anyone importing them from here. The regex compilation and prefix
+  escaping moved with them.
+- **The `naulon-kit check` CLI prints a signed `settlement.completed` delivery** instead
+  of a settlement fixture, for the same reason as before: a money-adjacent path gets no
+  public "pretend" mode, so you feed the fixture to your own receiver in your own
+  harness.
+- **A published package may no longer depend on `@naulon/*` at `*`.**
+  `packages/shared/src/releaseRanges.test.ts` used to exempt the string outright, on the
+  reasoning that only workspace-internal packages use it; `@naulon/enforce` then acquired
+  `"@naulon/sdk": "*"`, which would have shipped a range that resolves whatever is newest
+  at install time. The exemption is now on the dependent being private.
+
 ## v0.5.0
 
 Ships `@naulon/shared` 0.2.0 · `@naulon/enforce` 0.2.0 · `@naulon/wayfarer` 0.2.0 ·

@@ -1,6 +1,6 @@
 {
   "name": "@naulon/enforce",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/naulonapp/naulon.git",
@@ -30,8 +30,8 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@naulon/sdk": "*",
-    "@naulon/shared": "^0.2.0",
+    "@naulon/sdk": "^0.2.0",
+    "@naulon/shared": "^0.3.0",
     "viem": "^2.52.2"
   },
   "peerDependencies": {
