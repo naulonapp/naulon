@@ -147,6 +147,28 @@ test("assertConformance names every failure, not just the first", async () => {
   );
 });
 
+test("off-origin fixtures match on host+path, so a query string need not be reproduced", async () => {
+  const platform: SourceAdapter<string> = {
+    id: "platform",
+    rank: 1,
+    requires: { offOrigin: ["api.example.com"] },
+    async detect() {
+      return true;
+    },
+    async discover(ctx) {
+      // A real platform API carries a key and a field mask whose order the fixture cannot know.
+      await ctx.capabilities?.offOriginFetch?.("https://api.example.com/v1/posts?key=k&fields=a,b");
+      return [{ url: `${ORIGIN}/articles/one`, title: "One", authors: [] }];
+    },
+  };
+  assertConformance(
+    await runConformance(platform, {
+      ...OK_FIXTURES,
+      offOriginRoutes: { "https://api.example.com/v1/posts": "[]" },
+    }),
+  );
+});
+
 test("a granted off-origin adapter passes when it stays inside its allowlist", async () => {
   const platform: SourceAdapter<string> = {
     id: "platform",
