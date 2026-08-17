@@ -15,10 +15,17 @@ export * from "./resolver/http.ts";
 export * from "./resolver/fixture.ts";
 export * from "./idempotency.ts";
 // The crawl engine — shared verbatim by the `naulon-kit crawl` CLI and the
-// self-host console's Content tab, so the two front-doors never drift.
+// self-host console's Content tab, so the two front-doors never drift. A third front-door with
+// adapters of its own implements the port from `@naulon/sdk/crawl` rather than copying the engine.
 export { runCrawl, type CrawlOptions, type CrawlResult } from "./crawl/crawl.ts";
 export { makeGuardedFetcher } from "./crawl/fetcher.ts";
-export type { CrawlConfig, DiscoveredArticle, SourceAdapterId } from "./crawl/types.ts";
+export type {
+  ArticleCandidate,
+  CrawlConfig,
+  DiscoveredArticle,
+  HostCapabilities,
+  SourceAdapterId,
+} from "./crawl/types.ts";
 // The engine's own building blocks — glob matching and the one feed-reading config —
 // are the `@naulon/sdk/crawl` subpath, not this barrel: `toArray`/`textOf` are names
 // no publisher contract should claim at the root.

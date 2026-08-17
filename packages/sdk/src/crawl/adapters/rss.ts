@@ -2,14 +2,13 @@
  * crawl/adapters/rss.ts — the always-available RSS/Atom feed adapter.
  *
  * The lowest-rank fallback: nearly every CMS exposes an RSS 2.0 or Atom feed. It yields
- * title, URL, author (`<author>`/`<dc:creator>` for RSS, `<author><name>` for Atom), and
+ * title, URL, teaser, author (`<author>`/`<dc:creator>` for RSS, `<author><name>` for Atom), and
  * publish date — enough for the catalog plane. Authors are feed STRINGS only (the map key);
  * never a wallet. All fetches go through the guarded fetcher, so even a derived feed URL can
  * only ever hit the proven origin host.
  */
-import type { AdapterContext, DiscoveredArticle, DiscoveredAuthor, SourceAdapter } from "../types.ts";
+import type { AdapterContext, ArticleCandidate, DiscoveredAuthor, SourceAdapter } from "../types.ts";
 import { parseXml, toArray, textOf } from "../xml.ts";
-import { deriveSlug } from "../../contract/slug.ts";
 
 /** Conventional feed paths, richest first. Probed only when no explicit `feedUrl` is set.
  *  `/feed/` (trailing slash) is WordPress's canonical feed — `/feed` 301-redirects to it, and the
@@ -70,6 +69,16 @@ function authorsFromAtomEntry(entry: Record<string, unknown>): DiscoveredAuthor[
   return out;
 }
 
+/** Feed description → plain text: strip tags, collapse whitespace, cap length. '' → undefined.
+ *  The publisher's own teaser, so a catalog page never has to invent one. */
+function summaryOf(raw: unknown): string | undefined {
+  const s = textOf(raw)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return s ? s.slice(0, 500) : undefined;
+}
+
 /** Normalize a feed date to ISO-8601, or undefined when unparseable (never throw). */
 function normDate(raw: string): string | undefined {
   const t = raw.trim();
@@ -78,21 +87,20 @@ function normDate(raw: string): string | undefined {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
-function discover(ctx: AdapterContext, xml: string): DiscoveredArticle[] {
+function discover(xml: string): ArticleCandidate[] {
   const doc = parseXml(xml);
-  const out: DiscoveredArticle[] = [];
+  const out: ArticleCandidate[] = [];
 
   // RSS 2.0: rss > channel > item
   const channel = (doc["rss"] as Record<string, unknown> | undefined)?.["channel"];
   for (const item of toArray((channel as Record<string, unknown> | undefined)?.["item"])) {
     const it = item as Record<string, unknown>;
     const url = textOf(it["link"]).trim();
-    const slug = url ? deriveSlug(url, ctx.articlePrefixes) : null;
-    if (!url || !slug) continue;
+    if (!url) continue;
     out.push({
-      slug,
       url,
       title: textOf(it["title"]).trim(),
+      summary: summaryOf(it["description"]),
       authors: authorsFromRssItem(it),
       publishedAt: normDate(textOf(it["pubDate"]) || textOf(it["dc:date"])),
     });
@@ -102,12 +110,11 @@ function discover(ctx: AdapterContext, xml: string): DiscoveredArticle[] {
   for (const entry of toArray((doc["feed"] as Record<string, unknown> | undefined)?.["entry"])) {
     const e = entry as Record<string, unknown>;
     const url = atomLink(e).trim();
-    const slug = url ? deriveSlug(url, ctx.articlePrefixes) : null;
-    if (!url || !slug) continue;
+    if (!url) continue;
     out.push({
-      slug,
       url,
       title: textOf(e["title"]).trim(),
+      summary: summaryOf(e["summary"] ?? e["content"]),
       authors: authorsFromAtomEntry(e),
       publishedAt: normDate(textOf(e["published"]) || textOf(e["updated"])),
     });
@@ -118,11 +125,12 @@ function discover(ctx: AdapterContext, xml: string): DiscoveredArticle[] {
 export const rssAdapter: SourceAdapter = {
   id: "rss",
   rank: 10, // fallback — any platform-native adapter outranks it
+  curated: true, // a feed lists real posts, not every URL on the site
   async detect(ctx) {
     return (await fetchFeedXml(ctx)) !== null;
   },
   async discover(ctx) {
     const xml = await fetchFeedXml(ctx);
-    return xml ? discover(ctx, xml) : [];
+    return xml ? discover(xml) : [];
   },
 };

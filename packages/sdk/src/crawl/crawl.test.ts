@@ -78,3 +78,42 @@ test("runCrawl throws on an unknown forced adapter id", async () => {
     /unknown adapter/,
   );
 });
+
+test("runCrawl keys the candidates and reports what it could not key", async () => {
+  // The feed lists an off-prefix page. Adapters no longer filter it — the orchestrator derives
+  // the key, finds none, and SAYS SO. A silent drop here is how a wrong `articlePrefixes` looks
+  // exactly like an empty site.
+  const feed = `<rss version="2.0"><channel>
+    <item><title>A</title><link>https://s.com/essays/a</link></item>
+    <item><title>Page</title><link>https://s.com/about/team</link></item>
+  </channel></rss>`;
+  const r = await runCrawl({
+    origin: "https://s.com",
+    articlePrefixes: ["essays"],
+    config: cfg({ defaultWallet: W_A }),
+    existing: {},
+    fetch: fakeFetch({ "/feed": feed }),
+  });
+  assert.equal(r.discovered, 2); // what the adapter returned
+  assert.equal(r.unkeyable, 1); // /about/team has no gateable slug
+  assert.deepEqual(r.added, ["a"]);
+});
+
+test("runCrawl keeps the first of two candidates that key to the same slug", async () => {
+  // A sitemap index can list one article twice; both derive the same credits key, and writing
+  // the second over the first would make the catalog depend on feed order.
+  const feed = `<rss version="2.0"><channel>
+    <item><title>First</title><link>https://s.com/essays/a</link></item>
+    <item><title>Duplicate</title><link>https://s.com/essays/a?utm=x</link></item>
+  </channel></rss>`;
+  const r = await runCrawl({
+    origin: "https://s.com",
+    articlePrefixes: ["essays"],
+    config: cfg({ defaultWallet: W_A }),
+    existing: {},
+    fetch: fakeFetch({ "/feed": feed }),
+  });
+  assert.equal(r.discovered, 2);
+  assert.deepEqual(r.added, ["a"]);
+  assert.equal(r.credits["a"]!.title, "First");
+});
