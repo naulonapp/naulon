@@ -35,6 +35,10 @@
     "./net": {
       "types": "./dist/crawl/net.d.ts",
       "import": "./dist/crawl/net.js"
+    },
+    "./crawl": {
+      "types": "./dist/crawl/index.d.ts",
+      "import": "./dist/crawl/index.js"
     }
   },
   "bin": {
