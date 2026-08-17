@@ -50,8 +50,9 @@ export interface ConformanceFixtures {
   config?: Partial<CrawlConfig>;
   /** `path[?search]` on the verified origin → response. Anything unlisted answers 404. */
   routes: Record<string, Route>;
-  /** Absolute URL → response, for adapters declaring `requires.offOrigin`. Reached only through
-   *  the granted off-origin fetcher, never through `ctx.fetch`. */
+  /** Absolute URL → response, for adapters declaring `requires.offOrigin`. Matched on the full
+   *  URL first, then on `scheme://host/path` so a fixture need not reproduce a query string.
+   *  Reached only through the granted off-origin fetcher, never through `ctx.fetch`. */
   offOriginRoutes?: Record<string, Route>;
   /** What the host grants. A `requires.secret` adapter needs one here or it cannot be tested. */
   capabilities?: HostCapabilities;
@@ -158,7 +159,16 @@ export async function runConformance(
     : offOrigin.length > 0
       ? async (url) => {
           offOriginRequested.push(url);
-          return respond(fixtures.offOriginRoutes?.[url]);
+          // Exact URL first, then host+path — a platform API's query string carries keys and
+          // field masks whose order is the adapter's business, not the fixture's.
+          let byPath: Route | undefined;
+          try {
+            const u = new URL(url);
+            byPath = fixtures.offOriginRoutes?.[u.origin + u.pathname];
+          } catch {
+            byPath = undefined;
+          }
+          return respond(fixtures.offOriginRoutes?.[url] ?? byPath);
         }
       : undefined;
 
