@@ -4,7 +4,15 @@
  * RSS/Atom/sitemap are all XML; this is the only place the parser is configured, so every
  * adapter reads feeds the same way. Text values stay strings (a slug like `2026` must not
  * become the number 2026), attributes surface under `@_` so `<link href=…>` (Atom) is
- * reachable, and namespaced tags (`dc:creator`) keep their prefix.
+ * reachable, and namespaced tags (`dc:creator`, `content:encoded`) keep their prefix.
+ *
+ * WHY WE STAY ON fast-xml-parser 4.x. `npm audit` flags 4.x for "XMLBuilder: XML Comment and
+ * CDATA Injection via Unescaped Delimiters", and the only fix is 5.x — a major. That advisory
+ * is against **XMLBuilder**, the WRITE side. This package imports `XMLParser` and nothing else
+ * (there is no `XMLBuilder` anywhere in the tree), so the vulnerable API is never constructed
+ * and the finding is unreachable. Taking a major on the parser that reads every publisher's
+ * feed, to fix a writer we do not call, is the worse trade. Re-decide the moment anything here
+ * EMITS xml: then the advisory is live and 5.x is mandatory, not optional.
  */
 import { XMLParser } from "fast-xml-parser";
 
