@@ -37,7 +37,7 @@ flowchart TD
     Req([Incoming request]) --> Cls{"agentDetect —<br/>human or machine?"}
     Cls -->|human| Free[["Proxied through, untouched — free read"]]
     Cls -->|machine| Bill["402 Payment Required<br/>price · author wallet(s) · signed nonce"]
-    Bill --> Sign["Agent signs a USDC payment,<br/>echoes the nonce, retries with X-Payment"]
+    Bill --> Sign["Agent signs a USDC payment,<br/>echoes the nonce, retries with payment-signature"]
     Sign --> Verify{"Verify via Circle Gateway"}
     Verify -->|valid| Serve[["Serve content + mint a Citation License,<br/>record who earned what"]]
     Verify -->|replayed / invalid| Bill
@@ -120,7 +120,7 @@ curl -A 'python-requests' localhost:8402/essays/on-stillness
 curl -A 'python-requests' -H 'x-naulon-kind: citation' localhost:8402/essays/the-naulon
 ```
 
-The agent then signs a payment, echoes the nonce back in an `X-Payment` header,
+The agent then signs a payment, echoes the nonce back in a `payment-signature` header,
 and retries — the gate verifies it, serves the article, and records who earned
 what.
 
@@ -340,7 +340,7 @@ sequenceDiagram
     G-->>A: 402 · price · payTo · nonce · Link: /.well-known/x402
     Note over A: appraise relevance-per-dollar, decide to pay under budget
     A->>C: GatewayClient.pay() — deposit-backed, gasless
-    A->>G: retry + X-Payment (signature, nonce)
+    A->>G: retry + payment-signature (signature, nonce)
     G->>C: BatchFacilitatorClient.verify + settle
     C->>Au: USDC settles buyer → author (custody-free)
     G-->>A: 200 · content + Citation License Token

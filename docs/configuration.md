@@ -111,7 +111,6 @@ multi-instance deploy possible.
 | `SUPABASE_EVENTS_TABLE` | `naulon_events` | Table override. |
 | `SUPABASE_NONCES_TABLE` | `naulon_nonces` | Table override. |
 | `SUPABASE_PENDING_LEGS_TABLE` | `naulon_pending_legs` | Table override. |
-| `SUPABASE_SETTLEMENT_DELIVERY_TABLE` | `naulon_settlement_delivery` | Table override. |
 | `SUPABASE_REVOCATIONS_TABLE` | `naulon_revocations` | Table override, used by the online license check. |
 | `SUPABASE_OBSERVATIONS_TABLE` | `naulon_observations` | Table override. |
 | `EVENTS_PATH` | `data/events.jsonl` | Shared event ledger for the `jsonl` backend. The gate appends; the dashboard and attribution read. |
@@ -188,6 +187,12 @@ Only read by the wayfarer agent and the MCP server. See [buying.md](./buying.md)
 ## Keeping this page honest
 
 `packages/shared/src/configDocs.test.ts` asserts, in both directions, that every key
-in the schema appears in this file and in `.env.example`, and that neither names a
-key the schema doesn't have. Add a variable without documenting it and the test
-fails — which is the only reason a reference page like this stays true.
+in the schema appears in this file and in `.env.example`, that `.env.example` names
+no key the schema lacks, and that this page names no variable nothing reads. Add a
+variable without documenting it and the test fails — which is the only reason a
+reference page like this stays true.
+
+The reverse direction on this page allows one exception the schema doesn't cover: a
+key read straight from `process.env` rather than through the validated config (the
+MCP server's `NAULON_CLOUD_*` trio). It has to appear in some package's source, so a
+row for a variable no code reads still fails.

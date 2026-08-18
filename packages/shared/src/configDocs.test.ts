@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -56,6 +57,46 @@ test("every config key appears in .env.example", () => {
     missing,
     [],
     `these env vars exist in config.ts but not in .env.example: ${missing.join(", ")}`,
+  );
+});
+
+/**
+ * The direction the other three tests never covered: a row on the reference page for a
+ * variable NOTHING reads. `SUPABASE_SETTLEMENT_DELIVERY_TABLE` sat there documented as a
+ * "table override" after the wire that read it was deleted — an operator could set it and
+ * change nothing. A documented key must be in the schema, or read straight from
+ * `process.env` somewhere in `packages/` (the MCP server's `NAULON_CLOUD_*` trio takes an
+ * injected env record rather than the gate's validated config).
+ */
+function documentedKeys(doc: string): string[] {
+  return [...doc.matchAll(/\|\s*`([A-Z][A-Z_0-9]{3,})`\s*\|/g)].map((m) => m[1]!);
+}
+
+function readDirectlyFromEnv(): Set<string> {
+  const out = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== "node_modules" && e.name !== "dist") walk(p);
+      } else if (e.name.endsWith(".ts")) {
+        for (const m of readFileSync(p, "utf8").matchAll(/env(?:\.|\["|\['")([A-Z][A-Z_0-9]{3,})/g)) out.add(m[1]!);
+      }
+    }
+  };
+  walk(`${REPO}packages`);
+  return out;
+}
+
+test("docs/configuration.md names no variable nothing reads", () => {
+  const doc = readFileSync(`${REPO}docs/configuration.md`, "utf8");
+  const schema = new Set(schemaKeys());
+  const direct = readDirectlyFromEnv();
+  const dead = documentedKeys(doc).filter((k) => !schema.has(k) && !direct.has(k));
+  assert.deepEqual(
+    dead,
+    [],
+    `docs/configuration.md documents env vars no code reads: ${dead.join(", ")}`,
   );
 });
 
