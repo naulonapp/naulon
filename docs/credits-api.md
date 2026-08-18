@@ -126,7 +126,7 @@ The credits response decides where a payment goes. Two things follow:
 
 ## Reference
 
-A complete, runnable consumer (this endpoint + the settlement receiver, against a
-static fixture) lives in
+A complete, runnable consumer (this endpoint + the signed settlement webhook,
+against a static fixture) lives in
 [`packages/sdk/examples/next-credits/`](https://github.com/naulonapp/naulon/tree/main/packages/sdk/examples/next-credits). Copy
 it, swap the resolver for your own source, and you have a tollable site.

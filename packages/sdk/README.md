@@ -20,7 +20,7 @@ npm install @naulon/sdk
 
 - `@naulon/sdk` — the contract types, validators, crypto (sign/verify), credits
   resolvers, and the crawl engine.
-- `@naulon/sdk/next` · `@naulon/sdk/express` — credits-route + settlement-receiver
+- `@naulon/sdk/next` · `@naulon/sdk/express` — credits-route + webhook-receiver
   adapters for those frameworks (both optional peer deps).
 - `@naulon/sdk/cli` — the `naulon` / `naulon-kit` command entry.
 
