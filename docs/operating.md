@@ -14,8 +14,19 @@ npm run -w @naulon/dashboard dev      # → http://127.0.0.1:8403
 By default it binds `127.0.0.1`, so only the box owner sees it. That's the private
 ops console. Point a browser at it and you get five things.
 
-The sidebar carries the pages — **Overview**, **Ledger** under Money, and
-**Content** under Config — and at its foot, the live gate state.
+The sidebar carries seven pages in four groups — **Overview**; **Requests** and
+**Agents** under Traffic; **Ledger** under Money; **Content**, **Crawlers**,
+**Webhooks** and **Doctor** under Config — and at its foot, the live gate state.
+
+- **Requests** — every decision the gate made, including the ones that earned nothing,
+  with missed earnings broken down by cause. The settlement ledger cannot show you this
+  half: it only knows about reads that paid.
+- **Agents** — who is reading and how much of that you can trust. A user-agent is a
+  claim anyone can make; a Web Bot Auth signature is not, and this page separates them.
+- **Crawlers** — the per-crawler decision (read free, pay, or refused) and your own
+  rules on top of the defaults. Contract: [crawler-policy.md](./crawler-policy.md).
+- **Webhooks** — endpoints and their delivery log, for telling your systems a citation
+  settled. Contract: [settlement-notifications.md](./settlement-notifications.md).
 
 ## What each panel tells you
 
