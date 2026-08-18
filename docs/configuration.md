@@ -173,6 +173,9 @@ Only read by the wayfarer agent and the MCP server. See [buying.md](./buying.md)
 | `RSS_URL` | unset | An explicit feed URL. Precedence is `RSS_URL` > `PUBLISHER_URL` > `CATALOG_URL`; with none of them the agent refuses rather than inventing sources. |
 | `SITEMAP_URL` | unset | Reserved for sitemap-based discovery, which fills the slugs an RSS feed truncates. Unused until that parsing lands. |
 | `OPENAI_API_KEY` | unset | Only for the agent's own reasoning. The toll never needs it. |
+| `NAULON_CLOUD_ENDPOINT` | unset | MCP server only. Opt-in hosted signing: the memo is signed by a remote service instead of a local key. All three of endpoint / token / session address must be set, or the server falls back to the BYO-key path unchanged (`packages/wayfarer-mcp/src/cloud-signer.ts:55`). |
+| `NAULON_CLOUD_TOKEN` | unset | Bearer token for that endpoint. |
+| `NAULON_BUYER_SESSION_ADDRESS` | unset | The session wallet address the hosted signer signs for. Must be a well-formed `0x…40` address or the hosted path stays off. |
 
 ## Attribution and payouts
 
