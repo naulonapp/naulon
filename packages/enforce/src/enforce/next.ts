@@ -9,10 +9,10 @@
  * (the publisher's app already has it). Everything else is the framework-agnostic
  * core.
  *
- *   // middleware.ts (in the publisher's Next app)
+ *   // proxy.ts (in the publisher's Next 16 app — middleware.ts on Next ≤ 15)
  *   import { NextResponse } from "next/server";
  *   import { createNaulonMiddleware } from "@naulon/sdk/enforce/next";
- *   export const middleware = createNaulonMiddleware({ …opts }, NextResponse);
+ *   export const proxy = createNaulonMiddleware({ …opts }, NextResponse);
  *   export const config = { matcher: ["/essays/:path*"] };
  */
 import { naulonMiddleware, type NaulonMiddlewareOptions } from "./middleware.ts";

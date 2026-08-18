@@ -57,12 +57,12 @@ The decision kernel and the framework-agnostic middleware core:
 ## Usage
 
 ```ts
-// middleware.ts (Next.js App Router)
+// proxy.ts (Next.js App Router — `middleware.ts` on Next ≤ 15)
 import { NextResponse } from "next/server";
 import { createNaulonMiddleware } from "@naulon/enforce/next";
 import { httpQuoteSource } from "@naulon/enforce";
 
-export const middleware = createNaulonMiddleware(
+export const proxy = createNaulonMiddleware(
   {
     publisher: { id: "your-site", articlePrefixes: ["articles"] },
     quote: httpQuoteSource("https://<your-control-plane>/_naulon/quote", process.env.NAULON_API_KEY!),
@@ -74,6 +74,11 @@ export const middleware = createNaulonMiddleware(
 
 export const config = { matcher: ["/articles/:path*"] };
 ```
+
+Next 16 renamed the file convention: `middleware.ts` still runs but warns
+(`The "middleware" file convention is deprecated. Please use "proxy" instead.`),
+and the export it looks for is `proxy`. On Next ≤ 15 keep the file `middleware.ts`
+and export `middleware` — the adapter itself is identical either way.
 
 `quote` and `verifyUrl` point at whatever runs the money + catalog legs — the
 managed control plane, or your own self-hosted `POST /_naulon/verify` +
