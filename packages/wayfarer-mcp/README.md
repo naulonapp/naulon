@@ -182,7 +182,7 @@ Env read by the stdio server (all optional — omit for the offline mock):
 | `BUYER_PRIVATE_KEY` | The wallet the toll is paid from. BYO-key path; a hosted deploy signs through a cloud signer instead. |
 | `TOLLGATE_URL` | The gate every payment resolves against. Payments only ever flow here — a prompt-injected model cannot redirect them. |
 | `WAYFARER_BUDGET_USDC` | The session spend ceiling. The model can never raise it. |
-| `WAYFARER_ALLOW_DOMAINS` / `WAYFARER_DENY_DOMAINS` | Publisher allow/deny lists applied to **every paid tool** (`naulon_quote`, `naulon_pay_and_read`, `naulon_research`) — not just research. A stated `ALLOW_DOMAINS` *replaces* the single-gate identity pin, so one server can buy across many publishers. Blank/malformed reads as **unset** (no restriction); comma-separated hosts to allow. (Internally, a defined-but-empty allowlist denies all — a blank env var can only ever read as unset, never empty.) |
+| `WAYFARER_ALLOW_DOMAINS` / `WAYFARER_DENY_DOMAINS` | Publisher allow/deny lists applied to **every paid tool** (`naulon_quote`, `naulon_pay_and_read`, `naulon_research`) — not just research. A stated `WAYFARER_ALLOW_DOMAINS` *replaces* the single-gate identity pin, so one server can buy across many publishers. Blank/malformed reads as **unset** (no restriction); comma-separated hosts to allow. (Internally, a defined-but-empty allowlist denies all — a blank env var can only ever read as unset, never empty.) |
 | `WAYFARER_PER_DOMAIN_CAP` | Max paid reads per publisher per session. |
 | `WAYFARER_KILL_SWITCH` | Hard stop — refuse all spend. |
 

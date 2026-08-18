@@ -123,7 +123,7 @@ the EventSink — so a `record()` failure after settle still yields a valid rece
 verify (fail **closed** to the 402 path on any error, never 500, never free
 passthrough); require `naulon.slug === slugFromPath(path)` (post-decode),
 `aud===naulon:<thisHost>`, and `kind` covers the requested kind; if
-`LICENSES_ONLINE_CHECK`, consult the `jti` revocation seam. Valid → serve origin
+`LICENSE_ONLINE_CHECK`, consult the `jti` revocation seam. Valid → serve origin
 free with `X-Naulon-Verdict: agent reread (license)`.
 
 **Two verify tiers:** *offline* (fetch JWKS once, verify locally — O(1), trustless,

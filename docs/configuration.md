@@ -83,6 +83,8 @@ A few rules are enforced across variables rather than on one of them:
 The gate tells you a payment landed with a signed `settlement.completed` webhook.
 Contract: [settlement-notifications.md](./settlement-notifications.md).
 
+<!-- naulon-docs: deleted-names CREDITS_SETTLEMENT_SECRET -->
+
 There used to be a second wire here — a signed POST to
 `${ORIGIN_URL}/api/credits/settlement`, tuned by eleven `SETTLEMENT_*` variables. It
 is **deleted**, along with `CREDITS_SETTLEMENT_SECRET`. If your `.env` still sets any
