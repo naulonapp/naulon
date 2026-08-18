@@ -28,6 +28,8 @@ You run the toll proxy in front of a site.
 - **[crawler-policy.md](./crawler-policy.md)** — allow, charge or block per crawler,
   what the policy file may not say (humans read free), and how verified bot identity
   (Web Bot Auth) is checked.
+- **[crawl-adapters.md](./crawl-adapters.md)** — the crawl seam: implement the adapter
+  interface for your own CMS instead of forking the crawler, and conformance-test it.
 - **[DEPLOY.md](https://github.com/naulonapp/naulon/blob/main/DEPLOY.md)** — click-by-click to host the gate on Vercel +
   Supabase in front of a real site.
 

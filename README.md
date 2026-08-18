@@ -83,7 +83,7 @@ make demo        # the whole loop offline: origin → toll → agent pays → se
 
 To put a gate in front of your own site, `naulon init` asks a handful of
 questions and writes a coherent `.env` plus a starter `credits.json` — no
-hand-editing the 180-line example:
+hand-editing the full example:
 
 ```bash
 npx naulon init               # → .env + credits.json, then: make dev
@@ -235,7 +235,6 @@ A small npm-workspaces monorepo. Each piece is independent and runs on its own.
 | Package | What it does |
 |---|---|
 | [`tollgate`](./packages/tollgate) | The x402 reverse proxy: human/agent detection, the `402` challenge, payment verification, and the attributed-event log. |
-| [`shared`](./packages/shared) | Domain types, validated config, and the attribution + recursive-split algorithm (unit-tested). |
 | [`wayfarer`](./packages/wayfarer) | An autonomous research agent that decides which articles are worth paying to cite under a budget, then pays. |
 | [`attribution`](./packages/attribution) | Batches sub-cent tolls per wallet and settles author payouts (mock, or real Circle Gateway via `PAYMENT_MODE`). |
 | [`dashboard`](./packages/dashboard) | The operator console — gate health, live toll traffic, earnings, and config sanity (plus an opt-in public earnings page). |
@@ -270,6 +269,7 @@ flowchart TD
     dashboard --> sdk
     dashboard --> shared
     enforce --> shared
+    enforce --> sdk
     shared --> sdk
 ```
 
