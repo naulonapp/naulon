@@ -27,9 +27,16 @@
  *   • ahrefs.com — REAL directory (2 Ed25519 keys).
  *   • naulon.app — a live, signature-VALID directory (re-confirmed 2026-07-16), served
  *     under the apex; keyid BYljRezMWMjeJPiDfKtnznxXk9HwkWdhLR79i_9fuYI.
- *   • NOT publishing (as of 2026-07-04): anthropic.com/claude.ai/claude.com,
- *     perplexity.ai, google.com, bing.com, apple.com, meta.com, amazon.com,
- *     bytedance.com, commoncrawl.org, archive.org, semrush.com, duckduckgo.com.
+ *   • Re-probe 2026-08-18 — the list GREW, which is why the note above says to re-probe:
+ *     meta.com now serves a REAL directory (3 Ed25519 keys, correct content-type, via a
+ *     301 to www), so its three rows below carry the badge as of this date. you.com also
+ *     serves a REAL directory (1 key) — deliberately NOT given a row, because YouBot is
+ *     still in the "known gap" list above and a signer with no crawler row is nothing for
+ *     a publisher to act on. Add both together or neither.
+ *   • NOT publishing (re-probed 2026-08-18): anthropic.com/claude.com, perplexity.ai,
+ *     google.com, bing.com, apple.com, amazon.com, bytedance.com, duckduckgo.com,
+ *     cohere.com, brave.com, huggingface.co, cloudflare.com. (openai.com 404s — OpenAI's
+ *     directory is on chatgpt.com, which is the row we carry.)
  *     Re-probe when operators announce Web Bot Auth support.
  *
  * Operator-doc re-verification (2026-08-03) — every operator page re-read, which is how
@@ -92,7 +99,7 @@ export const CRAWLER_REGISTRY: RegistryCrawler[] = [
   { id: "ccbot", name: "CCBot", operator: "Common Crawl", fragment: "ccbot", category: "ai-training", defaultCharged: true },
   { id: "bytespider", name: "Bytespider", operator: "ByteDance", fragment: "bytespider", category: "ai-training", defaultCharged: true },
   { id: "applebot-extended", name: "Applebot-Extended", operator: "Apple", fragment: "applebot-extended", category: "ai-training", defaultCharged: true },
-  { id: "meta-external", name: "Meta-ExternalAgent", operator: "Meta", fragment: "meta-externalagent", category: "ai-training", defaultCharged: true },
+  { id: "meta-external", name: "Meta-ExternalAgent", operator: "Meta", fragment: "meta-externalagent", category: "ai-training", defaultCharged: true, directoryHost: "meta.com" },
   { id: "amazonbot", name: "Amazonbot", operator: "Amazon", fragment: "amazonbot", category: "ai-training", defaultCharged: true },
   // AI assistants (fetch on a user's behalf). User-triggered fetches are the
   // citation moment — machine-only UAs, charged by default since the 2026-07-03
@@ -109,7 +116,7 @@ export const CRAWLER_REGISTRY: RegistryCrawler[] = [
   // moment — is charged on the ordinary assistant rule, not this one.
   { id: "perplexitybot", name: "PerplexityBot", operator: "Perplexity", fragment: "perplexitybot", category: "ai-assistant", defaultCharged: true },
   { id: "perplexity-user", name: "Perplexity-User", operator: "Perplexity", fragment: "perplexity-user", category: "ai-assistant", defaultCharged: true },
-  { id: "meta-externalfetcher", name: "Meta-ExternalFetcher", operator: "Meta", fragment: "meta-externalfetcher", category: "ai-assistant", defaultCharged: true },
+  { id: "meta-externalfetcher", name: "Meta-ExternalFetcher", operator: "Meta", fragment: "meta-externalfetcher", category: "ai-assistant", defaultCharged: true, directoryHost: "meta.com" },
   { id: "amzn-user", name: "Amzn-User", operator: "Amazon", fragment: "amzn-user", category: "ai-assistant", defaultCharged: true },
   { id: "mistralai-user", name: "MistralAI-User", operator: "Mistral", fragment: "mistralai-user", category: "ai-assistant", defaultCharged: true },
   // naulon's own buy-side citing agent (the wayfarer). Not in the gate's KNOWN_AGENT_UA
@@ -125,7 +132,7 @@ export const CRAWLER_REGISTRY: RegistryCrawler[] = [
   { id: "bingbot", name: "Bingbot", operator: "Microsoft", fragment: "bingbot", category: "search", defaultCharged: false },
   { id: "duckduckbot", name: "DuckDuckBot", operator: "DuckDuckGo", fragment: "duckduckbot", category: "search", defaultCharged: false },
   { id: "applebot", name: "Applebot", operator: "Apple", fragment: "applebot", category: "search", defaultCharged: false },
-  { id: "meta-webindexer", name: "Meta-WebIndexer", operator: "Meta", fragment: "meta-webindexer", category: "search", defaultCharged: false },
+  { id: "meta-webindexer", name: "Meta-WebIndexer", operator: "Meta", fragment: "meta-webindexer", category: "search", defaultCharged: false, directoryHost: "meta.com" },
   { id: "amzn-searchbot", name: "Amzn-SearchBot", operator: "Amazon", fragment: "amzn-searchbot", category: "search", defaultCharged: false },
   // Archivers
   { id: "ia-archiver", name: "Internet Archive", operator: "Internet Archive", fragment: "ia_archiver", category: "archiver", defaultCharged: false },

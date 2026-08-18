@@ -223,6 +223,8 @@ Each endpoint gets a `Naulon-Signature: t=<unix>,v1=<hex>` header — HMAC-SHA25
 a no-op when the env is unset. Full contract:
 [settlement-notifications.md](./docs/settlement-notifications.md).
 
+<!-- naulon-docs: deleted-names CREDITS_SETTLEMENT_SECRET -->
+
 **This is the only settlement-notification path.** The gate used to *also* POST a
 signed settlement straight at the publisher's origin; that wire was deleted (WH-1 P3)
 along with `CREDITS_SETTLEMENT_SECRET` and the eleven `SETTLEMENT_*` knobs that tuned

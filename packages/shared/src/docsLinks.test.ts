@@ -115,14 +115,23 @@ function knownNames(): Set<string> {
   return out;
 }
 
+/** Every prose page we ship: docs/, the root pages, and each package's own README. */
+function allProsePages(): string[] {
+  const pkgs = readdirSync(`${REPO}packages`, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => `packages/${e.name}/README.md`)
+    .filter((r) => existsSync(`${REPO}${r}`));
+  return [...docFiles().map((f) => `docs/${f}`), "docs/README.md", "README.md", "DEPLOY.md", "CONTRIBUTING.md", ...pkgs];
+}
+
 test("no doc names an env var or constant nothing in the code defines", () => {
   const known = knownNames();
   const unknown: string[] = [];
-  for (const f of docFiles()) {
-    const body = readFileSync(`${DOCS}${f}`, "utf8");
+  for (const f of allProsePages()) {
+    const body = readFileSync(`${REPO}${f}`, "utf8");
     const tombstoned = tombstonedNames(body);
     for (const name of backtickedEnvNames(body)) {
-      if (!known.has(name) && !tombstoned.has(name)) unknown.push(`docs/${f} → ${name}`);
+      if (!known.has(name) && !tombstoned.has(name)) unknown.push(`${f} → ${name}`);
     }
   }
   assert.deepEqual(
