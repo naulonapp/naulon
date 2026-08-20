@@ -4,7 +4,7 @@
  * two buttons. Nothing here interprets a status; if the wording is wrong, it is wrong
  * on the server where it can be unit-tested.
  */
-import { $, esc, rel, emptyState, renderShell, setGate } from "./shell.js";
+import { $, esc, rel, emptyState, renderShell } from "./shell.js";
 
 renderShell({ active: "doctor" });
 
@@ -30,10 +30,6 @@ function renderChecks(report) {
       </div>
       <span class="badge ${esc(c.status)}">${esc(c.status)}</span>
     </div>`).join("");
-
-  // The gate check owns the rail's state on this page.
-  const gate = report.checks.find((c) => c.id === "gate");
-  if (gate) setGate(gate.status === "pass", gate.status === "pass" ? "gate up" : "gate down");
 }
 
 async function load() {

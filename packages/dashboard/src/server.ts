@@ -252,15 +252,31 @@ if (ACCESS.refuse) {
       await next();
     };
 
+    // The sidebar's gate pill, and nothing else. Every console page renders that pill, but
+    // only four of them used to fetch anything that carried gate health — so the other four
+    // painted it from whatever they DID know (their own SSE socket, their own fetch
+    // succeeding) and reported "settling live" beside a gate that was unreachable. One
+    // endpoint, one fact: the shell polls this and no page passes the rail a label again.
+    // Deliberately not /api/ops, which reads the whole observation log to answer it.
+    app.get("/api/gate", async (c) => c.json(await gateHealth()));
+
     app.get("/api/ops", async (c) => {
       const now = Date.now();
       const windowMs = windowMsFromKey(c.req.query("window"));
-      const [health, observations, config] = await Promise.all([
+      const [health, observations, config, settledEvents] = await Promise.all([
         gateHealth(),
         readObservations(),
         summarizeConfig(),
+        // The settlement plane, so the overview can distinguish a quiet window from an
+        // unrecorded one. Same list /api/ledger reads.
+        sink.readAll(),
       ]);
-      return c.json({ at: now, health, ops: summarizeOps(observations, now, windowMs), config });
+      return c.json({
+        at: now,
+        health,
+        ops: summarizeOps(observations, now, windowMs, undefined, settledEvents),
+        config,
+      });
     });
 
     // The traffic tail. Everything the Overview's six counters summarise, unrolled:

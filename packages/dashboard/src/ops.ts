@@ -30,6 +30,17 @@ export interface OpsSummary {
   earningsMissed: number;
   /** Newest-first, capped — the live request feed. */
   recent: ObservationEvent[];
+  /**
+   * What the SETTLEMENT ledger recorded in this same window — a different plane, read
+   * from the event sink rather than the observation log.
+   *
+   * It is here so the overview can tell "nothing happened" apart from "nothing was
+   * recorded". Those two look identical in `byVerdict` and mean opposite things: with
+   * `OBSERVATIONS_BACKEND` switched on mid-life, every crossing that settled before the
+   * switch is in the ledger and in no observation — so the counters honestly summed to
+   * zero while the Ledger page showed real money for the same hours.
+   */
+  settled: { crossings: number; usdc: number };
 }
 
 const zeroVerdicts = (): Record<ObservationVerdict, number> =>
@@ -52,6 +63,12 @@ export function summarizeOps(
   nowMs: number,
   windowMs = 24 * 3_600_000,
   recentLimit = 20,
+  /**
+   * Settled events (the other plane) — same list the Ledger page renders. Both fields are
+   * REQUIRED, so a rename in `AttributedEvent` fails the build here rather than silently
+   * filtering every row out and reporting a settlement plane that is always empty.
+   */
+  settledEvents: readonly { at: number; amount: number }[] = [],
 ): OpsSummary {
   const cutoff = nowMs - windowMs;
   const inWindow = observations.filter((o) => o.at >= cutoff);
@@ -80,6 +97,11 @@ export function summarizeOps(
 
   const recent = [...inWindow].sort((a, b) => b.at - a.at).slice(0, recentLimit);
 
+  // The settlement plane over the SAME window. An event with no `at` cannot be placed in
+  // a window, so it is left out rather than counted into whichever window is being asked
+  // for — an undated event is not evidence about these hours.
+  const settledInWindow = settledEvents.filter((e) => typeof e.at === "number" && e.at >= cutoff);
+
   return {
     windowMs,
     at: nowMs,
@@ -90,5 +112,9 @@ export function summarizeOps(
     earnings,
     earningsMissed,
     recent,
+    settled: {
+      crossings: settledInWindow.length,
+      usdc: settledInWindow.reduce((sum, e) => sum + e.amount, 0),
+    },
   };
 }

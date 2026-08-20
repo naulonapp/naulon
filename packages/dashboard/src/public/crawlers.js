@@ -7,7 +7,7 @@
  * Security: crawler fragments are operator-typed and round-trip from a file, so every
  * one goes through esc() before it touches innerHTML.
  */
-import { $, $$, esc, renderShell, setGate, wireSeg } from "./shell.js";
+import { $, $$, esc, renderShell, wireSeg, guardUnsaved } from "./shell.js";
 
 renderShell({ active: "crawlers" });
 
@@ -75,9 +75,14 @@ function renderCrawlers() {
     .map((cat) => {
       const rows = byCat.get(cat).map((c) => {
         const state = picks.get(c.fragment) ?? c.state;
+        // `aria-pressed` + a named group, because "on" is a CSS class and a screen reader
+        // cannot see one. Without these the grid announced as 104 buttons reading
+        // "default free charge block" twenty-six times over — no crawler name, no way to
+        // tell which state was selected on any row. The one group on this page that DID
+        // carry them ("Your own rules", via wireSeg) is why it read as a hand-rolled copy.
         const seg = STATES.map(
           (s) =>
-            `<button type="button" class="seg-btn${s === state ? " on" : ""}" data-frag="${esc(c.fragment)}" data-pick="${esc(s)}">${esc(STATE_LABEL[s])}</button>`,
+            `<button type="button" class="seg-btn${s === state ? " on" : ""}" aria-pressed="${s === state}" data-frag="${esc(c.fragment)}" data-pick="${esc(s)}">${esc(STATE_LABEL[s])}</button>`,
         ).join("");
         // The search caution is the one place this page argues with the operator: tolling
         // a search indexer deindexes the site, which is a bigger loss than the toll.
@@ -94,7 +99,7 @@ function renderCrawlers() {
             </div>
           </div>
           <div class="crawl-default">default: ${esc(DEFAULT_NOTE[c.defaultState])}</div>
-          <div class="seg crawl-seg">${seg}</div>
+          <div class="seg crawl-seg" role="group" aria-label="${esc(c.name)} policy">${seg}</div>
           ${caution}
         </div>`;
       }).join("");
@@ -152,10 +157,8 @@ async function load() {
     view = await r.json();
     picks = new Map();
     custom = view.custom.map((c) => ({ ...c }));
-    setGate(!!view.gate?.up, view.gate?.up ? "gate up" : "gate down");
     paint();
   } catch {
-    setGate(false, "dashboard offline");
     $("#notice").innerHTML = `<div class="banner pending">Could not read the crawler policy. The request that failed was <span class="mono">/api/crawlers</span>.</div>`;
   }
 }
@@ -206,7 +209,10 @@ $("#crawlers").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-pick]");
   if (!btn) return;
   picks.set(btn.dataset.frag, btn.dataset.pick);
-  for (const b of $$(`[data-frag="${CSS.escape(btn.dataset.frag)}"]`)) b.classList.toggle("on", b === btn);
+  for (const b of $$(`[data-frag="${CSS.escape(btn.dataset.frag)}"]`)) {
+    b.classList.toggle("on", b === btn);
+    b.setAttribute("aria-pressed", String(b === btn));
+  }
   renderCrawlers();
   counts();
   paintDirty();
@@ -252,5 +258,9 @@ $("#customFrag").addEventListener("keydown", (e) => {
   }
 });
 $("#saveBtn").addEventListener("click", save);
+
+// `picks` and `custom` live in memory until Save, so leaving discards them. Same guard
+// /content has always had; this page went without it.
+guardUnsaved(dirty);
 
 load();

@@ -11,7 +11,7 @@
  * author ids originate from crawled URLs and tenant config, so treat them as
  * untrusted — esc() from shell.js is the boundary.
  */
-import { $, esc, fmt6, trunc, rel, emptyState, renderShell, setGate, sse } from "./shell.js";
+import { $, esc, fmt6, trunc, rel, emptyState, renderShell, sse } from "./shell.js";
 
 const isOperatorPreview = location.pathname === "/ledger";
 renderShell({ active: "ledger", nav: isOperatorPreview });
@@ -111,8 +111,17 @@ function render(L) {
   firstPaint = false;
 }
 
+/**
+ * The stream's own state, reported ON the feed it drives — not in the sidebar. This used
+ * to paint the rail's gate pill "settling live", which is a claim about the GATE that a
+ * healthy socket cannot support: measured with the gate unreachable, this page showed a
+ * green rail while five others showed red, and nothing was settling at all.
+ */
 function setConn(ok) {
-  setGate(ok, ok ? "settling live" : "offline");
+  const el = $("#feedLive");
+  if (!el) return;
+  el.textContent = ok ? "live" : "reconnecting";
+  el.classList.toggle("stale", !ok);
 }
 
 const stream = sse("/api/stream", (_name, data) => { setConn(true); render(data); }, ["ledger"]);

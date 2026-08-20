@@ -118,3 +118,30 @@ test("windowMsFromKey falls back to 24h for unknown / missing keys", () => {
   assert.equal(windowMsFromKey("nonsense"), OPS_WINDOWS["24h"]);
   assert.equal(windowMsFromKey(""), OPS_WINDOWS["24h"]);
 });
+
+/**
+ * The settlement plane, carried on the ops summary so the overview can tell a QUIET window
+ * apart from an UNRECORDED one. `byVerdict` reports zero for both and they mean opposite
+ * things: with OBSERVATIONS_BACKEND switched on mid-life, everything that settled before
+ * the switch is in the ledger and in no observation. Measured before this existed: the
+ * overview read EARNED $0.000000 while /ledger read $0.039000 over the same hours.
+ */
+test("settled counts only events inside the window", () => {
+  const now = 1_700_000_000_000;
+  const hour = 3_600_000;
+  const s = summarizeOps([], now, 24 * hour, 20, [
+    { at: now - hour, amount: 0.005 },
+    { at: now - 2 * hour, amount: 0.001 },
+    { at: now - 40 * hour, amount: 9 }, // outside the 24h window
+  ]);
+  assert.equal(s.total, 0);
+  assert.equal(s.settled.crossings, 2);
+  assert.equal(Number(s.settled.usdc.toFixed(6)), 0.006);
+});
+
+test("no settled events means an honest zero, not a gap", () => {
+  const now = 1_700_000_000_000;
+  const s = summarizeOps([], now, 24 * 3_600_000);
+  assert.equal(s.settled.crossings, 0);
+  assert.equal(s.settled.usdc, 0);
+});

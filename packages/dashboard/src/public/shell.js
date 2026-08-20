@@ -278,21 +278,71 @@ export function renderShell({ active, nav = true }) {
     `<span class="brand-tile">${markSvg()}</span>` +
     `<span class="brand-word"><b>naulon</b><span class="brand-role">self-host</span></span></a>` +
     `<nav class="nav">${groups}</nav>` +
-    `<div class="rail"><span class="gate-state"><span class="dot off" id="gateDot"></span>` +
-    `<span id="gateState">checking gate</span></span>` +
-    `<a class="rail-link" href="https://naulon.app" target="_blank" rel="noopener">naulon cloud ↗</a></div>`;
+    // The gate pill is operator posture, so the PUBLIC earnings page does not get one: a
+    // visitor has no business reading whether this operator's gate is reachable, and there
+    // is no /api/gate mounted in that mode to answer it honestly anyway.
+    (nav
+      ? `<div class="rail"><span class="gate-state"><span class="dot off" id="gateDot"></span>` +
+        `<span id="gateState">checking gate</span></span>` +
+        `<a class="rail-link" href="https://naulon.app" target="_blank" rel="noopener">naulon cloud ↗</a></div>`
+      : `<div class="rail"><a class="rail-link" href="https://naulon.app" target="_blank" rel="noopener">naulon cloud ↗</a></div>`);
+
+  if (nav) startGateRail();
 }
 
 /**
- * Paint the rail's gate state. Every page owns a different source for it (the ops
- * poll, the SSE connection, the content fetch) but they all render it the same way,
- * so the rail never sits on its "checking gate" placeholder forever.
+ * The rail's ONE source of truth, owned here rather than by each page.
+ *
+ * It used to take a label from whatever the page happened to be fetching, and three pages
+ * had nothing to report but their own health: /ledger painted "settling live" off its SSE
+ * socket, /requests and /agents painted "recording traffic" off their own fetch. Measured
+ * with the gate down, those three showed a GREEN pill while the other five showed red —
+ * and "settling live" beside a dead gate is not a soft truth, it is the opposite of one.
+ * The four honest pages still spelled the same state four ways ("gate down — unreachable",
+ * "gate down", "gate unreachable").
+ *
+ * So: one poller, one endpoint, one vocabulary. A page that cannot reach the console's own
+ * API says so in its own #notice banner — that is a different fact from the gate's health
+ * and it already has a better home than four words in the sidebar.
  */
-export function setGate(up, label) {
+const GATE_POLL_MS = 15_000;
+let gateStarted = false;
+
+async function readGate() {
+  try {
+    const r = await fetch("/api/gate", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const h = await r.json();
+    // `detail` is gateHealth()'s own word for why — "unreachable", "timed out", "HTTP 502".
+    setGate(h.up === true, h.up === true ? "gate up" : `gate down — ${h.detail || "unreachable"}`);
+  } catch {
+    // The console could not answer for the gate, so the honest report is that we do not
+    // know — never "up", and never a red that blames the gate for the console's fault.
+    setGate(null, "gate state unknown");
+  }
+}
+
+function startGateRail() {
+  // `poll` already owns the interval + the pause-while-hidden behaviour every other
+  // repeating fetch here uses. Guarded because renderShell runs once per page, and a
+  // second poller would double the gate's /healthz load for nothing.
+  if (gateStarted) return;
+  gateStarted = true;
+  poll(readGate, GATE_POLL_MS);
+}
+
+/**
+ * Paint the rail. NOT exported — `startGateRail` is the only caller, which is the whole
+ * point: a page that can paint this can lie with it, and eight pages did.
+ *
+ * `up === null` means "we could not find out", which is a third state and must not read as
+ * either a healthy gate or a broken one.
+ */
+function setGate(up, label) {
   const dot = $("#gateDot");
   const text = $("#gateState");
   if (!dot || !text) return;
-  dot.classList.toggle("off", !up);
+  dot.classList.toggle("off", up !== true);
   dot.classList.toggle("bad", up === false);
   text.textContent = label;
 }
@@ -321,6 +371,29 @@ export function wireSeg(container, key, onPick) {
   for (const b of $$(`[data-${key}]`, container)) {
     b.setAttribute("aria-pressed", String(b.classList.contains("on")));
   }
+}
+
+/**
+ * Warn before a full-page unload while `isDirty()` says there are unsaved edits.
+ *
+ * Both write pages hold their pending change in memory until Save, so leaving the page
+ * discards it — the sidebar nav links and a closed tab are both full unloads. `/content`
+ * had this guard from the start; `/crawlers` did not, and had exactly the same shape
+ * (unsaved intent in a Map, an explicit Save, a restart-to-apply banner). Setting a
+ * crawler to `block`, clicking Agents, and coming back silently put it on `default`
+ * again, with no dialog — on the page you are likeliest to abandon mid-edit, because its
+ * last row sits 2,283px below its only Save.
+ *
+ * So it lives here rather than in either page: a third write surface gets it by calling
+ * one function, which is the only version of this that stays true.
+ */
+export function guardUnsaved(isDirty) {
+  window.addEventListener("beforeunload", (e) => {
+    if (!isDirty()) return;
+    e.preventDefault();
+    // Chrome/Safari still require the legacy assignment; the browser picks its own words.
+    e.returnValue = "";
+  });
 }
 
 /**

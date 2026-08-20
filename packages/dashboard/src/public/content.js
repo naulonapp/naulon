@@ -11,7 +11,7 @@
  * navigating away; the banner tells you whether the gate is serving your current
  * file or needs a restart to pick up your edits.
  */
-import { $, esc, emptyState, renderShell, setGate } from "./shell.js";
+import { $, esc, emptyState, renderShell, guardUnsaved } from "./shell.js";
 
 renderShell({ active: "content" });
 
@@ -40,8 +40,6 @@ function entryToRow(slug, entry) {
 
 async function load() {
   const d = await fetch("/api/content").then((r) => r.json());
-  // API mode reports no gate health (there is no local file to be in sync with).
-  setGate(d.apiMode ? null : !!(d.gate && d.gate.up), d.apiMode ? "credits via API" : d.gate && d.gate.up ? "gate up" : "gate down");
   if (d.apiMode) {
     setBanner("api");
     $("#rows").innerHTML = emptyState({
@@ -213,12 +211,6 @@ $("#scanBtn").addEventListener("click", scan);
 $("#saveBtn").addEventListener("click", requestSave);
 $("#addBtn").addEventListener("click", () => { rows.push({ slug: "", author: "", wallet: "", locked: false, isNew: true }); markDirty(); render(); });
 
-// Unsaved-changes guard — don't lose wallet edits by navigating away (the nav
-// links and a closed tab are both full-page unloads).
-window.addEventListener("beforeunload", (e) => {
-  if (!dirty) return;
-  e.preventDefault();
-  e.returnValue = "";
-});
+guardUnsaved(() => dirty);
 
 load();

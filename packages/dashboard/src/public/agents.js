@@ -5,7 +5,7 @@
  * Security: agent keys are caller-controlled (a raw User-Agent, when unsigned). Every
  * one goes through esc() from shell.js before it touches innerHTML.
  */
-import { $, esc, usd, emptyState, renderShell, setGate, poll, wireSeg, debounced } from "./shell.js";
+import { $, esc, usd, emptyState, renderShell, poll, wireSeg, debounced } from "./shell.js";
 
 renderShell({ active: "agents" });
 
@@ -96,10 +96,8 @@ async function tick() {
     const d = await r.json();
     renderSplit(d.split || { total: 0, verified: 0, unsigned: 0, masquerade: 0 });
     renderAgents(d.agents || []);
-    setGate(true, "recording traffic");
     $("#notice").innerHTML = "";
   } catch {
-    setGate(false, "dashboard offline");
     $("#notice").innerHTML = `<div class="banner pending">Could not read the traffic log. The console is up; the request that failed was <span class="mono">/api/agents</span>.</div>`;
   }
 }

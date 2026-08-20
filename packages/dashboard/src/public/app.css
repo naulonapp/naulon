@@ -182,6 +182,10 @@ body {
    Kept in the markup as a zero-width no-op so every page need not be re-cut. */
 .section-head .rule { display: none; }
 .section-head .n { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted-fg); }
+/* A live feed whose socket has dropped still says "live" unless something changes the
+   word. `.stale` is that word changing — warning, not error: the rows on screen are
+   still true, they have just stopped arriving. */
+.section-head .n.stale { color: var(--warning); }
 
 .cols { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; align-items: start; }
 
