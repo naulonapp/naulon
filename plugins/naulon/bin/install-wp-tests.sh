@@ -52,6 +52,17 @@ if [ "$WP_VERSION" = "latest" ]; then
 fi
 say "WordPress $WP_VERSION"
 
+# The two sources do NOT spell a release the same way, and the difference only appears on an
+# x.y.0 release. wordpress.org serves "wordpress-7.1.tar.gz"; wordpress-develop tags the same
+# release "7.1.0". Using one string for both worked for every 7.0.x and 404'd the day 7.1
+# shipped, reddening plugin-integration on every PR — core downloaded fine, the test library
+# did not. So the tag gets its own variable, normalised to three components.
+case "$WP_VERSION" in
+	*.*.*) WP_TESTS_TAG="$WP_VERSION" ;;
+	*.*)   WP_TESTS_TAG="${WP_VERSION}.0" ;;
+	*)     WP_TESTS_TAG="$WP_VERSION" ;;
+esac
+
 fetch_tarball() {
 	local url=$1 dest=$2 strip=$3 subpath=${4:-}
 	local tmp
@@ -78,8 +89,8 @@ if [ ! -d "$WP_TESTS_DIR/includes" ]; then
 	# wordpress-develop carries the suite at tests/phpunit; includes/ is the framework and data/ is
 	# the fixture set several of its cases load.
 	fetch_tarball \
-		"https://github.com/WordPress/wordpress-develop/archive/refs/tags/${WP_VERSION}.tar.gz" \
-		"$WP_TESTS_DIR" 3 "wordpress-develop-${WP_VERSION}/tests/phpunit"
+		"https://github.com/WordPress/wordpress-develop/archive/refs/tags/${WP_TESTS_TAG}.tar.gz" \
+		"$WP_TESTS_DIR" 3 "wordpress-develop-${WP_TESTS_TAG}/tests/phpunit"
 else
 	say "test library already present in $WP_TESTS_DIR"
 fi
