@@ -280,7 +280,49 @@ export function renderShell({ active, nav = true }) {
     `<nav class="nav">${groups}</nav>` +
     `<div class="rail"><span class="gate-state"><span class="dot off" id="gateDot"></span>` +
     `<span id="gateState">checking gate</span></span>` +
+    `<span id="who"></span>` +
     `<a class="rail-link" href="https://naulon.app" target="_blank" rel="noopener">naulon cloud ↗</a></div>`;
+
+  if (nav) renderWho();
+}
+
+/**
+ * Fill the rail's identity slot.
+ *
+ * Sign-in shipped without this and the account surface was unreachable from the product:
+ * an operator who signed in had no way to sign out, change their password or add a
+ * colleague from any of the eight console pages — `/account` existed only if you knew to
+ * type it. A credential you cannot revoke from the UI that made you use it is the dead end
+ * this fixes.
+ *
+ * Rendered async and failure-silent: the console's job is the gate, and an identity rail
+ * that cannot load must never be the reason a page looks broken.
+ */
+async function renderWho() {
+  const host = $("#who");
+  if (!host) return;
+  try {
+    const res = await fetch("/api/session", { headers: { Accept: "application/json" } });
+    if (!res.ok) return;
+    const me = await res.json();
+    if (me.authenticated) {
+      // The role subscript is dropped when it repeats the username, which is the DEFAULT
+      // self-host case: CONSOLE_ADMIN_USERNAME is `admin` and its role is `admin`, so the
+      // rail read "admin admin". Same call the plan tag makes for a self-named tier
+      // (pricing-sync.md, SELF_NAMED) — a subscript that repeats the label says nothing.
+      const role = me.role && me.role.toLowerCase() !== me.username.toLowerCase() ? me.role : "";
+      host.innerHTML =
+        `<a class="rail-link" href="/account" title="Account, operators and sign out">` +
+        `${esc(me.username)}${role ? ` <span class="who-role">${esc(role)}</span>` : ""}</a>`;
+    } else if (!me.hasAccounts) {
+      // The private console: it serves the box owner with no login, which is correct and
+      // documented — but nothing in the UI ever said sign-in exists. The boot log did, and
+      // nobody reads a boot log twice.
+      host.innerHTML = `<a class="rail-link" href="/setup">set up sign-in</a>`;
+    }
+  } catch {
+    /* offline or mid-restart — the rail simply stays empty */
+  }
 }
 
 /**

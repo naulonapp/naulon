@@ -14,6 +14,8 @@
  *   printf %s "$PW" | npm run hash -w @naulon/dashboard
  */
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { hashPassword } from "./credential.ts";
 
 function readPiped(): Promise<string> {
@@ -50,15 +52,35 @@ function prompt(question: string): Promise<string> {
   });
 }
 
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+export interface HashArgs {
+  username: string | undefined;
+  /** The password, when given on the command line. Undefined means prompt or read a pipe. */
+  password: string | undefined;
+}
+
+/**
+ * Split argv. Extracted so it can be tested, because it silently lost the password:
+ * `userIdx + 1` is the index of the username after `--user`, but with no `--user` at all
+ * `indexOf` returns -1 and the filter excluded index 0 — the password itself. The command
+ * then read an empty stdin and refused a 22-character password as "at least 12
+ * characters", naming the wrong cause. Measured 2026-08-21.
+ */
+export function parseHashArgs(args: readonly string[]): HashArgs {
   const userIdx = args.indexOf("--user");
-  const username = userIdx >= 0 ? args[userIdx + 1] : undefined;
-  const positional = args.filter((a, i) => !a.startsWith("--") && i !== userIdx + 1);
+  const usernameIdx = userIdx >= 0 ? userIdx + 1 : -1;
+  const positional = args.filter((a, i) => !a.startsWith("--") && i !== usernameIdx);
+  return {
+    username: userIdx >= 0 ? args[usernameIdx] : undefined,
+    password: positional[0],
+  };
+}
+
+async function main(): Promise<void> {
+  const { username, password: fromArgs } = parseHashArgs(process.argv.slice(2));
 
   let password: string;
-  if (positional.length > 0) {
-    password = positional[0] ?? "";
+  if (fromArgs !== undefined) {
+    password = fromArgs;
     process.stderr.write("warning: the password was passed as an argument — it is in your shell history.\n");
   } else if (!process.stdin.isTTY) {
     password = await readPiped();
@@ -85,4 +107,12 @@ async function main(): Promise<void> {
   process.stdout.write(username ? `DASHBOARD_AUTH=${username}:${phc}\n` : `${phc}\n`);
 }
 
-await main();
+/**
+ * Only when RUN, never when imported. `await main()` at module scope meant that importing
+ * anything from this file executed the CLI — a test that imports `parseHashArgs` sat
+ * waiting on stdin until it was killed. A module with a side effect at import time cannot
+ * be tested, and anything that cannot be tested is where the next bug lives; this one
+ * already shipped a defect (see parseHashArgs).
+ */
+const invokedDirectly = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) await main();

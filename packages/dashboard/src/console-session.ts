@@ -101,6 +101,7 @@ export async function createSession(
   store: ConsoleStore,
   userId: string,
   ctx: SessionContext = {},
+  lifetimes: SessionLifetimes = DEFAULT_LIFETIMES,
 ): Promise<IssuedSession> {
   const token = randomBytes(TOKEN_BYTES).toString("base64url");
   const stamp = (ctx.now?.() ?? new Date()).toISOString();
@@ -114,6 +115,18 @@ export async function createSession(
     ...(ctx.userAgent ? { userAgent: ctx.userAgent.slice(0, 200) } : {}),
   };
   await store.update((draft) => {
+    // Sweep here, and only here. Sessions were previously removed only when a token was
+    // presented again after expiry, on logout, or on disable — so a browser closed without
+    // signing out left its row forever. Measured 2026-08-21: six sign-ins, six rows, none
+    // reclaimed. That is the "why is this file 40 MB" bug this store's own comment says it
+    // was avoiding, and every request pays for it, because `read()` clones the array.
+    //
+    // Creation is the right moment: it is exactly when the array grows, it is already
+    // under the lock, and it costs no extra write.
+    const at = (ctx.now?.() ?? new Date()).getTime();
+    draft.sessions = draft.sessions.filter(
+      (s) => at < Date.parse(s.lastSeenAt) + lifetimes.idleMs && at < Date.parse(s.createdAt) + lifetimes.absoluteMs,
+    );
     draft.sessions.push(session);
   });
   return { token, session };
