@@ -17,8 +17,8 @@
  *   - `data/events.jsonl` already forces the operator to mount a volume. If they have no
  *     volume they have no ledger either, so sessions are not the thing they lost.
  *
- * It stays behind an interface for one reason beyond testing: naulon-cloud can eventually
- * supply a store that delegates to the hosted portal (the shape Netdata uses — the agent
+ * It stays behind an interface for one reason beyond testing: a hosted control plane can
+ * eventually supply a store that delegates to it (the shape Netdata uses — the agent
  * redirects to the Cloud for identity and inherits its roles), and that must be possible
  * WITHOUT forking this console. The seam is public, the hosted implementation is private:
  * the same one-way dependency the rest of the project runs on.

@@ -7,9 +7,9 @@
  * login page and nothing else.
  *
  * Append-only JSONL beside the event ledger, same shape discipline as the gate's own
- * `events.jsonl`: one self-describing record per line, never rewritten. naulon-cloud has
- * a much larger version of this idea (`src/audit-log/`, with retention and DSR export)
- * and this deliberately does NOT try to be it — the private control plane audits many
+ * `events.jsonl`: one self-describing record per line, never rewritten. A hosted control
+ * plane built on this core has a much larger version of the idea (retention, DSR export)
+ * and this deliberately does NOT try to be it — such a plane audits many
  * tenants and must answer subject-access requests; a self-host console needs a log its
  * owner can `tail`.
  *

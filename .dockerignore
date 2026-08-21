@@ -1,0 +1,34 @@
+# What never enters the image. This file is load-bearing in a way the Dockerfile is
+# not: the image is PUBLISHED, so anything copied in is copied to everyone who pulls
+# it. `.env` is first for that reason — it is gitignored, so nothing else in this repo
+# stops a local secret riding into a public layer.
+.env
+.env.*
+!.env.example
+
+# Built on the host for the host. A darwin/arm64 tree copied into a linux image is at
+# best dead weight and at worst a native module that cannot load.
+node_modules
+**/node_modules
+
+.git
+.github
+.gitignore
+
+# Runtime state, not source. A ledger baked into the image would ship one operator's
+# traffic to every other operator.
+data
+*.jsonl
+console.json
+
+# Test and docs weight the runtime never reads.
+**/*.test.ts
+plugins
+docs
+examples
+site
+_release
+_wp
+tsconfig.tsbuildinfo
+.DS_Store
+.superpowers

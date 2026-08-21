@@ -18,7 +18,7 @@
  * up"), reached without their breaking change.
  *
  * `resolvePrincipal` is one step, run once per request, and every route reads its result
- * — the same shape naulon-cloud uses for its BFFs (`src/principal.ts`), for the same
+ * — the same shape a hosted control plane built on this core uses for its own APIs, for the same
  * reason: an authorization decision spread across handlers is one handler away from being
  * wrong.
  */
