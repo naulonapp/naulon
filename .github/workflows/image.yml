@@ -16,9 +16,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Extra tag to publish (e.g. edge). latest is always updated."
-        required: false
-        default: ""
+        # `latest` is deliberately NOT offered here: it means "the current release", and a
+        # dispatch builds whatever a branch happens to hold. Default `edge` so a dispatch
+        # always produces a tag — with no tag computed, the push below fails at the very
+        # end of a ~10-minute emulated build.
+        description: "Tag to publish for this build (`latest` is reserved for releases)"
+        required: true
+        default: "edge"
 
 permissions:
   contents: read
@@ -52,6 +56,17 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+
+      # Every tag above is conditional, so "no tags at all" is reachable — and a push with
+      # no tags fails inside build-push-action after the whole multi-arch build has run.
+      # Cheaper to refuse in a second, here, than to pay for the build and find out.
+      - name: A build with no tag would push nothing
+        run: |
+          test -n "${{ steps.meta.outputs.tags }}" || {
+            echo "::error::no tag was computed for ${{ github.ref }} — nothing to publish"
+            exit 1
+          }
+          echo "publishing:"; echo "${{ steps.meta.outputs.tags }}"
 
       # Native amd64 only, loaded into the runner's docker rather than pushed. The point
       # is the smoke test below: an image that cannot boot must not reach the registry,
