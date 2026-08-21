@@ -77,8 +77,23 @@ jobs:
           fi
           echo "previous tag: $prev"
 
-          if git diff --quiet "$prev" "${GITHUB_REF_NAME}" -- plugins/naulon/; then
-            echo "plugins/naulon/ unchanged since $prev — the version may legitimately stand still"
+          # Compare only what a SITE receives. `.distignore` is the same list the release
+          # zip is built from a few steps below, so the guard and the artifact cannot
+          # disagree about what "the plugin" is — one owner, the way the npm half already
+          # excludes test files it does not ship. Without this, touching
+          # plugins/naulon/bin/install-wp-tests.sh (a CI harness, excluded from the zip)
+          # demanded a version bump, which would offer every installed site an update
+          # containing nothing. A guard that asks for a meaningless bump stops being read.
+          excl=()
+          while IFS= read -r line; do
+            line="${line%%#*}"
+            line="$(printf '%s' "$line" | tr -d '[:space:]')"
+            [ -n "$line" ] || continue
+            excl+=( ":(exclude)plugins/naulon/${line#/}" )
+          done < plugins/naulon/.distignore
+
+          if git diff --quiet "$prev" "${GITHUB_REF_NAME}" -- plugins/naulon/ "${excl[@]}"; then
+            echo "nothing that ships changed since $prev — the version may legitimately stand still"
             exit 0
           fi
 
