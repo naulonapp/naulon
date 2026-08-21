@@ -12,6 +12,7 @@ import { checkMain } from "./check.ts";
 import { initMain } from "./init.ts";
 import { doctorMain } from "./doctor.ts";
 import { crawlMain } from "./crawl.ts";
+import { selftestMain } from "./selftest.ts";
 
 const HELP = `naulon — the citation-toll setup CLI
 
@@ -21,6 +22,7 @@ commands:
   init     set up a gate: writes .env + a starter credits.json  (--yes for non-interactive)
   crawl    draft credits.json from your own origin (WordPress/RSS/sitemap)  (--dry-run)
   doctor   health-check your own gate (env + credits + live human/agent probe)
+  selftest drive one whole toll through your gate: quote → pay → read → licence → replay
   check    conformance-check a publisher's /credits endpoint     (baseUrl --slug <s>)
 
 run \`naulon <command> --help\` for command options.`;
@@ -34,6 +36,8 @@ async function main(): Promise<number> {
       return crawlMain(rest);
     case "doctor":
       return doctorMain(rest);
+    case "selftest":
+      return selftestMain(rest);
     case "check":
       return checkMain(rest);
     case undefined:
