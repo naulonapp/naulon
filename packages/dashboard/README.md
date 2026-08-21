@@ -1,12 +1,24 @@
 # @naulon/dashboard
 
-The operator console — a read-only window onto a running gate: is it up, who's
-being served or blocked, what's settling, and is the config sane.
+The operator console — a window onto a running gate: is it up, who's being served
+or blocked, what's settling, and is the config sane.
 
-You don't configure anything here; you watch. It reads the gate's observation log
+Most of it is a read-out. It reads the gate's observation log
 (`OBSERVATIONS_BACKEND=jsonl`) and event ledger and renders health, live toll
 traffic (served free / denied / paid), settlement earnings, and a config-sanity
 panel — enough to confirm your proxy is actually working.
+
+**Three pages write to disk**, and they are the reason the exposure section below
+matters as much as it does:
+
+| Page | Writes | What it decides |
+|---|---|---|
+| Content | `credits.json` | who gets paid, and which articles are tollable |
+| Crawlers | the crawler policy file | which bots read free, pay, or are refused |
+| Webhooks | nothing — endpoints come from env | (it can queue a test ping / a resend) |
+
+A write is validated server-side and takes effect when the gate restarts; it never
+settles, spends, or moves money by itself.
 
 ## Run
 
@@ -35,7 +47,8 @@ Full guide: [docs/operating.md](../../docs/operating.md).
 
 ## What's inside
 
-- **`server.ts` / `access.ts`** — the read-only server and the exposure guard.
+- **`server.ts` / `access.ts`** — the server and the exposure guard. Every
+  state-changing route is POST, behind the same-origin (CSRF) check.
 - **`aggregate.ts` / `observations.ts` / `ops.ts`** — earnings, traffic, health rollups.
 - **`config-view.ts` / `content.ts`** — the config-sanity and content panels.
 

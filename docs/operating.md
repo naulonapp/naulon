@@ -3,7 +3,9 @@
 You run `naulon` as a reverse proxy in front of your site. Humans pass through
 free; machines pay to read or cite. The **operator console** is how you see that
 happening: is the gate up, who's being served or blocked, what's settling, and is
-your config right. It's read-only — you don't configure anything here, you watch.
+your config right. Most of it is a read-out; the Content and Crawlers pages write
+to disk (your payout mapping and your crawler policy), which is why the exposure
+rules below are strict.
 
 Start it alongside the gate:
 

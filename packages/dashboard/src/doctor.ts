@@ -202,7 +202,25 @@ export function buildChecks(i: DoctorInput): Check[] {
   );
 
   // 8. Edits on disk that the running gate has not read.
-  if (i.restartPending) {
+  //
+  //    `restartPending` is FALSE when the gate is down — correct for its own question
+  //    (nothing can be behind a boot that never happened), and wrong to render as a pass.
+  //    It did: with the gate unreachable this panel showed "The gate is up — FAIL — No
+  //    answer from the gate" six rows above "The gate is serving your current credits —
+  //    PASS". A gate that is not answering is not serving anything.
+  //
+  //    Same shape as check 2's "Not probed." rather than a fourth status: unknowable is a
+  //    warn with no `fix`, because check 1 already carries the remedy and repeating it is
+  //    how this panel once counted one outage twice.
+  if (!i.health.up) {
+    checks.push({
+      id: "restart",
+      label: "The gate is serving your current credits",
+      status: "warn",
+      detail: "Not checkable — the gate is not answering, so it is serving nothing.",
+      fix: "",
+    });
+  } else if (i.restartPending) {
     checks.push({
       id: "restart",
       label: "The gate is serving your current credits",

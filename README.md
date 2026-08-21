@@ -212,9 +212,11 @@ heuristic.
 npm run dashboard                         # http://localhost:8403
 ```
 
-Your read-only window onto the gate: health, live toll traffic (served free /
-denied / paid), settlement earnings, and a config-sanity panel — so you can see
-your proxy actually working. It reads the gate's observation log (set
+Your window onto the gate: health, live toll traffic (served free / denied /
+paid), settlement earnings, and a config-sanity panel — so you can see your proxy
+actually working. Two of its pages also write: Content edits `credits.json` (who
+gets paid) and Crawlers edits the crawler policy (who reads free, pays, or is
+refused). It reads the gate's observation log (set
 `OBSERVATIONS_BACKEND=jsonl`) and event ledger. Private on `127.0.0.1` by default;
 making it reachable at all — a wider bind, a reverse proxy, or a serverless deploy —
 needs `DASHBOARD_AUTH`, and `DASHBOARD_PUBLIC=true` serves only a masked public
@@ -471,8 +473,13 @@ The gate is built to sit on the public internet in front of a real site:
   through a strict schema before any wallet becomes a `payTo` — a malformed or
   hostile credits source is rejected, not settled
   ([`shared/credits.ts`](./packages/shared/src/credits.ts)).
-- **Dashboard exposure.** The operator console is read-only but shows wallets,
-  earnings, and traffic, so exposure is deliberate. It binds `127.0.0.1` by default
+- **Dashboard exposure.** The operator console shows wallets, earnings and traffic,
+  **and it writes** — the Content page rewrites `credits.json` (who gets paid) and
+  the Crawlers page rewrites the crawler policy (whether a bot is charged at all).
+  Treat access to it as access to your payout configuration, not as a read-only
+  leak. Every state-changing route is a POST behind a same-origin check, so a third
+  party's page cannot drive it; a credential that reaches it can. Exposure is
+  therefore deliberate. It binds `127.0.0.1` by default
   (private). Make it reachable — a wide bind, or a non-loopback name in
   `DASHBOARD_ALLOWED_HOSTS`, which is how a reverse proxy and a serverless deploy
   both announce themselves — and it **requires** `DASHBOARD_AUTH=user:pass` (HTTP

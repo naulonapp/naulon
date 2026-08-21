@@ -18,7 +18,7 @@
         <div>
           <p class="eyebrow">Self-hosted gate</p>
           <h1 class="page-title">Your gate</h1>
-          <p class="page-sub">One box, one origin. Humans read free; machines pay to read and cite. This console is read-only — articles, wallets and prices come from your credits source and env.</p>
+          <p class="page-sub">One box, one origin. Humans read free; machines pay to read and cite. Traffic and earnings here are a read-out; the three pages under Config write to disk, and the gate picks them up when it restarts.</p>
         </div>
         <!-- The freshness label comes FIRST on purpose. This row is pinned to the right
              edge, so the width of its LAST child decides where every earlier child sits —
@@ -37,6 +37,8 @@
           <button id="tollBtn" class="btn">Test toll</button>
         </div>
       </div>
+
+      <div id="notice" aria-live="polite"></div>
 
       <section class="stat-strip" id="tiles" aria-live="polite">
         <div class="stat"><div class="stat-k">served free</div><div class="stat-v" id="tHumans">—</div><div class="stat-sub">humans + allowed crawlers</div></div>

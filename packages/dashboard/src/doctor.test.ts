@@ -217,3 +217,29 @@ test("warnings alone read as working-but-worth-a-look", () => {
   const cs = buildChecks({ ...HEALTHY, paymentMode: "mock" });
   assert.match(headlineFor(cs), /Everything essential is working/);
 });
+
+/**
+ * The gate-down case for check 8. `restartPending` is false when the gate is down — a
+ * correct answer to "is the file newer than the boot?" and a false one to "is the gate
+ * serving your credits?", which is the sentence the operator reads. It rendered PASS six
+ * rows under check 1's FAIL, in the same panel, in the same request.
+ */
+test("check 8 does not call the gate healthy while check 1 calls it dead", () => {
+  const cs = buildChecks({ ...HEALTHY, health: { up: false, detail: "unreachable" }, restartPending: false });
+  assert.equal(byId(cs, "gate").status, "fail");
+  const restart = byId(cs, "restart");
+  assert.notEqual(restart.status, "pass");
+  assert.ok(
+    !/no pending edits/i.test(restart.detail),
+    "a dead gate cannot report that it is serving the current credits",
+  );
+  // Check 1 owns the remedy; repeating it here is how one outage got counted twice.
+  assert.equal(restart.fix, "");
+});
+
+test("check 8 still reports a real pending restart when the gate IS up", () => {
+  const cs = buildChecks({ ...HEALTHY, restartPending: true });
+  const c = byId(cs, "restart");
+  assert.equal(c.status, "warn");
+  assert.match(c.fix, /Restart the gate/);
+});

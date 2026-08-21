@@ -226,6 +226,56 @@ export function emptyState({ icon, lead, body = "", foot = "" }) {
   );
 }
 
+// ── the test toll ─────────────────────────────────────────────────────────────
+/**
+ * The "Test toll" control: ask the gate to bill itself, and report what came back.
+ *
+ * Two pages mount it — Overview, where a fresh install is told to prove the toll works,
+ * and Doctor, where it is one check among several. It shipped as two copies of the same
+ * function that had already drifted apart in shape, which is the whole argument for it
+ * living here: a probe that reports a failure differently depending on which page you
+ * ran it from teaches the reader two things about one gate.
+ *
+ * No-ops when the page mounts no control, so a page opts in by rendering the two ids.
+ */
+export function wireTestToll() {
+  const btn = $("#tollBtn");
+  const out = $("#tollOut");
+  if (!btn || !out) return;
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "probing…";
+    out.innerHTML = "";
+    try {
+      const res = await fetch("/api/test-toll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      const p = await res.json();
+      // skipped is neither pass nor fail — it is "this install has nothing to probe yet",
+      // so it gets the neutral tone rather than being painted as a problem.
+      const tone = p.status === "pass" ? "synced" : p.status === "skipped" ? "" : "pending";
+      const meta = !p.url
+        ? ""
+        : `<div class="toll-meta"><span class="mono">GET ${esc(p.url)}</span>` +
+          (p.httpStatus ? ` → <span class="mono">${esc(p.httpStatus)}</span>` : "") +
+          (p.verdict ? ` · <span class="mono">${esc(p.verdict)}</span>` : "") +
+          ` · ${esc(p.elapsedMs)}ms</div>`;
+      out.innerHTML =
+        `<div class="banner ${tone}"><b>${esc(p.summary)}</b>` +
+        (p.fix ? `<div class="toll-fix">${esc(p.fix)}</div>` : "") +
+        meta +
+        `</div>`;
+    } catch (e) {
+      out.innerHTML = `<div class="banner pending"><b>${esc(e.message)}</b></div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Test toll";
+    }
+  });
+}
+
 // ── the sidebar ───────────────────────────────────────────────────────────────
 /** Nav groups, in order. `null` group = ungrouped, rendered above the first label. */
 export const NAV = [
@@ -278,14 +328,23 @@ export function renderShell({ active, nav = true }) {
     `<span class="brand-tile">${markSvg()}</span>` +
     `<span class="brand-word"><b>naulon</b><span class="brand-role">self-host</span></span></a>` +
     `<nav class="nav">${groups}</nav>` +
-    `<div class="rail"><span class="gate-state"><span class="dot off" id="gateDot"></span>` +
-    `<span id="gateState">checking gate</span></span>` +
-    `<span id="who"></span>` +
+    // Operator posture is not public. The PUBLIC earnings page gets no gate pill: a visitor
+    // has no business reading whether this operator's gate is reachable, and `/api/gate` is
+    // not mounted in that mode to answer it honestly anyway. The theme control is not
+    // posture, so it stays on both.
+    `<div class="rail">` +
+    (nav
+      ? `<span class="gate-state"><span class="dot off" id="gateDot"></span>` +
+        `<span id="gateState">checking gate</span></span><span id="who"></span>`
+      : "") +
     `<button type="button" class="rail-link theme-btn" id="themeBtn" aria-live="polite"></button>` +
     `<a class="rail-link" href="https://naulon.app" target="_blank" rel="noopener">naulon cloud ↗</a></div>`;
 
   wireTheme();
-  if (nav) renderWho();
+  if (nav) {
+    startGateRail();
+    renderWho();
+  }
 }
 
 /** What the toggle says it is showing, per preference. "system" names what it resolved to,
@@ -354,19 +413,61 @@ async function renderWho() {
     }
   } catch {
     /* offline or mid-restart — the rail simply stays empty */
+  }}
+
+/**
+ * The rail's ONE source of truth, owned here rather than by each page.
+ *
+ * It used to take a label from whatever the page happened to be fetching, and three pages
+ * had nothing to report but their own health: /ledger painted "settling live" off its SSE
+ * socket, /requests and /agents painted "recording traffic" off their own fetch. Measured
+ * with the gate down, those three showed a GREEN pill while the other five showed red —
+ * and "settling live" beside a dead gate is not a soft truth, it is the opposite of one.
+ * The four honest pages still spelled the same state four ways ("gate down — unreachable",
+ * "gate down", "gate unreachable").
+ *
+ * So: one poller, one endpoint, one vocabulary. A page that cannot reach the console's own
+ * API says so in its own #notice banner — that is a different fact from the gate's health
+ * and it already has a better home than four words in the sidebar.
+ */
+const GATE_POLL_MS = 15_000;
+let gateStarted = false;
+
+async function readGate() {
+  try {
+    const r = await fetch("/api/gate", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const h = await r.json();
+    // `detail` is gateHealth()'s own word for why — "unreachable", "timed out", "HTTP 502".
+    setGate(h.up === true, h.up === true ? "gate up" : `gate down — ${h.detail || "unreachable"}`);
+  } catch {
+    // The console could not answer for the gate, so the honest report is that we do not
+    // know — never "up", and never a red that blames the gate for the console's fault.
+    setGate(null, "gate state unknown");
   }
 }
 
+function startGateRail() {
+  // `poll` already owns the interval + the pause-while-hidden behaviour every other
+  // repeating fetch here uses. Guarded because renderShell runs once per page, and a
+  // second poller would double the gate's /healthz load for nothing.
+  if (gateStarted) return;
+  gateStarted = true;
+  poll(readGate, GATE_POLL_MS);
+}
+
 /**
- * Paint the rail's gate state. Every page owns a different source for it (the ops
- * poll, the SSE connection, the content fetch) but they all render it the same way,
- * so the rail never sits on its "checking gate" placeholder forever.
+ * Paint the rail. NOT exported — `startGateRail` is the only caller, which is the whole
+ * point: a page that can paint this can lie with it, and eight pages did.
+ *
+ * `up === null` means "we could not find out", which is a third state and must not read as
+ * either a healthy gate or a broken one.
  */
-export function setGate(up, label) {
+function setGate(up, label) {
   const dot = $("#gateDot");
   const text = $("#gateState");
   if (!dot || !text) return;
-  dot.classList.toggle("off", !up);
+  dot.classList.toggle("off", up !== true);
   dot.classList.toggle("bad", up === false);
   text.textContent = label;
 }
@@ -395,6 +496,29 @@ export function wireSeg(container, key, onPick) {
   for (const b of $$(`[data-${key}]`, container)) {
     b.setAttribute("aria-pressed", String(b.classList.contains("on")));
   }
+}
+
+/**
+ * Warn before a full-page unload while `isDirty()` says there are unsaved edits.
+ *
+ * Both write pages hold their pending change in memory until Save, so leaving the page
+ * discards it — the sidebar nav links and a closed tab are both full unloads. `/content`
+ * had this guard from the start; `/crawlers` did not, and had exactly the same shape
+ * (unsaved intent in a Map, an explicit Save, a restart-to-apply banner). Setting a
+ * crawler to `block`, clicking Agents, and coming back silently put it on `default`
+ * again, with no dialog — on the page you are likeliest to abandon mid-edit, because its
+ * last row sits 2,283px below its only Save.
+ *
+ * So it lives here rather than in either page: a third write surface gets it by calling
+ * one function, which is the only version of this that stays true.
+ */
+export function guardUnsaved(isDirty) {
+  window.addEventListener("beforeunload", (e) => {
+    if (!isDirty()) return;
+    e.preventDefault();
+    // Chrome/Safari still require the legacy assignment; the browser picks its own words.
+    e.returnValue = "";
+  });
 }
 
 /**

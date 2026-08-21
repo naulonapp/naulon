@@ -11,7 +11,7 @@
  * (env, or a receiving server's response body). All of it goes through esc() before it touches
  * innerHTML, and the signing secret arrives already masked — the server never sends it.
  */
-import { $, esc, emptyState, renderShell, setGate, poll, timeTag } from "./shell.js";
+import { $, esc, emptyState, renderShell, poll, timeTag } from "./shell.js";
 
 renderShell({ active: "webhooks" });
 
@@ -218,10 +218,8 @@ async function tick() {
     renderStats(d);
     renderEndpoints(d);
     renderDeliveries(d);
-    setGate(d.gate?.up === true, d.gate?.up === true ? "gate up" : "gate unreachable");
     clearErrorNotice();
   } catch {
-    setGate(false, "dashboard offline");
     notice(
       `<div class="banner pending">Could not read the webhook configuration. The console is up; the request that failed was <span class="mono">/api/webhooks</span>.</div>`,
       true,

@@ -6,7 +6,7 @@
  * verified-agent). Every one is HTML-escaped before it touches innerHTML — esc()
  * from shell.js is the boundary, same as the earnings view.
  */
-import { $, esc, usd, trunc, rel, emptyState, renderShell, setGate, poll, sse, wireSeg, agentLabel, selfTestBadge } from "./shell.js";
+import { $, esc, usd, trunc, rel, emptyState, renderShell, poll, sse, wireSeg, agentLabel, selfTestBadge, wireTestToll } from "./shell.js";
 
 renderShell({ active: "overview" });
 
@@ -39,11 +39,6 @@ function paintFreshness() {
   $("#freshness").textContent = s < 1 ? "updated now" : `updated ${s}s ago`;
 }
 
-function renderHealth(h) {
-  const up = !!(h && h.up);
-  setGate(up, up ? "gate up" : "gate down — " + (h?.detail || "unreachable"));
-}
-
 /**
  * Every number on this row is computed from observations, and OBSERVATIONS_BACKEND
  * defaults to `off`. With it off there is nothing to compute from, so a zero here is not
@@ -72,6 +67,46 @@ function renderUnknownTiles(ops) {
   $("#window").textContent = hrs > 24 ? `last ${Math.round(hrs / 24)}d` : `last ${hrs}h`;
 }
 
+/**
+ * Recording is ON, this window recorded nothing, and the SETTLEMENT ledger has crossings
+ * in the same hours. The counters are then honestly zero and the money tiles are not: the
+ * gate did earn, the observation log just wasn't keeping the receipt yet.
+ *
+ * This is the state you enter by taking the console's own advice. With OBSERVATIONS_BACKEND
+ * off the empty state says "set it to jsonl and restart" — do that, and every crossing
+ * settled before the restart lives in the ledger and in no observation. Measured: the
+ * tiles read PAID 0 / EARNED $0.000000 / "$0.000000 left on the table" while /ledger read
+ * $0.039000 across 11 crossings stamped 2m, 6m and 13m ago. Turning the telemetry on made
+ * the headline LESS true than leaving it off, which is the opposite of the trade an
+ * operator thinks they are making.
+ */
+const settlementUnrecorded = (ops) => ops.total === 0 && (ops.settled?.crossings ?? 0) > 0;
+
+/**
+ * The counters stay as measured — no traffic WAS recorded, and saying so is true. The two
+ * money tiles do not, because the ledger contradicts them: they dim to a dash and the
+ * notice below says where the money actually is.
+ */
+function renderUnrecordedSettlement(ops) {
+  const v = ops.byVerdict || {};
+  countUp($("#tHumans"), ops.humans ?? 0, false);
+  countUp($("#tDenied"), v["denied"] ?? 0, false);
+  countUp($("#tBlocked"), v["blocked"] ?? 0, false);
+  countUp($("#tPaid"), v["paid"] ?? 0, false);
+  countUp($("#tFailed"), v["payment-failed"] ?? 0, false);
+  for (const id of ["#tEarned", "#tMissed"]) {
+    const el = $(id);
+    el.textContent = "—";
+    el.classList.remove("bad", "pos", "warn");
+    el.classList.add("dim");
+    el.title = "Settled money in this window predates the traffic log — see the Ledger";
+  }
+  const a = ops.agents || {};
+  $("#agentSplit").textContent = `${a.verified || 0} verified · ${a.unverified || 0} unsigned · ${a.masquerade || 0} spoofed`;
+  const hrs = Math.round((ops.windowMs || 0) / 3_600_000);
+  $("#window").textContent = hrs > 24 ? `last ${Math.round(hrs / 24)}d` : `last ${hrs}h`;
+}
+
 function renderTiles(ops, observations) {
   if (observations === "off") return renderUnknownTiles(ops);
   for (const id of TILE_IDS) {
@@ -79,6 +114,7 @@ function renderTiles(ops, observations) {
     el.removeAttribute("title");
     el.className = TILE_CLASS.get(id);
   }
+  if (settlementUnrecorded(ops)) return renderUnrecordedSettlement(ops);
   const v = ops.byVerdict || {};
   countUp($("#tHumans"), ops.humans ?? 0, false);
   countUp($("#tDenied"), v["denied"] ?? 0, false);
@@ -172,7 +208,6 @@ async function tick() {
     const r = await fetch(`/api/ops?window=${currentWindow}`, { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
-    renderHealth(d.health);
     renderTiles(d.ops, d.config.observations);
     renderConfig(d.config);
     renderWarnings(d.config.warnings || []);
@@ -183,43 +218,27 @@ async function tick() {
     // Pulse the freshness cue so a live refresh is visible even when no number moved.
     const fr = $("#freshness");
     fr.classList.remove("beat"); void fr.offsetWidth; fr.classList.add("beat");
+    $("#notice").innerHTML = settlementUnrecorded(d.ops)
+      ? `<div class="banner pending"><b>This window settled money the traffic log never saw.</b>` +
+        `<div class="toll-fix">${d.ops.settled.crossings} crossing(s) worth ` +
+        `<span class="mono">$${(d.ops.settled.usdc || 0).toFixed(6)}</span> are in the settlement ledger and in no ` +
+        `observation — recording was switched on after they happened. The counters above are ` +
+        `right; the money is on the <a href="/ledger">Ledger</a>. New crossings appear in both.</div></div>`
+      : "";
   } catch {
-    setGate(false, "dashboard offline");
+    // Every figure on this page is now stale and nothing on it says so. The rail used to
+    // carry this ("dashboard offline"), which was the wrong place — it reports the GATE —
+    // and left this page as the only one with no error surface of its own.
+    $("#notice").innerHTML =
+      `<div class="banner pending"><b>These figures have stopped updating.</b>` +
+      `<div class="toll-fix">The console could not read <span class="mono">/api/ops</span>. ` +
+      `Everything below is the last answer it got.</div></div>`;
   }
 }
 
-/**
- * Test toll — the server does the probing and writes every sentence (test-toll.ts);
- * this only renders the answer. Shared shape with the Doctor page on purpose.
- */
-async function testToll() {
-  const btn = $("#tollBtn");
-  btn.disabled = true;
-  btn.textContent = "probing…";
-  $("#tollOut").innerHTML = "";
-  try {
-    const r = await fetch("/api/test-toll", { method: "POST", headers: { "content-type": "application/json" } });
-    const p = await r.json();
-    const tone = p.status === "pass" ? "synced" : p.status === "skipped" ? "" : "pending";
-    $("#tollOut").innerHTML =
-      `<div class="banner ${tone}"><b>${esc(p.summary)}</b>` +
-      (p.fix ? `<div class="toll-fix">${esc(p.fix)}</div>` : "") +
-      (p.url
-        ? `<div class="toll-meta"><span class="mono">GET ${esc(p.url)}</span>` +
-          (p.httpStatus ? ` → <span class="mono">${esc(p.httpStatus)}</span>` : "") +
-          (p.verdict ? ` · <span class="mono">${esc(p.verdict)}</span>` : "") +
-          ` · ${esc(p.elapsedMs)}ms</div>`
-        : "") +
-      `</div>`;
-  } catch (e) {
-    $("#tollOut").innerHTML = `<div class="banner pending"><b>${esc(e.message)}</b></div>`;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Test toll";
-  }
-}
-
-$("#tollBtn").addEventListener("click", testToll);
+// The server does the probing and writes every sentence (test-toll.ts); the control and
+// its rendering are shell.js's, shared with the Doctor page. This page only mounts it.
+wireTestToll();
 
 const loop = poll(tick, 4000);
 

@@ -7,7 +7,7 @@
  * boundary the Overview uses. `agentLabel`/`selfTestBadge` return already-escaped HTML.
  */
 import {
-  $, esc, usd, rel, emptyState, renderShell, setGate, poll, wireSeg, debounced,
+  $, esc, usd, rel, emptyState, renderShell, poll, wireSeg, debounced,
   VERDICTS, VERDICT_LABEL, VERDICT_BAD, agentLabel, selfTestBadge,
 } from "./shell.js";
 
@@ -136,10 +136,8 @@ async function tick() {
     renderAgents(d.topAgents || []);
     renderMissed(d.missed);
     renderRows(d.rows || [], d.matched || 0);
-    setGate(true, "recording traffic");
     $("#notice").innerHTML = "";
   } catch {
-    setGate(false, "dashboard offline");
     $("#notice").innerHTML = `<div class="banner pending">Could not read the traffic log. The console is up; the request that failed was <span class="mono">/api/traffic</span>.</div>`;
   }
 }
