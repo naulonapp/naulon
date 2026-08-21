@@ -14,6 +14,10 @@
  * this one must not know about — the dependency points one way. So this is a tripwire on
  * *our* copy, not a sync, and when the palette is deliberately changed the fix is to edit
  * this table in the same commit.
+ *
+ * The other half of that pair lives on the private side and pins these tokens to the portal's
+ * name-by-name. Renaming a token here without updating it there turns its suite red — which is
+ * how the `--surface-2` → `--elev-2` rename was caught.
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
