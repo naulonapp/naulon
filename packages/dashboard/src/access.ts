@@ -81,7 +81,11 @@ const LOOPBACK_BINDS = new Set(["127.0.0.1", "::1", "localhost"]);
 export const isLoopbackBind = (bind: string): boolean => LOOPBACK_BINDS.has(bind.trim());
 
 /** A usable Basic credential is exactly `user:pass`, both non-empty. */
-export const isValidAuth = (auth: string | undefined): auth is string => {
+// NOT a type predicate. It used to be `auth is string`, which taught the compiler that a
+// value failing this check is `undefined` — so the "set but unreadable" case below could
+// not even be written without TS narrowing it to `never`. A malformed credential is very
+// much a string; the guard answers "is it USABLE", not "is it present".
+export const isValidAuth = (auth: string | undefined): boolean => {
   if (!auth) return false;
   const i = auth.indexOf(":");
   return i > 0 && i < auth.length - 1;
@@ -123,6 +127,30 @@ export function decideAccess({ bind, auth, isPublic, allowedHosts = [] }: Access
       requireAuth: true,
       refuse: false,
       reason: `${why} — ops console behind HTTP Basic`,
+    };
+  }
+
+  // Set, but unusable: `DASHBOARD_AUTH=ops:` with no secret, `DASHBOARD_AUTH=opspass` with
+  // no colon, a value that survived a shell quoting accident. This is the SAME failure the
+  // ordering note above describes, reached by a different door — the operator asked for a
+  // credential, the credential could not be read, and falling through to the loopback
+  // shortcut would serve the full ops console with the boot line reading `[private]`, which
+  // is precisely how they would never find out. Measured 2026-08-21: it returned 200 and
+  // served wallets. When a security control loses its input, refuse.
+  // Empty string is UNSET (that is what a shell hands you for `DASHBOARD_AUTH=`), but any
+  // other value is an attempt — including one that is only whitespace, which is a quoting
+  // accident rather than a decision to run without a credential.
+  if (auth !== undefined && auth !== "") {
+    return {
+      serve: false,
+      mode: "refused",
+      requireAuth: false,
+      refuse: true,
+      reason:
+        "refusing to serve: DASHBOARD_AUTH is set but unreadable — it must be `user:secret` " +
+        "with both halves non-empty. The secret is either a password or a scrypt hash from " +
+        "`npm run hash -w @naulon/dashboard`. Serving anyway would run the ops console with " +
+        "no credential while the boot line claimed a private one.",
     };
   }
 

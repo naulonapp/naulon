@@ -40,6 +40,7 @@ import { runDoctor } from "./doctor.ts";
 import { buildWebhooksView, queuePing, resendDelivery } from "./webhooks.ts";
 import { runTollProbe } from "./test-toll.ts";
 import { decideAccess } from "./access.ts";
+import { createCredentialVerifier, parseDashboardAuth } from "./credential.ts";
 import { authThrottle } from "./authThrottle.ts";
 import { isAllowedHost, parseAllowedHosts } from "./host-guard.ts";
 import { tileSvg } from "./brand.ts";
@@ -53,6 +54,15 @@ const PUBLIC = new URL("./public/", import.meta.url);
 // here means strangers can address this console, which a loopback bind would otherwise
 // hide (serverless, or a reverse proxy). See access.ts.
 const ALLOWED_HOSTS = parseAllowedHosts(cfg.DASHBOARD_ALLOWED_HOSTS);
+
+/**
+ * The credential, parsed once. Null when DASHBOARD_AUTH is absent OR malformed — and
+ * those two are NOT the same thing downstream: absent is a mode (private/public/refuse),
+ * malformed is an operator who asked for a credential and would otherwise get none.
+ */
+const CREDENTIAL = parseDashboardAuth(cfg.DASHBOARD_AUTH);
+
+const VERIFY = CREDENTIAL ? createCredentialVerifier(CREDENTIAL) : null;
 
 const ACCESS = decideAccess({
   bind: cfg.DASHBOARD_BIND,
@@ -175,7 +185,8 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-// Fail safe: bound wide with no auth and not public → serve nothing but the reason.
+// Fail safe: bound wide with no auth, or an unreadable credential, and not public →
+// serve nothing but the reason (access.ts decides both).
 if (ACCESS.refuse) {
   app.all("*", (c) => c.text(`naulon dashboard refused to start serving.\n\n${ACCESS.reason}\n`, 503));
 } else {
@@ -183,8 +194,17 @@ if (ACCESS.refuse) {
     // Order matters: the failed-sign-in budget has to see the 401 that basicAuth
     // produces, so it wraps it rather than following it.
     app.use("*", authThrottle());
-    const [username, password] = (cfg.DASHBOARD_AUTH ?? "").split(/:(.*)/s);
-    app.use("*", basicAuth({ username: username ?? "", password: password ?? "" }));
+    // The secret half may be a scrypt PHC string rather than a password in the clear
+    // (credential.ts). `verifyUser` is the seam that lets it be either, and its
+    // (username, password) shape is already the one a user STORE would implement — so
+    // growing past a single credential does not come back through this line.
+    // VERIFY is non-null wherever requireAuth is true — a malformed credential is refused
+    // above. The fallback is `false` rather than a non-null assertion, so if that ever
+    // stopped holding the console would deny everyone instead of admitting everyone.
+    app.use(
+      "*",
+      basicAuth({ verifyUser: (username, password) => (VERIFY ? VERIFY(username, password) : false) }),
+    );
   }
 
   for (const [path, asset] of Object.entries(ASSETS)) {
@@ -455,3 +475,4 @@ if (ACCESS.refuse) {
 export const port = cfg.DASHBOARD_PORT;
 export const hostname = cfg.DASHBOARD_BIND;
 export const access = ACCESS;
+export const credential = CREDENTIAL;

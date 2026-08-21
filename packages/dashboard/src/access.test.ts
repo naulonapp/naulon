@@ -155,11 +155,35 @@ test("the authed reason names the loopback bind rather than an empty host list",
   assert.doesNotMatch(d.reason, /reachable as +with/, "no dangling host list");
 });
 
-test("a malformed credential on loopback still yields private, not a broken authed", () => {
-  // Nothing to enforce: basicAuth would be mounted with an empty password.
-  const d = decideAccess({ bind: "127.0.0.1", auth: "nopassword", isPublic: false });
-  assert.equal(d.mode, "private");
-  assert.equal(d.requireAuth, false);
+test("a malformed credential REFUSES, even on loopback — it does not fall through to private", () => {
+  // This used to assert `private`, on the reasoning that there was nothing to enforce
+  // (basicAuth would have been mounted with an empty password). Measured 2026-08-21, that
+  // reasoning shipped a hole: `DASHBOARD_AUTH=ops:` served the full ops console — wallets,
+  // ledger and the six write routes — at 200, with the boot line reading `[private]`. Same
+  // failure the header of access.ts describes, reached through the malformed door instead
+  // of the ordering one. The credential is now verified by credential.ts, which fails
+  // closed, so degrading here is a choice rather than a consequence — and the choice is to
+  // refuse: an operator who set a credential is not asking to be served without one.
+  for (const auth of ["nopassword", "ops:", ":secret", " "]) {
+    const d = decideAccess({ bind: "127.0.0.1", auth, isPublic: false });
+    assert.equal(d.mode, "refused", `${JSON.stringify(auth)} must refuse`);
+    assert.equal(d.requireAuth, false);
+    assert.equal(d.serve, false);
+  }
+});
+
+test("the malformed-credential refusal names the format AND how to mint the secret", () => {
+  const d = decideAccess({ bind: "127.0.0.1", auth: "ops:", isPublic: false });
+  assert.match(d.reason, /user:secret/);
+  assert.match(d.reason, /npm run hash/);
+});
+
+test("an absent credential on loopback is still private — absent is not malformed", () => {
+  // The distinction the refusal rests on: nothing was asked for, so nothing was dropped.
+  for (const auth of [undefined, ""]) {
+    const d = decideAccess({ bind: "127.0.0.1", auth, isPublic: false });
+    assert.equal(d.mode, "private", `${JSON.stringify(auth)} must stay private`);
+  }
 });
 
 test("the public flag still wins over a credential", () => {

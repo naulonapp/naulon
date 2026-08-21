@@ -163,13 +163,36 @@ internet by accident, so exposure is deliberate:
 | You want | Set | Result |
 |---|---|---|
 | **Private** (default) | `DASHBOARD_BIND=127.0.0.1`, no credential | Full ops, box owner only. |
-| **Remote ops** | `DASHBOARD_AUTH=user:pass` (+ a wide bind, or a named host below) | Full ops behind HTTP Basic. |
+| **Remote ops** | `DASHBOARD_AUTH=user:secret` (+ a wide bind, or a named host below) | Full ops behind HTTP Basic. |
 | **Public proof** | `DASHBOARD_PUBLIC=true` | Only the earnings page — wallets masked, every ops panel hidden. |
+
+### Don't store the password
+
+The secret half of `DASHBOARD_AUTH` may be a scrypt hash instead of the password itself:
+
+```
+npm run hash -w @naulon/dashboard -- --user ops
+Console password: (not echoed)
+DASHBOARD_AUTH=ops:$scrypt$ln=15,r=8,p=1$...
+```
+
+Paste that line into `.env`. Basic still sends the password over the wire on every
+request — that is the protocol, and it is why HTTPS is not optional here — but the
+password no longer sits in your `.env`, your compose file, your secret store or a
+`docker inspect`. A plaintext secret keeps working and prints a warning at every boot.
+
+Hashing costs ~100 ms by design, and Basic re-authenticates on every request, so a
+verified credential is cached in memory for 60 s. A REJECTED one never is, which is what
+keeps the failed-sign-in budget below seeing every guess.
 
 Setting `DASHBOARD_AUTH` always enforces it, loopback or not. If you share the box —
 a container on the same network namespace, another user with an SSH tunnel, anything
 else that can reach `127.0.0.1` — that is how you keep the ops plane to yourself; a
 loopback bind is not a boundary between users on one machine.
+
+A credential that is *set but unreadable* — `ops:` with no secret, a value with no colon,
+a quoting accident — also refuses to serve, loopback included. It used to fall through to
+the private console: full ops, no credential, and a boot line that said `[private]`.
 
 Make the console reachable with neither auth nor public set and it **refuses to
 serve** — it won't leak wallets because you fat-fingered a bind. For real exposure,
