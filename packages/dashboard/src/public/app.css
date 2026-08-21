@@ -522,7 +522,23 @@ body {
   font-family: var(--font-mono); font-size: 11px; color: var(--info);
   border: 1px solid color-mix(in oklab, var(--info) 35%, transparent); border-radius: 2px; padding: 2px 8px; justify-self: start;
 }
-.x { background: none; border: none; color: var(--faint); cursor: pointer; font-size: 14px; padding: 4px; transition: color var(--motion); }
+/* One owner for "a <button> that must read as text". Three rules below need it — the remove
+   ✕, the theme control, the webhook row actions — and each used to spell the reset itself,
+   differently, which is how two of them ended up in the wrong face and one in the wrong size.
+
+   A <button> does not inherit the page's font: the UA sheet gives it a family and a size of
+   its own. `font: inherit` looks like the cure and is the disease — the shorthand also resets
+   font-size to the PARENT's, silently overriding whatever the element's own class set. That
+   shipped the theme control at 16px beside its 12px siblings, and it is why `.wh-link` had to
+   restate 11.5px on the very next declaration. So: family and line-height by name, and size
+   is left to each rule below, which owns it.
+
+   Declared before all three so the specific rules still win the properties they restate. */
+.x, .theme-btn, .wh-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font-family: inherit; line-height: inherit;
+}
+.x { color: var(--faint); font-size: 14px; padding: 4px; transition: color var(--motion); }
 .x:hover { color: var(--down); }
 
 .actions { display: flex; gap: 12px; margin-top: 20px; }
@@ -547,9 +563,9 @@ body {
   background: color-mix(in oklab, var(--bg) 88%, transparent);
   backdrop-filter: blur(8px);
 }
-/* The theme control sits in the rail with the other links and must not look like a form
-   button — same type scale and colour as `.rail-link`, no chrome of its own. */
-.theme-btn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+/* Chrome and font come from the bare-button rule above; `.rail-link` (also on this element)
+   owns the type scale and colour. All this adds is the left edge every rail item shares. */
+.theme-btn { text-align: left; }
 .theme-btn:hover { color: var(--fg); }
 
 .dock-note { margin-right: auto; font-size: 12.5px; color: var(--muted-fg); }
@@ -769,10 +785,7 @@ body {
 .wh-table tbody tr:last-child td { border-bottom: 0; }
 .wh-table .dim { color: var(--faint); }
 .wh-row-act { text-align: right; white-space: nowrap; }
-.wh-link {
-  background: none; border: 0; padding: 0 0 0 14px; cursor: pointer;
-  font: inherit; font-size: 11.5px; color: var(--muted-fg);
-}
+.wh-link { padding-left: 14px; font-size: 11.5px; color: var(--muted-fg); }
 .wh-link:hover { color: var(--fg); }
 .wh-link.accent { color: var(--primary); }
 .wh-link:disabled { opacity: 0.5; cursor: not-allowed; }
