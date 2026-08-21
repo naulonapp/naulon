@@ -332,8 +332,24 @@ function page({ title, body, error, notice }: PageOptions): string {
   );
 }
 
+/**
+ * The auth pages carry their own palette because they carry their own stylesheet — they are
+ * deliberately JS-free (a login that needs JavaScript to render is a login that can lock you
+ * out), so they cannot use the console's `theme.js`, which resolves an explicit preference.
+ *
+ * They therefore follow the OS and nothing else. An operator who forced light in the console
+ * still meets a system-themed login; that seam is the price of a sign-in page that works with
+ * scripting switched off, and it is one screen, once per session.
+ *
+ * Values are the same published palette as app.css. `--field` exists because the input
+ * background was the one hardcoded colour left in here (#0b0e14) — invisible in dark, and on
+ * paper it would have been a black box in the middle of a white card.
+ */
 export const AUTH_CSS = `:root{color-scheme:dark;--bg:#07080b;--card:#11141c;--fg:#e9edf3;--muted-fg:#8d96a3;
---line:#242b39;--input:#313a4b;--primary:#2bf5a0;--primary-ink:#04130c;--down:#ff476f}
+--line:#242b39;--input:#313a4b;--primary:#2bf5a0;--primary-ink:#04130c;--down:#ff476f;--field:#0b0e14}
+@media (prefers-color-scheme: light){:root{color-scheme:light;--bg:#f7f4ec;--card:#fffdf8;--fg:#1a1c1a;
+--muted-fg:#5f635a;--line:#e3ddcf;--input:#cdc6b4;--primary:#0a7350;--primary-ink:#ffffff;--down:#d11f4f;
+--field:#ffffff}}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);
 font-family:"Hanken Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;padding:24px}
@@ -346,7 +362,7 @@ p{color:var(--muted-fg);font-size:.9rem;line-height:1.5;margin:0 0 16px}
 p.error{color:var(--down)}
 p.notice{color:var(--primary)}
 label{display:block;font-size:.82rem;color:var(--muted-fg);margin:14px 0 6px}
-input,select{width:100%;padding:10px 12px;background:#0b0e14;border:1px solid var(--input);border-radius:8px;
+input,select{width:100%;padding:10px 12px;background:var(--field);border:1px solid var(--input);border-radius:8px;
 color:var(--fg);font:inherit;font-size:.95rem}
 input:focus,select:focus{outline:2px solid var(--primary);outline-offset:1px}
 button{margin-top:20px;width:100%;padding:11px;border:0;border-radius:8px;background:var(--primary);

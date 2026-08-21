@@ -41,8 +41,24 @@ const dirty = () => {
   return view.crawlers.some((c) => (picks.get(c.fragment) ?? c.state) !== c.state);
 };
 
+/** How many rules differ from what the server last served — the dock's subject line. */
+function pendingCount() {
+  if (!view) return 0;
+  const before = new Map(view.custom.map((c) => [c.fragment, c.state]));
+  let n = view.crawlers.filter((c) => (picks.get(c.fragment) ?? c.state) !== c.state).length;
+  n += custom.filter((c) => before.get(c.fragment) !== c.state).length;
+  n += view.custom.filter((c) => !custom.some((x) => x.fragment === c.fragment)).length;
+  return n;
+}
+
 function paintDirty() {
+  const n = pendingCount();
   $("#saveBtn").disabled = !dirty();
+  const note = $("#dockNote");
+  if (note) {
+    note.textContent = n === 0 ? "no unsaved changes" : `${n} rule${n === 1 ? "" : "s"} changed — not saved yet`;
+    note.classList.toggle("pending", n > 0);
+  }
 }
 
 function counts() {

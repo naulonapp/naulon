@@ -21,6 +21,13 @@ const titleFromSlug = (s) => s.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUp
 let rows = []; // { slug, author, wallet, locked, raw, isNew }
 let savedSlugs = new Set(); // slugs as of the last load/save — to count removals on confirm
 let dirty = false; // unsaved edits present → beforeunload guard + fresh save confirm
+/**
+ * Where credits.json actually is, straight from /api/content. Every "edit via credits.json"
+ * on this page used to be a dead end: a split row cannot be edited inline, and nothing on the
+ * page said which file to open — the path rendered on a DIFFERENT page's config table, so the
+ * instruction was true and unfollowable at the same time.
+ */
+let creditsPath = "";
 
 function markDirty() {
   dirty = true;
@@ -52,6 +59,7 @@ async function load() {
     $("#scanBtn").disabled = true; $("#saveBtn").disabled = true; $("#addBtn").disabled = true;
     return;
   }
+  creditsPath = d.creditsPath || "";
   rows = Object.entries(d.credits || {}).map(([slug, e]) => entryToRow(slug, e));
   markClean(rows.map((r) => r.slug));
   setBanner(d.restartPending ? "pending" : d.gate && d.gate.up ? "synced" : "unknown");
@@ -64,14 +72,14 @@ function setBanner(state) {
   el.classList.remove("pending", "synced");
   if (state === "pending") {
     el.classList.add("pending");
-    el.innerHTML = `<b>Edits pending a restart.</b> <span class="mono">credits.json</span> changed after the gate started — your edits are saved but <b>not live</b> until you restart the gate. <span class="dim">naulon cloud applies wallet edits instantly, no restart.</span>`;
+    el.innerHTML = `<b>Edits pending a restart.</b> <span class="mono">${esc(creditsPath || "credits.json")}</span> changed after the gate started — your edits are saved but <b>not live</b> until you restart the gate. <span class="dim">naulon cloud applies wallet edits instantly, no restart.</span>`;
   } else if (state === "synced") {
     el.classList.add("synced");
-    el.innerHTML = `<b>In sync.</b> The gate is serving the current <span class="mono">credits.json</span>. Edits here apply on the next gate restart.`;
+    el.innerHTML = `<b>In sync.</b> The gate is serving the current <span class="mono">${esc(creditsPath || "credits.json")}</span>. Edits here apply on the next gate restart.`;
   } else if (state === "api") {
     el.innerHTML = `Credits are served from a live API — edit them at your CMS, not here.`;
   } else {
-    el.innerHTML = `Edits write <span class="mono">credits.json</span> and apply when you <b>restart the gate</b>.`;
+    el.innerHTML = `Edits write <span class="mono">${esc(creditsPath || "credits.json")}</span> and apply when you <b>restart the gate</b>.`;
   }
 }
 
@@ -94,7 +102,7 @@ function rowHtml(r, i) {
     return `<div class="crow rise" data-i="${i}">
       <span class="slug">${esc(r.slug)}</span>
       <span class="split-badge">${esc(r.author)} · split</span>
-      <span class="dim mono">edit via credits.json</span><span></span></div>`;
+      <span class="dim mono" title="${esc(creditsPath || "credits.json")}">edit in <span class="path-cell">${esc(creditsPath || "credits.json")}</span></span><span></span></div>`;
   }
   return `<div class="crow rise" data-i="${i}">
     ${r.isNew ? `<input class="in slug-in" data-i="${i}" data-k="slug" value="${esc(r.slug)}" placeholder="article-slug" aria-label="article slug" spellcheck="false" />`

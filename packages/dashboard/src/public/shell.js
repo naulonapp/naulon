@@ -281,9 +281,41 @@ export function renderShell({ active, nav = true }) {
     `<div class="rail"><span class="gate-state"><span class="dot off" id="gateDot"></span>` +
     `<span id="gateState">checking gate</span></span>` +
     `<span id="who"></span>` +
+    `<button type="button" class="rail-link theme-btn" id="themeBtn" aria-live="polite"></button>` +
     `<a class="rail-link" href="https://naulon.app" target="_blank" rel="noopener">naulon cloud ↗</a></div>`;
 
+  wireTheme();
   if (nav) renderWho();
+}
+
+/** What the toggle says it is showing, per preference. "system" names what it resolved to,
+ *  because "system" alone does not tell an operator which one they are looking at. */
+const THEME_LABEL = {
+  system: () => `system · ${window.naulonTheme ? window.naulonTheme.resolved() : "dark"}`,
+  light: () => "light",
+  dark: () => "dark",
+};
+
+/**
+ * The theme control. Cycles system → light → dark, which keeps "follow the OS" reachable —
+ * a two-state toggle silently strands anyone who ever touches it on a manual choice forever.
+ *
+ * theme.js owns the storage key and the resolution rule; this only drives it, so the value
+ * applied before first paint and the value this button reports cannot disagree.
+ */
+function wireTheme() {
+  const btn = $("#themeBtn");
+  if (!btn || !window.naulonTheme) return;
+  const paint = () => {
+    const pref = window.naulonTheme.get();
+    btn.textContent = `theme: ${THEME_LABEL[pref]()}`;
+    btn.title = "Switch theme (system → light → dark)";
+  };
+  btn.addEventListener("click", () => {
+    window.naulonTheme.cycle();
+    paint();
+  });
+  paint();
 }
 
 /**
