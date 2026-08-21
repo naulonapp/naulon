@@ -80,3 +80,7 @@ require_once __DIR__ . '/../includes/class-naulon-updater.php';
 // path that drops a table. UninstallGuardTest also reads uninstall.php as text, which needs no
 // WordPress either. The outcomes against a real database live in the wp-env suite.
 require_once __DIR__ . '/../includes/class-naulon-data.php';
+// Only `verdict_for` and `legs_total` are exercised here — a pure mapping and a pure sum over
+// integers. Everything else in the class talks to options and hooks and lives in the wp-env
+// suite. See ObserverReportTest for why these two are worth the fast suite.
+require_once __DIR__ . '/../includes/class-naulon-observer.php';

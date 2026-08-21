@@ -167,6 +167,7 @@ class Naulon_Data {
 		Naulon_Settings::delete_all();
 		Naulon_Roles::remove_capabilities();
 		Naulon_Log::clear();
+		Naulon_Observer::clear();
 
 		// A record of money. On chain is the copy that lasts, and the export above is the copy a
 		// publisher can read — this only goes because they asked for it to.

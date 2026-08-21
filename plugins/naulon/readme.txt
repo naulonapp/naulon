@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.4.2
+Stable tag: 0.4.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.4.3 =
+* Your dashboard now shows what the toll actually did. Every decision the plugin makes about a crawler — charged, served free, or re-read on a license it already paid for — is reported to your naulon account, so the Audit and Readiness screens stop telling a working site that nothing has been priced yet. Readers are still never reported: not sampled, not counted, not touched.
+* Settlements are not reported from here. What you were paid is recorded from the payment itself, so nothing on your earnings screen can come from this plugin claiming it.
+* A report that cannot be delivered — a timeout, or your site being offline for a moment — is kept and sent with the next one, rather than lost.
+
 = 0.4.2 =
 * Three more agent user-agents are now charged: Meta's external fetcher, Amazon's user-triggered fetcher and Mistral's. They were reading your articles for free because the plugin only knew one of Meta's five tokens. Search indexers are still never charged.
 
@@ -193,6 +198,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+
+= 0.4.3 =
+Your naulon account now sees what the toll actually did — every crawler charged, served free, or re-reading on a license it paid for. Before this, an in-app site's Audit page could only ever show what someone else saw, which was nothing. Readers are still never reported.
 
 = 0.4.2 =
 Meta's external fetcher, Amazon's user-triggered fetcher and Mistral's were reading your articles free. This charges them. Nothing else changes.

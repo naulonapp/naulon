@@ -182,6 +182,23 @@ class Naulon_Client {
 	}
 
 	/**
+	 * Report gating decisions to the audit plane.
+	 *
+	 * Always a JSON ARRAY, even for one report: the endpoint accepts either shape, and sending
+	 * the array form unconditionally means a batch and a single decision travel the same code
+	 * path here and on the far side.
+	 *
+	 * The two money verdicts are refused by the endpoint with a 400 that explains why, and
+	 * Naulon_Observer never builds one — see that class for the writer split.
+	 *
+	 * @param array $reports One or more observation reports.
+	 * @return array {ok:bool, status:int, body:array|null, error:string}
+	 */
+	public function observe( array $reports ) {
+		return $this->request( 'POST', '/_naulon/observe', array_values( $reports ), self::TIMEOUT_REQUEST );
+	}
+
+	/**
 	 * One HTTP call. Never throws.
 	 *
 	 * @param string     $method  HTTP method.
