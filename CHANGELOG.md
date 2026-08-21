@@ -14,10 +14,17 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
-## Unreleased
+## v0.7.0
 
-Ships `@naulon/sdk` 0.3.0 · `@naulon/shared` 0.3.1 · `@naulon/enforce` 0.3.1. The latter two
-carry no behaviour change — their `@naulon/sdk` range moves with the minor.
+Ships `@naulon/sdk` 0.3.0 · `@naulon/shared` 0.3.1 · `@naulon/enforce` 0.3.1 ·
+`@naulon/wayfarer-mcp` 0.4.1. The middle two carry no behaviour change — their
+`@naulon/sdk` range moves with the minor — and the last is a corrected env var name in
+its README, which is the page npm shows.
+
+The headline is that the gate image exists and can be pulled. Everything under Fixed
+below is what stood between "a workflow that builds an image" and that sentence being
+true; the first of them was found by the workflow's own smoke test, on the first build
+that ever ran.
 
 ### Added
 
@@ -37,9 +44,18 @@ carry no behaviour change — their `@naulon/sdk` range moves with the minor.
 
 ### Fixed
 
-- **The Docker image could not boot.** `tsx` was a root devDependency while the image installed
-  `--omit=dev`, so `npm run tollgate` died on a missing binary. `tsx` is now a dependency —
-  nothing in this repo is compiled before it runs, which makes it a runtime need, not a dev one.
+- **The image could not boot the gate: no workspace was ever built.** Five packages
+  (`@naulon/{sdk,shared,enforce,wayfarer,wayfarer-mcp}`) resolve through `dist/`, so the gate's
+  first import of `@naulon/shared` reads `dist/index.js` — which nothing produced, and which the
+  single `--omit=dev` stage could not produce, having no typescript. "Runs straight from
+  TypeScript via tsx" was true of the entry module only. The build is now two stages: install in
+  full, build in dependency order, prune to production, copy the result. A local boot of the
+  *console* half hides this entirely — it imports none of the five, which is how the image passed
+  a hand check twice before a machine ran the gate.
+- **The Docker image could not boot at all.** `tsx` was a root devDependency while the image
+  installed `--omit=dev`, so `npm run tollgate` died on a missing binary. `tsx` is now a
+  dependency — nothing in this repo is compiled before it runs, which makes it a runtime need,
+  not a dev one.
 - **The image build copied five of eight workspace manifests**, which is why its install carried
   a `|| npm install` fallback: `npm ci` could not see the missing workspaces and failed every
   time, silently downgrading a locked install to an unlocked one. All eight are copied and the
@@ -47,6 +63,15 @@ carry no behaviour change — their `@naulon/sdk` range moves with the minor.
 - **The build had no `.dockerignore`**, so `COPY . .` swept in `node_modules`, `.git`, any local
   ledger and — on a machine that had one — `.env`. For an image nobody published that was waste;
   for one anybody can pull it would have been a secret in a public layer.
+- **A dispatched image build could only ever fail.** Every tag in the publish step is
+  conditional and `latest` is gated on a tag ref, so a manual run computed an empty tag list and
+  died on a tagless push — at the end of a ~10-minute emulated multi-arch build. `latest` stays
+  release-only; a dispatch publishes `edge`, and an empty tag list is refused in a second.
+- **The console's theme control rendered a third larger than the rail around it** — 16px/24px
+  beside 12px/18px siblings. `font: inherit` reads as "take the page's type" and does the
+  opposite: the shorthand also resets font-size to the parent's, overriding the size the
+  element's own class set. Three rules styled a `<button>` to read as text and each spelled that
+  reset itself; they now share one.
 
 ## v0.6.0
 

@@ -118,8 +118,11 @@ docker compose up -d                # gate :8402 · console :8403 (loopback only
 `ghcr.io/naulonapp/naulon` is public — no registry login. Both services run the same
 image under an unprivileged user and share one ledger volume; your `credits.json` is
 mounted read-only from `./config` rather than baked in, because a gate that fell back
-to an example's wallets would settle real money to a fixture address. Pin a release
-with `NAULON_TAG=v0.6.0` in `.env`.
+to an example's wallets would settle real money to a fixture address. Compose follows
+`:latest`, which each release moves; pin one with `NAULON_TAG=v0.7.0` in `.env`, or
+track main between releases with `NAULON_TAG=edge`. v0.7.0 is the first tag carrying an
+image — the workflow that builds one postdates every tag before it, so `v0.6.0` and
+earlier name releases that exist on npm and in git, never in the registry.
 
 The console binds wide inside its container (127.0.0.1 there is unreachable from your
 host) and is published on your loopback only. Because the socket is no longer evidence
