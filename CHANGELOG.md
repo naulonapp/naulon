@@ -14,6 +14,40 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## Unreleased
+
+Ships `@naulon/sdk` 0.3.0 · `@naulon/shared` 0.3.1 · `@naulon/enforce` 0.3.1. The latter two
+carry no behaviour change — their `@naulon/sdk` range moves with the minor.
+
+### Added
+
+- **`naulon selftest`** — drives one whole toll through your own gate and reports each leg:
+  the manifest, a free human read, the 402 quote, the payment, the citation licence that came
+  back, that the same payment cannot be replayed, and that a citation costs more than a read.
+  Where `naulon doctor` stops at "the gate issues a challenge", this satisfies it. The path
+  under test is the prefix your gate advertises in `/.well-known/x402`, so a publisher at
+  `/writing/` is tested at `/writing/`; the slug is the first entry in your credits source, or
+  `--slug`. It pays with the offline mock signature, so nothing moves — against a gate already
+  in `gateway` mode it reports the facilitator's refusal as expected rather than as a fault.
+
+- **A published gate image, `ghcr.io/naulonapp/naulon`.** `@naulon/tollgate` and
+  `@naulon/dashboard` were never on npm because the gate ships as a container; until now
+  nothing published one. `docker-compose.yml` pulls it, so a host with Docker needs neither
+  this repo nor Node. Contributors build from the working tree with `make docker-build`.
+
+### Fixed
+
+- **The Docker image could not boot.** `tsx` was a root devDependency while the image installed
+  `--omit=dev`, so `npm run tollgate` died on a missing binary. `tsx` is now a dependency —
+  nothing in this repo is compiled before it runs, which makes it a runtime need, not a dev one.
+- **The image build copied five of eight workspace manifests**, which is why its install carried
+  a `|| npm install` fallback: `npm ci` could not see the missing workspaces and failed every
+  time, silently downgrading a locked install to an unlocked one. All eight are copied and the
+  fallback is gone.
+- **The build had no `.dockerignore`**, so `COPY . .` swept in `node_modules`, `.git`, any local
+  ledger and — on a machine that had one — `.env`. For an image nobody published that was waste;
+  for one anybody can pull it would have been a secret in a public layer.
+
 ## v0.6.0
 
 Ships `@naulon/sdk` 0.2.0 · `@naulon/shared` 0.3.0 · `@naulon/enforce` 0.3.0 ·

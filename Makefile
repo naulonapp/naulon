@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build-shared build-enforce build-wayfarer build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-down
+.PHONY: help install build-shared build-enforce build-wayfarer build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-build docker-down
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[33m%-18s\033[0m %s\n", $$1, $$2}'
@@ -77,8 +77,13 @@ generate-wallets: ## Generate buyer/author wallets for PAYMENT_MODE=gateway
 clean: ## Remove build output + local ledger data
 	rm -rf packages/*/dist data **/*.tsbuildinfo
 
-docker-up: ## Build + run tollgate and dashboard in Docker
-	docker compose up --build
+docker-up: ## Run the published gate + console image (no clone, no build)
+	docker compose up -d
+	@echo "gate  → http://localhost:8402"
+	@echo "console → http://localhost:8403  (needs CONSOLE_ADMIN_PASSWORD or DASHBOARD_AUTH in .env)"
+
+docker-build: ## Same stack, built from this working tree instead of pulled
+	docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 docker-down: ## Stop the Docker stack
 	docker compose down

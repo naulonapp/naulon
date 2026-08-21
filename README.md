@@ -101,9 +101,64 @@ make dev                      # stub origin :3000 + tollgate :8402 + dashboard :
 make tollgate                 # just the reverse proxy
 ```
 
-`make help` lists every target. There's a `Dockerfile` + `docker-compose.yml`
-too (`make docker-up`) that runs the tollgate and dashboard against a shared
-ledger volume.
+`make help` lists every target.
+
+### Without cloning anything
+
+The gate and console ship as one image, so a host with Docker needs neither this
+repo nor Node:
+
+```bash
+curl -O https://raw.githubusercontent.com/naulonapp/naulon/main/docker-compose.yml
+npx -p @naulon/sdk naulon init      # writes .env + credits.json (or write them by hand)
+mkdir -p config && mv credits.json config/
+docker compose up -d                # gate :8402 · console :8403 (loopback only)
+```
+
+`ghcr.io/naulonapp/naulon` is public — no registry login. Both services run the same
+image under an unprivileged user and share one ledger volume; your `credits.json` is
+mounted read-only from `./config` rather than baked in, because a gate that fell back
+to an example's wallets would settle real money to a fixture address. Pin a release
+with `NAULON_TAG=v0.6.0` in `.env`.
+
+The console binds wide inside its container (127.0.0.1 there is unreachable from your
+host) and is published on your loopback only. Because the socket is no longer evidence
+of privacy, it *requires* a credential before it serves: set `CONSOLE_ADMIN_PASSWORD`
+in `.env` to seed a first administrator that must change its password on first sign-in,
+or `DASHBOARD_AUTH=user:pass` for HTTP Basic.
+
+Contributors who want the image built from a working tree instead:
+`make docker-build`.
+
+### Check it actually tolls
+
+Two commands, both offline. `doctor` reads your `.env`, validates the credits source, and
+probes the gate: a browser must read free, an agent must get a 402.
+
+```bash
+npx -p @naulon/sdk naulon doctor
+```
+
+`selftest` goes the rest of the way — it pays the 402, reads the article, checks the citation
+licence that came back, and proves the same payment cannot be replayed:
+
+```bash
+npx -p @naulon/sdk naulon selftest
+```
+
+```text
+  ✓ manifest   self-describing toll at /essays/ · read 1000 atomic
+  ✓ human      browser UA → HTTP 200, straight through
+  ✓ quote      402 · 1000 atomic → 0x1111…1111
+  ✓ pay        HTTP 200 · settled with a payment-response
+  ✓ licence    citation licence for "hello-world" naming 1 payee(s)
+  ✓ replay     the spent payment bought nothing a second time
+  ✓ citation   5000 atomic (5× a read) · paid, HTTP 200
+```
+
+It drives the path prefix your gate advertises, not a hardcoded one, and picks the first
+article in your credits (`--slug` to choose). The payment is the offline mock signature, so
+nothing moves — against a gate already in `gateway` mode it says so rather than failing.
 
 Watch the toll work (mock settlement — no wallet or API keys needed):
 

@@ -143,7 +143,13 @@ The operator console. How to expose it safely: [operating.md](./operating.md).
 |---|---|---|
 | `DASHBOARD_PORT` | `8403` | Port the console listens on. |
 | `DASHBOARD_BIND` | `127.0.0.1` | Interface it binds. The earnings view has no built-in auth and shows author wallets, so loopback is the default. Set `0.0.0.0` only behind your own auth. |
-| `DASHBOARD_AUTH` | unset | HTTP Basic credential (`user:pass`). With a non-loopback bind and no credential, the console **refuses to serve** rather than leak wallets. |
+| `DASHBOARD_AUTH` | unset | HTTP Basic credential, `user:secret`. The secret is either a password or — preferred — a scrypt hash minted by `npm run hash -w @naulon/dashboard`, so the password is not stored in your `.env`, your compose file or your secret store. Plaintext still works and warns at every boot. With a non-loopback bind and no credential, the console **refuses to serve** rather than leak wallets; a credential that is set but unreadable (`ops:`, no colon) also refuses, loopback or not. |
+| `DASHBOARD_AUTH_ROLE` | `viewer` | What the machine credential may do **once console accounts exist**: `viewer` reads, `admin` may also run the six ops writes. Ignored while there are no accounts — `DASHBOARD_AUTH` is still the whole login then, and still writes. |
+| `CONSOLE_STATE_PATH` | beside `EVENTS_PATH` | Operators and sessions (`console.json`, mode 0600). Put it on the same volume as your ledger, or sign-ins do not survive a restart. |
+| `CONSOLE_ADMIN_USERNAME` | `admin` | Username for the seeded first administrator. |
+| `CONSOLE_ADMIN_PASSWORD` | unset | Seeds the first administrator without an interactive first run — the container path. The account it creates **must** change its password before the console will render anything else. |
+| `CONSOLE_SESSION_IDLE_MINUTES` | `480` | Sign-in expires after this much inactivity. |
+| `CONSOLE_SESSION_ABSOLUTE_HOURS` | `168` | Hard ceiling on a sign-in regardless of activity. |
 | `DASHBOARD_AUTH_FAIL_RPM` | `20` | Failed-sign-in budget per client. Basic auth has no lockout, so without this the password can be guessed at network speed. Only 401s are charged, so you cannot lock yourself out by using the console hard. `0` disables. |
 | `DASHBOARD_AUTH_FAIL_BURST` | `10` | Burst allowance on that budget. |
 | `DASHBOARD_PUBLIC` | `false` | Opt in to a read-only public earnings page with wallets masked and every operational panel hidden. The ops console itself is never public. |

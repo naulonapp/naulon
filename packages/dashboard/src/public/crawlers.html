@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="color-scheme" content="dark" />
+<meta name="color-scheme" content="dark light" />
 <title>naulon — crawlers</title>
 <meta name="description" content="Decide per crawler whether it reads free, pays the toll, or is refused outright. Humans always read free." />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<script src="/theme.js"></script>
 <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
@@ -18,9 +19,6 @@
           <p class="eyebrow">Config</p>
           <h1 class="page-title">Crawlers</h1>
           <p class="page-sub">Decide per crawler: read free, pay the toll, or be refused outright. Leave one on its default and the gate's classifier decides — which is the right answer for most of them.</p>
-        </div>
-        <div class="head-actions">
-          <button id="saveBtn" class="btn btn-primary" disabled>Save</button>
         </div>
       </div>
 
@@ -57,6 +55,16 @@
         </div>
         <div class="panel-foot">matched case-insensitively, anywhere in the user-agent</div>
       </section>
+
+      <!-- The save control lives here rather than in the page header. The header sits at
+           y=34; the last crawler row sits ~2,300px below it, so an operator who changed a
+           rule at the bottom of a 2,730px document had to scroll back up to a control they
+           could no longer see to find out whether it was even enabled. Docked, it follows
+           them and states what it is about to do. -->
+      <div class="dock">
+        <span class="dock-note" id="dockNote">no unsaved changes</span>
+        <button id="saveBtn" class="btn btn-primary" disabled>Save</button>
+      </div>
     </main>
   </div>
 

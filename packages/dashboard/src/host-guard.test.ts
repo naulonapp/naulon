@@ -71,5 +71,10 @@ test("the guard's own 403 carries the security headers", async () => {
   assert.match(res.headers.get("content-type") ?? "", /text\/plain/);
   assert.equal(res.headers.get("x-content-type-options"), "nosniff");
   assert.match(res.headers.get("content-security-policy") ?? "", /default-src 'self'/);
-  assert.equal(res.headers.get("referrer-policy"), "no-referrer");
+  // `same-origin`, not `no-referrer`. Both send nothing to a third party, which is the
+  // property this assertion was protecting — but `no-referrer` also makes Chrome send
+  // `Origin: null` on the console's own form posts, which made every sign-in a 403.
+  // Measured 2026-08-21 in a real browser; see same-origin.ts.
+  assert.equal(res.headers.get("referrer-policy"), "same-origin");
+  assert.notEqual(res.headers.get("referrer-policy"), "unsafe-url", "never send a referrer cross-origin");
 });

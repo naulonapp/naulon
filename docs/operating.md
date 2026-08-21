@@ -87,6 +87,12 @@ refused — so it shows up in Recent requests tagged **self-test**. That's delib
 those rows are real denials and they do count toward "missed", and you should be able
 to tell which ones were you.
 
+**Theme.** The rail carries a theme control that cycles system → light → dark. It starts on
+system, so the console follows whatever your OS is set to and changes with it; pick light or
+dark and that choice sticks in this browser. The choice is resolved before the page paints, so
+switching pages never flashes the other theme at you. The sign-in pages are the one exception:
+they render without JavaScript on purpose, so they follow the OS and nothing else.
+
 **Doctor** (`/doctor`) is the preflight: every condition that decides whether this
 gate can earn, each with the fix attached, and passing checks shown too so you can
 see the thing is configured rather than merely quiet. It checks the gate, your
@@ -165,13 +171,74 @@ internet by accident, so exposure is deliberate:
 | You want | Set | Result |
 |---|---|---|
 | **Private** (default) | `DASHBOARD_BIND=127.0.0.1`, no credential | Full ops, box owner only. |
-| **Remote ops** | `DASHBOARD_AUTH=user:pass` (+ a wide bind, or a named host below) | Full ops behind HTTP Basic. |
+| **Remote ops** | `DASHBOARD_AUTH=user:secret` (+ a wide bind, or a named host below) | Full ops behind HTTP Basic. |
 | **Public proof** | `DASHBOARD_PUBLIC=true` | Only the earnings page — wallets masked, every ops panel hidden. |
+
+### Sign-in: operator accounts
+
+`DASHBOARD_AUTH` is one credential shared by everyone who has it. It cannot tell you who
+ran a test toll, it cannot be revoked for one person, and rotating it signs out everybody
+at once. So the console has accounts.
+
+Open `/setup` on a fresh console and create the first administrator. From then on:
+
+- Browsers sign in at `/login` and get a session cookie — `HttpOnly`, `SameSite=Strict`,
+  and `__Host-`+`Secure` whenever the console is actually served over HTTPS.
+- `/account` is where you change your password, sign out, and (as an administrator) add or
+  disable operators. There is no self-signup, deliberately.
+- Two roles. `viewer` reads every panel; `admin` may also run the six ops writes (test
+  toll, content, crawlers, webhook ping and resend).
+- The rail at the bottom of every console page shows who you are and links to
+  `/account`. On a console with no accounts yet it offers `set up sign-in` instead.
+- Every sign-in, sign-out, account change **and ops write** — test toll, content,
+  crawlers, webhook ping and resend — is appended to `console-audit.jsonl` beside the
+  state file, with the account that ran it and whether it was allowed or refused. That
+  log is the reason accounts exist: a shared password cannot tell you who fired a toll.
+
+Containers can skip the interactive first run with `CONSOLE_ADMIN_PASSWORD` (plus
+`CONSOLE_ADMIN_USERNAME`). That account has to change its password before the console
+will render anything else — a password that came out of the environment is a bootstrap
+value, not a credential.
+
+Sessions live in `console.json` (mode 0600) beside your event ledger, and the token is
+stored only as a hash, so a copy of that file is not a set of live sessions. Put it on the
+volume you already mount or sign-ins reset on every restart. A read-only filesystem — the
+serverless entrypoint, for instance — cannot hold sessions at all; there, `DASHBOARD_AUTH`
+stays the only way in, and the console says so at boot.
+
+**Upgrading changes nothing until you create an account.** A console with `DASHBOARD_AUTH`
+and no accounts behaves exactly as it did before, browsers included. Once accounts exist,
+that credential becomes a MACHINE credential: it answers API requests for scripts and CI,
+it is refused for browser navigation (sign in instead), and it is a `viewer` unless you set
+`DASHBOARD_AUTH_ROLE=admin`.
+
+### Don't store the password
+
+The secret half of `DASHBOARD_AUTH` may be a scrypt hash instead of the password itself:
+
+```
+npm run hash -w @naulon/dashboard -- --user ops
+Console password: (not echoed)
+DASHBOARD_AUTH=ops:$scrypt$ln=15,r=8,p=1$...
+```
+
+Paste that line into `.env`. Basic still sends the password over the wire on every
+request — that is the protocol, and it is why HTTPS is not optional here — but the
+password no longer sits in your `.env`, your compose file, your secret store or a
+`docker inspect`. A plaintext secret keeps working and prints a warning at every boot.
+
+Hashing costs ~100 ms by design, and Basic re-authenticates on every request, so a
+verified credential is cached in memory for 60 s. A REJECTED one never is, which is what
+keeps the failed-sign-in budget below seeing every guess.
 
 Setting `DASHBOARD_AUTH` always enforces it, loopback or not. If you share the box —
 a container on the same network namespace, another user with an SSH tunnel, anything
 else that can reach `127.0.0.1` — that is how you keep the ops plane to yourself; a
 loopback bind is not a boundary between users on one machine.
+
+A credential that is *set but unreadable* — `ops:` with no secret, a value with no colon,
+a quoting accident — also refuses to serve, loopback included. It used to fall through to
+the private console: full ops, no credential, and a boot line that said `[private]`.
 
 Make the console reachable with neither auth nor public set and it **refuses to
 serve** — it won't leak wallets because you fat-fingered a bind. For real exposure,
