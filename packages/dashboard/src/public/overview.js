@@ -6,7 +6,7 @@
  * verified-agent). Every one is HTML-escaped before it touches innerHTML — esc()
  * from shell.js is the boundary, same as the earnings view.
  */
-import { $, esc, usd, trunc, rel, emptyState, renderShell, poll, sse, wireSeg, agentLabel, selfTestBadge } from "./shell.js";
+import { $, esc, usd, trunc, rel, emptyState, renderShell, poll, sse, wireSeg, agentLabel, selfTestBadge, wireTestToll } from "./shell.js";
 
 renderShell({ active: "overview" });
 
@@ -236,38 +236,9 @@ async function tick() {
   }
 }
 
-/**
- * Test toll — the server does the probing and writes every sentence (test-toll.ts);
- * this only renders the answer. Shared shape with the Doctor page on purpose.
- */
-async function testToll() {
-  const btn = $("#tollBtn");
-  btn.disabled = true;
-  btn.textContent = "probing…";
-  $("#tollOut").innerHTML = "";
-  try {
-    const r = await fetch("/api/test-toll", { method: "POST", headers: { "content-type": "application/json" } });
-    const p = await r.json();
-    const tone = p.status === "pass" ? "synced" : p.status === "skipped" ? "" : "pending";
-    $("#tollOut").innerHTML =
-      `<div class="banner ${tone}"><b>${esc(p.summary)}</b>` +
-      (p.fix ? `<div class="toll-fix">${esc(p.fix)}</div>` : "") +
-      (p.url
-        ? `<div class="toll-meta"><span class="mono">GET ${esc(p.url)}</span>` +
-          (p.httpStatus ? ` → <span class="mono">${esc(p.httpStatus)}</span>` : "") +
-          (p.verdict ? ` · <span class="mono">${esc(p.verdict)}</span>` : "") +
-          ` · ${esc(p.elapsedMs)}ms</div>`
-        : "") +
-      `</div>`;
-  } catch (e) {
-    $("#tollOut").innerHTML = `<div class="banner pending"><b>${esc(e.message)}</b></div>`;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Test toll";
-  }
-}
-
-$("#tollBtn").addEventListener("click", testToll);
+// The server does the probing and writes every sentence (test-toll.ts); the control and
+// its rendering are shell.js's, shared with the Doctor page. This page only mounts it.
+wireTestToll();
 
 const loop = poll(tick, 4000);
 

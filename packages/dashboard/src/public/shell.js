@@ -226,6 +226,56 @@ export function emptyState({ icon, lead, body = "", foot = "" }) {
   );
 }
 
+// ── the test toll ─────────────────────────────────────────────────────────────
+/**
+ * The "Test toll" control: ask the gate to bill itself, and report what came back.
+ *
+ * Two pages mount it — Overview, where a fresh install is told to prove the toll works,
+ * and Doctor, where it is one check among several. It shipped as two copies of the same
+ * function that had already drifted apart in shape, which is the whole argument for it
+ * living here: a probe that reports a failure differently depending on which page you
+ * ran it from teaches the reader two things about one gate.
+ *
+ * No-ops when the page mounts no control, so a page opts in by rendering the two ids.
+ */
+export function wireTestToll() {
+  const btn = $("#tollBtn");
+  const out = $("#tollOut");
+  if (!btn || !out) return;
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "probing…";
+    out.innerHTML = "";
+    try {
+      const res = await fetch("/api/test-toll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      const p = await res.json();
+      // skipped is neither pass nor fail — it is "this install has nothing to probe yet",
+      // so it gets the neutral tone rather than being painted as a problem.
+      const tone = p.status === "pass" ? "synced" : p.status === "skipped" ? "" : "pending";
+      const meta = !p.url
+        ? ""
+        : `<div class="toll-meta"><span class="mono">GET ${esc(p.url)}</span>` +
+          (p.httpStatus ? ` → <span class="mono">${esc(p.httpStatus)}</span>` : "") +
+          (p.verdict ? ` · <span class="mono">${esc(p.verdict)}</span>` : "") +
+          ` · ${esc(p.elapsedMs)}ms</div>`;
+      out.innerHTML =
+        `<div class="banner ${tone}"><b>${esc(p.summary)}</b>` +
+        (p.fix ? `<div class="toll-fix">${esc(p.fix)}</div>` : "") +
+        meta +
+        `</div>`;
+    } catch (e) {
+      out.innerHTML = `<div class="banner pending"><b>${esc(e.message)}</b></div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Test toll";
+    }
+  });
+}
+
 // ── the sidebar ───────────────────────────────────────────────────────────────
 /** Nav groups, in order. `null` group = ungrouped, rendered above the first label. */
 export const NAV = [

@@ -4,7 +4,7 @@
  * two buttons. Nothing here interprets a status; if the wording is wrong, it is wrong
  * on the server where it can be unit-tested.
  */
-import { $, esc, rel, emptyState, renderShell } from "./shell.js";
+import { $, esc, rel, emptyState, renderShell, wireTestToll } from "./shell.js";
 
 renderShell({ active: "doctor" });
 
@@ -49,29 +49,6 @@ async function load() {
   }
 }
 
-async function testToll() {
-  const btn = $("#tollBtn");
-  btn.disabled = true;
-  btn.textContent = "probing…";
-  $("#tollOut").innerHTML = "";
-  try {
-    const r = await fetch("/api/test-toll", { method: "POST", headers: { "content-type": "application/json" } });
-    const p = await r.json();
-    const tone = p.status === "pass" ? "synced" : p.status === "skipped" ? "" : "pending";
-    $("#tollOut").innerHTML = `
-      <div class="banner ${tone}">
-        <b>${esc(p.summary)}</b>
-        ${p.fix ? `<div class="toll-fix">${esc(p.fix)}</div>` : ""}
-        ${p.url ? `<div class="toll-meta"><span class="mono">GET ${esc(p.url)}</span>${p.httpStatus ? ` → <span class="mono">${esc(p.httpStatus)}</span>` : ""}${p.verdict ? ` · <span class="mono">${esc(p.verdict)}</span>` : ""} · ${esc(p.elapsedMs)}ms</div>` : ""}
-      </div>`;
-  } catch (e) {
-    $("#tollOut").innerHTML = `<div class="banner pending"><b>${esc(e.message)}</b></div>`;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Test toll";
-  }
-}
-
 $("#rerunBtn").addEventListener("click", load);
-$("#tollBtn").addEventListener("click", testToll);
+wireTestToll();
 load();
