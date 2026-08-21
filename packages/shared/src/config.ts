@@ -292,6 +292,24 @@ export const configSchema = z.object({
   // so without this the password can be guessed at network speed for as long as the
   // console is exposed. Only 401s are charged — a correct credential costs nothing, so
   // an operator cannot lock themselves out by using the console hard. 0 disables.
+  // What the MACHINE credential may do once real console accounts exist. Viewer by
+  // default: a CI job that reads the ledger has no business firing a test toll, and the
+  // credential that lives in a script is the one most likely to leak. Ignored while the
+  // console has no accounts, where DASHBOARD_AUTH is still the whole login.
+  DASHBOARD_AUTH_ROLE: z.enum(["admin", "viewer"]).default("viewer"),
+  // Console identity state (operators + sessions). Defaults beside EVENTS_PATH, so it
+  // rides whatever volume the operator already mounts for the ledger.
+  CONSOLE_STATE_PATH: z.string().optional(),
+  // Seeds the first administrator without an interactive first run — the container path,
+  // the same shape as Grafana's [security] admin_password. The account it creates MUST
+  // change its password before the console renders anything else.
+  CONSOLE_ADMIN_USERNAME: z.string().default("admin"),
+  CONSOLE_ADMIN_PASSWORD: z.string().optional(),
+  // Session lifetimes. Idle is the inactivity window, absolute is the ceiling regardless
+  // of activity — OWASP asks for both, and one without the other is a session that either
+  // never ends or ends at random.
+  CONSOLE_SESSION_IDLE_MINUTES: z.coerce.number().int().positive().default(480),
+  CONSOLE_SESSION_ABSOLUTE_HOURS: z.coerce.number().int().positive().default(168),
   DASHBOARD_AUTH_FAIL_RPM: z.coerce.number().int().nonnegative().default(20),
   DASHBOARD_AUTH_FAIL_BURST: z.coerce.number().int().positive().default(10),
   // Opt in to the PUBLIC earnings view: a read-only "authors are earning" page

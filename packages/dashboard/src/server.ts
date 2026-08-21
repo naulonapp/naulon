@@ -18,7 +18,6 @@
 import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { basicAuth } from "hono/basic-auth";
 import { getConfig, getSink } from "@naulon/shared";
 import { aggregate, type Ledger } from "./aggregate.ts";
 import { watchLedger } from "./watch.ts";
@@ -40,9 +39,15 @@ import { runDoctor } from "./doctor.ts";
 import { buildWebhooksView, queuePing, resendDelivery } from "./webhooks.ts";
 import { runTollProbe } from "./test-toll.ts";
 import { decideAccess } from "./access.ts";
+import { CSP } from "./security-headers.ts";
 import { createCredentialVerifier, parseDashboardAuth } from "./credential.ts";
+import { auditPathFor, createAuditor } from "./console-audit.ts";
+import { consoleAuth, mountConsoleAuth, getPrincipal, requireRole, type ConsoleAuthDeps } from "./console-auth.ts";
+import { createFileStore, defaultStatePath } from "./console-store.ts";
+import { createUser, hasAnyUser } from "./console-users.ts";
+import { checkOrigin } from "./same-origin.ts";
 import { authThrottle } from "./authThrottle.ts";
-import { isAllowedHost, parseAllowedHosts } from "./host-guard.ts";
+import { isAllowedHost, parseAllowedHosts, isLoopbackHostname } from "./host-guard.ts";
 import { tileSvg } from "./brand.ts";
 import { RECENT_LIMIT } from "./constants.ts";
 
@@ -64,7 +69,35 @@ const CREDENTIAL = parseDashboardAuth(cfg.DASHBOARD_AUTH);
 
 const VERIFY = CREDENTIAL ? createCredentialVerifier(CREDENTIAL) : null;
 
+/**
+ * Console identity state. Absent in PUBLIC mode, which serves one masked page and has no
+ * notion of an operator — building a user store for it would be inventing a login for a
+ * page whose entire purpose is being readable without one.
+ */
+const STATE_PATH = cfg.CONSOLE_STATE_PATH ?? defaultStatePath(cfg.EVENTS_PATH);
+const STORE = cfg.DASHBOARD_PUBLIC ? null : await createFileStore(STATE_PATH);
+
+/**
+ * The container path to a first administrator: seed once, force a change on first use.
+ * Grafana's `admin_password` shape, and the same caveat — a seeded password sits in the
+ * environment, so it is a bootstrap value, never a credential to keep.
+ */
+export const seededAdmin =
+  STORE && cfg.CONSOLE_ADMIN_PASSWORD && !(await hasAnyUser(STORE))
+    ? await createUser(STORE, {
+        username: cfg.CONSOLE_ADMIN_USERNAME,
+        password: cfg.CONSOLE_ADMIN_PASSWORD,
+        role: "admin",
+        mustChangePassword: true,
+      })
+    : null;
+
+const HAS_USERS = STORE ? await hasAnyUser(STORE) : false;
+
+let AUTH_DEPS: ConsoleAuthDeps | null = null;
+
 const ACCESS = decideAccess({
+  hasUsers: HAS_USERS,
   bind: cfg.DASHBOARD_BIND,
   auth: cfg.DASHBOARD_AUTH,
   isPublic: cfg.DASHBOARD_PUBLIC,
@@ -134,24 +167,13 @@ export const app = new Hono();
 // returns without calling next() skips everything registered after it.
 app.use("*", async (c, next) => {
   await next();
-  c.header(
-    "Content-Security-Policy",
-    [
-      "default-src 'self'",
-      "img-src 'self' data:",
-      "style-src 'self'",
-      // Inherited from default-src, but stated so the "we ship our own faces, we
-      // never reach a CDN" decision is legible to anyone auditing the header.
-      "font-src 'self'",
-      "script-src 'self'",
-      "connect-src 'self'",
-      "base-uri 'none'",
-      "form-action 'none'",
-      "frame-ancestors 'none'",
-    ].join("; "),
-  );
+  c.header("Content-Security-Policy", CSP);
   c.header("X-Content-Type-Options", "nosniff");
-  c.header("Referrer-Policy", "no-referrer");
+  // `same-origin`, not `no-referrer`. Both send nothing to a third party — the property
+  // that matters for an ops console — but `no-referrer` ALSO makes Chrome send `Origin:
+  // null` on the console's own form posts, which is what broke the sign-in page. Keeping a
+  // header whose only remaining effect is to blind our own CSRF check is not hardening.
+  c.header("Referrer-Policy", "same-origin");
 });
 
 // DNS-rebinding guard — before anything reads or renders. Private mode runs without
@@ -190,21 +212,30 @@ app.use("*", async (c, next) => {
 if (ACCESS.refuse) {
   app.all("*", (c) => c.text(`naulon dashboard refused to start serving.\n\n${ACCESS.reason}\n`, 503));
 } else {
-  if (ACCESS.requireAuth) {
-    // Order matters: the failed-sign-in budget has to see the 401 that basicAuth
-    // produces, so it wraps it rather than following it.
+  if (STORE) {
+    // Order is load-bearing, twice over. hono composes middleware in REGISTRATION order,
+    // so the failed-sign-in budget has to be mounted before the gate whose 401s it charges,
+    // and the gate before every route it protects.
+    const AUDITOR = createAuditor(STORE.writable ? auditPathFor(STATE_PATH) : null);
+    AUTH_DEPS = {
+      store: STORE,
+      auditor: AUDITOR,
+      lifetimes: {
+        idleMs: cfg.CONSOLE_SESSION_IDLE_MINUTES * 60_000,
+        absoluteMs: cfg.CONSOLE_SESSION_ABSOLUTE_HOURS * 3_600_000,
+      },
+      // The machine credential, narrowed: it exists only if DASHBOARD_AUTH parsed, and it
+      // carries DASHBOARD_AUTH_ROLE — viewer unless the operator says otherwise.
+      machine:
+        CREDENTIAL && VERIFY
+          ? { username: CREDENTIAL.username, verify: VERIFY, role: cfg.DASHBOARD_AUTH_ROLE }
+          : null,
+      loopbackOnly: isLoopbackHostname(cfg.DASHBOARD_BIND) && ALLOWED_HOSTS.every(isLoopbackHostname),
+      privateMode: ACCESS.mode === "private",
+    };
     app.use("*", authThrottle());
-    // The secret half may be a scrypt PHC string rather than a password in the clear
-    // (credential.ts). `verifyUser` is the seam that lets it be either, and its
-    // (username, password) shape is already the one a user STORE would implement — so
-    // growing past a single credential does not come back through this line.
-    // VERIFY is non-null wherever requireAuth is true — a malformed credential is refused
-    // above. The fallback is `false` rather than a non-null assertion, so if that ever
-    // stopped holding the console would deny everyone instead of admitting everyone.
-    app.use(
-      "*",
-      basicAuth({ verifyUser: (username, password) => (VERIFY ? VERIFY(username, password) : false) }),
-    );
+    app.use("*", consoleAuth(AUTH_DEPS));
+    mountConsoleAuth(app, AUTH_DEPS);
   }
 
   for (const [path, asset] of Object.entries(ASSETS)) {
@@ -257,20 +288,17 @@ if (ACCESS.refuse) {
     // Prefer Origin; fall back to Referer's host when Origin is absent (older
     // browsers / some form posts omit Origin but still send Referer). Neither
     // present ⇒ not a browser CSRF vector (curl/tooling carry no ambient creds).
+    // The rule moved to same-origin.ts, and it now depends on WHICH credential
+    // authenticated: a session cookie is ambient, so an unattributed write is refused
+    // outright; the machine credential is not, so the old lenient path still holds for it.
     const sameOrigin = async (c: import("hono").Context, next: () => Promise<void>) => {
-      const host = c.req.header("Host");
-      const source = c.req.header("Origin") ?? c.req.header("Referer");
-      if (source) {
-        let sourceHost: string;
-        try {
-          sourceHost = new URL(source).host;
-        } catch {
-          return c.text("malformed Origin/Referer", 403);
-        }
-        if (sourceHost !== host) return c.text("cross-origin request refused", 403);
-      }
+      const verdict = checkOrigin(c, getPrincipal(c)?.kind === "session" ? "strict" : "lenient");
+      if (!verdict.ok) return c.text(verdict.refusal ?? "refused", 403);
       await next();
     };
+
+    /** The six ops writes are administrator-only once the console has accounts. */
+    const adminOnly = requireRole("admin");
 
     app.get("/api/ops", async (c) => {
       const now = Date.now();
@@ -375,7 +403,7 @@ if (ACCESS.refuse) {
     // articles with a crawler UA. State-changing only in the sense that it makes an
     // outbound request, so it takes the same CSRF guard as the write routes; the
     // target is built from GATE_URL, never from the request.
-    app.post("/api/test-toll", sameOrigin, async (c) => {
+    app.post("/api/test-toll", sameOrigin, adminOnly, async (c) => {
       const config = await summarizeConfig();
       const slug = config.articles?.[0]?.slug ?? null;
       return c.json(await runTollProbe({ slug, apiMode: config.creditsSource.mode === "api" }));
@@ -400,7 +428,7 @@ if (ACCESS.refuse) {
       });
     });
 
-    app.post("/api/content/scan", sameOrigin, async (c) => {
+    app.post("/api/content/scan", sameOrigin, adminOnly, async (c) => {
       const body = await c.req.json<{ defaultWallet?: string }>().catch(() => ({}) as { defaultWallet?: string });
       try {
         return c.json(await scanArticles(body.defaultWallet?.trim() || undefined));
@@ -427,7 +455,7 @@ if (ACCESS.refuse) {
       });
     });
 
-    app.post("/api/crawlers", sameOrigin, async (c) => {
+    app.post("/api/crawlers", sameOrigin, adminOnly, async (c) => {
       const body = await c.req
         .json<{ allow?: unknown; block?: unknown; charge?: unknown }>()
         .catch(() => ({}) as { allow?: unknown; block?: unknown; charge?: unknown });
@@ -450,21 +478,21 @@ if (ACCESS.refuse) {
 
     // Both writes below take the same CSRF guard as every other state-changing route, and both
     // resolve their target from the operator's own configuration — never from a URL in the request.
-    app.post("/api/webhooks/ping", sameOrigin, async (c) => {
+    app.post("/api/webhooks/ping", sameOrigin, adminOnly, async (c) => {
       const body = await c.req.json<{ endpointId?: unknown }>().catch(() => ({}) as { endpointId?: unknown });
       const endpointId = typeof body.endpointId === "string" ? body.endpointId : "";
       const result = await queuePing(endpointId);
       return c.json(result, result.ok ? 200 : 400);
     });
 
-    app.post("/api/webhooks/resend", sameOrigin, async (c) => {
+    app.post("/api/webhooks/resend", sameOrigin, adminOnly, async (c) => {
       const body = await c.req.json<{ deliveryId?: unknown }>().catch(() => ({}) as { deliveryId?: unknown });
       const deliveryId = typeof body.deliveryId === "string" ? body.deliveryId : "";
       const result = await resendDelivery(deliveryId);
       return c.json(result, result.ok ? 200 : 400);
     });
 
-    app.post("/api/content", sameOrigin, async (c) => {
+    app.post("/api/content", sameOrigin, adminOnly, async (c) => {
       const body = await c.req.json<{ credits?: Record<string, unknown> }>().catch(() => ({}) as { credits?: Record<string, unknown> });
       const result = await writeCredits(body.credits ?? {});
       return c.json(result, result.written ? 200 : 422);
@@ -476,3 +504,4 @@ export const port = cfg.DASHBOARD_PORT;
 export const hostname = cfg.DASHBOARD_BIND;
 export const access = ACCESS;
 export const credential = CREDENTIAL;
+export const consoleState = STORE ? { path: STATE_PATH, writable: STORE.writable, hasUsers: HAS_USERS } : null;

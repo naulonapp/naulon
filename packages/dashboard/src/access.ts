@@ -49,6 +49,13 @@ export interface AccessInput {
   /** DASHBOARD_PUBLIC. */
   isPublic: boolean;
   /**
+   * Does the console have operator ACCOUNTS? A console with accounts authenticates
+   * through them, so it is as safe to expose as one with DASHBOARD_AUTH — and refusing
+   * to serve it because no Basic credential is set would refuse the very deployment this
+   * feature exists for (a team signing in, with no shared secret anywhere).
+   */
+  hasUsers?: boolean;
+  /**
    * Parsed `DASHBOARD_ALLOWED_HOSTS`. Any entry that is not a loopback name means
    * the operator is deliberately fronting this console with something the outside
    * world can address, so the loopback bind stops being evidence of privacy.
@@ -98,7 +105,7 @@ export const isValidAuth = (auth: string | undefined): boolean => {
 export const externalHosts = (allowedHosts: readonly string[] = []): string[] =>
   allowedHosts.filter((h) => !isLoopbackHostname(h));
 
-export function decideAccess({ bind, auth, isPublic, allowedHosts = [] }: AccessInput): AccessDecision {
+export function decideAccess({ bind, auth, isPublic, hasUsers = false, allowedHosts = [] }: AccessInput): AccessDecision {
   if (isPublic) {
     return {
       serve: true,
@@ -127,6 +134,25 @@ export function decideAccess({ bind, auth, isPublic, allowedHosts = [] }: Access
       requireAuth: true,
       refuse: false,
       reason: `${why} — ops console behind HTTP Basic`,
+    };
+  }
+
+  // Accounts are a credential too. Same reasoning as the branch above and the same
+  // position relative to the loopback shortcut: an operator who created accounts has
+  // asked to be asked, and loopback is not a boundary between users on one box.
+  if (hasUsers) {
+    const why =
+      external.length > 0
+        ? `reachable as ${external.join(", ")} with console accounts`
+        : isLoopbackBind(bind)
+          ? `loopback bind (${bind}) with console accounts`
+          : "wide bind with console accounts";
+    return {
+      serve: true,
+      mode: "authed",
+      requireAuth: true,
+      refuse: false,
+      reason: `${why} — ops console behind a sign-in`,
     };
   }
 

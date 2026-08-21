@@ -166,6 +166,40 @@ internet by accident, so exposure is deliberate:
 | **Remote ops** | `DASHBOARD_AUTH=user:secret` (+ a wide bind, or a named host below) | Full ops behind HTTP Basic. |
 | **Public proof** | `DASHBOARD_PUBLIC=true` | Only the earnings page — wallets masked, every ops panel hidden. |
 
+### Sign-in: operator accounts
+
+`DASHBOARD_AUTH` is one credential shared by everyone who has it. It cannot tell you who
+ran a test toll, it cannot be revoked for one person, and rotating it signs out everybody
+at once. So the console has accounts.
+
+Open `/setup` on a fresh console and create the first administrator. From then on:
+
+- Browsers sign in at `/login` and get a session cookie — `HttpOnly`, `SameSite=Strict`,
+  and `__Host-`+`Secure` whenever the console is actually served over HTTPS.
+- `/account` is where you change your password, sign out, and (as an administrator) add or
+  disable operators. There is no self-signup, deliberately.
+- Two roles. `viewer` reads every panel; `admin` may also run the six ops writes (test
+  toll, content, crawlers, webhook ping and resend).
+- Every sign-in, sign-out, account change and refusal is appended to
+  `console-audit.jsonl`, beside the state file. That log is the reason accounts exist.
+
+Containers can skip the interactive first run with `CONSOLE_ADMIN_PASSWORD` (plus
+`CONSOLE_ADMIN_USERNAME`). That account has to change its password before the console
+will render anything else — a password that came out of the environment is a bootstrap
+value, not a credential.
+
+Sessions live in `console.json` (mode 0600) beside your event ledger, and the token is
+stored only as a hash, so a copy of that file is not a set of live sessions. Put it on the
+volume you already mount or sign-ins reset on every restart. A read-only filesystem — the
+serverless entrypoint, for instance — cannot hold sessions at all; there, `DASHBOARD_AUTH`
+stays the only way in, and the console says so at boot.
+
+**Upgrading changes nothing until you create an account.** A console with `DASHBOARD_AUTH`
+and no accounts behaves exactly as it did before, browsers included. Once accounts exist,
+that credential becomes a MACHINE credential: it answers API requests for scripts and CI,
+it is refused for browser navigation (sign in instead), and it is a `viewer` unless you set
+`DASHBOARD_AUTH_ROLE=admin`.
+
 ### Don't store the password
 
 The secret half of `DASHBOARD_AUTH` may be a scrypt hash instead of the password itself:

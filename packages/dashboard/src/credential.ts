@@ -18,8 +18,8 @@
  * neither needed to.
  *
  * THE COST THAT HAS TO BE PAID BACK: Basic sends the credential on EVERY request, and a
- * memory-hard hash is ~100 ms by design. One console page load is a burst of assets, API
- * calls and an SSE stream — twenty verifications, two seconds, all to re-answer a question
+ * memory-hard hash is ~350 ms at the parameters below, by design. One console page load is a burst of assets, API
+ * calls and an SSE stream — twenty verifications, seven seconds, all to re-answer a question
  * answered at the first one. So a verified credential is cached for a short TTL, keyed by
  * a per-process-salted digest of what the caller sent (never the password, and never a key
  * a different process could precompute). That cache is what makes hashing affordable under
@@ -39,14 +39,33 @@ const scryptAsync = promisify(scrypt) as (
   options: { N: number; r: number; p: number; maxmem: number },
 ) => Promise<Buffer>;
 
-/** PHC id. `$scrypt$ln=15,r=8,p=1$<salt>$<hash>`, base64 without padding. */
+/** PHC id. `$scrypt$ln=16,r=8,p=2$<salt>$<hash>`, base64 without padding. */
 const PHC_ID = "scrypt";
 export const PHC_PREFIX = `$${PHC_ID}$`;
 
-/** ~32 MB and ~100 ms on a 2020-era laptop. The interactive-login end of the scale. */
-const DEFAULT_LN = 15;
+/**
+ * OWASP's Password Storage Cheat Sheet (read 2026-08-21) gives scrypt as a ladder of
+ * equivalent-defence rows, not a single number:
+ *
+ *   N=2^17 (128 MiB), r=8, p=1   ← the headline recommendation
+ *   N=2^16  (64 MiB), r=8, p=2   ← this
+ *   N=2^15  (32 MiB), r=8, p=3
+ *   N=2^14  (16 MiB), r=8, p=5
+ *   N=2^13   (8 MiB), r=8, p=10
+ *
+ * The `p` column is the part that is easy to get wrong: dropping N without raising p is
+ * not "the same hash, cheaper", it is a weaker hash. This shipped at N=2^15,r=8,p=1 for
+ * exactly one commit, which was off that ladder entirely.
+ *
+ * 2^16 rather than 2^17 because of where this runs. The console is self-hosted, often on
+ * a 1 GB VPS beside the gate, and the failed-sign-in budget below permits a burst of ten
+ * guesses — ten concurrent 128 MiB derivations is 1.3 GB of resident memory and an OOM
+ * kill of the gate, i.e. the password hash becoming the outage. 64 MiB with the
+ * concurrency cap below peaks at 128 MiB whatever an attacker does.
+ */
+const DEFAULT_LN = 16;
 const DEFAULT_R = 8;
-const DEFAULT_P = 1;
+const DEFAULT_P = 2;
 const KEYLEN = 32;
 const SALT_BYTES = 16;
 
@@ -68,6 +87,8 @@ export interface ParsedPhc extends ScryptParams {
   hash: Buffer;
 }
 
+export const DEFAULT_PARAMS: ScryptParams = { ln: DEFAULT_LN, r: DEFAULT_R, p: DEFAULT_P };
+
 const b64 = (b: Buffer) => b.toString("base64").replace(/=+$/, "");
 
 /** Node's maxmem must exceed 128 * N * r; give it headroom rather than tripping on equality. */
@@ -76,7 +97,7 @@ const maxmemFor = ({ ln, r }: ScryptParams) => 256 * 2 ** ln * r;
 /** Mint a PHC string for a password. The `hash` script and first-run bootstrap both use this. */
 export async function hashPassword(
   password: string,
-  params: ScryptParams = { ln: DEFAULT_LN, r: DEFAULT_R, p: DEFAULT_P },
+  params: ScryptParams = DEFAULT_PARAMS,
 ): Promise<string> {
   assertParams(params);
   const salt = randomBytes(SALT_BYTES);
@@ -93,7 +114,58 @@ function assertParams(params: ScryptParams): void {
   if (!Number.isInteger(p) || p < 1 || p > 16) throw new Error(`scrypt p must be an integer in 1..16 (got ${p})`);
 }
 
-function derive(password: string, salt: Buffer, params: ScryptParams): Promise<Buffer> {
+/**
+ * A memory-hard hash is a memory-exhaustion primitive pointed at yourself: the whole
+ * design is "this costs 64 MiB", and nothing stops ten requests from arriving together.
+ * The failed-sign-in budget rate-limits guesses, but it is a budget PER CLIENT and it
+ * charges only after the 401 — the derivations are already in flight by then.
+ *
+ * So derivations are serialised two at a time. An attacker's flood queues instead of
+ * allocating, a real operator never notices (their credential is cached after the first
+ * request), and the console's peak from this path is bounded at 2 x 64 MiB regardless of
+ * load. Queueing is the right failure here — the alternative is an OOM kill that takes
+ * the GATE down with the console.
+ */
+const MAX_CONCURRENT_DERIVES = 2;
+let inFlight = 0;
+const waiting: Array<() => void> = [];
+
+async function acquire(): Promise<void> {
+  if (inFlight < MAX_CONCURRENT_DERIVES) {
+    inFlight++;
+    return;
+  }
+  await new Promise<void>((resolve) => waiting.push(resolve));
+  inFlight++;
+}
+
+function release(): void {
+  inFlight--;
+  const next = waiting.shift();
+  if (next) next();
+}
+
+/**
+ * Node hashes the password into scrypt's PBKDF2 stage, so length barely affects cost —
+ * but an unbounded body still gets copied and held, and there is no reason a console
+ * password is a megabyte. OWASP's guidance to cap input length applies for that reason
+ * rather than bcrypt's 72-byte truncation, which scrypt does not have.
+ */
+const MAX_PASSWORD_BYTES = 1024;
+
+async function derive(password: string, salt: Buffer, params: ScryptParams): Promise<Buffer> {
+  if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) {
+    throw new Error(`password exceeds ${MAX_PASSWORD_BYTES} bytes`);
+  }
+  await acquire();
+  try {
+    return await deriveNow(password, salt, params);
+  } finally {
+    release();
+  }
+}
+
+function deriveNow(password: string, salt: Buffer, params: ScryptParams): Promise<Buffer> {
   return scryptAsync(password, salt, KEYLEN, {
     N: 2 ** params.ln,
     r: params.r,
@@ -167,6 +239,7 @@ export async function verifySecret(stored: string, supplied: string): Promise<bo
     if (isHashed(stored)) return false; // looked like a hash, wasn't one: closed, never plaintext
     return safeEqual(stored, supplied);
   }
+  if (Buffer.byteLength(supplied, "utf8") > MAX_PASSWORD_BYTES) return false; // a caller's input, not a bug
   const key = await derive(supplied, phc.salt, { ln: phc.ln, r: phc.r, p: phc.p });
   return key.length === phc.hash.length && timingSafeEqual(key, phc.hash);
 }
