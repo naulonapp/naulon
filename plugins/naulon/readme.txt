@@ -199,6 +199,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Upgrade Notice ==
 
+= 0.4.3 =
+Your naulon account now sees what the toll actually did — every crawler charged, served free, or re-reading on a license it paid for. Before this, an in-app site's Audit page could only ever show what someone else saw, which was nothing. Readers are still never reported.
+
 = 0.4.2 =
 Meta's external fetcher, Amazon's user-triggered fetcher and Mistral's were reading your articles free. This charges them. Nothing else changes.
 
