@@ -4,9 +4,16 @@
 # Published to ghcr.io/naulonapp/naulon by .github/workflows/image.yml. `@naulon/tollgate`
 # is not on npm precisely because this is its distribution channel, so this file is what
 # "install naulon" means for anyone who is not cloning the repo.
-FROM node:22-slim AS base
+# Two stages, because "runs straight from TypeScript via tsx" is only true of the ENTRY
+# module. Five workspaces (@naulon/{sdk,shared,enforce,wayfarer,wayfarer-mcp}) publish
+# through `dist/`, so an import of @naulon/shared resolves to dist/index.js whatever tsx
+# is doing at the top. A single `--omit=dev` stage cannot produce that: it deliberately
+# has no typescript. The first image to reach a registry died on exactly this —
+# ERR_MODULE_NOT_FOUND on @naulon/shared/dist/index.js, caught by the smoke test rather
+# than by an operator, and invisible to a local run of the console half, which imports
+# none of them.
+FROM node:22-slim AS builder
 WORKDIR /app
-ENV NODE_ENV=production
 
 # Every workspace manifest, listed rather than globbed: `COPY packages/*/package.json`
 # flattens in Docker, and a workspace npm cannot see makes `npm ci` fail. Five of the
@@ -22,17 +29,44 @@ COPY packages/tollgate/package.json      packages/tollgate/
 COPY packages/wayfarer/package.json      packages/wayfarer/
 COPY packages/wayfarer-mcp/package.json  packages/wayfarer-mcp/
 
+# The full install: this stage needs the typescript the runtime stage must not carry.
 # No fallback. A lockfile that does not resolve is a broken build, and finding that out
 # here costs a minute — finding it out from a published image costs an operator.
-# `--omit=dev` keeps typescript and the type packages out; `tsx` is a runtime dependency
-# of this repo, not a dev one, because nothing here is compiled before it runs.
-RUN npm ci --omit=dev
+RUN npm ci
 
-# Source only — .dockerignore keeps .env, node_modules, .git, docs, tests and any local
-# ledger out. Everything runs straight from TypeScript via tsx, same as in development.
 COPY packages/ packages/
 COPY scripts/ scripts/
-COPY package.json ./
+# Every package tsconfig extends the root one; without it tsc dies on TS5083 and then
+# reports several hundred phantom "Cannot find name 'process'" errors, which read as a
+# broken source tree rather than a missing file.
+COPY tsconfig.base.json tsconfig.json ./
+
+# Dependency order, not alphabetical, and the same order release.yml publishes in — each
+# package typechecks against its dependencies' emitted .d.ts, so shared before enforce.
+RUN npm run build -w @naulon/sdk \
+ && npm run build -w @naulon/shared \
+ && npm run build -w @naulon/enforce \
+ && npm run build -w @naulon/wayfarer \
+ && npm run build -w @naulon/wayfarer-mcp
+
+# Drop the build-only half of node_modules in place, so the runtime stage copies a tree
+# that is already production-shaped. `tsx` survives it: it is a runtime dependency of
+# this repo, not a dev one, because the entry modules are never compiled.
+RUN npm prune --omit=dev
+
+
+FROM node:22-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Source, built dist and the pruned dependency tree — including the workspace symlinks
+# npm puts in node_modules/@naulon/*, which resolve because the path is /app in both
+# stages. .dockerignore keeps .env, .git, docs and any local ledger out of the context
+# they were copied from.
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/package.json ./package.json
 
 # The console writes its operator/session state (mode 0600) and both services append to
 # the ledger. Owned by `node` so the container does not need root to do it — Docker
