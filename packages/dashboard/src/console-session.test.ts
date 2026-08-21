@@ -194,3 +194,40 @@ test("a proxied https origin is detected, and a plain loopback one is not", () =
   assert.equal(isSecureRequest("http://127.0.0.1:8403/", undefined), false);
   assert.equal(isSecureRequest("https://console.example/", undefined), true);
 });
+
+// ── Regressions from the 2026-08-21 nitpick pass ─────────────────────────────────
+
+test("creating a session sweeps the dead ones — they used to accumulate forever", async () => {
+  // Measured before the fix: six sign-ins, six rows, none ever reclaimed. A session was
+  // removed only if its token was presented again after expiry, on logout, or on disable,
+  // so a browser closed without signing out left its row (with an IP and a User-Agent)
+  // permanently, and every request paid to clone the array.
+  const store = storeWith([alice]);
+  let clock = Date.parse("2026-02-01T00:00:00.000Z");
+  const now = () => new Date(clock);
+  const life = { idleMs: 1000, absoluteMs: 10_000 };
+
+  for (let i = 0; i < 5; i++) await createSession(store, "u1", { now }, life);
+  assert.equal((await store.read()).sessions.length, 5);
+
+  clock += 5_000; // every one of them is now past its idle window
+  await createSession(store, "u1", { now }, life);
+  assert.equal((await store.read()).sessions.length, 1, "the five dead rows go, the new one stays");
+});
+
+test("the sweep uses the CONFIGURED lifetimes, not the defaults", async () => {
+  // The bug this guards was nearly introduced by the fix itself: sweeping against
+  // DEFAULT_LIFETIMES would delete live sessions on any console configured with a LONGER
+  // idle window than the default.
+  const store = storeWith([alice]);
+  let clock = Date.parse("2026-02-01T00:00:00.000Z");
+  const now = () => new Date(clock);
+  const generous = { idleMs: 30 * 24 * 60 * 60 * 1000, absoluteMs: 90 * 24 * 60 * 60 * 1000 };
+
+  const { token } = await createSession(store, "u1", { now }, generous);
+  clock += 10 * 24 * 60 * 60 * 1000; // ten days: dead by the default, live by this console's
+
+  await createSession(store, "u1", { now }, generous);
+  assert.equal((await store.read()).sessions.length, 2, "a still-valid session must survive");
+  assert.equal((await resolveSession(store, token, generous, now)).ok, true);
+});

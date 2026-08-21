@@ -684,3 +684,10 @@ body {
   .wh-ep-right { flex-wrap: wrap; gap: 12px 24px; }
   .wh-ep-act { text-align: left; }
 }
+
+/* The rail's identity slot — who you are, and the way out. Muted like the gate state
+   beside it: it is chrome, not a destination. */
+.who-role {
+  color: var(--faint);
+  font-size: 0.86em;
+}

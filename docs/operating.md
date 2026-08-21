@@ -180,8 +180,12 @@ Open `/setup` on a fresh console and create the first administrator. From then o
   disable operators. There is no self-signup, deliberately.
 - Two roles. `viewer` reads every panel; `admin` may also run the six ops writes (test
   toll, content, crawlers, webhook ping and resend).
-- Every sign-in, sign-out, account change and refusal is appended to
-  `console-audit.jsonl`, beside the state file. That log is the reason accounts exist.
+- The rail at the bottom of every console page shows who you are and links to
+  `/account`. On a console with no accounts yet it offers `set up sign-in` instead.
+- Every sign-in, sign-out, account change **and ops write** — test toll, content,
+  crawlers, webhook ping and resend — is appended to `console-audit.jsonl` beside the
+  state file, with the account that ran it and whether it was allowed or refused. That
+  log is the reason accounts exist: a shared password cannot tell you who fired a toll.
 
 Containers can skip the interactive first run with `CONSOLE_ADMIN_PASSWORD` (plus
 `CONSOLE_ADMIN_USERNAME`). That account has to change its password before the console

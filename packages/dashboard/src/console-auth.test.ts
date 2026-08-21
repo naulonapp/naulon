@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { hashPassword } from "./credential.ts";
 import { createMemoryStore, emptyState, type ConsoleRole, type ConsoleState } from "./console-store.ts";
 import { memoryAuditor } from "./console-audit.ts";
-import { consoleAuth, mountConsoleAuth, requireRole, type ConsoleAuthDeps } from "./console-auth.ts";
+import { audited, consoleAuth, mountConsoleAuth, requireRole, type ConsoleAuthDeps } from "./console-auth.ts";
 import { DEFAULT_LIFETIMES } from "./console-session.ts";
 
 /** Generated per run, never a literal: nothing here may depend on a particular value. */
@@ -56,7 +56,7 @@ function harness(opts: {
   mountConsoleAuth(app, deps);
   app.get("/", (c) => c.text("ops console"));
   app.get("/api/ledger", (c) => c.json({ ok: true }));
-  app.post("/api/test-toll", requireRole("admin"), (c) => c.text("fired"));
+  app.post("/api/test-toll", audited("console.test_toll", auditor), requireRole("admin"), (c) => c.text("fired"));
   return { app, deps, auditor };
 }
 
@@ -343,4 +343,57 @@ test("the stylesheet the login page needs is reachable without a session", async
   const res = await h.app.request("/auth.css", { headers: { Host: HOST } });
   assert.equal(res.status, 200);
   assert.match(res.headers.get("content-type") ?? "", /text\/css/);
+});
+
+// ── Regressions from the 2026-08-21 nitpick pass ─────────────────────────────────
+
+test("a forced password change does not refuse the page's OWN stylesheet", async () => {
+  // It did: /auth.css, /favicon.svg and /fonts/* all answered 403 with a text/plain body,
+  // so the one page a seeded operator is forced onto rendered unstyled on a cold cache.
+  // It looked fine in a walk only because the login page had already cached the CSS.
+  const h = harness({ users: [user("u1", "admin", "admin", { mustChangePassword: true })] });
+  const cookie = await signIn(h, "admin");
+  for (const path of ["/auth.css", "/favicon.svg", "/fonts/fraunces-latin.woff2"]) {
+    const res = await h.app.request(path, { headers: { Host: HOST, Cookie: cookie } });
+    assert.notEqual(res.status, 403, `${path} must not be gated by the password change`);
+  }
+});
+
+test("an ops write is recorded against whoever ran it", async () => {
+  // The entire argument for accounts over a shared password was "who ran that test toll",
+  // and the audit log held sign-ins and account changes only.
+  const h = harness({ users: [user("u1", "alice", "admin")] });
+  const cookie = await signIn(h);
+  await h.app.request("/api/test-toll", { method: "POST", headers: { Host: HOST, Origin: ORIGIN, Cookie: cookie } });
+
+  const entry = h.auditor.entries.at(-1);
+  assert.equal(entry?.action, "console.test_toll");
+  assert.equal(entry?.outcome, "ok");
+  assert.equal(entry?.actor.name, "alice");
+  assert.equal(entry?.actor.userId, "u1");
+});
+
+test("a REFUSED ops write is recorded as refused, not as an action that happened", async () => {
+  const h = harness({ users: [user("u2", "vic", "viewer")] });
+  const cookie = await signIn(h, "vic");
+  await h.app.request("/api/test-toll", { method: "POST", headers: { Host: HOST, Origin: ORIGIN, Cookie: cookie } });
+
+  const entry = h.auditor.entries.at(-1);
+  assert.equal(entry?.action, "console.test_toll");
+  assert.equal(entry?.outcome, "refused");
+  assert.equal(entry?.actor.name, "vic");
+});
+
+test("whoami tells the shell who is signed in, so the UI can offer a way out", async () => {
+  const h = harness({ users: [user("u1", "alice", "admin")] });
+  const cookie = await signIn(h);
+  const me = await (await h.app.request("/api/session", { headers: { Host: HOST, Cookie: cookie } })).json();
+  assert.deepEqual(me, { authenticated: true, hasAccounts: true, username: "alice", role: "admin" });
+});
+
+test("whoami answers 200 on a private console with no accounts — that is a state, not an error", async () => {
+  const h = harness({ privateMode: true });
+  const res = await h.app.request("/api/session", { headers: { Host: HOST } });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { authenticated: false, hasAccounts: false });
 });

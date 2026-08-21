@@ -39,10 +39,10 @@ import { runDoctor } from "./doctor.ts";
 import { buildWebhooksView, queuePing, resendDelivery } from "./webhooks.ts";
 import { runTollProbe } from "./test-toll.ts";
 import { decideAccess } from "./access.ts";
-import { CSP } from "./security-headers.ts";
+import { CSP, shouldNotStore } from "./security-headers.ts";
 import { createCredentialVerifier, parseDashboardAuth } from "./credential.ts";
 import { auditPathFor, createAuditor } from "./console-audit.ts";
-import { consoleAuth, mountConsoleAuth, getPrincipal, requireRole, type ConsoleAuthDeps } from "./console-auth.ts";
+import { audited, consoleAuth, mountConsoleAuth, getPrincipal, requireRole, type ConsoleAuthDeps } from "./console-auth.ts";
 import { createFileStore, defaultStatePath } from "./console-store.ts";
 import { createUser, hasAnyUser } from "./console-users.ts";
 import { checkOrigin } from "./same-origin.ts";
@@ -168,6 +168,13 @@ export const app = new Hono();
 app.use("*", async (c, next) => {
   await next();
   c.header("Content-Security-Policy", CSP);
+  // No caching of HTML. Every page this console serves is authenticated once accounts
+  // exist, and without this the browser re-renders /account from history after a sign-out
+  // — operator roster, username and role, on a shared machine, from a session that has
+  // been destroyed server-side. Measured 2026-08-21: /account carried no Cache-Control at
+  // all. Static assets keep their caching; they are matched by content type, not by path,
+  // so a new HTML route cannot forget to opt in.
+  if (shouldNotStore(c.res.headers.get("Content-Type"))) c.header("Cache-Control", "no-store");
   c.header("X-Content-Type-Options", "nosniff");
   // `same-origin`, not `no-referrer`. Both send nothing to a third party — the property
   // that matters for an ops console — but `no-referrer` ALSO makes Chrome send `Origin:
@@ -300,6 +307,18 @@ if (ACCESS.refuse) {
     /** The six ops writes are administrator-only once the console has accounts. */
     const adminOnly = requireRole("admin");
 
+    /**
+     * ...and each one is recorded against whoever ran it. "Who ran that test toll" was the
+     * whole argument for accounts over a shared password, and until this line the audit log
+     * held sign-ins and account changes only — every question answered except that one.
+     *
+     * Mounted OUTERMOST, before the CSRF and role guards. A guard that refuses returns
+     * without calling next(), so an audit behind one records nothing — and a refused write
+     * is precisely the entry an operator goes looking for. Caught by its own test.
+     */
+    const auditWrite = (action: string): import("hono").MiddlewareHandler =>
+      AUTH_DEPS ? audited(action, AUTH_DEPS.auditor) : async (_c, next) => { await next(); };
+
     app.get("/api/ops", async (c) => {
       const now = Date.now();
       const windowMs = windowMsFromKey(c.req.query("window"));
@@ -403,7 +422,7 @@ if (ACCESS.refuse) {
     // articles with a crawler UA. State-changing only in the sense that it makes an
     // outbound request, so it takes the same CSRF guard as the write routes; the
     // target is built from GATE_URL, never from the request.
-    app.post("/api/test-toll", sameOrigin, adminOnly, async (c) => {
+    app.post("/api/test-toll", auditWrite("console.test_toll"), sameOrigin, adminOnly, async (c) => {
       const config = await summarizeConfig();
       const slug = config.articles?.[0]?.slug ?? null;
       return c.json(await runTollProbe({ slug, apiMode: config.creditsSource.mode === "api" }));
@@ -428,7 +447,7 @@ if (ACCESS.refuse) {
       });
     });
 
-    app.post("/api/content/scan", sameOrigin, adminOnly, async (c) => {
+    app.post("/api/content/scan", auditWrite("console.content_scan"), sameOrigin, adminOnly, async (c) => {
       const body = await c.req.json<{ defaultWallet?: string }>().catch(() => ({}) as { defaultWallet?: string });
       try {
         return c.json(await scanArticles(body.defaultWallet?.trim() || undefined));
@@ -455,7 +474,7 @@ if (ACCESS.refuse) {
       });
     });
 
-    app.post("/api/crawlers", sameOrigin, adminOnly, async (c) => {
+    app.post("/api/crawlers", auditWrite("console.crawlers_write"), sameOrigin, adminOnly, async (c) => {
       const body = await c.req
         .json<{ allow?: unknown; block?: unknown; charge?: unknown }>()
         .catch(() => ({}) as { allow?: unknown; block?: unknown; charge?: unknown });
@@ -478,21 +497,21 @@ if (ACCESS.refuse) {
 
     // Both writes below take the same CSRF guard as every other state-changing route, and both
     // resolve their target from the operator's own configuration — never from a URL in the request.
-    app.post("/api/webhooks/ping", sameOrigin, adminOnly, async (c) => {
+    app.post("/api/webhooks/ping", auditWrite("console.webhook_ping"), sameOrigin, adminOnly, async (c) => {
       const body = await c.req.json<{ endpointId?: unknown }>().catch(() => ({}) as { endpointId?: unknown });
       const endpointId = typeof body.endpointId === "string" ? body.endpointId : "";
       const result = await queuePing(endpointId);
       return c.json(result, result.ok ? 200 : 400);
     });
 
-    app.post("/api/webhooks/resend", sameOrigin, adminOnly, async (c) => {
+    app.post("/api/webhooks/resend", auditWrite("console.webhook_resend"), sameOrigin, adminOnly, async (c) => {
       const body = await c.req.json<{ deliveryId?: unknown }>().catch(() => ({}) as { deliveryId?: unknown });
       const deliveryId = typeof body.deliveryId === "string" ? body.deliveryId : "";
       const result = await resendDelivery(deliveryId);
       return c.json(result, result.ok ? 200 : 400);
     });
 
-    app.post("/api/content", sameOrigin, adminOnly, async (c) => {
+    app.post("/api/content", auditWrite("console.content_write"), sameOrigin, adminOnly, async (c) => {
       const body = await c.req.json<{ credits?: Record<string, unknown> }>().catch(() => ({}) as { credits?: Record<string, unknown> });
       const result = await writeCredits(body.credits ?? {});
       return c.json(result, result.written ? 200 : 422);

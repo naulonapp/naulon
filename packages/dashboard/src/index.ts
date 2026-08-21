@@ -28,6 +28,15 @@ if (access.refuse) {
           "   Serverless and read-only filesystems can only use the DASHBOARD_AUTH machine credential.",
       );
     }
+    if (seededAdmin?.ok) {
+      // Say so. A seed that works silently is indistinguishable from a seed that was
+      // ignored, and the operator's next move (sign in with it) is the same either way —
+      // so the first thing they learn about a typo'd variable is a failed sign-in.
+      console.log(
+        `\u{1F709} seeded administrator "${seededAdmin.user.username}" from CONSOLE_ADMIN_PASSWORD` +
+          " — it must change its password at first sign-in",
+      );
+    }
     if (seededAdmin && !seededAdmin.ok) {
       console.warn(`\u{1F709} CONSOLE_ADMIN_PASSWORD was not applied — ${seededAdmin.error}`);
     }

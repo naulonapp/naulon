@@ -219,7 +219,18 @@ export function consoleAuth(deps: ConsoleAuthDeps): MiddlewareHandler {
       );
     }
 
-    if (principal?.mustChangePassword && path !== "/account/password" && path !== "/logout") {
+    // `isPublicPath` is exempt, and that omission was a real defect: the forced-change
+    // page links /auth.css, /favicon.svg and /fonts/*, and this gate answered all three
+    // with a text/plain 403. It LOOKED fine in a walk only because the stylesheet was
+    // already in the browser cache from the login page one redirect earlier; on a cold
+    // cache the one page a seeded operator is forced onto renders unstyled. Measured
+    // 2026-08-21: fetch('/auth.css') => 403 "This account must set a new password".
+    if (
+      principal?.mustChangePassword &&
+      !isPublicPath(path) &&
+      path !== "/account/password" &&
+      path !== "/logout"
+    ) {
       if (isNavigation(c)) return c.redirect("/account/password", 302);
       return c.text("This account must set a new password before it can be used.\n", 403);
     }
@@ -233,6 +244,39 @@ function unauthorized(c: Context, deps: ConsoleAuthDeps): Response {
   // a credential the console does not have.
   if (deps.machine) c.header("WWW-Authenticate", 'Basic realm="naulon console"');
   return c.text("Not signed in.\n", 401);
+}
+
+/**
+ * Record an ops write against whoever ran it.
+ *
+ * Without this the audit log holds sign-ins and account changes only — and "who ran that
+ * test toll" was the entire argument for having accounts instead of one shared password.
+ * A log that answers every question except the one the feature was built for is worse than
+ * none, because it looks complete.
+ *
+ * The outcome is read from the response status AFTER the handler, so a refusal is recorded
+ * as a refusal rather than as an action that happened.
+ */
+export function audited(action: string, auditor: ConsoleAuditor): MiddlewareHandler {
+  return async (c, next) => {
+    await next();
+    const principal = getPrincipal(c);
+    const status = c.res.status;
+    await auditor.record({
+      action,
+      outcome: status < 400 ? "ok" : status === 403 || status === 401 ? "refused" : "failed",
+      actor: principal
+        ? {
+            kind: principal.kind,
+            ...(principal.userId ? { userId: principal.userId } : {}),
+            name: principal.username,
+            role: principal.role,
+          }
+        : anonymousActor(),
+      ...(clientIp(c) ? { ip: clientIp(c) as string } : {}),
+      detail: { status },
+    });
+  };
 }
 
 /** Route guard for the six write routes. Reads the principal the middleware already resolved. */
@@ -343,6 +387,30 @@ const formValue = (body: Record<string, unknown>, key: string): string => {
 export function mountConsoleAuth(app: Hono, deps: ConsoleAuthDeps): void {
   const now = deps.now ?? (() => new Date());
 
+  /**
+   * Whoami, for the console shell's rail. It is what lets the UI show who you are and
+   * offer a way out — before this, an operator who signed in had no affordance anywhere
+   * on any of the eight console pages to sign out again, and `/account` was reachable
+   * only by typing it.
+   *
+   * Answers 200 with `authenticated: false` rather than 401, so the shell can render the
+   * private no-accounts console (which has no session and never will) without treating a
+   * normal state as an error.
+   */
+  app.get("/api/session", async (c) => {
+    const principal = getPrincipal(c);
+    const hasAccounts = (await deps.store.read()).users.length > 0;
+    if (!principal || principal.kind !== "session") {
+      return c.json({ authenticated: false, hasAccounts });
+    }
+    return c.json({
+      authenticated: true,
+      hasAccounts,
+      username: principal.username,
+      role: principal.role,
+    });
+  });
+
   app.get("/auth.css", (c) => {
     c.header("Content-Type", "text/css; charset=utf-8");
     c.header("Cache-Control", "public, max-age=300");
@@ -412,8 +480,10 @@ export function mountConsoleAuth(app: Hono, deps: ConsoleAuthDeps): void {
     const issued = await createSession(deps.store, created.user.id, {
       ...(clientIp(c) ? { ip: clientIp(c) as string } : {}),
       ...(c.req.header("User-Agent") ? { userAgent: c.req.header("User-Agent") as string } : {}),
-      now,
-    });
+        now,
+      },
+      deps.lifetimes,
+    );
     c.header("Set-Cookie", sessionCookie(issued.token, { secure: secureOf(c) }), { append: true });
     return c.redirect("/", 303);
   });
@@ -464,8 +534,10 @@ export function mountConsoleAuth(app: Hono, deps: ConsoleAuthDeps): void {
     const issued = await createSession(deps.store, result.user.id, {
       ...(clientIp(c) ? { ip: clientIp(c) as string } : {}),
       ...(c.req.header("User-Agent") ? { userAgent: c.req.header("User-Agent") as string } : {}),
-      now,
-    });
+        now,
+      },
+      deps.lifetimes,
+    );
     await deps.auditor.record({
       action: "console.sign_in",
       outcome: "ok",
@@ -558,8 +630,10 @@ export function mountConsoleAuth(app: Hono, deps: ConsoleAuthDeps): void {
     const issued = await createSession(deps.store, principal.userId, {
       ...(clientIp(c) ? { ip: clientIp(c) as string } : {}),
       ...(c.req.header("User-Agent") ? { userAgent: c.req.header("User-Agent") as string } : {}),
-      now,
-    });
+        now,
+      },
+      deps.lifetimes,
+    );
     c.header("Set-Cookie", sessionCookie(issued.token, { secure: secureOf(c) }), { append: true });
 
     await deps.auditor.record({
