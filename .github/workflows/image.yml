@@ -1,0 +1,114 @@
+name: Image (ghcr)
+
+# Publishes the gate + console image to ghcr.io/naulonapp/naulon.
+#
+# `@naulon/tollgate` and `@naulon/dashboard` are deliberately not on npm — this image
+# IS their distribution channel, and until this workflow existed the repo said so in
+# three places while shipping nothing. `docker-compose.yml` pulls what this publishes.
+#
+# Trigger: a version tag (the same `v*` tag that publishes the npm packages, so one tag
+# ships both halves of a release) or a manual dispatch. Deliberately NOT on push to
+# main: a multi-arch build is ~10 emulated minutes on a billed account, and a build
+# nobody asked for is a build nobody is watching.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Extra tag to publish (e.g. edge). latest is always updated."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write # provenance attestation, same posture as the npm publish
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+
+      # Native amd64 only, loaded into the runner's docker rather than pushed. The point
+      # is the smoke test below: an image that cannot boot must not reach the registry,
+      # and "it built" has never been the same claim as "it runs". The multi-arch push
+      # that follows reuses this layer cache, so the amd64 half costs nothing twice.
+      - name: Build (amd64, local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: naulon:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A gate with no credits source is a gate that cannot price anything, so the smoke
+      # test supplies one — the same shape an operator mounts at /config/credits.json.
+      - name: Smoke test — the gate boots, tolls a machine, and lets a human through
+        run: |
+          set -euo pipefail
+          mkdir -p smoke
+          cat > smoke/credits.json <<'JSON'
+          { "hello-world": { "slug": "hello-world", "title": "Hello", "contributors": [
+            { "authorId": "a", "wallet": "0x1111111111111111111111111111111111111111" } ] } }
+          JSON
+          docker run -d --name naulon-smoke -p 8402:8402 \
+            -v "$PWD/smoke:/config:ro" \
+            -e CREDITS_FIXTURES=/config/credits.json \
+            -e ORIGIN_URL=http://127.0.0.1:9 \
+            -e PAYMENT_MODE=mock \
+            naulon:smoke
+          for i in $(seq 1 30); do
+            if curl -fsS localhost:8402/.well-known/x402 >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "${ok:-0}" != 1 ]; then
+            echo "::error::the gate never answered /.well-known/x402"
+            docker logs naulon-smoke || true
+            exit 1
+          fi
+          echo "--- manifest"
+          curl -fsS localhost:8402/.well-known/x402 | head -c 400; echo
+          # A machine asking for an article must be billed. 402 is the whole product; a
+          # 200 here would mean the image ships a gate that gives the content away.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -A 'python-requests' localhost:8402/essays/hello-world)
+          echo "agent → $code"
+          test "$code" = "402" || { docker logs naulon-smoke; exit 1; }
+          docker rm -f naulon-smoke
+
+      - name: Build and push (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

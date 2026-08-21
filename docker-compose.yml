@@ -1,27 +1,71 @@
-# naulon stack: the tollgate in front of your site, plus the live
-# earnings dashboard. Both read/write the same ledger via a shared volume.
+# The naulon stack: the gate in front of your site, plus the operator console. Both
+# read and write one ledger through a shared volume.
+#
+# This file pulls the PUBLISHED image, so it works on its own — download it, write a
+# .env beside it, `docker compose up -d`. No clone, no build, no Node on the host.
+# Contributors who want the image built from the working tree add the build override:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
+#
+# (`make docker-up` and `make docker-build` are those two lines.)
 services:
   tollgate:
-    build: .
+    image: ghcr.io/naulonapp/naulon:${NAULON_TAG:-latest}
     command: npm run tollgate
+    restart: unless-stopped
     ports:
       - "8402:8402"
     env_file: .env
     environment:
       EVENTS_PATH: /data/events.jsonl
+      CRAWLER_POLICY_PATH: /data/crawler-policy.json
+      CREDITS_FIXTURES: /config/credits.json
     volumes:
       - ledger:/data
+      # Your credits.json — who gets paid, per article — lives in ./config beside this
+      # file. A DIRECTORY rather than the file itself on purpose: Docker answers a
+      # bind mount of a path that does not exist by creating an empty directory there,
+      # so mounting ./credits.json directly turns a typo into a gate that reads a folder.
+      # Nothing is baked into the image, because a gate that fell back to an example's
+      # wallets would settle real money to a fixture address.
+      - ./config:/config:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8402/.well-known/x402').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   dashboard:
-    build: .
+    image: ghcr.io/naulonapp/naulon:${NAULON_TAG:-latest}
     command: npm run dashboard
+    restart: unless-stopped
     ports:
-      - "8403:8403"
+      # Published on the host's loopback only. The container-side bind below is wide
+      # because inside a container 127.0.0.1 is unreachable from the host — this line
+      # is what keeps the console off your network, not that bind.
+      - "127.0.0.1:8403:8403"
     env_file: .env
     environment:
       EVENTS_PATH: /data/events.jsonl
+      CRAWLER_POLICY_PATH: /data/crawler-policy.json
+      CREDITS_FIXTURES: /config/credits.json
+      CONSOLE_STATE_PATH: /data/console.json
+      DASHBOARD_BIND: 0.0.0.0
     volumes:
       - ledger:/data
+      - ./config:/config:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8403/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
+# A wide bind means the console cannot treat the socket as evidence of privacy, so it
+# WILL refuse to serve until it has a credential. Set CONSOLE_ADMIN_PASSWORD in .env and
+# it seeds a first administrator that must change its password on first sign-in; set
+# DASHBOARD_AUTH instead for HTTP Basic. Neither set is a console that answers 403 with
+# the reason — deliberate, and the reason it is written here rather than discovered.
 volumes:
   ledger:
