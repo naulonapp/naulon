@@ -55,6 +55,10 @@ class Naulon_Enforcer {
 	/** @var array|null Memoized decision for this request. */
 	private $decision = null;
 
+	/** @var array|null How the classifier read this request. Kept so the audit report can say
+	 *  WHY a machine was called a machine, without classifying a second time. */
+	private $agent_verdict = null;
+
 	public static function instance() {
 		if ( null === self::$instance ) {
 			self::$instance = new self();
@@ -217,7 +221,8 @@ class Naulon_Enforcer {
 	}
 
 	/**
-	 * Record a decision in the diagnostics window and return it unchanged.
+	 * Record a decision — in the local diagnostics window AND to the hosted audit plane — and
+	 * return it unchanged.
 	 *
 	 * Only ever called on a path where the requester was already classified as a machine —
 	 * humans are not logged at all, anywhere. See Naulon_Log for why that is a position rather
@@ -229,15 +234,39 @@ class Naulon_Enforcer {
 	 * @return array The decision.
 	 */
 	private function logged( array $decision, $post, $slug ) {
+		$kind = $this->requested_kind();
+		$ua   = $this->header( 'User-Agent' );
+
 		Naulon_Log::record(
 			array(
 				'action' => $decision['action'],
 				'reason' => $decision['reason'],
 				'slug'   => $slug,
-				'kind'   => $this->requested_kind(),
-				'ua'     => $this->header( 'User-Agent' ),
+				'kind'   => $kind,
+				'ua'     => $ua,
 			)
 		);
+
+		// The same choke point, reported outward. The local window above is what a publisher
+		// reads on Diagnostics; this is what makes the decision exist for the Audit and
+		// Readiness screens, which otherwise only ever see fleet-proxied traffic and therefore
+		// tell an enforcing site that nothing is priced. Cost is bounded to the crawler that
+		// caused it — see Naulon_Observer.
+		$permalink = get_permalink( $post );
+		if ( is_string( $permalink ) && '' !== $permalink ) {
+			Naulon_Observer::instance()->record(
+				array(
+					'resource'    => $permalink,
+					'slug'        => $slug,
+					'action'      => $decision['action'],
+					'kind'        => $kind,
+					'ua'          => $ua,
+					'reason'      => null === $this->agent_verdict ? $decision['reason'] : $this->agent_verdict['reason'],
+					'price_micro' => isset( $decision['price_micro'] ) ? (int) $decision['price_micro'] : 0,
+				)
+			);
+		}
+
 		return $decision;
 	}
 
@@ -260,6 +289,7 @@ class Naulon_Enforcer {
 		// known to be a machine, so it can be recorded in the diagnostics window without ever
 		// logging a reader.
 		$verdict = Naulon_Agent::classify( Naulon_Agent::signals_from_request(), $this->policy() );
+		$this->agent_verdict = $verdict;
 		if ( 'human' === $verdict['kind'] ) {
 			return $this->free( 'human (' . $verdict['reason'] . ')' );
 		}
@@ -310,11 +340,12 @@ class Naulon_Enforcer {
 		if ( '' === $payment ) {
 			return $this->logged(
 				array(
-					'action'  => 'pay',
-					'header'  => $built['header'],
-					'receipt' => '',
-					'license' => '',
-					'reason'  => 'agent (' . $verdict['reason'] . ')',
+					'action'      => 'pay',
+					'header'      => $built['header'],
+					'receipt'     => '',
+					'license'     => '',
+					'reason'      => 'agent (' . $verdict['reason'] . ')',
+					'price_micro' => Naulon_Observer::legs_total( $built['legs'] ),
 				),
 				$post,
 				$slug
@@ -357,11 +388,12 @@ class Naulon_Enforcer {
 		// and did not succeed, so the honest answer is the bill again, not free content.
 		return $this->logged(
 			array(
-				'action'  => 'pay',
-				'header'  => $built['header'],
-				'receipt' => '',
-				'license' => '',
-				'reason'  => 'settlement failed',
+				'action'      => 'pay',
+				'header'      => $built['header'],
+				'receipt'     => '',
+				'license'     => '',
+				'reason'      => 'settlement failed',
+				'price_micro' => Naulon_Observer::legs_total( $built['legs'] ),
 			),
 			$post,
 			$slug
@@ -633,6 +665,7 @@ class Naulon_Enforcer {
 	 * @return void
 	 */
 	public function reset() {
-		$this->decision = null;
+		$this->decision      = null;
+		$this->agent_verdict = null;
 	}
 }

@@ -185,6 +185,8 @@ class Naulon_Admin_Diagnostics {
 			)
 		);
 
+		self::render_reporting_line();
+
 		if ( empty( $entries ) ) {
 			echo '<p class="naulon-muted">' . esc_html__( 'No machine has asked for an article yet.', 'naulon' ) . '</p>';
 			Naulon_Admin::card_close();
@@ -223,6 +225,50 @@ class Naulon_Admin_Diagnostics {
 		Naulon_Admin::form_close();
 
 		Naulon_Admin::card_close();
+	}
+
+	/**
+	 * Whether the decisions above also reached the publisher's naulon account.
+	 *
+	 * The list on this screen is local: it is written whether or not anything is reachable. The
+	 * Audit and Readiness screens in the account are written by the report instead, and when the
+	 * report is failing they simply stay empty — which reads as "the toll is not working" and is
+	 * the one failure this panel can distinguish and no other screen can. So it is said here,
+	 * beside the decisions it is about.
+	 *
+	 * @return void
+	 */
+	private static function render_reporting_line() {
+		$status  = Naulon_Observer::status();
+		$waiting = count( Naulon_Observer::pending() );
+
+		if ( 0 === $status['at'] ) {
+			// Nothing has been attempted yet. Silent rather than reassuring: with no machine
+			// traffic there is nothing to report, and an "OK" here would be an unearned green tick.
+			return;
+		}
+
+		if ( $status['ok'] && 0 === $waiting ) {
+			printf(
+				'<p class="naulon-muted">%s %s</p>',
+				esc_html__( 'Reported to your naulon account', 'naulon' ),
+				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Naulon_Admin::when() escapes.
+				Naulon_Admin::when( gmdate( 'c', $status['at'] ) )
+			);
+			return;
+		}
+
+		printf(
+			'<p class="naulon-warn">%s</p>',
+			esc_html(
+				sprintf(
+					/* translators: 1: how many decisions are waiting, 2: the error, e.g. "HTTP 401". */
+					__( 'Could not report the last decisions to your naulon account (%2$s). %1$d waiting — they go with the next crawl, or within the hour. Your Audit page is missing them until then.', 'naulon' ),
+					$waiting,
+					'' !== $status['error'] ? $status['error'] : __( 'unknown error', 'naulon' )
+				)
+			)
+		);
 	}
 
 	/**

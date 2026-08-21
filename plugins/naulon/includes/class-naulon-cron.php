@@ -81,7 +81,8 @@ class Naulon_Cron {
 	}
 
 	/**
-	 * One tick: reconcile ownership, refresh the classification, then stamp liveness.
+	 * One tick: reconcile ownership, refresh the classification, stamp liveness, then drain any
+	 * audit reports a crawler request could not deliver.
 	 *
 	 * Ownership goes first on purpose — if this host lost its proof, the other two are describing
 	 * an integration that cannot settle anything, and stamping liveness for it would keep it
@@ -93,6 +94,10 @@ class Naulon_Cron {
 		$this->reconcile_ownership();
 		$status = $this->refresh_status();
 		$this->stamp_liveness();
+		// Last, and only ever a drain of what a crawler request could not deliver. A site with a
+		// trickle of machine traffic would otherwise hold a failed batch until the next crawl,
+		// which on a quiet site can be days. Nothing is recorded here — see Naulon_Observer.
+		Naulon_Observer::instance()->flush();
 		return $status;
 	}
 
