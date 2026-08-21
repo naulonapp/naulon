@@ -85,6 +85,12 @@ refused — so it shows up in Recent requests tagged **self-test**. That's delib
 those rows are real denials and they do count toward "missed", and you should be able
 to tell which ones were you.
 
+**Theme.** The rail carries a theme control that cycles system → light → dark. It starts on
+system, so the console follows whatever your OS is set to and changes with it; pick light or
+dark and that choice sticks in this browser. The choice is resolved before the page paints, so
+switching pages never flashes the other theme at you. The sign-in pages are the one exception:
+they render without JavaScript on purpose, so they follow the OS and nothing else.
+
 **Doctor** (`/doctor`) is the preflight: every condition that decides whether this
 gate can earn, each with the fix attached, and passing checks shown too so you can
 see the thing is configured rather than merely quiet. It checks the gate, your

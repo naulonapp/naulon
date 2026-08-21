@@ -112,6 +112,7 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
   ? {
       "/": { file: "ledger.html", type: "text/html; charset=utf-8" },
       "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
+      "/theme.js": { file: "theme.js", type: "text/javascript; charset=utf-8" },
       "/shell.js": { file: "shell.js", type: "text/javascript; charset=utf-8" },
       "/ledger.js": { file: "ledger.js", type: "text/javascript; charset=utf-8" },
     }
@@ -125,6 +126,7 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
       "/webhooks": { file: "webhooks.html", type: "text/html; charset=utf-8" },
       "/doctor": { file: "doctor.html", type: "text/html; charset=utf-8" },
       "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
+      "/theme.js": { file: "theme.js", type: "text/javascript; charset=utf-8" },
       "/shell.js": { file: "shell.js", type: "text/javascript; charset=utf-8" },
       "/overview.js": { file: "overview.js", type: "text/javascript; charset=utf-8" },
       "/requests.js": { file: "requests.js", type: "text/javascript; charset=utf-8" },

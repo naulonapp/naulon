@@ -36,13 +36,19 @@
   color-scheme: dark;
 
   /* Four elevation steps, so the UI reads with depth rather than one flat charcoal:
-     sidebar #050609 < background #07080b < card #11141c < surface-2 #1a1f29
+     sidebar #050609 < background #07080b < card #11141c < elev-2 #1a1f29
 
-     All four are the hosted portal's, byte-for-byte — `--surface-2` is its `--secondary`.
-     It used to be #1a2030: bluer and a step lighter than the portal's #1a1f29, so any
-     surface painted with it read as a different product's grey. That is the same defect
-     `--muted` carried (a surface here, text there) and it hid for the same reason — it is
-     invisible until something paints a large area with it. */
+     `--elev-2`, not `--elev-2`, and the name is the whole point. The hosted portal
+     publishes BOTH a `--elev-2` (#1a2030) and a `--secondary` (#1a1f29); this step is
+     its `--secondary`. Spelling it `--elev-2` here meant one token name held two
+     different greys across the two codebases that share the palette — so a rule ported
+     from one landed a step off in the other, and nothing rendered wrong enough to notice.
+     Same defect `--muted` carried (a surface there, text here), fixed the same way: when
+     a name cannot mean one thing in both places, stop using the name.
+
+     The value is still the portal's #1a1f29 byte-for-byte, and `--elev-2` is checked
+     against it by token-parity.test.ts. It used to be #1a2030 — bluer and a step
+     lighter — so any surface painted with it read as a different product's grey. */
   --sidebar: #050609;
   /* The sidebar's own two extra tokens, same values the hosted portal publishes —
      the console had neither, so its nav had to invent its own active treatment. */
@@ -50,7 +56,7 @@
   --sidebar-muted: #7c8593;
   --bg: #07080b;
   --card: #11141c;
-  --surface-2: #1a1f29;
+  --elev-2: #1a1f29;
 
   --fg: #e9edf3;
   /* `--muted-fg`, never `--muted`. Every value in this block is the published palette
@@ -59,7 +65,14 @@
      exactly one token meaning opposite things in the two codebases that share the
      palette, which is worse than a longer name. */
   --muted-fg: #8d96a3;
-  --faint: #6b7482;
+  /* Was #6b7482, which measured 3.50–4.29:1 depending on the surface under it — UNDER AA on
+     EVERY surface this console paints, not merely the worst one. It renders the nav group
+     labels, the field hints and the row remove buttons, so it was failing on live text on
+     every page. Raised to the darkest value that clears 4.5:1 on the lightest surface text
+     can land on (--elev-2 #1a1f29, 4.85:1), which keeps it a visibly dimmer tier than
+     --muted-fg #8d96a3 rather than collapsing the two. Derived, not eyeballed:
+     token-parity.test.ts recomputes the whole table instead of trusting this comment. */
+  --faint: #828c9a;
   --line: #242b39;
   --line-strong: #2e3647;
   --input: #313a4b;
@@ -80,10 +93,67 @@
   --font-serif: "Fraunces", Georgia, "Times New Roman", serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
+  /* The content column's side padding. A token because the docked save bar has to cancel it
+     with a negative margin to span the column edge to edge, and a hand-copied 20px against a
+     real 18px is a 4px overflow that puts a horizontal scrollbar on a phone. Measured at
+     393px before this was derived: dock 397px wide in a 393px viewport. */
+  --main-pad-x: 40px;
+
   --radius: 0.5rem;
   --rail: 256px;   /* measured off the hosted portal's sidebar */
   --motion: 180ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+
+/*
+ * Light. One block, applied when theme.js has resolved a preference to "light" — either the
+ * operator chose it or the OS asked for it. There is deliberately no second copy of these
+ * values inside a `prefers-color-scheme` media query: two palettes drift, and the one that
+ * drifts is whichever the author is not currently looking at.
+ *
+ * The values are the published light palette (https://naulon.app/brand), the same set a
+ * hosted control plane built on this core renders, including its contrast work: text tokens
+ * clear AA on EVERY surface they can land on, the worst being --sidebar-accent #e8e2d4 at
+ * 4.76:1. Do not lighten a surface or dim a text token here without re-deriving that table.
+ *
+ * Two things are NOT the dark values with the lightness flipped:
+ *   - The green. #2bf5a0 on paper is 1.4:1 — invisible. Light uses #0a7350, which is the
+ *     brand green taken down until it passes AA on white, and --primary-ink flips to white.
+ *   - Elevation INVERTS. In dark the sidebar is the darkest surface and cards lift toward
+ *     light; on paper the page is the light stock and the sidebar is a DEEPER paper, because
+ *     chrome has to read as chrome either way.
+ * And --faint collapses onto --muted-fg: paper has no room for a second dim tier below the
+ * one that already only just clears AA. De-emphasise with size and spacing instead.
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --sidebar: #f1ece0;
+  --sidebar-accent: #e8e2d4;
+  --sidebar-muted: #5f635a;
+  --bg: #f7f4ec;
+  --card: #fffdf8;
+  --elev-2: #efe9db;
+
+  --fg: #1a1c1a;
+  --muted-fg: #5f635a;
+  --faint: #5f635a;
+  --line: #e3ddcf;
+  --line-strong: #d4cbb6;
+  --input: #cdc6b4;
+
+  --primary: #0a7350;
+  --primary-ink: #ffffff;
+  --down: #d11f4f;
+  --warning: #8f5e00;
+  --info: #0e7490;
+
+  /* On paper, elevation is a soft cast shadow — no top inner highlight (that reads as a
+     smudge on white) and no halo. */
+  --shadow-panel:
+    0 1px 2px 0 rgb(26 28 26 / 0.05),
+    0 10px 24px -14px rgb(26 28 26 / 0.16);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -162,7 +232,7 @@ body {
 .rail-link:hover { color: var(--primary); }
 
 /* ── page head ───────────────────────────────────────────────────────────── */
-.main { padding: 34px 40px 64px; max-width: 1180px; }
+.main { padding: 34px var(--main-pad-x) 64px; max-width: 1180px; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 26px; }
 /* 10px / 0.2em — the portal's measured eyebrow, not a nearby-looking 10.5 / 0.22. */
 .eyebrow {
@@ -232,7 +302,7 @@ body {
   background: transparent; color: var(--fg); border: 1px solid var(--line-strong);
   transition: background var(--motion) var(--ease), border-color var(--motion) var(--ease), opacity var(--motion);
 }
-.btn:hover { background: var(--surface-2); }
+.btn:hover { background: var(--elev-2); }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn.sm { padding: 5px 11px; font-size: 12px; }
 .btn.ghost { background: transparent; }
@@ -262,7 +332,7 @@ body {
   padding: 32px 16px; text-align: center; color: var(--faint);
   border: 1px dashed color-mix(in oklab, var(--line-strong) 60%, transparent);
   border-radius: 4px;
-  background: color-mix(in oklab, var(--surface-2) 20%, transparent);
+  background: color-mix(in oklab, var(--elev-2) 20%, transparent);
 }
 .empty .lead { font-size: 14px; font-weight: 500; color: var(--fg); }
 .empty-ico {
@@ -271,7 +341,7 @@ body {
   border-radius: 4px; background: var(--card); color: var(--muted-fg);
 }
 .empty-ico svg { width: 16px; height: 16px; }
-.empty code, .banner code { font-family: var(--font-mono); font-size: 12.5px; color: var(--primary); background: var(--surface-2); padding: 2px 7px; border-radius: 3px; }
+.empty code, .banner code { font-family: var(--font-mono); font-size: 12.5px; color: var(--primary); background: var(--elev-2); padding: 2px 7px; border-radius: 3px; }
 
 .banner {
   border: 1px solid var(--line-strong); border-left: 2px solid var(--warning);
@@ -452,6 +522,42 @@ body {
 .x:hover { color: var(--down); }
 
 .actions { display: flex; gap: 12px; margin-top: 20px; }
+
+/* The docked save bar. `position: sticky` with `bottom: 0` keeps one control in reach of a
+   long config page instead of stranding it in a header 2,300px away — and `bottom: 0` on a
+   flow element means it only detaches while there is page left below it, so at the end of
+   the document it settles into place rather than hovering over the last row forever.
+   The negative side margins let it span the content column's full width; the padding under
+   `.main` (64px) is what keeps the last row from hiding beneath it. */
+.dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin: 28px calc(-1 * var(--main-pad-x)) 0;
+  padding: 14px var(--main-pad-x);
+  border-top: 1px solid var(--line);
+  background: color-mix(in oklab, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+}
+/* The theme control sits in the rail with the other links and must not look like a form
+   button — same type scale and colour as `.rail-link`, no chrome of its own. */
+.theme-btn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+.theme-btn:hover { color: var(--fg); }
+
+.dock-note { margin-right: auto; font-size: 12.5px; color: var(--muted-fg); }
+
+/* An absolute path is long and a row is a grid cell. Clip the HEAD of it, not the tail:
+   `/Users/…/site/credits.json` truncated the usual way hides the only part that identifies
+   the file. `direction: rtl` moves the ellipsis to the front, and it is scoped to this inner
+   span so the label beside it stays left-to-right. Whole path in the tooltip either way. */
+.path-cell { display: inline-block; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; vertical-align: bottom; }
+/* Warning, not error: unsaved is a state, not a mistake. */
+.dock-note.pending { color: var(--warning); }
+
 .save-out { margin-top: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--muted-fg); }
 .save-out .mono { color: var(--faint); }
 .save-out.flash { animation: flash 2.4s ease forwards; padding: 8px 10px; border-radius: 3px; }
@@ -462,13 +568,15 @@ body {
   .cols { grid-template-columns: 1fr; gap: 32px; }
 }
 @media (max-width: 900px) {
+  /* The column tightens on a phone, and the dock follows it because both read this token. */
+  :root { --main-pad-x: 18px; }
   .shell-wrap { grid-template-columns: 1fr; }
   .shell { flex-direction: row; align-items: center; gap: 16px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
   .shell .nav { flex-direction: row; }
   .nav-group { display: none; }
   .rail { margin: 0 0 0 auto; border-top: 0; padding-top: 0; display: flex; align-items: center; gap: 14px; }
   .rail-link { margin-top: 0; white-space: nowrap; }
-  .main { padding: 24px 18px 48px; }
+  .main { padding: 24px var(--main-pad-x) 48px; }
   .page-head { flex-direction: column; gap: 16px; }
   .earned { min-width: 0; }
   .thead, .crow { grid-template-columns: 1fr 1.4fr 24px; }
@@ -600,7 +708,7 @@ body {
 .wh-url {
   font-size: 12.5px; color: var(--muted-fg); overflow-wrap: anywhere;
   border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px;
-  background: color-mix(in oklab, var(--surface-2) 40%, transparent);
+  background: color-mix(in oklab, var(--elev-2) 40%, transparent);
 }
 .wh-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .wh-chip {
@@ -624,7 +732,7 @@ body {
 /* The env recipe in the empty state: a block of config to copy, so it keeps its own line breaks. */
 .wh-recipe {
   margin: 10px 0; padding: 11px 13px; font-size: 11.5px; line-height: 1.6;
-  color: var(--fg); background: var(--surface-2); border: 1px solid var(--line);
+  color: var(--fg); background: var(--elev-2); border: 1px solid var(--line);
   border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
@@ -650,7 +758,7 @@ body {
 .wh-table th {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
   color: var(--muted-fg); font-weight: 400; padding: 10px 12px;
-  background: color-mix(in oklab, var(--surface-2) 30%, transparent);
+  background: color-mix(in oklab, var(--elev-2) 30%, transparent);
   border-bottom: 1px solid var(--line-strong); white-space: nowrap;
 }
 .wh-table td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
@@ -664,7 +772,7 @@ body {
 .wh-link:hover { color: var(--fg); }
 .wh-link.accent { color: var(--primary); }
 .wh-link:disabled { opacity: 0.5; cursor: not-allowed; }
-.wh-payload-row td { background: color-mix(in oklab, var(--surface-2) 20%, transparent); }
+.wh-payload-row td { background: color-mix(in oklab, var(--elev-2) 20%, transparent); }
 .wh-payload-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .wh-payload {
   max-height: 260px; overflow: auto; margin: 0; padding: 10px 12px; font-size: 11px; line-height: 1.6;
