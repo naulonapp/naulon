@@ -49,6 +49,13 @@ export interface AccessInput {
   /** DASHBOARD_PUBLIC. */
   isPublic: boolean;
   /**
+   * Does the console have operator ACCOUNTS? A console with accounts authenticates
+   * through them, so it is as safe to expose as one with DASHBOARD_AUTH — and refusing
+   * to serve it because no Basic credential is set would refuse the very deployment this
+   * feature exists for (a team signing in, with no shared secret anywhere).
+   */
+  hasUsers?: boolean;
+  /**
    * Parsed `DASHBOARD_ALLOWED_HOSTS`. Any entry that is not a loopback name means
    * the operator is deliberately fronting this console with something the outside
    * world can address, so the loopback bind stops being evidence of privacy.
@@ -81,7 +88,11 @@ const LOOPBACK_BINDS = new Set(["127.0.0.1", "::1", "localhost"]);
 export const isLoopbackBind = (bind: string): boolean => LOOPBACK_BINDS.has(bind.trim());
 
 /** A usable Basic credential is exactly `user:pass`, both non-empty. */
-export const isValidAuth = (auth: string | undefined): auth is string => {
+// NOT a type predicate. It used to be `auth is string`, which taught the compiler that a
+// value failing this check is `undefined` — so the "set but unreadable" case below could
+// not even be written without TS narrowing it to `never`. A malformed credential is very
+// much a string; the guard answers "is it USABLE", not "is it present".
+export const isValidAuth = (auth: string | undefined): boolean => {
   if (!auth) return false;
   const i = auth.indexOf(":");
   return i > 0 && i < auth.length - 1;
@@ -94,7 +105,7 @@ export const isValidAuth = (auth: string | undefined): auth is string => {
 export const externalHosts = (allowedHosts: readonly string[] = []): string[] =>
   allowedHosts.filter((h) => !isLoopbackHostname(h));
 
-export function decideAccess({ bind, auth, isPublic, allowedHosts = [] }: AccessInput): AccessDecision {
+export function decideAccess({ bind, auth, isPublic, hasUsers = false, allowedHosts = [] }: AccessInput): AccessDecision {
   if (isPublic) {
     return {
       serve: true,
@@ -123,6 +134,49 @@ export function decideAccess({ bind, auth, isPublic, allowedHosts = [] }: Access
       requireAuth: true,
       refuse: false,
       reason: `${why} — ops console behind HTTP Basic`,
+    };
+  }
+
+  // Accounts are a credential too. Same reasoning as the branch above and the same
+  // position relative to the loopback shortcut: an operator who created accounts has
+  // asked to be asked, and loopback is not a boundary between users on one box.
+  if (hasUsers) {
+    const why =
+      external.length > 0
+        ? `reachable as ${external.join(", ")} with console accounts`
+        : isLoopbackBind(bind)
+          ? `loopback bind (${bind}) with console accounts`
+          : "wide bind with console accounts";
+    return {
+      serve: true,
+      mode: "authed",
+      requireAuth: true,
+      refuse: false,
+      reason: `${why} — ops console behind a sign-in`,
+    };
+  }
+
+  // Set, but unusable: `DASHBOARD_AUTH=ops:` with no secret, `DASHBOARD_AUTH=opspass` with
+  // no colon, a value that survived a shell quoting accident. This is the SAME failure the
+  // ordering note above describes, reached by a different door — the operator asked for a
+  // credential, the credential could not be read, and falling through to the loopback
+  // shortcut would serve the full ops console with the boot line reading `[private]`, which
+  // is precisely how they would never find out. Measured 2026-08-21: it returned 200 and
+  // served wallets. When a security control loses its input, refuse.
+  // Empty string is UNSET (that is what a shell hands you for `DASHBOARD_AUTH=`), but any
+  // other value is an attempt — including one that is only whitespace, which is a quoting
+  // accident rather than a decision to run without a credential.
+  if (auth !== undefined && auth !== "") {
+    return {
+      serve: false,
+      mode: "refused",
+      requireAuth: false,
+      refuse: true,
+      reason:
+        "refusing to serve: DASHBOARD_AUTH is set but unreadable — it must be `user:secret` " +
+        "with both halves non-empty. The secret is either a password or a scrypt hash from " +
+        "`npm run hash -w @naulon/dashboard`. Serving anyway would run the ops console with " +
+        "no credential while the boot line claimed a private one.",
     };
   }
 
