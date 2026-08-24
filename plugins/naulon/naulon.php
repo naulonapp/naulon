@@ -4,7 +4,7 @@
  * Plugin URI:        https://naulon.app
  * Update URI:        https://naulon.app/wp/naulon
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
- * Version:           0.4.3
+ * Version:           0.5.0
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
@@ -27,7 +27,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NAULON_VERSION', '0.4.3' );
+define( 'NAULON_VERSION', '0.5.0' );
 define( 'NAULON_PLUGIN_FILE', __FILE__ );
 define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 
@@ -52,6 +52,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-client.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-challenge.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-verification.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-license.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-agent.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
@@ -71,6 +72,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-data.php';
 function naulon_bootstrap() {
 	Naulon_Challenge::instance()->register();
 	Naulon_Credits::instance()->register();
+	Naulon_License::instance()->register();
 	Naulon_Enforcer::instance()->register();
 	Naulon_Cron::instance()->register();
 	Naulon_Profile::instance()->register();
@@ -107,6 +109,7 @@ function naulon_activate() {
 	Naulon_Roles::add_capabilities();
 	Naulon_Ledger::install();
 	Naulon_Challenge::instance()->add_rewrite_rules();
+	Naulon_License::instance()->add_rewrite_rules();
 	flush_rewrite_rules();
 	Naulon_Cron::instance()->ensure_scheduled();
 }

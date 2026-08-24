@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.4.3
+Stable tag: 0.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.5.0 =
+* Your site now publishes its licence. RSL — Really Simple Licensing — is the open standard AI crawlers are starting to check before they read: a machine-readable statement of what a site permits and what it costs. Yours is served at /license.xml, pointed at from robots.txt and from the head of every page, and built from the price and scope already in your naulon account. Nothing to write and nothing to configure.
+* Search indexers stay free in the licence, because they are free at the toll. What the document says and what the plugin does are the same thing, from the same settings.
+* The licence is refreshed in the background, so a price change reaches crawlers within hours without you republishing anything. If naulon cannot be reached, the licence already published stays up rather than disappearing.
+
 = 0.4.3 =
 * Your dashboard now shows what the toll actually did. Every decision the plugin makes about a crawler — charged, served free, or re-read on a license it already paid for — is reported to your naulon account, so the Audit and Readiness screens stop telling a working site that nothing has been priced yet. Readers are still never reported: not sampled, not counted, not touched.
 * Settlements are not reported from here. What you were paid is recorded from the payment itself, so nothing on your earnings screen can come from this plugin claiming it.
@@ -198,6 +203,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+
+= 0.5.0 =
+Your site now states its terms where a crawler looks for them: /license.xml, a line in robots.txt, and a link in every page head. Built from the price you already set — nothing to configure.
 
 = 0.4.3 =
 Your naulon account now sees what the toll actually did — every crawler charged, served free, or re-reading on a license it paid for. Before this, an in-app site's Audit page could only ever show what someone else saw, which was nothing. Readers are still never reported.
