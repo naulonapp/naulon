@@ -52,6 +52,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-client.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-challenge.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-verification.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-license.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-agent.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
@@ -71,6 +72,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-data.php';
 function naulon_bootstrap() {
 	Naulon_Challenge::instance()->register();
 	Naulon_Credits::instance()->register();
+	Naulon_License::instance()->register();
 	Naulon_Enforcer::instance()->register();
 	Naulon_Cron::instance()->register();
 	Naulon_Profile::instance()->register();
@@ -107,6 +109,7 @@ function naulon_activate() {
 	Naulon_Roles::add_capabilities();
 	Naulon_Ledger::install();
 	Naulon_Challenge::instance()->add_rewrite_rules();
+	Naulon_License::instance()->add_rewrite_rules();
 	flush_rewrite_rules();
 	Naulon_Cron::instance()->ensure_scheduled();
 }

@@ -151,6 +151,12 @@ class Naulon_Data {
 		}
 
 		Naulon_Cron::instance()->unschedule();
+
+		// Our cached copy of the control plane's licence document. Not the publisher's data —
+		// it is regenerated from their settings on demand — and a stale licence outliving the
+		// plugin that fetched it would state terms nothing is enforcing.
+		delete_option( Naulon_License::OPTION );
+		delete_transient( Naulon_License::RETRY_TRANSIENT );
 	}
 
 	/**

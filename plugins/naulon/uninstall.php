@@ -33,6 +33,7 @@ if ( ! defined( 'NAULON_VERSION' ) ) {
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-settings.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-license.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-wallet.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-agent.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
