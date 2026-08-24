@@ -102,23 +102,18 @@ class LicenseTest extends WP_UnitTestCase {
 		);
 	}
 
-	public function test_the_rewrite_rule_matches_the_licence_path() {
+	public function test_the_rewrite_rule_is_registered_at_the_top_and_matches_the_licence_path() {
 		Naulon_License::instance()->add_rewrite_rules();
-		$rules = get_option( 'rewrite_rules' );
-		$this->assertIsArray( $rules );
+		$pattern = '^license\\.xml$';
 
+		// Registered at 'top' so a page rule or an SEO plugin's catch-all cannot answer first.
 		global $wp_rewrite;
-		$wp_rewrite->flush_rules( false );
-		$rules = get_option( 'rewrite_rules' );
+		$extra = isset( $wp_rewrite->extra_rules_top ) ? $wp_rewrite->extra_rules_top : array();
+		$this->assertArrayHasKey( $pattern, $extra, 'the licence rule must outrank page rules' );
+		$this->assertStringContainsString( Naulon_License::QUERY_VAR, $extra[ $pattern ] );
 
-		$matched = false;
-		foreach ( $rules as $pattern => $target ) {
-			if ( preg_match( '#' . str_replace( '#', '\#', $pattern ) . '#', 'license.xml' ) ) {
-				$matched = ( false !== strpos( $target, Naulon_License::QUERY_VAR ) );
-				break;
-			}
-		}
-		$this->assertTrue( $matched, 'the first rule matching license.xml must be ours' );
+		$this->assertSame( 1, preg_match( '#' . $pattern . '#', 'license.xml' ) );
+		$this->assertSame( 0, preg_match( '#' . $pattern . '#', 'license.xml/extra' ), 'the rule is exact' );
 	}
 
 	public function test_a_failed_fetch_keeps_the_previous_document_and_backs_off() {
