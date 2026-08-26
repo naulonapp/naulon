@@ -109,6 +109,21 @@ export interface AttributedEvent {
   /** Gateway settlement / batch reference. */
   settlementRef: string;
   /**
+   * Fee legs the quote required that this buyer never authorized, in atomic micro-USDC — the sum
+   * of what a STOCK x402 client left uncollected by signing only `accepts[0]`.
+   *
+   * The booking side of honouring that payment. A forgone leg has no signed authorization and no
+   * nonce, so it can never be a pending leg and no drain can ever settle it; without this field it
+   * would leave no trace anywhere and the fee would silently under-report itself. Stamped on the
+   * ledger row because that is the one record BOTH settle paths write — the gate's proxy handler
+   * and the hosted `/verify` — so neither path can book it differently.
+   *
+   * Optional, like `publisherId`/`host`: every row written before this existed stays valid, and a
+   * multi-leg payer (the normal case) leaves it absent rather than `"0"`, so "absent" and "nothing
+   * was forgone" are the same statement.
+   */
+  feeForgoneMicro?: string;
+  /**
    * The chain this event settled on (the per-tenant settlement network's chainId).
    * Optional: stamped by the settle tail so a later drain re-sends on the right
    * chain even across a multi-network fleet. Absent (every pre-per-tenant event) ⇒

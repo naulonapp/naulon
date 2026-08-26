@@ -109,7 +109,7 @@ function issueMulti(now: number) {
   const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as {
     extensions?: { naulonLegs?: { legs: WireLeg[] } };
   };
-  return { legReqs: legs.map((l) => l.requirements), wireLegs: decoded.extensions?.naulonLegs?.legs ?? [], decoded };
+  return { legs, legReqs: legs.map((l) => l.requirements), wireLegs: decoded.extensions?.naulonLegs?.legs ?? [], decoded };
 }
 
 // A multi-leg mock payment-signature: one { payer, amount, nonce } per wire leg.
@@ -339,4 +339,81 @@ test("buildGatewaySignature clamps a sub-floor advertised window up to Circle's 
     authorization: { validAfter: string; validBefore: string };
   };
   assert.ok(Number(authorization.validBefore) - Number(authorization.validAfter) >= 604_900);
+});
+
+// ── Honouring the stock x402 payer (the accepts[0] alternative we advertise) ──
+// `accepts[]` is "pick one you can fulfil", and we put the author leg there on purpose. A client
+// that does not know the naulonLegs extension signs it and sends a BARE OBJECT. Before this, that
+// payment was refused — so with the operator fee on, no stock or Agent-Marketplace client could
+// pay any tenant at all.
+
+/** A stock single-leg mock signature: today's bare object, not an array. */
+function mockStockSig(wireLeg: WireLeg): string {
+  return Buffer.from(JSON.stringify({ payer: PAYER, amount: wireLeg.amount, nonce: wireLeg.nonce })).toString("base64");
+}
+
+test("a STOCK single-leg payment against a multi-leg quote settles the author and reports the fee forgone", async () => {
+  resetPendingLegSink();
+  const now = 1_000_000;
+  // Full `SettlementLegReq[]`, which is what `settleAndAttribute` passes in production — a bare
+  // `PaymentRequirements[]` loses the role (`normalizeLegs` labels it "leg"), and the role is the
+  // thing the booking side needs to know this was the operator fee.
+  const { legs, legReqs, wireLegs } = issueMulti(now);
+  const result = await verifyAndSettle(mockStockSig(wireLegs[0]!), legs, now, "pub-stock");
+
+  assert.equal(result.ok, true, "the buyer paid what we advertised — serving is the whole point");
+  assert.equal(result.legSettlements!.length, 1, "only the author leg exists on this path");
+  assert.equal(result.legSettlements![0]!.settled, true);
+  assert.match(result.settlementRef!, /^mock-/);
+
+  // The obligation is handed back, not silently dropped.
+  assert.deepEqual(result.forgoneLegs, [{ role: "operator", payTo: legReqs[1]!.payTo, amount: "500" }]);
+});
+
+test("a forgone leg is NEVER written to the pending sink — it could never be drained", async () => {
+  resetPendingLegSink();
+  const now = 1_000_000;
+  const { legs, wireLegs } = issueMulti(now);
+  const result = await verifyAndSettle(mockStockSig(wireLegs[0]!), legs, now, "pub-stock");
+
+  // Both halves, or this asserts nothing: a REFUSAL also leaves the sink empty, so "sink is empty"
+  // alone passes whether we honour the payment or reject it.
+  assert.equal(result.ok, true, "settled");
+  assert.equal(result.forgoneLegs!.length, 1, "and the obligation was reported");
+
+  // No signed payload and no nonce, so there is nothing to settle. Recording it would put money we
+  // can never collect into the same ledger the drain and the fee-revenue report read from.
+  assert.equal((await getPendingLegSink().pending(now, "pub-stock")).length, 0);
+  assert.deepEqual(await drainPendingLegs({ publisherId: "pub-stock" }, now), { settled: 0, failed: 0 });
+});
+
+test("the discriminator is the WIRE SHAPE — a naulon client that signs too few legs is still refused", async () => {
+  resetPendingLegSink();
+  const now = 1_000_000;
+  const { legs, wireLegs } = issueMulti(now);
+  // An ARRAY of one: a client that knows about naulonLegs and dropped a leg anyway. Not a stock
+  // payer, and collapsing the two cases into "fewer payloads than legs" would let this through.
+  const oneInAnArray = Buffer.from(
+    JSON.stringify([{ payer: PAYER, amount: wireLegs[0]!.amount, nonce: wireLegs[0]!.nonce }]),
+  ).toString("base64");
+  const result = await verifyAndSettle(oneInAnArray, legs, now);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "leg count mismatch: 1 signed, 2 required");
+  assert.equal(result.forgoneLegs, undefined);
+});
+
+test("a stock payment against a SINGLE-leg quote is unchanged — no forgoneLegs key at all", async () => {
+  resetPendingLegSink();
+  // Its OWN clock: the mock nonce is derived from the requirements + time, so reusing 1_000_000
+  // replays a nonce an earlier test already consumed and the settle refuses for the wrong reason.
+  const now = 1_700_000;
+  const { legs } = build402(quote, "http://gate/essays/on-stillness", now);
+  const req = legs[0]!.requirements;
+  const result = await verifyAndSettle(
+    buildMockSignature(PAYER, req.amount, req.extra.nonce as string),
+    legs,
+    now,
+  );
+  assert.equal(result.ok, true);
+  assert.equal("forgoneLegs" in result, false, "the stock single-author toll must stay byte-identical");
 });

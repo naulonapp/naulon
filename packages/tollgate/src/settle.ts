@@ -80,6 +80,11 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     gateway: settleNet.gatewayWallet,
   };
 
+  // What this buyer was asked for and never authorized. Summed here rather than in x402.ts because
+  // this is the layer that owns the ledger row; the settle layer's job is to report the legs, not
+  // to decide what booking them means. Integer micro-USDC throughout — the money rule.
+  const forgoneMicro = (result.forgoneLegs ?? []).reduce((sum, leg) => sum + BigInt(leg.amount), 0n);
+
   // Build the attributed event (full recursive split).
   const payerResolved = /^0x[0-9a-fA-F]{40}$/.test(result.payer ?? "") ? result.payer! : ZERO_ADDRESS;
   const event: AttributedEvent = {
@@ -102,6 +107,10 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     // Stamp the settle chain so a later drain re-sends on the same chain (survives
     // a multi-network fleet). Absent on pre-per-tenant events ⇒ activeNetwork().
     chainId: settleNet.chainId,
+    // Book what a stock x402 payer left uncollected. Spread so the key is ABSENT on every normal
+    // settle — the overwhelmingly common case — keeping the ledger row byte-identical to what it
+    // was, rather than adding a `"0"` to millions of rows to describe nothing happening.
+    ...(forgoneMicro > 0n ? { feeForgoneMicro: forgoneMicro.toString() } : {}),
     at: now,
   };
 
