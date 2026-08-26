@@ -106,3 +106,55 @@ test("two hosts under one publisher are distinguishable in the ledger", async ()
   const hosts = events.filter((e) => e.at === t0 || e.at === t0 + 1).map((e) => e.host);
   assert.deepEqual(hosts.sort(), ["busy.example.com", "quiet.example.com"]);
 });
+
+/* ── Booking the fee a stock x402 payer never authorized ──────────────────────
+ * `verifyAndSettle` now honours a bare-object payment against a multi-leg quote: it settles the
+ * author, serves the content, and reports the un-authorized legs. Those legs can never become
+ * pending rows (no signed payload, no nonce), so unless the settle tail books them they leave no
+ * trace anywhere and the fee silently under-reports itself. The ledger row is where it lands
+ * because it is the one record BOTH settle paths write. */
+
+const OPERATOR = walletAddress("0x3333333333333333333333333333333333333333");
+
+function operatorLeg() {
+  return {
+    role: "operator",
+    requirements: {
+      scheme: "exact",
+      network: NETWORKS.baseSepolia.network,
+      asset: NETWORKS.baseSepolia.usdc,
+      amount: "500",
+      payTo: OPERATOR,
+      maxTimeoutSeconds: 691_200,
+    },
+  };
+}
+
+/** A STOCK x402 payment: the bare object today's single-leg clients send, signing only accepts[0]. */
+function stockPayment(now: number): string {
+  const nonce = issueNonce(bindingOf(authorLeg().requirements as never), now);
+  return Buffer.from(JSON.stringify({ payer: PAYER, amount: "5000", nonce })).toString("base64");
+}
+
+test("a stock payer's un-authorized fee is booked onto the ledger row", async () => {
+  const now = Date.now() + 5000;
+  const a = args("stock.example.com", now);
+  const res = await settleAndAttribute({ ...a, payment: stockPayment(now), legs: [authorLeg(), operatorLeg()] as never });
+  assert.equal(res.ok, true, res.error);
+
+  const written = (await readAll("pub-1")).find((e) => e.at === now);
+  assert.ok(written);
+  assert.equal(written.feeForgoneMicro, "500", "the operator leg the buyer was never offered");
+});
+
+test("a normal settle leaves the key ABSENT, not zero", async () => {
+  // "Absent" and "nothing was forgone" must be the same statement, or every historical row and
+  // every multi-leg settle would have to carry a "0" describing something that did not happen.
+  const now = Date.now() + 6000;
+  const res = await settleAndAttribute(args("normal.example.com", now));
+  assert.equal(res.ok, true, res.error);
+
+  const written = (await readAll("pub-1")).find((e) => e.at === now);
+  assert.ok(written);
+  assert.equal("feeForgoneMicro" in written, false);
+});

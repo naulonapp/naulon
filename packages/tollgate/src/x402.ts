@@ -65,6 +65,21 @@ export interface LegSettlement {
   settled: boolean;
 }
 
+/**
+ * A leg the quote required and the buyer never authorized. Deliberately NOT a `PayoutLeg`: a
+ * PayoutLeg is an instruction to pay someone and carries a validated `WalletAddress`, whereas this
+ * is a record that a payment did NOT happen. Branding it would mean running an address validator on
+ * the settle path to describe money that did not move — a throw where there is nothing to gain.
+ */
+export interface ForgoneLeg {
+  /** The ledger label the quote gave it ("operator", "coauthor", …). */
+  role: string;
+  /** Who would have been paid. Reported as advertised, not re-validated. */
+  payTo: string;
+  /** Atomic micro-USDC, integer string — the amount that went uncollected. */
+  amount: string;
+}
+
 export interface VerifyResult {
   ok: boolean;
   payer?: string;
@@ -73,6 +88,18 @@ export interface VerifyResult {
   error?: string;
   /** Per-leg settlement outcomes (author first), present on a successful N-leg settle. */
   legSettlements?: LegSettlement[];
+  /**
+   * Legs the quote required that the buyer never authorized, because they paid with a STOCK
+   * x402 client — one that reads `accepts[0]` as the offer, signs that one alternative, and
+   * knows nothing of the `naulonLegs` extension. Present only on that path.
+   *
+   * These are NOT pending and NOT retryable: there is no signed authorization and no nonce, so
+   * nothing can ever settle them and they are deliberately not written to the pending-leg sink.
+   * They are an OBLIGATION the caller must book somewhere — the fee is owed by the toll being
+   * priced, and the on-wire leg is the preferred way to collect it, not the only proof it exists.
+   * A caller that ignores this field silently under-reports what it is owed.
+   */
+  forgoneLegs?: ForgoneLeg[];
 }
 
 // Lazily construct the real facilitator only in gateway mode.
@@ -181,16 +208,46 @@ export async function verifyAndSettle(
     return { ok: false, error: "malformed payment-signature" };
   }
   const payloads = Array.isArray(parsed) ? parsed : [parsed];
-  if (payloads.length !== legReqs.length) {
-    return { ok: false, error: `leg count mismatch: ${payloads.length} signed, ${legReqs.length} required` };
+
+  // HONOURING THE STOCK PAYER. `build402` advertises the author leg as `accepts[0]` — stock x402
+  // defines `accepts[]` as ALTERNATIVES, "pick one you can fulfil" — and puts the simultaneous
+  // extra legs in the `naulonLegs` extension. A client that does not know the extension therefore
+  // does exactly what the protocol tells it to: signs `accepts[0]` and sends today's bare object.
+  //
+  // Refusing that is refusing a payment we advertised. Worse, once the operator fee is on, EVERY
+  // tenant's 402 is multi-leg, so the refusal applies to every stock and Agent-Marketplace payer
+  // there is — the payer set collapses to naulon-aware clients. So: settle the author leg, serve
+  // the content, and hand the un-authorized legs back as `forgoneLegs` for the caller to book.
+  //
+  // The discriminator is the WIRE SHAPE, not the count: a bare object is a client that never knew
+  // there was more than one leg; an ARRAY is a naulon-aware client, and an array of the wrong
+  // length is a real mismatch that must still be refused. This is why the two cases cannot be
+  // collapsed into "fewer payloads than legs".
+  //
+  // Note this is orthogonal to the control plane's drop-refusal on `/verify`: that one catches a
+  // PUBLISHER who strips the fee from their own quote. This is a BUYER who was never offered it.
+  const stockPayer = !Array.isArray(parsed) && legReqs.length > 1;
+  const required = stockPayer ? [legReqs[0]!] : legReqs;
+  const forgoneLegs: ForgoneLeg[] | undefined = stockPayer
+    ? legReqs.slice(1).map((l) => ({ role: l.role, payTo: l.requirements.payTo, amount: l.requirements.amount }))
+    : undefined;
+
+  if (payloads.length !== required.length) {
+    return { ok: false, error: `leg count mismatch: ${payloads.length} signed, ${required.length} required` };
   }
-  const pairs: LegPair[] = legReqs.map((leg, i) => ({
+  const pairs: LegPair[] = required.map((leg, i) => ({
     role: leg.role,
     requirements: leg.requirements,
     payload: payloads[i],
   }));
 
-  if (cfg.PAYMENT_MODE !== "gateway") return settleMock(pairs, now, publisherId);
+  // `pairs` now holds the author leg alone on the stock path, so `deferExtraLegs` records nothing:
+  // a leg with no signed payload has no authorization id and could never be drained. Carrying the
+  // obligation OUT of the settle is the whole point — writing an undrainable row would put money we
+  // will never collect into the same ledger the drain reports from.
+  const withForgone = (r: VerifyResult): VerifyResult => (forgoneLegs ? { ...r, forgoneLegs } : r);
+
+  if (cfg.PAYMENT_MODE !== "gateway") return withForgone(await settleMock(pairs, now, publisherId));
   // Resolve the settle chain from the AUTHOR leg the 402 advertised (per-tenant),
   // not the process-global — so a base tenant settles on base even when the fleet
   // default is Arc. Fallback to activeNetwork() keeps the single-tenant path exact.
@@ -199,9 +256,11 @@ export async function verifyAndSettle(
   // and we self-relay it through the Memo predeploy — Circle's facilitator can't verify
   // that domain. Field-presence gate, never a chainName check (see supportsMemo): a
   // memo-less leg (Base) falls through to the stock Gateway path with no edit here.
-  return supportsMemo(net)
-    ? settleMemo(pairs, net, now, publisherId)
-    : settleGateway(pairs, net, now, publisherId);
+  return withForgone(
+    supportsMemo(net)
+      ? await settleMemo(pairs, net, now, publisherId)
+      : await settleGateway(pairs, net, now, publisherId),
+  );
 }
 
 /** Memo-network settlement: pre-verify every leg's raw EIP-3009 authorization, then
