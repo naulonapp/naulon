@@ -7,7 +7,7 @@ import {
   type CreditsResolver,
   type PublisherConfig,
 } from "@naulon/shared";
-import { quote } from "./pricing.ts";
+import { quote, tollPrice } from "./pricing.ts";
 
 const WALLET = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -50,6 +50,24 @@ test("quote prices a citation at price * citationMultiplier", async () => {
   const q = await quote(publisher(), "on-passage", "citation");
   assert.ok(q);
   assert.equal(q.price, 0.005); // 0.001 * 5
+});
+
+test("tollPrice is the same number quote() charges, for both kinds", async () => {
+  // The point of exporting it: a verifier that never calls quote() must land on the
+  // identical figure. Asserted against quote's own output rather than a literal, so a
+  // future formula change cannot pass here while breaking the quoting path.
+  for (const kind of ["read", "citation"] as const) {
+    const q = await quote(publisher(), "on-passage", kind);
+    assert.ok(q);
+    assert.equal(tollPrice(publisher(), kind), q.price);
+  }
+});
+
+test("tollPrice reads only price and citationMultiplier", () => {
+  // No credits source, no id, no wallet — the structural subset a control plane holds
+  // when it has a tenant record but has not resolved an article.
+  assert.equal(tollPrice({ price: usdc(0.002), citationMultiplier: 3 }, "citation"), 0.006);
+  assert.equal(tollPrice({ price: usdc(0.002), citationMultiplier: 3 }, "read"), 0.002);
 });
 
 test("citationMultiplier is configurable per publisher", async () => {

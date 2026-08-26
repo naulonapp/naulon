@@ -62,6 +62,23 @@ export interface Quote {
 }
 
 /**
+ * What one toll of `kind` costs on this publisher, before any additive extra leg.
+ *
+ * Exported because it is the ONLY implementation of the price formula, and a second
+ * caller now needs it: the multi-tenant control plane verifies a self-hosting
+ * publisher's own quote against the tenant record before settling it. Deriving that
+ * answer any other way means copying a money formula into a second file, which is the
+ * thing the fee math already refuses to do.
+ *
+ * Pure and synchronous — it reads only the fields the resolver already put on the
+ * config, never the credits source. `quote()` calls it for exactly the same reason a
+ * verifier does, so the two can never disagree.
+ */
+export function tollPrice(publisher: Pick<PublisherConfig, "price" | "citationMultiplier">, kind: TollKind): Usdc {
+  return usdc(kind === "citation" ? publisher.price * publisher.citationMultiplier : publisher.price);
+}
+
+/**
  * Price a toll event for one publisher. Citations cost more than a single read (a
  * citation has downstream reach), but both resolve to the same author payees.
  * Returns undefined for an article the publisher's credits source doesn't know —
@@ -75,7 +92,7 @@ export async function quote(
   const credits = await publisher.credits.resolve(slug);
   if (!credits) return undefined;
 
-  const price = usdc(kind === "citation" ? publisher.price * publisher.citationMultiplier : publisher.price);
+  const price = tollPrice(publisher, kind);
 
   return {
     slug: credits.slug,

@@ -38,7 +38,7 @@ export {
 } from "./crawlerPrice.ts";
 
 // Pricing (the `quote` value; the `Quote` type comes through `./decide.ts`).
-export { quote } from "./pricing.ts";
+export { quote, tollPrice } from "./pricing.ts";
 
 // Licensing, revocation, discoverability manifest.
 export { licensing, type Licensing } from "./license.ts";
