@@ -23,9 +23,14 @@ import {
   networkByCaip2,
   relayerKeyFor,
   supportsMemo,
+  type ForgoneLeg,
   type MemoAuthorization,
   type SettlementNetwork,
 } from "@naulon/shared";
+
+/** Re-exported so the settle surface reads unchanged; the type is owned by `@naulon/shared`
+ *  because `AttributedEvent` carries it and shared is the base package. */
+export type { ForgoneLeg };
 import {
   preverifyEip3009,
   relayerAddress,
@@ -63,21 +68,6 @@ export interface LegSettlement {
   settlementRef?: string;
   /** True once on-chain (or mock) settled; false = buyer-authorized, awaiting the drain. */
   settled: boolean;
-}
-
-/**
- * A leg the quote required and the buyer never authorized. Deliberately NOT a `PayoutLeg`: a
- * PayoutLeg is an instruction to pay someone and carries a validated `WalletAddress`, whereas this
- * is a record that a payment did NOT happen. Branding it would mean running an address validator on
- * the settle path to describe money that did not move — a throw where there is nothing to gain.
- */
-export interface ForgoneLeg {
-  /** The ledger label the quote gave it ("operator", "coauthor", …). */
-  role: string;
-  /** Who would have been paid. Reported as advertised, not re-validated. */
-  payTo: string;
-  /** Atomic micro-USDC, integer string — the amount that went uncollected. */
-  amount: string;
 }
 
 export interface VerifyResult {

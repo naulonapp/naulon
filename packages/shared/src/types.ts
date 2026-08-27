@@ -78,6 +78,26 @@ export interface EventSink {
 }
 
 /** A settled, attributed event — the row the dashboard reads. */
+/**
+ * A leg the quote required and the buyer never authorized.
+ *
+ * Deliberately NOT a `PayoutLeg`: a PayoutLeg is an instruction to pay someone and carries a
+ * validated `WalletAddress`, whereas this is a record that a payment did NOT happen. Branding it
+ * would mean running an address validator on the settle path to describe money that did not move —
+ * a throw where there is nothing to gain.
+ *
+ * It lives HERE rather than in `@naulon/tollgate` because `AttributedEvent` carries it and shared
+ * is the base package; tollgate re-exports it so the settle surface reads unchanged.
+ */
+export interface ForgoneLeg {
+  /** The ledger label the quote gave it ("operator", "coauthor", …). */
+  role: string;
+  /** Who would have been paid. Reported as advertised, not re-validated. */
+  payTo: string;
+  /** Atomic micro-USDC, integer string — the amount that went uncollected. */
+  amount: string;
+}
+
 export interface AttributedEvent {
   id: string;
   /**
@@ -109,20 +129,28 @@ export interface AttributedEvent {
   /** Gateway settlement / batch reference. */
   settlementRef: string;
   /**
-   * Fee legs the quote required that this buyer never authorized, in atomic micro-USDC — the sum
-   * of what a STOCK x402 client left uncollected by signing only `accepts[0]`.
+   * Every leg the quote required that this buyer never authorized — role, payee and amount, one
+   * entry each. The booking side of honouring a STOCK x402 payment: such a client signs only
+   * `accepts[0]` (the x402 spec defines `accepts` as alternatives and `payTo` as a single string),
+   * and `build402` reduces `accepts[0]` to the PRIMARY author's own share — so on a co-authored,
+   * fee-bearing toll the legs left here are the co-authors' cuts AND the operator fee together.
    *
-   * The booking side of honouring that payment. A forgone leg has no signed authorization and no
-   * nonce, so it can never be a pending leg and no drain can ever settle it; without this field it
-   * would leave no trace anywhere and the fee would silently under-report itself. Stamped on the
-   * ledger row because that is the one record BOTH settle paths write — the gate's proxy handler
-   * and the hosted `/verify` — so neither path can book it differently.
+   * **Per leg, never a sum.** A total cannot say whose money it was, and the two kinds are owed to
+   * different people: an operator leg is naulon's, a coauthor leg is that author's. Summing them
+   * made a co-author's unpaid cut report as naulon revenue — the exact confusion the fee-revenue
+   * plane exists to end. It also cannot say WHICH co-author, and an author being shown someone
+   * else's shortfall is worse than being shown none.
    *
-   * Optional, like `publisherId`/`host`: every row written before this existed stays valid, and a
-   * multi-leg payer (the normal case) leaves it absent rather than `"0"`, so "absent" and "nothing
-   * was forgone" are the same statement.
+   * A forgone leg has no signed authorization and no nonce, so it can never be a pending leg and
+   * no drain can ever settle it. This row is the only trace it will ever leave — and it is the one
+   * record BOTH settle paths write (the gate's proxy handler and the hosted `/verify`), so neither
+   * path can book it differently.
+   *
+   * Optional, like `publisherId`/`host`: a multi-leg payer — the normal case — leaves it ABSENT
+   * rather than `[]`, so "absent" and "nothing was forgone" are the same statement and no
+   * historical row needs rewriting to say nothing happened.
    */
-  feeForgoneMicro?: string;
+  forgoneLegs?: ForgoneLeg[];
   /**
    * The chain this event settled on (the per-tenant settlement network's chainId).
    * Optional: stamped by the settle tail so a later drain re-sends on the right
