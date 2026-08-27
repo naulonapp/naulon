@@ -124,6 +124,30 @@ export function totalChargedMicro(legs: readonly { requirements: { amount: strin
   return legs.reduce((sum, leg) => sum + toMicro(leg.requirements.amount), 0n);
 }
 
+/**
+ * What the buyer ACTUALLY authorized — the quoted total minus every leg they never signed.
+ *
+ * `totalChargedMicro` is the ASK. Since naulon#73 the gate honours a stock x402 client that signs
+ * `accepts[0]` and knows nothing of the `naulonLegs` extension: it settles the author leg, serves
+ * the read, and hands the rest back as `forgoneLegs`. That buyer is charged the author leg alone,
+ * so emitting the ask as `crawler-charged` overstates what left their wallet — by the operator fee
+ * and any co-author cut — on the one header whose own contract is that it "has to be the real total
+ * or it is a lie to the buyer".
+ *
+ * A naulon-aware payer forgoes nothing, so this returns the ask unchanged and the header is
+ * byte-identical to before.
+ */
+export function settledChargedMicro(
+  legs: readonly { requirements: { amount: string } }[],
+  forgoneLegs: readonly { amount: string }[] | undefined,
+): bigint {
+  const forgone = (forgoneLegs ?? []).reduce((sum, leg) => sum + toMicro(leg.amount), 0n);
+  const settled = totalChargedMicro(legs) - forgone;
+  // Defensive: a forgone total can never exceed the ask (it is built from the same leg list), but
+  // a negative price would throw in formatCrawlerPrice and turn a paid read into a 500.
+  return settled > 0n ? settled : 0n;
+}
+
 function toMicro(v: bigint | number | string): bigint {
   if (typeof v === "bigint") return v;
   if (typeof v === "number") {

@@ -16,6 +16,7 @@ import {
   declaredCrawlerBudget,
   formatCrawlerPrice,
   parseCrawlerPrice,
+  settledChargedMicro,
   totalChargedMicro,
 } from "./crawlerPrice.ts";
 
@@ -124,4 +125,37 @@ test("budget verdict compares the ceiling against the real ask", () => {
   assert.equal(crawlerBudgetVerdict(1000n, 1000n), "within", "exactly the ask is within it");
   assert.equal(crawlerBudgetVerdict(999n, 1000n), "over");
   assert.equal(crawlerBudgetVerdict(0n, 1000n), "over");
+});
+
+test("crawler-charged is what the buyer PAID, not what they were asked", () => {
+  // The stock-payer shape (naulon#73): a 3-leg quote, only accepts[0] signed.
+  const legs = [
+    { requirements: { amount: "15000" } }, // author — signed
+    { requirements: { amount: "5000" } },  // co-author — never offered to a stock client
+    { requirements: { amount: "2000" } },  // operator fee — likewise
+  ];
+  const forgone = [{ amount: "5000" }, { amount: "2000" }];
+
+  assert.equal(totalChargedMicro(legs), 22_000n, "the ASK is still the whole quote");
+  assert.equal(settledChargedMicro(legs, forgone), 15_000n, "but only the author leg left the wallet");
+  assert.equal(formatCrawlerPrice(settledChargedMicro(legs, forgone)), "USD 0.015");
+  // The bug this pins: emitting the ask told a stock payer they were charged $0.022 when
+  // $0.015 moved. `crawler-charged` is a claim about money — it has to be the real total.
+  assert.notEqual(formatCrawlerPrice(totalChargedMicro(legs)), "USD 0.015");
+});
+
+test("a naulon-aware payer forgoes nothing, so the header is unchanged", () => {
+  const legs = [{ requirements: { amount: "15000" } }, { requirements: { amount: "2000" } }];
+  // Absent and empty must both mean "nothing was forgone" — the settle path omits the key.
+  assert.equal(settledChargedMicro(legs, undefined), 17_000n);
+  assert.equal(settledChargedMicro(legs, []), 17_000n);
+  assert.equal(settledChargedMicro(legs, undefined), totalChargedMicro(legs));
+});
+
+test("the settled total never goes negative", () => {
+  // Can't happen from a real settle (forgone is built from the same leg list), but a negative
+  // would throw in formatCrawlerPrice and turn a PAID read into a 500 — fail toward 0, not 500.
+  const legs = [{ requirements: { amount: "1000" } }];
+  assert.equal(settledChargedMicro(legs, [{ amount: "9999" }]), 0n);
+  assert.equal(formatCrawlerPrice(settledChargedMicro(legs, [{ amount: "9999" }])), "USD 0.00");
 });

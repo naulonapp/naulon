@@ -105,6 +105,7 @@ import {
   crawlerBudgetVerdict,
   declaredCrawlerBudget,
   formatCrawlerPrice,
+  settledChargedMicro,
   totalChargedMicro,
 } from "@naulon/enforce";
 
@@ -807,8 +808,11 @@ export function createApp(
         if (settled.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, settled.responseHeader);
         if (settled.licenseJws) res.headers.set(LICENSE_HEADER, settled.licenseJws);
         // Only on the settled path: `crawler-charged` is a claim that money moved, so
-        // it is set after settleAndAttribute succeeded and never on a 402.
-        res.headers.set(CRAWLER_CHARGED_HEADER, formatCrawlerPrice(totalChargedMicro(d.legs)));
+        // it is set after settleAndAttribute succeeded and never on a 402. It is the SETTLED
+        // total, not the ask: a stock x402 payer (naulon#73) signs `accepts[0]` alone, so the
+        // operator fee and any co-author cut never left their wallet and must not be billed to
+        // them here. `crawler-price` on the 402 above still carries the full ask.
+        res.headers.set(CRAWLER_CHARGED_HEADER, formatCrawlerPrice(settledChargedMicro(d.legs, settled.forgoneLegs)));
         res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${d.obs.classifyReason})`));
         return stampGateCacheHeaders(res, { noStore: true });
       }
