@@ -122,6 +122,46 @@ test("only Arc carries the memo capability — Base networks never do", () => {
   assert.equal(supportsMemo(NETWORKS.base), false, "base must NOT carry a memo field");
 });
 
+/**
+ * THE COST GUARD. `memo` is not a labelling flag — it SELECTS THE SETTLEMENT RAIL.
+ *
+ * A memo-less network settles through Circle Gateway, which BATCHES: "Gateway collects
+ * authorizations and settles net positions in bulk onchain, paying gas once per batch
+ * instead of once per payment", so a settle costs us nothing per read. A memo-capable
+ * network cannot use that rail (Gateway's `transferWithAuthorization` has no memo field),
+ * so `settleMemo` self-relays ONE ON-CHAIN TRANSACTION PER TOLL and our relayer pays the
+ * gas — see arcRelay.ts's header, "it pays gas … an operating cost".
+ *
+ * Measured 2026-08-27 on arcTestnet at 21 Gwei: 65k–150k gas = $0.00137–$0.00315 per
+ * settle, against an operator fee of $0.0003 on the live $0.003 toll. That is a 4.5x–10x
+ * LOSS on every read. Circle documents the same cliff: individual settlement is viable
+ * only above ~$0.01/payment, batched settlement down to $0.000001.
+ *
+ * So this test pins the COMPLETE set. It is not here to describe today's registry — it is
+ * here so that adding `memo` to a MAINNET entry cannot happen quietly. `arc` mainnet is the
+ * one that will tempt someone: its entry says "Add only after an on-chain read confirms it",
+ * which is true about the ADDRESS and silent about the ECONOMICS.
+ *
+ * If you are here because this test failed: the address being verified is necessary and not
+ * sufficient. State what a settle will cost against the fee at the price that network will
+ * carry, and only then add the network below.
+ */
+test("the self-relay (gas-paying) rail is TESTNET-ONLY — a mainnet memo is a per-read loss", () => {
+  const selfRelay = Object.values(NETWORKS).filter(supportsMemo).map((n) => n.chainName).sort();
+  assert.deepEqual(
+    selfRelay,
+    ["arcTestnet"],
+    "a network gained the memo capability — it now self-relays and WE pay gas per toll. " +
+      "Read this test's doc comment before widening the list; on mainnet this loses money on every read.",
+  );
+  // The invariant behind the list: nothing that settles real money may self-relay.
+  for (const net of Object.values(NETWORKS)) {
+    if (supportsMemo(net)) {
+      assert.equal(net.testnet, true, `${net.chainName} self-relays on MAINNET — every settle burns real gas against a sub-cent fee`);
+    }
+  }
+});
+
 test("the memo contract is the verified Arc Memo predeploy", () => {
   // Cross-checked against testnet.arcscan.app (Blockscout). If Arc redeploys it, this
   // catches the stale copy before a self-relay settle targets the wrong contract.

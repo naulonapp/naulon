@@ -60,7 +60,16 @@ export interface SettlementNetwork {
    *  The settle path gates memo emission on the PRESENCE of this field, NEVER on
    *  chainName — so a chain swap to Base omits memos automatically (illegal state
    *  unrepresentable). The memo wraps the buyer→author transfer via a self-relay,
-   *  which stays custody-free (the relayer pays gas, never touches the USDC). */
+   *  which stays custody-free (the relayer pays gas, never touches the USDC).
+   *
+   *  COST — read before adding this to any network. Presence of this field does not
+   *  merely add a label, it SELECTS THE SETTLEMENT RAIL. Without it a settle goes
+   *  through Circle Gateway, which BATCHES (gas paid once per batch, nothing per
+   *  read). With it, `settleMemo` self-relays ONE ON-CHAIN TRANSACTION PER TOLL and
+   *  our relayer pays that gas. Measured 2026-08-27 on arcTestnet at 21 Gwei:
+   *  $0.00137–$0.00315 per settle against a $0.0003 operator fee on the live $0.003
+   *  toll — a 4.5x–10x loss per read. Harmless on a testnet (fake gas); on MAINNET it
+   *  is a real loss on every settle. `networks.test.ts` pins the set for this reason. */
   memo?: {
     /** The Memo predeploy. `memo(target,data,memoId,memoData)` executes the subcall
      *  through the CALL_FROM precompile (preserving the relayer as caller) AND emits
