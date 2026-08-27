@@ -115,6 +115,21 @@ test("two hosts under one publisher are distinguishable in the ledger", async ()
  * because it is the one record BOTH settle paths write. */
 
 const OPERATOR = walletAddress("0x3333333333333333333333333333333333333333");
+const COAUTHOR = walletAddress("0x4444444444444444444444444444444444444444");
+
+function coauthorLeg() {
+  return {
+    role: "coauthor",
+    requirements: {
+      scheme: "exact",
+      network: NETWORKS.baseSepolia.network,
+      asset: NETWORKS.baseSepolia.usdc,
+      amount: "1500",
+      payTo: COAUTHOR,
+      maxTimeoutSeconds: 691_200,
+    },
+  };
+}
 
 function operatorLeg() {
   return {
@@ -144,7 +159,31 @@ test("a stock payer's un-authorized fee is booked onto the ledger row", async ()
 
   const written = (await readAll("pub-1")).find((e) => e.at === now);
   assert.ok(written);
-  assert.equal(written.feeForgoneMicro, "500", "the operator leg the buyer was never offered");
+  assert.deepEqual(written.forgoneLegs, [{ role: "operator", payTo: OPERATOR, amount: "500" }]);
+});
+
+test("a co-author's unpaid cut stays THEIRS — it is not folded in with naulon's fee", async () => {
+  // The whole reason this is a list. Summing it reported a co-author's money as naulon revenue,
+  // and an aggregate cannot say WHICH co-author was short-paid either — so an author could only
+  // ever be shown the article's total, never their own.
+  const now = Date.now() + 7000;
+  const a = args("mixed.example.com", now);
+  const res = await settleAndAttribute({
+    ...a,
+    payment: stockPayment(now),
+    legs: [authorLeg(), coauthorLeg(), operatorLeg()] as never,
+  });
+  assert.equal(res.ok, true, res.error);
+
+  const written = (await readAll("pub-1")).find((e) => e.at === now);
+  assert.ok(written);
+  assert.deepEqual(written.forgoneLegs, [
+    { role: "coauthor", payTo: COAUTHOR, amount: "1500" },
+    { role: "operator", payTo: OPERATOR, amount: "500" },
+  ]);
+  // And the thing a sum could never answer: whose money, and how much of it.
+  const ours = (written.forgoneLegs ?? []).filter((l) => l.role === "operator");
+  assert.equal(ours.reduce((n, l) => n + Number(l.amount), 0), 500, "naulon is owed 500, not 2000");
 });
 
 test("a normal settle leaves the key ABSENT, not zero", async () => {
@@ -156,5 +195,5 @@ test("a normal settle leaves the key ABSENT, not zero", async () => {
 
   const written = (await readAll("pub-1")).find((e) => e.at === now);
   assert.ok(written);
-  assert.equal("feeForgoneMicro" in written, false);
+  assert.equal("forgoneLegs" in written, false);
 });
