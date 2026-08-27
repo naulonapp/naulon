@@ -34,6 +34,7 @@ export {
   declaredCrawlerBudget,
   formatCrawlerPrice,
   parseCrawlerPrice,
+  settledChargedMicro,
   totalChargedMicro,
 } from "./crawlerPrice.ts";
 

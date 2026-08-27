@@ -22,6 +22,7 @@ import {
   usdc,
   walletAddress,
   type AttributedEvent,
+  type ForgoneLeg,
   type PublisherConfig,
 } from "@naulon/shared";
 import { licensing, type Quote, type SettlementLegReq } from "@naulon/enforce";
@@ -43,6 +44,13 @@ export interface SettleResult {
   responseHeader?: string;
   /** The minted Citation License (re-read entitlement); absent for a zero-address payer. */
   licenseJws?: string;
+  /**
+   * Legs this buyer was asked for and never authorized (the stock-payer path, naulon#73).
+   * Booked onto the ledger row here; also returned so the CALLER can tell the buyer the truth —
+   * `crawler-charged` is what money moved, and for a stock payer that is the ask minus this.
+   * Absent on every normal settle.
+   */
+  forgoneLegs?: ForgoneLeg[];
 }
 
 export interface SettleArgs {
@@ -169,5 +177,8 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     payer: payerResolved === ZERO_ADDRESS ? result.payer : payerResolved,
     responseHeader: result.responseHeader,
     licenseJws,
+    // Spread so the key is ABSENT on every normal settle, exactly as it is on the ledger row —
+    // a caller checking `forgoneLegs` gets undefined, never an empty array meaning the same thing.
+    ...(forgoneLegs.length > 0 ? { forgoneLegs } : {}),
   };
 }
