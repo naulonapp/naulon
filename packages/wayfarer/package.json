@@ -28,13 +28,13 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@naulon/shared": "^0.3.0",
-    "@circle-fin/x402-batching": "^3.3.0",
-    "@langchain/core": "^1.1.48",
-    "@langchain/openai": "^1.4.7",
-    "@x402/core": "^2.6.0",
-    "@x402/evm": "^2.6.0",
-    "viem": "^2.52.2"
+    "@circle-fin/x402-batching": "^3.4.0",
+    "@langchain/core": "^1.2.9",
+    "@langchain/openai": "^1.5.10",
+    "@naulon/shared": "^0.3.1",
+    "@x402/core": "^2.23.0",
+    "@x402/evm": "^2.23.0",
+    "viem": "^2.56.0"
   },
   "engines": {
     "node": ">=22"

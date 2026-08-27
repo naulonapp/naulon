@@ -30,8 +30,8 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@naulon/shared": "^0.3.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@naulon/shared": "^0.3.1",
     "@naulon/wayfarer": "^0.3.0",
     "zod": "^4.4.3"
   },
