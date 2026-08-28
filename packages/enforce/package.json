@@ -7,6 +7,20 @@
     "directory": "packages/enforce"
   },
   "description": "Runtime-agnostic naulon toll-decision kernel + in-app enforcement middleware. The neutral low-level core shared by @naulon/tollgate (the gate) and @naulon/sdk (the publisher SDK) — no dependency cycle.",
+  "keywords": [
+    "x402",
+    "usdc",
+    "paywall",
+    "ai-crawler",
+    "bot-detection",
+    "middleware",
+    "micropayments",
+    "naulon"
+  ],
+  "homepage": "https://naulon.app",
+  "bugs": {
+    "url": "https://github.com/naulonapp/naulon/issues"
+  },
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

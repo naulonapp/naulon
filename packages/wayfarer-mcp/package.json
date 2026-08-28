@@ -2,6 +2,20 @@
   "name": "@naulon/wayfarer-mcp",
   "version": "0.4.1",
   "description": "Model Context Protocol server that lets any LLM discover, quote, pay, and cite naulon-tolled sources — BYO wallet, local stdio, the wayfarer brain in-process.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "x402",
+    "usdc",
+    "ai-agent",
+    "llm",
+    "micropayments",
+    "naulon"
+  ],
+  "homepage": "https://naulon.app",
+  "bugs": {
+    "url": "https://github.com/naulonapp/naulon/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

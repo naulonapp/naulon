@@ -14,6 +14,17 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.7.2
+
+WordPress plugin only — `@naulon/*` versions all stood still, so this tag published
+nothing to npm. What it shipped is in [`plugins/naulon/readme.txt`](./plugins/naulon/readme.txt),
+the changelog WordPress shows a publisher.
+
+## v0.7.1
+
+WordPress plugin only — same shape as v0.7.2 above: no npm package moved, and the
+plugin's own changelog carries the detail.
+
 ## v0.7.0
 
 Ships `@naulon/sdk` 0.3.0 · `@naulon/shared` 0.3.1 · `@naulon/enforce` 0.3.1 ·

@@ -164,7 +164,7 @@ wallet/faucet steps.)
 ## Notes & caveats
 
 - **Hobby ToS.** Vercel Hobby is non-commercial. Moving real USDC is arguably
-  commercial — fine for a hackathon demo, but move to Pro (or the Fly/VPS path
+  commercial — fine for a throwaway trial, but move to Pro (or the Fly/VPS path
   below) for anything ongoing.
 - **Serverless gotchas.** The two spots most likely to need a tweak on Vercel are
   the `.ts`-extension imports and the npm-workspace install — check those first if
