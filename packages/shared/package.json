@@ -2,7 +2,24 @@
   "name": "@naulon/shared",
   "version": "0.3.1",
   "description": "The naulon contract layer: env config, credits + license types, settlement and attribution wire types, event/observation sinks, and the money primitives (network constants, EIP-3009). Builds on @naulon/sdk and re-exports it, so downstream packages get one import.",
+  "keywords": [
+    "x402",
+    "usdc",
+    "micropayments",
+    "paywall",
+    "ai-crawler",
+    "settlement",
+    "stablecoin",
+    "naulon"
+  ],
+  "homepage": "https://naulon.app",
+  "bugs": {
+    "url": "https://github.com/naulonapp/naulon/issues"
+  },
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/naulonapp/naulon.git",

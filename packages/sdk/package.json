@@ -7,6 +7,20 @@
     "directory": "packages/sdk"
   },
   "description": "The naulon publisher contract: credits + settlement wire types, validators, HMAC sign/verify, and credits resolvers. One source of truth for the money-routing trust boundary.",
+  "keywords": [
+    "x402",
+    "usdc",
+    "micropayments",
+    "paywall",
+    "ai-crawler",
+    "citation",
+    "stablecoin",
+    "naulon"
+  ],
+  "homepage": "https://naulon.app",
+  "bugs": {
+    "url": "https://github.com/naulonapp/naulon/issues"
+  },
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

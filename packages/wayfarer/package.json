@@ -2,6 +2,20 @@
   "name": "@naulon/wayfarer",
   "version": "0.3.0",
   "description": "The naulon paying agent: discover → quote → appraise → decide → pay → ground. Budgeted x402 buying over Circle Gateway on Arc, with reusable Citation Licenses (pay once, re-read free).",
+  "keywords": [
+    "x402",
+    "usdc",
+    "ai-agent",
+    "autonomous-agent",
+    "micropayments",
+    "llm",
+    "citation",
+    "naulon"
+  ],
+  "homepage": "https://naulon.app",
+  "bugs": {
+    "url": "https://github.com/naulonapp/naulon/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
