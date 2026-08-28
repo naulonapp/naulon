@@ -27,6 +27,41 @@ jobs:
       - name: Test (incl. license interop conformance)
         run: make test
 
+      # WARNING ONLY — never a red build. Says whether the registry is behind this branch.
+      #
+      # release.yml already refuses a tag whose packages changed without a version bump, which is
+      # the right place to BLOCK. What nothing said, until a human went looking on 2026-08-28, is
+      # that the changes exist at all: `@naulon/enforce` had carried a pricing correction for four
+      # days while npm still served the version before it, and the only way to learn that was to
+      # diff the tree against the last tag by hand. A guard that fires at tag time cannot tell you
+      # a tag is owed.
+      #
+      # Deliberately not a failure: unreleased work is the normal state of a branch. The signal is
+      # for the person deciding whether it is time to cut one.
+      - name: Is npm behind this branch?
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet || true
+          prev=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -z "$prev" ]; then echo "no tag yet — nothing to compare"; exit 0; fi
+
+          behind=""
+          for pkg in sdk shared enforce wayfarer wayfarer-mcp; do
+            # Test files never ship (each package builds with them excluded), so a test-only
+            # change is not a reason to release — same exclusion release.yml uses.
+            if git diff --quiet "$prev" HEAD -- "packages/${pkg}" ":(exclude)packages/${pkg}/src/**/*.test.ts"; then
+              continue
+            fi
+            behind="${behind} ${pkg}"
+          done
+
+          if [ -z "$behind" ]; then
+            echo "npm is current with ${prev} — every published package is unchanged since the tag."
+            exit 0
+          fi
+          echo "::warning title=npm is behind ${prev}::Published packages changed since ${prev} and are not on the registry:${behind}. Cut a release when the change is worth installing — bump each one, add its CHANGELOG.md section, then tag."
+
   # The WordPress plugin is PHP, so the Node job above cannot see it. Until this job
   # existed, plugins/naulon/tests/ ran NOWHERE — including VersionTest, written
   # precisely to stop a build shipping under a version already in the wild, which is
