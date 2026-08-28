@@ -14,6 +14,56 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.7.3
+
+Ships `@naulon/shared` 0.4.0 · `@naulon/enforce` 0.4.0 · `@naulon/sdk` 0.3.1 ·
+`@naulon/wayfarer` 0.3.1 · `@naulon/wayfarer-mcp` 0.4.2. The two minors are additive — new
+exports, no signature changed — but a caret range on a zero-major is minor-tight, so anything
+asking for `^0.3.x` of `shared` or `enforce` must move its range to `^0.4.0` to see them.
+
+The headline is that a STOCK x402 client is now billed for what it actually paid. Such a client
+signs only `accepts[0]`, which is the primary author's own share, and the gate had been booking
+the whole quote — so a co-author's unpaid cut and the operator fee were both recorded as though
+the money had moved.
+
+### Added
+
+- **`@naulon/enforce` — `tollPrice(publisher, kind)`.** The price formula, exported. It was
+  inlined in `quote()`, and a second caller now needs the same answer: a control plane verifying a
+  self-hosting publisher's quote against its own record before settling it. Copying a money formula
+  into a second file is the thing this package refuses to do, so the formula moved out instead.
+
+- **`@naulon/shared` — `ForgoneLeg` and `AttributedEvent.forgone`.** Every leg the quote required
+  that the buyer never authorized, one entry each: role, payee, amount. Deliberately per-leg and
+  never a sum — a total cannot say whose money it was, and an operator leg and a co-author leg are
+  owed to different people. Deliberately not a `PayoutLeg` either: this records that a payment did
+  NOT happen, so branding it would run an address validator over money that never moved.
+
+### Fixed
+
+- **A crawler read charged what the quote asked for, not what settled.** The receipt for a stock
+  payer reported the full multi-leg total; it now reports the amount that actually moved.
+
+- **The single-leg payment the gate advertises is honoured, and the fee is booked as uncollected.**
+  Refusing a stock payer would have been the other way to close it — and would have broken every
+  client that reads x402 the way the spec is written.
+
+### Changed
+
+- **`memoTemplate` is documented as a RAIL CHOICE, not a label**, and the networks that may
+  self-relay are pinned by a test. Setting it takes the settle off Circle Gateway's batch and onto
+  one on-chain transaction per toll, with our relayer paying that gas — measured at 4.5×–10× the
+  operator fee it earns. Harmless on a testnet; a real loss per read on mainnet.
+
+- **The settlement-rail dependencies were refreshed** within their existing ranges.
+
+- **The published packages carry `keywords`, `homepage` and `bugs`** — npm search matched none of
+  them before, for any term. `@naulon/shared` gained `engines.node` to match its siblings.
+
+- **Three tripwires** for surfaces that had a rule and nothing executing it: a release tag must
+  have a section in this file, a published package must carry the metadata npm renders, and CI
+  says on `main` when the registry is behind the branch.
+
 ## v0.7.2
 
 WordPress plugin only — `@naulon/*` versions all stood still, so this tag published
