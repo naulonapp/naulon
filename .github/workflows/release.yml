@@ -169,6 +169,34 @@ jobs:
 
           exit "$failed"
 
+      # The third version of the same question, asked of the file a human reads instead of the
+      # registry: does this tag appear in CHANGELOG.md?
+      #
+      # CHANGELOG.md opens by promising a section per release tag. v0.7.1 and v0.7.2 had none —
+      # both were WordPress-plugin-only releases where every @naulon/* version legitimately stood
+      # still — so a reader who saw those tags on GitHub could not tell "nothing shipped to npm"
+      # from "nobody wrote it down". Silence and absence looked identical, which is the same
+      # failure the two guards above exist to prevent, one plane over.
+      #
+      # A plugin-only release satisfies this with a two-line stub saying so; that is the point.
+      # Writing "nothing moved here" is cheap, and it is the sentence the reader needs.
+      - name: The tag has a CHANGELOG section
+        run: |
+          set -euo pipefail
+
+          case "${GITHUB_REF:-}" in
+            refs/tags/*) ;;
+            *) echo "not a tag build — the changelog check does not apply"; exit 0 ;;
+          esac
+
+          tag="${GITHUB_REF_NAME}"
+          if grep -qE "^## +${tag}([[:space:]]|$)" CHANGELOG.md; then
+            echo "CHANGELOG.md documents ${tag}"
+            exit 0
+          fi
+          echo "::error::CHANGELOG.md has no '## ${tag}' section. Add one before tagging — a plugin-only or metadata-only release still needs a stub that says so, or the next reader cannot tell an empty release from an undocumented one."
+          exit 1
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
