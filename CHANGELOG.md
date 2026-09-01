@@ -14,6 +14,38 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.7.4
+
+Ships `@naulon/shared` 0.4.1 · `@naulon/enforce` 0.4.1. Both are patches, so every existing
+`^0.4.0` range picks them up with no change on your side.
+
+The headline is that `@naulon/enforce` finally exports the observation sink it has shipped
+since 0.4.0. The module was built, compiled into `dist` and unit-tested, and no consumer could
+reach it — so the documented `/observe` wiring threw at import.
+
+### Fixed
+
+- **`@naulon/enforce` — `httpObservationSink` is importable.** The package barrel re-exported
+  three of its four in-app-enforcement modules, and the `exports` map publishes `"."` and
+  `"./next"` only, so the sibling barrel that did list the fourth was not a path any consumer
+  could take. `import { httpObservationSink } from "@naulon/enforce"` threw
+  `does not provide an export named 'httpObservationSink'` on 0.4.0. The same omission left
+  `NaulonMiddlewareOptions.observe` as a slot whose type, `ObservationReporter`, could not be
+  named — so a custom sink could not be typed either. Both are exported now, along with
+  `ObservationReport` and `ReportableVerdict`.
+
+  Every test in that directory imports its subject by relative path, which is why none of them
+  saw it. `barrel.test.ts` now asserts reachability rather than behaviour: every runtime export
+  of each in-app-enforcement module must appear on the package root, and a new sibling module
+  fails the check until it is added.
+
+### Added
+
+- **`@naulon/shared` — `readAllPaged()` and `PAGE_ROWS`.** One paging primitive for PostgREST
+  reads. PostgREST caps a response at 1000 rows, so an unpaged `select` silently returns a
+  prefix of the truth rather than an error; this walks the pages instead. Additive — no existing
+  export changed signature.
+
 ## v0.7.3
 
 Ships `@naulon/shared` 0.4.0 · `@naulon/enforce` 0.4.0 · `@naulon/sdk` 0.3.1 ·
