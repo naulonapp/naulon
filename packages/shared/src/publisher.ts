@@ -133,7 +133,21 @@ export interface PublisherConfig {
    * discovery would starve the catalog agents buy from. excludePrefixes adds
    * publisher-chosen free sections on top (no leading slash, like articlePrefixes).
    */
-  gateScope?: { mode: "prefixes" } | { mode: "site"; excludePrefixes: string[] };
+  gateScope?:
+    | { mode: "prefixes" }
+    | {
+        mode: "site";
+        excludePrefixes: string[];
+        /**
+         * File extensions this publisher opts INTO tolling (lowercase, dotless —
+         * normalise with `normalizeIncludeExtensions` before storing). Site mode drops
+         * every static extension by default, `.pdf` and `.json` included, so a whole-site
+         * toll gives away exactly the files most worth charging for. Absent or empty is
+         * byte-identical to before this field. Discovery surfaces and control routes are
+         * refused ahead of it regardless, so opting into `xml` cannot toll a sitemap.
+         */
+        includeExtensions?: string[];
+      };
   /**
    * Optional hook: additional settlement legs for a priced toll, beyond the author
    * payment. Given the resolved `price` (whole USDC) and `kind`, return any extra
