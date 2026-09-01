@@ -228,7 +228,9 @@ export async function decide(input: DecideInput): Promise<Decision> {
 
   const slug =
     publisher.gateScope?.mode === "site"
-      ? slugFromSitePath(path, publisher.gateScope.excludePrefixes)
+      ? slugFromSitePath(path, publisher.gateScope.excludePrefixes, {
+          includeExtensions: publisher.gateScope.includeExtensions,
+        })
       : slugFromPath(path, publisher.articlePrefixes);
 
   // Non-article routes: pure passthrough (assets, home, RSS...).
