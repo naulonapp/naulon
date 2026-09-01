@@ -114,8 +114,9 @@ define( 'DB_COLLATE', '' );
  * The plugin is loaded from the repository working tree, not copied into wp-content/plugins, so
  * that a local run tests the files you just edited. Pointing WP_PLUGIN_DIR at the tree is what
  * makes that honest: plugin_basename() strips this prefix, so NAULON_PLUGIN_FILE resolves to
- * 'naulon/naulon.php' — the same key get_plugins() and core's update loop use. Without it,
- * UpdaterCacheTest's pass through wp_update_plugins() would look for a plugin core cannot see.
+ * 'naulon/naulon.php' — the same key get_plugins() and core's update transient use, which is
+ * what the diagnostics version line reads. Without it, anything keyed by plugin_basename() is
+ * looking for a plugin core cannot see.
  */
 define( 'WP_PLUGIN_DIR', '${PLUGINS_ROOT}' );
 define( 'WP_PLUGIN_URL', 'http://example.org/wp-content/plugins' );
