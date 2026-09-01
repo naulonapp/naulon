@@ -6,9 +6,19 @@
  * publish date — enough for the catalog plane. Authors are feed STRINGS only (the map key);
  * never a wallet. All fetches go through the guarded fetcher, so even a derived feed URL can
  * only ever hit the proven origin host.
+ *
+ * A feed also carries ATTACHMENTS — `<enclosure url>` in RSS, `<link rel="enclosure">` in Atom,
+ * `<media:content url>` in the Media RSS extension every podcast and most CMS feeds emit. Those
+ * were dropped on the floor, so a publisher who opted `pdf` in to the toll got an RSS crawl that
+ * discovered the POST and never the PDF hanging off it: the gate tolled a URL nothing had staged
+ * credits for, and the file served free forever. They are emitted now, but ONLY for the extensions
+ * the publisher opted in (`gateScope.includeExtensions`) — otherwise a podcast feed would stage a
+ * thousand MP3s nobody asked to sell. An attachment inherits its item's authors and date, because
+ * that is who published it; the title falls back to the filename.
  */
 import type { AdapterContext, ArticleCandidate, DiscoveredAuthor, SourceAdapter } from "../types.ts";
 import { parseXml, toArray, textOf } from "../xml.ts";
+import { isOptedInFile, mediaExtensions } from "../media.ts";
 
 /** Conventional feed paths, richest first. Probed only when no explicit `feedUrl` is set.
  *  `/feed/` (trailing slash) is WordPress's canonical feed — `/feed` 301-redirects to it, and the
@@ -87,9 +97,45 @@ function normDate(raw: string): string | undefined {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
-function discover(xml: string): ArticleCandidate[] {
+/** Every attachment URL an item declares, across the three spellings that exist in the wild.
+ *  Order is stable and duplicates are the caller's problem (it dedupes across the whole feed). */
+function enclosureUrls(node: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (raw: unknown) => {
+    if (!raw || typeof raw !== "object") return;
+    const o = raw as Record<string, unknown>;
+    // RSS `<enclosure url>` and Media RSS `<media:content url>` both use `url`; Atom's
+    // `<link rel="enclosure" href>` uses `href` and must declare the rel — a bare `<link>` is the
+    // entry's own permalink and is already handled as the article.
+    const rel = o["@_rel"];
+    const href = o["@_url"] ?? (rel === "enclosure" ? o["@_href"] : undefined);
+    const url = typeof href === "string" ? href.trim() : "";
+    if (url) out.push(url);
+  };
+  for (const key of ["enclosure", "media:content", "link"]) for (const n of toArray(node[key])) push(n);
+  return out;
+}
+
+function discover(xml: string, extensions: ReadonlySet<string>): ArticleCandidate[] {
   const doc = parseXml(xml);
   const out: ArticleCandidate[] = [];
+  const seenFiles = new Set<string>();
+  /** Stage an item's attachments beside the item itself. A no-op when nothing was opted in, which
+   *  is what keeps a feed crawl identical to what it has always been for every other publisher. */
+  const withFiles = (node: Record<string, unknown>, article: ArticleCandidate) => {
+    out.push(article);
+    if (extensions.size === 0) return;
+    for (const url of enclosureUrls(node)) {
+      if (seenFiles.has(url) || !isOptedInFile(url, extensions)) continue;
+      seenFiles.add(url);
+      out.push({
+        url,
+        title: decodeURIComponent(url.slice(url.lastIndexOf("/") + 1).split("?")[0] ?? "") || article.title,
+        authors: article.authors,
+        publishedAt: article.publishedAt,
+      });
+    }
+  };
 
   // RSS 2.0: rss > channel > item
   const channel = (doc["rss"] as Record<string, unknown> | undefined)?.["channel"];
@@ -97,7 +143,7 @@ function discover(xml: string): ArticleCandidate[] {
     const it = item as Record<string, unknown>;
     const url = textOf(it["link"]).trim();
     if (!url) continue;
-    out.push({
+    withFiles(it, {
       url,
       title: textOf(it["title"]).trim(),
       summary: summaryOf(it["description"]),
@@ -111,7 +157,7 @@ function discover(xml: string): ArticleCandidate[] {
     const e = entry as Record<string, unknown>;
     const url = atomLink(e).trim();
     if (!url) continue;
-    out.push({
+    withFiles(e, {
       url,
       title: textOf(e["title"]).trim(),
       summary: summaryOf(e["summary"] ?? e["content"]),
@@ -131,6 +177,6 @@ export const rssAdapter: SourceAdapter = {
   },
   async discover(ctx) {
     const xml = await fetchFeedXml(ctx);
-    return xml ? discover(xml) : [];
+    return xml ? discover(xml, mediaExtensions(ctx.config)) : [];
   },
 };

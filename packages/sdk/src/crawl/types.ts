@@ -96,6 +96,14 @@ export interface CrawlConfig {
   /** Fallback payTo when an author is unmapped or the source stated none. Optional —
    *  absent means an unmapped article is reported, not written. */
   defaultWallet?: string;
+  /** The file extensions the publisher opted in to tolling (`gateScope.includeExtensions` —
+   *  lowercase, dotless). Adapters that can enumerate a site's FILES as well as its posts discover
+   *  them only for these; empty or absent ⇒ articles only, which is the historical behaviour.
+   *
+   *  It is the same list the gate reads, for the same reason the slug derivation already carries
+   *  it: a file the gate tolls and the crawl never discovered has no credits, so it serves free
+   *  forever while every dashboard reports the site as configured. Nothing warns about that. */
+  includeExtensions?: readonly string[];
 }
 
 /* ── capabilities: what an adapter needs, and what a host can give ────────────── */
