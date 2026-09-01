@@ -217,6 +217,7 @@ export const wordpressAdapter: SourceAdapter = {
   id: "wordpress",
   rank: 100, // real author objects → outranks feeds
   curated: true, // the REST posts endpoint lists real articles, not every URL
+  files: true, // the media library, via `discoverMedia`
   async detect(ctx) {
     try {
       const res = await ctx.fetch(new URL("/wp-json/wp/v2/posts?per_page=1", ctx.origin).toString());

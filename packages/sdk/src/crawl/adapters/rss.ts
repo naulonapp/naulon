@@ -172,6 +172,7 @@ export const rssAdapter: SourceAdapter = {
   id: "rss",
   rank: 10, // fallback — any platform-native adapter outranks it
   curated: true, // a feed lists real posts, not every URL on the site
+  files: true, // `<enclosure>` / `<media:content>` — see `enclosureUrls`
   async detect(ctx) {
     return (await fetchFeedXml(ctx)) !== null;
   },

@@ -178,6 +178,12 @@ export interface SourceAdapter<Id extends string = SourceAdapterId> {
    *  opposed to every URL on the site (a sitemap). A host may infer article prefixes from a
    *  curated source's URLs; it must not from an uncurated one. */
   readonly curated?: boolean;
+  /** True when this source can enumerate a site's non-HTML FILES, not only its posts, given a
+   *  non-empty `config.includeExtensions`. Declared rather than inferred because a publisher who
+   *  opts `pdf` in to the toll needs to be told, on the page where they tick it, whether their
+   *  catalogue can find one — and the alternative to declaring it is a hard-coded list of adapter
+   *  ids somewhere in a UI, which is drift waiting to happen. */
+  readonly files?: boolean;
   /** What this adapter needs from the host. Absent ⇒ nothing beyond the guarded origin fetch. */
   readonly requires?: AdapterRequirements;
   /** Cheap probe: could this adapter discover THIS origin? MUST use only the granted fetchers.

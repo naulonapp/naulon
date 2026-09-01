@@ -101,6 +101,7 @@ export const sitemapAdapter: SourceAdapter = {
   id: "sitemap",
   rank: 5, // lowest — no author/title, pure URL discovery
   curated: false, // a sitemap lists EVERY URL, so prefixes must never be inferred from it
+  files: true, // a sitemap lists a site's files alongside its pages
   async detect(ctx) {
     return (await rootSitemap(ctx)) !== null;
   },

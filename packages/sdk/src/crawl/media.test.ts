@@ -18,11 +18,12 @@ test("mediaExtensions normalises the way the write path stores them", () => {
   assert.deepEqual([...set].sort(), ["json", "pdf"]);
 });
 
-test("mediaExtensions refuses the extensions the gate keeps free, whatever a config claims", () => {
-  // A human reader must never meet a payment wall because a font 402'd, so discovering these
-  // could only ever stage rows that cannot toll. `slugFromSitePath` refuses them one layer down.
-  const set = mediaExtensions({ includeExtensions: ["png", "css", "js", "woff2", "ico", "svg", "pdf"] });
-  assert.deepEqual([...set], ["pdf"]);
+test("mediaExtensions applies no policy of its own — the write path and the gate own that", () => {
+  // A second "never discover" list here would be a second owner for a question
+  // `normalizeIncludeExtensions` (which refuses `ico`) and `slugFromSitePath` already answer. Two
+  // owners is how a crawl ends up refusing to stage a file the gate is charging for.
+  const set = mediaExtensions({ includeExtensions: ["png", "pdf"] });
+  assert.deepEqual([...set].sort(), ["pdf", "png"]);
 });
 
 test("an absent or empty list discovers nothing — the historical behaviour, exactly", () => {

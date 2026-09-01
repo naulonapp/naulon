@@ -17,22 +17,22 @@
  */
 import type { CrawlConfig } from "./types.ts";
 
-/** Extensions we will never discover as tollable files, whatever a config claims. The gate keeps
- *  stylesheets, scripts, images and fonts free by design — a human reader must never meet a
- *  payment wall because a font 402'd — so discovering them could only ever stage rows that cannot
- *  toll. Belt to `slugFromSitePath`'s braces: it refuses them too, one layer down. */
-const NEVER: ReadonlySet<string> = new Set([
-  "css", "js", "mjs", "cjs", "map", "ico", "png", "jpg", "jpeg", "gif", "webp", "avif", "svg",
-  "woff", "woff2", "ttf", "otf", "eot",
-]);
-
-/** The opted-in extensions, normalised the way the write path stores them (lowercase, dotless) and
- *  filtered by `NEVER`. Empty ⇒ this crawl discovers no files at all. */
+/**
+ * The opted-in extensions, normalised the way the write path stores them (lowercase, dotless).
+ * Empty ⇒ this crawl discovers no files at all.
+ *
+ * It applies no policy of its own, deliberately. An earlier cut filtered a hard-coded "never
+ * discover" set here — stylesheets, images, fonts — and that was a SECOND owner for a question
+ * `normalizeIncludeExtensions` and `slugFromSitePath` already answer between them. Two owners is
+ * how the crawl ends up refusing to stage a file the gate is charging for, which is precisely the
+ * silent mismatch this module exists to close. Whatever the publisher opted in, the gate tolls;
+ * whatever the gate tolls, the crawl discovers.
+ */
 export function mediaExtensions(config: Pick<CrawlConfig, "includeExtensions">): ReadonlySet<string> {
   const out = new Set<string>();
   for (const raw of config.includeExtensions ?? []) {
     const ext = raw.trim().replace(/^\./, "").toLowerCase();
-    if (ext && !NEVER.has(ext)) out.add(ext);
+    if (ext) out.add(ext);
   }
   return out;
 }

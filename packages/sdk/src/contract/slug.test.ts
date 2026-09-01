@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeSlug, deriveSiteSlug, deriveSlug, slugFromPath, slugFromSitePath } from "./slug.ts";
+import { STATIC_EXTENSIONS, decodeSlug, deriveSiteSlug, deriveSlug, slugFromPath, slugFromSitePath } from "./slug.ts";
 
 test("deriveSlug pulls the segment after a configured prefix", () => {
   assert.equal(deriveSlug("https://site.com/essays/on-stillness", ["essays"]), "on-stillness");
@@ -228,4 +228,29 @@ test("site-mode: a non-array includeExtensions fails toward FREE, never a substr
     assert.equal(slugFromSitePath("/x.js", [], { includeExtensions: bad as never }), null);
     assert.equal(slugFromSitePath("/x.json", [], { includeExtensions: bad as never }), null);
   }
+});
+
+// ── STATIC_EXTENSIONS is the matcher's own source, not a copy of it ──────────────────────────
+// The list has three readers — this matcher, the crawler's media pass, and a publisher's RSL
+// document — and the two outside this file used to re-derive it. A copy that drifts makes the
+// crawl stage a row for a path the gate serves free, or a licence price a file nobody is charged
+// for. So the regex is BUILT from the constant, and this proves the two cannot disagree.
+
+test("every listed extension is free by default, and opting it in tolls it", () => {
+  for (const ext of STATIC_EXTENSIONS) {
+    const path = `/papers/file.${ext}`;
+    assert.equal(slugFromSitePath(path, [], {}), null, `.${ext} must be free by default`);
+    if (ext === "ico") continue; // refused as a discovery surface before the allowlist is read
+    assert.equal(slugFromSitePath(path, [], { includeExtensions: [ext] }), path, `.${ext} must be opt-in-able`);
+  }
+});
+
+test("an extension NOT on the list was never free, so opting it in changes nothing", () => {
+  // The list is the free set, not the tollable set: `.docx` has always tolled in site mode.
+  assert.equal(STATIC_EXTENSIONS.includes("docx"), false);
+  assert.equal(slugFromSitePath("/papers/minutes.docx", [], {}), "/papers/minutes.docx");
+});
+
+test("the list is sorted and unique — it is read by humans and diffed by reviewers", () => {
+  assert.deepEqual([...STATIC_EXTENSIONS], [...new Set(STATIC_EXTENSIONS)].sort());
 });
