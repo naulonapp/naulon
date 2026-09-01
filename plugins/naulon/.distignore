@@ -18,6 +18,9 @@
 /languages/*.po
 
 # The GitHub self-updater. A plugin hosted on wordpress.org may not serve its own updates
-# (Plugin Guideline 8), and does not need to — the directory does it. Kept in the repo so
-# the GitHub zip channel still works until the listing is live; never shipped in the zip.
+# (Plugin Guideline 8), and does not need to — the directory does it. One zip serves both
+# channels, so excluding it here means no install carries it, not just the .org one: nothing
+# requires the class and the plugin declares no `Update URI`, so it would be dead weight a
+# reviewer greps for anyway. It stays in the repository, unloaded, so the mechanism can be
+# restored in one commit if the listing is refused.
 /includes/class-naulon-updater.php

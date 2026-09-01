@@ -6,8 +6,11 @@
  * telling a publisher their site is untested when it is not.
  *
  * The mapping functions are pure by design (see the class docblock) so this suite needs no
- * WordPress. The HTTP fetch and the transient caching are covered by UpdaterCacheTest, in the
- * wp-env suite, because caching is WordPress.
+ * WordPress — which is why it is the coverage that survives. The cached half lived in
+ * UpdaterCacheTest, in the wp-env suite, and it drove core's real update path: without an
+ * `Update URI` header there is no `update_plugins_{host}` filter for core to call, so those
+ * tests stopped being runnable the moment the plugin stopped serving its own updates. They
+ * were deleted rather than left skipping; `git log` has them if the mechanism comes back.
  *
  * @package naulon
  */
@@ -198,9 +201,9 @@ class UpdaterTest extends TestCase {
 	 * update notice, one-click update, auto-update toggle — for every install, for free.
 	 *
 	 * So the shipped plugin must declare no `Update URI` and register no updater. The class
-	 * itself stays in the repository (and is still covered by every test above) because the
-	 * GitHub zip remains the only channel until the listing is live; `.distignore` keeps it out
-	 * of the zip that goes to wordpress.org.
+	 * itself stays in the repository, unloaded and still covered by every test above, so the
+	 * mechanism can be restored in one commit if the listing is refused. It ships nowhere in the
+	 * meantime: one zip serves both channels and `.distignore` excludes it from that zip.
 	 */
 	public function test_the_plugin_does_not_serve_its_own_updates() {
 		$php = $this->plugin_file_contents();
