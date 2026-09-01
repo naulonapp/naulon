@@ -86,7 +86,21 @@ export function slugFromPath(path: string, prefixes: string[]): string | null {
   return m ? decodeSlug(m[1]!) : null;
 }
 
-const STATIC_EXT_RE = /\.(css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|mp4|webm|mp3|pdf|txt|xml|json)$/i;
+/**
+ * The extensions site mode keeps FREE by default — the set `includeExtensions` claws back from.
+ *
+ * Data, not a regex literal, because it has two consumers beyond the matcher below and both of
+ * them were re-deriving it: the crawler decides which files to discover, and a publisher's RSL
+ * document declares which paths are unpriced. A hand-copied list in either would drift from the
+ * gate silently — the crawl would stage a row for a path the gate serves free, or the licence
+ * would price a file nobody is charged for. One owner, three readers.
+ */
+export const STATIC_EXTENSIONS: readonly string[] = [
+  "avif", "css", "eot", "gif", "ico", "jpeg", "jpg", "js", "json", "map", "mjs", "mp3", "mp4",
+  "otf", "pdf", "png", "svg", "ttf", "txt", "webm", "webp", "woff", "woff2", "xml",
+];
+
+const STATIC_EXT_RE = new RegExp(`\\.(${STATIC_EXTENSIONS.join("|")})$`, "i");
 
 /**
  * The ORIGINAL root-anchored discovery matcher. Kept, so nothing that was free before
