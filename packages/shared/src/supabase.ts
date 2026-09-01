@@ -47,3 +47,56 @@ export async function supabaseRest(path: string, init: RequestInit = {}): Promis
   const text = await res.text();
   return text ? JSON.parse(text) : [];
 }
+
+/* ── paging ──────────────────────────────────────────────────────────────────── */
+
+/** Rows per page. Any value works — the loop below never assumes it got what it asked for. */
+export const PAGE_ROWS = 1000;
+
+/**
+ * Read every row of a paged PostgREST query.
+ *
+ * PostgREST clips a select at its own `db-max-rows` and answers 200 with no error and no header a
+ * caller checks, so a clipped read is indistinguishable from a complete one and every consumer
+ * treating it as a whole set is quietly wrong past the cap, forever.
+ *
+ * Two rules make this independent of that cap, and both are load-bearing:
+ *   • terminate on an EMPTY page, never a short one — a deployment whose cap is below `pageRows`
+ *     returns a short FIRST page, and reading that as "done" is the very truncation being killed;
+ *   • advance by rows RECEIVED, not by what was asked for, for the same reason.
+ *
+ * `page` must apply a TOTAL order (a unique tiebreaker), or offset paging can repeat one row
+ * across pages and never return another. It is a callback so callers keep their own URL building,
+ * credentials and filters — those filters are the authorization, and hiding them behind a query
+ * builder is how a scope goes quietly missing.
+ *
+ * Never returns a prefix: past `maxRows` it throws rather than hand back a partial set that reads
+ * like a complete one.
+ */
+export async function readAllPaged<T>(opts: {
+  /** Fetch one page. Must apply a total order. */
+  page: (limit: number, offset: number) => Promise<T[]>;
+  /** Rows requested per page. Default {@link PAGE_ROWS}. */
+  pageRows?: number;
+  /** Loud-failure ceiling for the whole read. */
+  maxRows: number;
+  /** Names the read in the ceiling error, e.g. `"eventsink.readAll"`. */
+  what: string;
+  /** Appended to the ceiling error — why a partial result would be harmful here. */
+  because?: string;
+}): Promise<T[]> {
+  const pageRows = opts.pageRows ?? PAGE_ROWS;
+  const out: T[] = [];
+  for (;;) {
+    const rows = await opts.page(pageRows, out.length);
+    if (rows.length === 0) return out;
+    out.push(...rows);
+    // Either a real operational problem or a server ignoring `offset` (which would spin forever).
+    if (out.length > opts.maxRows) {
+      throw new Error(
+        `${opts.what}: exceeded ${opts.maxRows} rows — refusing to return a partial result.` +
+          (opts.because ? ` ${opts.because}` : ""),
+      );
+    }
+  }
+}
