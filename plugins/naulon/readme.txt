@@ -1,6 +1,6 @@
 === naulon — citation toll ===
 Contributors: naulon
-Tags: ai, monetization, paywall, crawlers, licensing
+Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
@@ -41,7 +41,7 @@ The whole protocol is open source. The connectivity field takes either a hosted 
 
 == Installation ==
 
-1. Install and activate the plugin. Later versions arrive on the Plugins screen like any other update — you only download a zip this once.
+1. Install and activate the plugin from **Plugins → Add New**. Later versions arrive on the Plugins screen like any other update.
 2. Open **naulon → Setup** and paste your key.
 3. Click **Verify this site**. The plugin proves you own the domain by serving a challenge file and a meta tag — no DNS changes needed.
 4. Paste the credits address shown on that screen into your naulon account, so the service knows where to read your author data.
@@ -63,7 +63,8 @@ A key in `wp-config.php` stays out of your database, so it does not travel in da
 
 This plugin relies on an external service to price a read and to settle a payment, because
 settlement cannot be performed inside WordPress. Nothing is contacted until you enter a key —
-entering it is the consent, and until then the plugin makes no outbound requests at all.
+entering it is the consent, and until then the plugin makes no outbound requests at all —
+not one, to anywhere.
 
 **Service:** naulon (https://naulon.app), reached at https://gate.naulon.app.
 
@@ -83,21 +84,6 @@ about human traffic. Human requests never contact the service at all.
 
 If you point the connectivity field at your own self-hosted gate instead of a key, the plugin
 talks only to that server and never to naulon.app.
-
-**Service:** GitHub (https://github.com), for updates only.
-
-This plugin is not listed on wordpress.org, so WordPress cannot ask wordpress.org whether a new
-version exists. Instead it reads a small file describing the current release, published beside the
-download on GitHub. This is the only outbound request the plugin makes before you enter a key.
-
-* When WordPress checks for plugin updates (twice a day, and when you click "Check again"), the
-  plugin fetches https://github.com/naulonapp/naulon/releases/latest/download/naulon-update.json.
-  It is a public file. **Nothing is sent** — no key, no domain, no site information — beyond the
-  request itself, and the answer is cached for six hours.
-* When you choose to install an update, WordPress downloads the release zip from the same place.
-
-GitHub terms of service: https://docs.github.com/site-policy/github-terms/github-terms-of-service
-GitHub privacy statement: https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement
 
 Terms of service: https://naulon.app/terms
 Privacy policy: https://naulon.app/privacy
@@ -144,7 +130,7 @@ The plugin's folder is not writable by the user your web server runs as. Removin
 
 = How do I update the plugin? =
 
-The same way as any other: **Dashboard → Updates**, or the notice on the Plugins screen. Turning on "Enable auto-updates" there works too. Because the plugin is not listed on wordpress.org it checks a small public file on GitHub instead of the wordpress.org API — that is the only difference, and it needs nothing from you. Version 0.3.0 is the first release that can do this, so if you are on an earlier one, install that one by hand and it is the last time.
+The same way as any other: **Dashboard → Updates**, or the notice on the Plugins screen. Turning on "Enable auto-updates" there works too, and nothing about this plugin needs you to treat it differently.
 
 = I use a caching plugin. Does that matter? =
 
