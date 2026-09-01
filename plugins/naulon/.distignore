@@ -16,3 +16,8 @@
 # wordpress.org listing assets live in SVN /assets, never in the plugin itself.
 /.wordpress-org
 /languages/*.po
+
+# The GitHub self-updater. A plugin hosted on wordpress.org may not serve its own updates
+# (Plugin Guideline 8), and does not need to — the directory does it. Kept in the repo so
+# the GitHub zip channel still works until the listing is live; never shipped in the zip.
+/includes/class-naulon-updater.php
