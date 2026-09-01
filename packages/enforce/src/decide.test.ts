@@ -204,3 +204,67 @@ test("API mode: an expired gate license falls through to 402 (fails closed)", as
   });
   assert.equal(d.kind, "payment-required", "an expired license is not a free re-read");
 });
+
+// ── site mode: the extension allowlist ────────────────────────────────────────
+
+const sitePublisher = (includeExtensions?: string[]) =>
+  ({
+    ...basePublisher,
+    gateScope: { mode: "site", excludePrefixes: [], ...(includeExtensions ? { includeExtensions } : {}) },
+  }) as any;
+
+const agentReq = (path: string) =>
+  new Request(`http://h${path}`, { headers: { "user-agent": "GPTBot/1.0" } });
+
+test("site mode: an allowlisted extension is gated, not passed through", async () => {
+  const path = "/papers/q.pdf";
+  const d = await decide({
+    raw: agentReq(path),
+    host: "h",
+    path,
+    publisher: sitePublisher(["pdf"]),
+    now: 1,
+    quote: quoteOf,
+  });
+  assert.equal(d.kind, "payment-required");
+});
+
+test("site mode: a NON-allowlisted extension still passes through free", async () => {
+  const path = "/app.css";
+  const d = await decide({
+    raw: agentReq(path),
+    host: "h",
+    path,
+    publisher: sitePublisher(["pdf"]),
+    now: 1,
+    quote: quoteOf,
+  });
+  assert.equal(d.kind, "passthrough");
+});
+
+test("site mode: without the allowlist a .pdf stays free (regression)", async () => {
+  const path = "/papers/q.pdf";
+  const d = await decide({
+    raw: agentReq(path),
+    host: "h",
+    path,
+    publisher: sitePublisher(),
+    now: 1,
+    quote: quoteOf,
+  });
+  assert.equal(d.kind, "passthrough");
+});
+
+test("site mode: allowlisting xml never tolls the sitemap", async () => {
+  for (const path of ["/sitemap.xml", "/robots.txt", "/.well-known/x402"]) {
+    const d = await decide({
+      raw: agentReq(path),
+      host: "h",
+      path,
+      publisher: sitePublisher(["xml", "txt"]),
+      now: 1,
+      quote: quoteOf,
+    });
+    assert.equal(d.kind, "passthrough", `${path} must stay free`);
+  }
+});

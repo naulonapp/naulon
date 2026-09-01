@@ -95,3 +95,137 @@ test("site-mode: control routes, discovery and static assets never toll", () => 
   assert.equal(slugFromSitePath("/private/x", ["private"]), null);
   assert.equal(slugFromSitePath("/private", ["private"]), null);
 });
+
+// ── site-mode extension allowlist (gateScope.includeExtensions) ────────────────
+// The publisher opts a file type INTO the toll. Everything below the allowlist —
+// discovery surfaces, control routes, the publisher's own excludePrefixes — is
+// refused BEFORE it is consulted, so opting into `xml` can never toll a sitemap.
+
+test("site-mode: an allowlisted extension becomes gateable", () => {
+  assert.equal(slugFromSitePath("/papers/quantum.pdf", [], { includeExtensions: ["pdf"] }), "/papers/quantum.pdf");
+  assert.equal(
+    slugFromSitePath("/papers/2026/quantum.pdf", [], { includeExtensions: ["pdf"] }),
+    "/papers/2026/quantum.pdf",
+  );
+});
+
+test("site-mode: a NON-allowlisted extension stays free", () => {
+  assert.equal(slugFromSitePath("/app.css", [], { includeExtensions: ["pdf"] }), null);
+  assert.equal(slugFromSitePath("/logo.png", [], { includeExtensions: ["pdf"] }), null);
+  assert.equal(slugFromSitePath("/bundle.js", [], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: discovery ALWAYS wins over the allowlist", () => {
+  const opts = { includeExtensions: ["xml", "txt", "json"] };
+  for (const p of ["/robots.txt", "/sitemap.xml", "/sitemap-index.xml", "/rss.xml", "/atom.xml", "/feed.xml", "/favicon.ico"]) {
+    assert.equal(slugFromSitePath(p, [], opts), null, `${p} must stay free`);
+  }
+});
+
+test("site-mode: control routes ALWAYS win over the allowlist", () => {
+  const opts = { includeExtensions: ["json"] };
+  assert.equal(slugFromSitePath("/.well-known/x402", [], opts), null);
+  assert.equal(slugFromSitePath("/.well-known/naulon-jwks.json", [], opts), null);
+  assert.equal(slugFromSitePath("/licenses/abc.json", [], opts), null);
+});
+
+test("site-mode: excludePrefixes still win over the allowlist", () => {
+  assert.equal(slugFromSitePath("/free/paper.pdf", ["free"], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: absent opts is byte-identical to today (regression)", () => {
+  assert.equal(slugFromSitePath("/papers/quantum.pdf", []), null);
+  assert.equal(slugFromSitePath("/2026/08/a-post", []), "/2026/08/a-post");
+  assert.equal(slugFromSitePath("/app.css", []), null);
+});
+
+test("site-mode: an empty allowlist is the same as absent", () => {
+  assert.equal(slugFromSitePath("/papers/quantum.pdf", [], { includeExtensions: [] }), null);
+});
+
+test("site-mode: the allowlist is case-insensitive on the PATH (.PDF is a pdf)", () => {
+  assert.equal(slugFromSitePath("/papers/Q.PDF", [], { includeExtensions: ["pdf"] }), "/papers/Q.PDF");
+});
+
+test("deriveSiteSlug carries the allowlist (the crawler/gate join)", () => {
+  const opts = { includeExtensions: ["pdf"] };
+  assert.equal(deriveSiteSlug("https://s.test/papers/q.pdf", [], opts), slugFromSitePath("/papers/q.pdf", [], opts));
+  assert.equal(deriveSiteSlug("https://s.test/papers/q.pdf", [], opts), "/papers/q.pdf");
+});
+
+test("site-mode: a malformed escape stays free even when allowlisted", () => {
+  assert.equal(slugFromSitePath("/papers/100%.pdf", [], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: a dotless path is unaffected by the allowlist", () => {
+  assert.equal(slugFromSitePath("/papers/quantum", [], { includeExtensions: ["pdf"] }), "/papers/quantum");
+});
+
+// ── discovery is matched by FILENAME, at any depth ────────────────────────────
+// The root-anchored matcher was never enough, and opting an extension in is what
+// made that expensive: with `xml` ticked, /sitemap.xml was free while WordPress's
+// own /wp-sitemap.xml tolled. Paywalling a sitemap starves the catalog agents buy
+// from — the one thing site mode exists to refuse.
+
+test("site-mode: real-world sitemaps stay free even with xml opted in", () => {
+  const opts = { includeExtensions: ["xml", "txt", "json"] };
+  for (const p of [
+    "/sitemap.xml",
+    "/sitemap_index.xml",
+    "/wp-sitemap.xml",
+    "/wp-sitemap-posts-post-1.xml",
+    "/post-sitemap.xml",
+    "/page-sitemap.xml",
+    "/sitemap-1.xml.gz",
+    "/en/sitemap.xml",
+    "/blog/sitemap.xml",
+  ]) {
+    assert.equal(slugFromSitePath(p, [], opts), null, `${p} must stay free`);
+  }
+});
+
+test("site-mode: feeds stay free at any depth, and with a trailing slash", () => {
+  const opts = { includeExtensions: ["xml", "json"] };
+  for (const p of ["/index.xml", "/blog/feed.xml", "/news/rss.xml", "/blog/atom.xml", "/feed/", "/feeds/", "/blog/feed/"]) {
+    assert.equal(slugFromSitePath(p, [], opts), null, `${p} must stay free`);
+  }
+});
+
+test("site-mode: the agent-discovery text files stay free with txt opted in", () => {
+  const opts = { includeExtensions: ["txt"] };
+  for (const p of ["/llms.txt", "/ads.txt", "/app-ads.txt", "/security.txt", "/.well-known/security.txt", "/robots.txt"]) {
+    assert.equal(slugFromSitePath(p, [], opts), null, `${p} must stay free`);
+  }
+});
+
+test("site-mode: a 'feed'-PREFIXED article still tolls — the rule is the whole segment", () => {
+  const opts = { includeExtensions: ["pdf"] };
+  assert.equal(slugFromSitePath("/papers/feedback-loops.pdf", [], opts), "/papers/feedback-loops.pdf");
+  assert.equal(slugFromSitePath("/essays/atomic-habits", [], opts), "/essays/atomic-habits");
+  assert.equal(slugFromSitePath("/blog/rss-explained.pdf", [], opts), "/blog/rss-explained.pdf");
+});
+
+test("site-mode: the LEGACY root matcher still over-refuses, deliberately", () => {
+  // `DISCOVERY_ROOT_RE` matches `/rss*`, `/feed*`, `/atom*`, `/sitemap*` at the root, so a
+  // root-level `/rssistan-report.pdf` has always been free. The name-shaped rules are a UNION
+  // with it rather than a replacement: narrowing it would make paths that were free start
+  // charging, which is the one direction this codebase does not change silently. Nested paths
+  // are unaffected (the case above), which is where real articles live.
+  assert.equal(slugFromSitePath("/rssistan-report.pdf", [], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: a doubled leading slash cannot smuggle a control route into the toll", () => {
+  const opts = { includeExtensions: ["json"] };
+  assert.equal(slugFromSitePath("//.well-known/naulon-jwks.json", [], opts), null);
+  assert.equal(slugFromSitePath("///licenses/abc.json", [], opts), null);
+});
+
+test("site-mode: a non-array includeExtensions fails toward FREE, never a substring match or a throw", () => {
+  // gate_scope is untyped jsonb: a string would make `.includes` a substring matcher
+  // ("json" tolls every .js), an object or number would throw out of decide() and 503
+  // the whole tenant — humans included.
+  for (const bad of ["json", {}, 5, true, null, undefined]) {
+    assert.equal(slugFromSitePath("/x.js", [], { includeExtensions: bad as never }), null);
+    assert.equal(slugFromSitePath("/x.json", [], { includeExtensions: bad as never }), null);
+  }
+});

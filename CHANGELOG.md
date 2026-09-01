@@ -14,6 +14,24 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## Unreleased
+
+### Added
+
+- **`gateScope.includeExtensions`** — a whole-site publisher can opt a file extension
+  back into the toll. Site mode drops every static extension by default (`.pdf`,
+  `.json`, `.csv`, `.txt`, `.xml`), which meant a whole-site toll served exactly the
+  files most worth charging for free. Absent or empty is byte-identical to before.
+
+  Control routes and discovery surfaces (`robots.txt`, sitemaps, feeds, `favicon.ico`)
+  are refused **before** the allowlist is consulted, so opting into `xml` can never
+  toll a sitemap — tolling discovery would starve the catalog agents buy from.
+
+  `slugFromSitePath` and `deriveSiteSlug` take a third `SiteSlugOpts` argument;
+  `normalizeIncludeExtensions` (`@naulon/shared`) is the write-path validator.
+  A consumer deriving slugs for a stored catalog MUST pass the same options the gate
+  is configured with, or the two planes key the same URL differently.
+
 ## v0.7.4
 
 Ships `@naulon/shared` 0.4.1 · `@naulon/enforce` 0.4.1. Both are patches, so every existing

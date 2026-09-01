@@ -94,3 +94,78 @@ test("prefixes mode (and absent gateScope) is byte-identical to today (regressio
   const r200 = await bare.request("/about", { headers: { host: "x", "user-agent": "GPTBot" } });
   assert.equal(r200.status, 200, "non-prefix path must still pass through free");
 });
+
+// ── the extension allowlist, over real HTTP ───────────────────────────────────
+// Third fixture: whole-site, with `pdf` and `json` opted into the toll. The point
+// of the assertions below is the ORDER — discovery and control routes are refused
+// before the allowlist is consulted, so opting into a type cannot starve the
+// catalog agents buy from.
+
+const FILES: PublisherConfig = {
+  ...PUB,
+  id: "files",
+  gateScope: { mode: "site", excludePrefixes: ["legal"], includeExtensions: ["pdf", "json"] },
+};
+const files = createApp({ async resolve(host) { return host === "files.example" ? FILES : undefined; } });
+
+function getFile(path: string, ua = "GPTBot") {
+  return files.request(path, { headers: { host: "files.example", "user-agent": ua } });
+}
+
+test("site mode: an allowlisted extension answers 402", async () => {
+  for (const p of ["/papers/quantum.pdf", "/papers/2026/quantum.pdf", "/data/prices.json"]) {
+    const res = await getFile(p);
+    assert.equal(res.status, 402, `${p} should toll`);
+  }
+});
+
+test("site mode: a non-allowlisted asset stays free while the allowlist is on", async () => {
+  for (const p of ["/app.css", "/bundle.js", "/logo.png", "/font.woff2"]) {
+    const res = await getFile(p);
+    assert.notEqual(res.status, 402, `${p} must stay free`);
+  }
+});
+
+test("site mode: discovery and control stay free even when their extension is allowlisted", async () => {
+  for (const p of ["/robots.txt", "/sitemap.xml", "/favicon.ico", "/.well-known/x402"]) {
+    const res = await getFile(p);
+    assert.notEqual(res.status, 402, `${p} must stay free`);
+  }
+});
+
+test("site mode: an excluded section stays free even for an allowlisted type", async () => {
+  const res = await getFile("/legal/terms.pdf");
+  assert.notEqual(res.status, 402);
+});
+
+test("site mode: humans read an allowlisted file free, forever", async () => {
+  const res = await getFile("/papers/quantum.pdf", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15");
+  assert.notEqual(res.status, 402);
+});
+
+test("site mode: the SAME .pdf is free without the allowlist (the differential)", async () => {
+  // `get` drives PUB, which sets no includeExtensions. Same path, same gate, same
+  // agent UA — the only difference is the field. Without this the four tests above
+  // could pass on a gate that tolled every .pdf unconditionally.
+  const free = await get("/papers/quantum.pdf");
+  assert.notEqual(free.status, 402);
+  const tolled = await getFile("/papers/quantum.pdf");
+  assert.equal(tolled.status, 402);
+});
+
+test("site mode: WordPress and Hugo discovery stay free over HTTP with xml opted in", async () => {
+  // The root-anchored matcher made /sitemap.xml free and /wp-sitemap.xml chargeable — on the
+  // CMS naulon ships a plugin for. Paywalling a sitemap hides the catalog from the buyers the
+  // toll exists to attract, so this is asserted on the wire, not just in the slug unit.
+  const xml: PublisherConfig = {
+    ...PUB,
+    id: "xmlsite",
+    gateScope: { mode: "site", excludePrefixes: [], includeExtensions: ["xml", "txt"] },
+  };
+  const app2 = createApp({ async resolve(host) { return host === "xml.example" ? xml : undefined; } });
+  const get2 = (p: string) => app2.request(p, { headers: { host: "xml.example", "user-agent": "GPTBot" } });
+  for (const p of ["/sitemap.xml", "/wp-sitemap.xml", "/wp-sitemap-posts-post-1.xml", "/post-sitemap.xml", "/index.xml", "/en/sitemap.xml", "/blog/feed.xml", "/llms.txt", "/ads.txt", "/robots.txt"]) {
+    const res = await get2(p);
+    assert.notEqual(res.status, 402, `${p} must stay free`);
+  }
+});
