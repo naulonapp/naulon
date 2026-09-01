@@ -152,3 +152,20 @@ test("site mode: the SAME .pdf is free without the allowlist (the differential)"
   const tolled = await getFile("/papers/quantum.pdf");
   assert.equal(tolled.status, 402);
 });
+
+test("site mode: WordPress and Hugo discovery stay free over HTTP with xml opted in", async () => {
+  // The root-anchored matcher made /sitemap.xml free and /wp-sitemap.xml chargeable — on the
+  // CMS naulon ships a plugin for. Paywalling a sitemap hides the catalog from the buyers the
+  // toll exists to attract, so this is asserted on the wire, not just in the slug unit.
+  const xml: PublisherConfig = {
+    ...PUB,
+    id: "xmlsite",
+    gateScope: { mode: "site", excludePrefixes: [], includeExtensions: ["xml", "txt"] },
+  };
+  const app2 = createApp({ async resolve(host) { return host === "xml.example" ? xml : undefined; } });
+  const get2 = (p: string) => app2.request(p, { headers: { host: "xml.example", "user-agent": "GPTBot" } });
+  for (const p of ["/sitemap.xml", "/wp-sitemap.xml", "/wp-sitemap-posts-post-1.xml", "/post-sitemap.xml", "/index.xml", "/en/sitemap.xml", "/blog/feed.xml", "/llms.txt", "/ads.txt", "/robots.txt"]) {
+    const res = await get2(p);
+    assert.notEqual(res.status, 402, `${p} must stay free`);
+  }
+});
