@@ -85,15 +85,48 @@ const STATIC_EXT_RE = /\.(css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|
 const DISCOVERY_RE = /^\/(robots\.txt|sitemap[^/]*|rss[^/]*|atom[^/]*|feed[^/]*|favicon\.ico)$/i;
 
 /**
+ * Options for site-mode slugging. Absent — and an empty list — reproduce today's
+ * behaviour exactly, which is what lets this field ship without re-keying a single
+ * stored slug: it can only turn a path that had NO key into one that has one, never
+ * change the key of a path that already had one.
+ */
+export interface SiteSlugOpts {
+  /**
+   * Extensions the publisher has opted INTO tolling — lowercase, no leading dot
+   * (`["pdf", "json"]`). Everything else in `STATIC_EXT_RE` stays free.
+   *
+   * ORDER IS THE SAFETY PROPERTY. Control routes and discovery surfaces are refused
+   * BEFORE this is consulted, so opting into `xml` cannot toll a sitemap and opting
+   * into `json` cannot toll the JWKS. Tolling discovery would starve the catalog the
+   * agents buy from, which is the one thing site mode has always refused to do.
+   *
+   * Normalised at the write path by `normalizeIncludeExtensions` (`@naulon/shared`);
+   * this function is pure and assumes that has already run.
+   */
+  includeExtensions?: readonly string[];
+}
+
+/** A pathname's extension, lowercase and dotless, or `null` when it has none. */
+function extensionOf(pathname: string): string | null {
+  const m = pathname.match(/\.([A-Za-z0-9]+)$/);
+  return m ? m[1]!.toLowerCase() : null;
+}
+
+/**
  * Site-mode slug: the full decoded pathname, or `null` for the surfaces that must stay
  * free — gate control routes, discovery (robots/sitemaps/feeds/favicon), static assets by
- * extension (deliberately including `.txt`/`.xml`/`.json`: machine-readable surfaces never
- * toll), and the publisher's own `excludePrefixes`.
+ * extension (`.txt`/`.xml`/`.json` included: machine-readable surfaces do not toll unless
+ * the publisher opts them in through `opts.includeExtensions`), and the publisher's own
+ * `excludePrefixes`.
  */
-export function slugFromSitePath(path: string, excludePrefixes: string[]): string | null {
+export function slugFromSitePath(path: string, excludePrefixes: string[], opts?: SiteSlugOpts): string | null {
   const pathname = path.split(/[?#]/, 1)[0]!;
   if (isControlRoute(pathname)) return null;
-  if (DISCOVERY_RE.test(pathname) || STATIC_EXT_RE.test(pathname)) return null;
+  if (DISCOVERY_RE.test(pathname)) return null;
+  if (STATIC_EXT_RE.test(pathname)) {
+    const ext = extensionOf(pathname);
+    if (ext === null || !(opts?.includeExtensions ?? []).includes(ext)) return null;
+  }
   const clean = excludePrefixes.filter(Boolean);
   if (clean.some((p) => pathname === `/${p}` || pathname.startsWith(`/${p}/`))) return null;
   return decodeSlug(pathname);
@@ -119,8 +152,10 @@ export function deriveSlug(url: string, prefixes: string[]): string | null {
   return pathname === null ? null : slugFromPath(pathname, prefixes);
 }
 
-/** Site-mode slug from a full URL — the crawler-side spelling of `slugFromSitePath`. */
-export function deriveSiteSlug(url: string, excludePrefixes: string[]): string | null {
+/** Site-mode slug from a full URL — the crawler-side spelling of `slugFromSitePath`.
+ *  `opts` MUST be the same one the gate is configured with, or the crawler stages a row
+ *  under a key the gate never asks for (or stages nothing for a path the gate tolls). */
+export function deriveSiteSlug(url: string, excludePrefixes: string[], opts?: SiteSlugOpts): string | null {
   const pathname = pathnameOf(url);
-  return pathname === null ? null : slugFromSitePath(pathname, excludePrefixes);
+  return pathname === null ? null : slugFromSitePath(pathname, excludePrefixes, opts);
 }

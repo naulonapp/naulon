@@ -95,3 +95,68 @@ test("site-mode: control routes, discovery and static assets never toll", () => 
   assert.equal(slugFromSitePath("/private/x", ["private"]), null);
   assert.equal(slugFromSitePath("/private", ["private"]), null);
 });
+
+// ── site-mode extension allowlist (gateScope.includeExtensions) ────────────────
+// The publisher opts a file type INTO the toll. Everything below the allowlist —
+// discovery surfaces, control routes, the publisher's own excludePrefixes — is
+// refused BEFORE it is consulted, so opting into `xml` can never toll a sitemap.
+
+test("site-mode: an allowlisted extension becomes gateable", () => {
+  assert.equal(slugFromSitePath("/papers/quantum.pdf", [], { includeExtensions: ["pdf"] }), "/papers/quantum.pdf");
+  assert.equal(
+    slugFromSitePath("/papers/2026/quantum.pdf", [], { includeExtensions: ["pdf"] }),
+    "/papers/2026/quantum.pdf",
+  );
+});
+
+test("site-mode: a NON-allowlisted extension stays free", () => {
+  assert.equal(slugFromSitePath("/app.css", [], { includeExtensions: ["pdf"] }), null);
+  assert.equal(slugFromSitePath("/logo.png", [], { includeExtensions: ["pdf"] }), null);
+  assert.equal(slugFromSitePath("/bundle.js", [], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: discovery ALWAYS wins over the allowlist", () => {
+  const opts = { includeExtensions: ["xml", "txt", "json"] };
+  for (const p of ["/robots.txt", "/sitemap.xml", "/sitemap-index.xml", "/rss.xml", "/atom.xml", "/feed.xml", "/favicon.ico"]) {
+    assert.equal(slugFromSitePath(p, [], opts), null, `${p} must stay free`);
+  }
+});
+
+test("site-mode: control routes ALWAYS win over the allowlist", () => {
+  const opts = { includeExtensions: ["json"] };
+  assert.equal(slugFromSitePath("/.well-known/x402", [], opts), null);
+  assert.equal(slugFromSitePath("/.well-known/naulon-jwks.json", [], opts), null);
+  assert.equal(slugFromSitePath("/licenses/abc.json", [], opts), null);
+});
+
+test("site-mode: excludePrefixes still win over the allowlist", () => {
+  assert.equal(slugFromSitePath("/free/paper.pdf", ["free"], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: absent opts is byte-identical to today (regression)", () => {
+  assert.equal(slugFromSitePath("/papers/quantum.pdf", []), null);
+  assert.equal(slugFromSitePath("/2026/08/a-post", []), "/2026/08/a-post");
+  assert.equal(slugFromSitePath("/app.css", []), null);
+});
+
+test("site-mode: an empty allowlist is the same as absent", () => {
+  assert.equal(slugFromSitePath("/papers/quantum.pdf", [], { includeExtensions: [] }), null);
+});
+
+test("site-mode: the allowlist is case-insensitive on the PATH (.PDF is a pdf)", () => {
+  assert.equal(slugFromSitePath("/papers/Q.PDF", [], { includeExtensions: ["pdf"] }), "/papers/Q.PDF");
+});
+
+test("deriveSiteSlug carries the allowlist (the crawler/gate join)", () => {
+  const opts = { includeExtensions: ["pdf"] };
+  assert.equal(deriveSiteSlug("https://s.test/papers/q.pdf", [], opts), slugFromSitePath("/papers/q.pdf", [], opts));
+  assert.equal(deriveSiteSlug("https://s.test/papers/q.pdf", [], opts), "/papers/q.pdf");
+});
+
+test("site-mode: a malformed escape stays free even when allowlisted", () => {
+  assert.equal(slugFromSitePath("/papers/100%.pdf", [], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: a dotless path is unaffected by the allowlist", () => {
+  assert.equal(slugFromSitePath("/papers/quantum", [], { includeExtensions: ["pdf"] }), "/papers/quantum");
+});
