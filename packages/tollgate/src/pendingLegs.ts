@@ -20,7 +20,7 @@
  * A deliberate sibling of `EventSink`/`ObservationSink` — same backend story (memory for
  * dev/tests, supabase for the fleet), env-selected, callers use `getPendingLegSink()`.
  */
-import { getConfig, supabaseRest } from "@naulon/shared";
+import { getConfig, readAllPaged, supabaseRest } from "@naulon/shared";
 import type { PaymentRequirements } from "@naulon/enforce";
 
 /** One buyer-authorized extra leg awaiting settlement. The `payload` is the buyer's
@@ -93,6 +93,10 @@ export interface PendingLegSink {
 }
 
 /** In-memory sink — dev + tests. The Map is the durable store for the process. */
+/** Loud-failure ceiling for one `pending()` read. A drain queue this deep is an operational
+ *  problem or a server ignoring `offset`; either way a silent prefix is the worse answer. */
+const MAX_PENDING_LEGS = 100_000;
+
 export function memoryPendingLegSink(seed: PendingLeg[] = []): PendingLegSink {
   const legs = new Map<string, { leg: PendingLeg; settled: boolean; ref?: string; claimedUntil?: number }>();
   for (const l of seed) legs.set(l.id, { leg: l, settled: false });
@@ -159,9 +163,19 @@ export function supabasePendingLegSink(): PendingLegSink {
       // re-broadcasting an in-flight authorization is exactly what this design avoids. A lapsed
       // lease (or a null one) is fair game again.
       const claimable = `&or=(claimed_until.is.null,claimed_until.lt.${now})`;
-      const rows = (await supabaseRest(
-        `/rest/v1/${table}?select=data&settled=is.false&valid_before=gt.${now}${claimable}&order=valid_before.asc${scope}`,
-      )) as Array<{ data: PendingLeg }>;
+      // PAGED: unbounded, PostgREST clips at `db-max-rows` and answers 200, so past the cap the
+      // drain would never see the remaining legs — money that stays unsettled with nothing
+      // reporting it. `valid_before,id` is a total order (expiries tie).
+      const rows = await readAllPaged<{ data: PendingLeg }>({
+        page: (limit, offset) =>
+          supabaseRest(
+            `/rest/v1/${table}?select=data&settled=is.false&valid_before=gt.${now}${claimable}` +
+              `&order=valid_before.asc,id.asc${scope}&limit=${limit}&offset=${offset}`,
+          ) as Promise<Array<{ data: PendingLeg }>>,
+        maxRows: MAX_PENDING_LEGS,
+        what: "pendingLegs.pending",
+        because: "The settlement drain rides this read; a prefix would leave legs unsettled silently.",
+      });
       return rows.map((r) => r.data);
     },
     async markSettled(id, settlementRef) {

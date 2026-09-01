@@ -169,7 +169,9 @@ test("a server that ignores `offset` fails LOUD instead of looping forever", asy
   try {
     await assert.rejects(
       () => supabaseSink({ maxLedgerRows: 500 }).readAll("publisher-a"),
-      /refusing to return a partial ledger/,
+      // The noun moved into the caller's own `because` clause when the paging loop became the
+      // shared `readAllPaged`; the guarantee asserted here — fail loud, never a prefix — did not.
+      /refusing to return a partial result/,
     );
   } finally {
     globalThis.fetch = original;

@@ -7,7 +7,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { getConfig } from "./config.ts";
-import { supabaseRest } from "./supabase.ts";
+import { readAllPaged, supabaseRest } from "./supabase.ts";
 import type { AttributedEvent, EventSink } from "./types.ts";
 
 export function jsonlSink(path?: string): EventSink {
@@ -54,7 +54,6 @@ export function jsonlSink(path?: string): EventSink {
  * (1000 in prod), so asking for more than that is pointless — but asking for LESS
  * would be wrong too, since the cap is what the page loop is defending against.
  */
-const PAGE_ROWS = 1000;
 
 /**
  * Ceiling on a single `readAll` result. Not a limit anyone should hit: it is a
@@ -102,35 +101,22 @@ export function supabaseSink(opts: SupabaseSinkOptions = {}): EventSink {
     },
     async readAll(publisherId?) {
       const scope = publisherId === undefined ? "" : `&publisher=eq.${encodeURIComponent(publisherId)}`;
-      const out: AttributedEvent[] = [];
-      let offset = 0;
-      // Page until the server hands back nothing. Terminating on an EMPTY page
-      // (never on a SHORT one) is what makes this independent of the server's own
-      // `db-max-rows`: prod PostgREST runs 1000, but a deployment with a lower cap
-      // returns a short first page, and reading that as "done" is exactly the
-      // silent truncation this loop exists to kill. Advance by what actually came
-      // back, not by what was asked for, for the same reason.
-      for (;;) {
-        const rows = (await supabaseRest(
-          `/rest/v1/${table}?select=data&order=at.asc,id.asc${scope}&limit=${PAGE_ROWS}&offset=${offset}`,
-        )) as Array<{ data: AttributedEvent }>;
-        if (rows.length === 0) break;
-        for (const r of rows) out.push(r.data);
-        offset += rows.length;
-        // A ledger this large means either a real operational problem or a server
-        // ignoring `offset` (which would spin forever). Fail LOUD — the whole point
-        // of this function is that it must never quietly return a prefix.
-        if (out.length > maxLedgerRows) {
-          throw new Error(
-            `eventsink.readAll: ledger exceeded ${maxLedgerRows} rows for publisher=` +
-              `${publisherId ?? "<all>"} — refusing to return a partial ledger. Earnings, author ` +
-              `receipts and the settlement drain all ride this path, so a truncated result would ` +
-              `silently under-report money. Scope the read or raise the bound deliberately.`,
-          );
-        }
-      }
-      return out;
+      const rows = await readAllPaged<{ data: AttributedEvent }>({
+        // `at,id` is a TOTAL order: `at` alone ties for events written in the same millisecond, and
+        // a tie under offset paging drops rows. The publisher scope rides every page, not just the first.
+        page: (limit, offset) =>
+          supabaseRest(
+            `/rest/v1/${table}?select=data&order=at.asc,id.asc${scope}&limit=${limit}&offset=${offset}`,
+          ) as Promise<Array<{ data: AttributedEvent }>>,
+        maxRows: maxLedgerRows,
+        what: "eventsink.readAll",
+        because:
+          "Earnings, author receipts and the settlement drain all ride this path, so a truncated " +
+          "result would silently under-report money. Scope the read or raise the bound deliberately.",
+      });
+      return rows.map((r) => r.data);
     },
+
     async get(id) {
       // Primary-key lookup — never reads the whole table.
       const rows = (await supabaseRest(
