@@ -286,3 +286,73 @@ test("N-leg: a payment missing the operator leg is rejected — content stays ga
   });
   assert.equal(res.status, 402, "an incomplete multi-leg payment must not unlock content");
 });
+
+// ── W6: the citation record — permanent, and it entitles nothing ────────────────
+// The CLT's 10-minute window is the kill switch for an unrevocable bearer credential.
+// A citation is the opposite job: a reader checks it years later. So the record is a
+// SECOND object minted from the same ledger row, permanent precisely because presenting
+// one buys nothing.
+
+test("GET /licenses/:jti/record mints a permanent record for a paid event", async () => {
+  const jws = (await pay("on-stillness", "citation")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+
+  const res = await app.request(`/licenses/${jti}/record`);
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { jti: string; record: string };
+  assert.equal(body.jti, jti);
+
+  const claims = payload(body.record);
+  assert.equal(claims.jti, jti, "the record is the same ledger row, not a new one");
+  assert.equal("exp" in claims, false, "a record never expires");
+  assert.equal((claims.naulon as { grant: string }).grant, "none");
+  assert.equal((claims.naulon as { settlementRef: string }).settlementRef.length > 0, true);
+});
+
+test("a record verifies against the gate's published JWKS, offline", async () => {
+  const jws = (await pay("the-river-and-the-name", "citation")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const { record } = (await (await app.request(`/licenses/${jti}/record`)).json()) as { record: string };
+
+  const iss = payload(record).iss as string;
+  const r = verifyLicense(record, {
+    // A century on: the property under test is that nothing here consults a clock-bound term.
+    now: Date.now() + 100 * 365 * 24 * 3600 * 1000,
+    expectedIssuer: iss,
+    expectedAudience: iss,
+    jwks: await jwks(),
+  });
+  assert.equal(r.ok, true, "the record must verify from the JWKS alone, forever");
+});
+
+test("a citation record presented as a licence does NOT buy a free read", async () => {
+  // The bypass this split exists to prevent: a permanent token that entitles a re-read
+  // would be an unrevocable free-read credential.
+  const jws = (await pay("on-stillness", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const { record } = (await (await app.request(`/licenses/${jti}/record`)).json()) as { record: string };
+
+  const res = await app.request("/essays/on-stillness", {
+    headers: { "x-naulon-agent": "tester", "x-naulon-license": record },
+  });
+  assert.equal(res.status, 402, "a record grants nothing — it must not re-read");
+});
+
+test("an unknown jti has no record — 404, the same shape as the verify tier", async () => {
+  assert.equal((await app.request("/licenses/nope/record")).status, 404);
+});
+
+test("the record route is host-scoped — another tenant cannot mint one", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+
+  const otherTenant = createApp({
+    async resolve(host: string) {
+      const p = await envPublisherResolver().resolve(host);
+      return p ? { ...p, id: "other-tenant" } : undefined;
+    },
+  });
+  const leaked = await otherTenant.request(`/licenses/${jti}/record`);
+  assert.equal(leaked.status, 404, "minting a record must not disclose another tenant's event");
+  assert.equal((await app.request(`/licenses/${jti}/record`)).status, 200, "the owner still can");
+});

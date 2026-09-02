@@ -21,6 +21,9 @@ export interface HeldLicense {
   pop: boolean;
   /** The compact-JWS token to present on a re-read. */
   jws: string;
+  /** The paths this licence covers, when it is a SCOPED licence rather than a
+   *  single-slug one. Absent ⇒ it covers `slug` and nothing else. */
+  scope?: { patterns: string[] };
   /** The canonical URL this source was actually PAID at — captured at pay time so a
    * later `read_held` re-fetches the exact link (`/articles/<slug>`, a custom domain,
    * whatever the publisher serves) instead of reconstructing a `/essays/<slug>`
@@ -47,12 +50,21 @@ export function decodeHeld(jws: string): Omit<HeldLicense, "jws"> | null {
       exp?: number;
       aud?: string;
       cnf?: { "naulon:addr"?: string };
-      naulon?: { slug?: string; title?: string };
+      naulon?: { slug?: string; title?: string; grant?: string; scope?: { patterns?: unknown } };
     };
     if (!claims.jti || !claims.exp || !claims.aud || !claims.naulon?.slug) return null;
+    // A held licence is an ACCESS right. A citation record grants nothing and is permanent,
+    // so it must never enter this store — it would be an unexpiring free-read entitlement.
+    // The `exp` requirement above already excludes a record (it carries none); this states
+    // the rule where a reader looks for it, and covers any future grant kind, which must
+    // fail closed rather than be held as access.
+    const grant = claims.naulon.grant;
+    if (grant !== undefined && grant !== "read") return null;
+    const patterns = claims.naulon.scope?.patterns;
     return {
       slug: claims.naulon.slug,
       title: claims.naulon.title ?? claims.naulon.slug,
+      ...(Array.isArray(patterns) ? { scope: { patterns: patterns.filter((x): x is string => typeof x === "string") } } : {}),
       jti: claims.jti,
       exp: claims.exp,
       aud: claims.aud,

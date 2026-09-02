@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decide, LICENSE_HEADER, type LicenseVerification } from "./decide.ts";
 import { PAYMENT_SIGNATURE_HEADER } from "./build402.ts";
-import { jwksOf, loadSigningKey, mintLicense } from "@naulon/shared";
+import { jwksOf, loadSigningKey, mintCitationRecord, mintLicense } from "@naulon/shared";
 
 const basePublisher = {
   id: "pub_test",
@@ -267,4 +267,133 @@ test("site mode: allowlisting xml never tolls the sitemap", async () => {
     });
     assert.equal(d.kind, "passthrough", `${path} must stay free`);
   }
+});
+
+// ── W6: a citation record grants nothing; a scoped licence covers its scope ──────
+// The record is permanent BECAUSE it entitles no read. If one could be presented for a
+// free re-read, permanence would be an unrevocable free-read credential — the exact
+// thing the CLT's 3600s cap exists to prevent.
+
+/** Mint a permanent citation record for slug `x` — same key, issuer and shape as gateLicense. */
+function gateRecord(iss: string, opts: { slug?: string; scope?: { patterns: string[] } } = {}): string {
+  const event = {
+    id: "11111111-2222-4333-8444-555555555555",
+    slug: opts.slug ?? "x",
+    kind: "citation",
+    amount: 0.003,
+    payees: [{ authorId: "etiric", wallet: `0x${"1".repeat(40)}`, share: 1 }],
+    payerAddress: `0x${"3".repeat(40)}`,
+    settlementRef: "0xref",
+    at: REAL_NOW,
+  } as any;
+  return mintCitationRecord(
+    {
+      event,
+      issuer: iss,
+      audience: iss,
+      ttlSeconds: 3600,
+      payeesMode: "full",
+      title: "X",
+      network: "eip155:5042002" as any,
+      ...(opts.scope ? { scope: opts.scope } : {}),
+    } as any,
+    GATE_KEY,
+    REAL_NOW,
+  );
+}
+
+/** Mint a SCOPED access licence — valid, unexpired, covering a path pattern. */
+function gateScopedLicense(iss: string, patterns: string[], slug = "some-other-article"): string {
+  const event = {
+    id: "11111111-2222-4333-8444-555555555556",
+    slug,
+    kind: "citation",
+    amount: 0.003,
+    payees: [{ authorId: "etiric", wallet: `0x${"1".repeat(40)}`, share: 1 }],
+    payerAddress: `0x${"3".repeat(40)}`,
+    settlementRef: "0xref",
+    at: REAL_NOW,
+  } as any;
+  return mintLicense(
+    {
+      event,
+      issuer: iss,
+      audience: iss,
+      ttlSeconds: 3600,
+      payeesMode: "full",
+      title: "X",
+      network: "eip155:5042002" as any,
+      scope: { patterns },
+    } as any,
+    GATE_KEY,
+    REAL_NOW,
+  );
+}
+
+const VERIFY: LicenseVerification = { jwks: GATE_JWKS, issuer: GATE_ISS };
+
+test("W6: a citation record NEVER buys a free re-read, though it verifies", async () => {
+  const d = await decide({
+    raw: agentReread(gateRecord(GATE_ISS)),
+    host: "h",
+    path: "/essays/x",
+    publisher: basePublisher,
+    now: NOW,
+    quote: quoteOf,
+    licenseVerification: VERIFY,
+  });
+  assert.equal(d.kind, "payment-required", "a record grants nothing — it must not re-read");
+});
+
+test("W6: the record's own signature and issuer are fine — only the grant refuses it", async () => {
+  // Same key, same issuer, same slug as the licence that DOES re-read above.
+  const { verifyLicense } = await import("@naulon/shared");
+  const r = verifyLicense(gateRecord(GATE_ISS), {
+    now: Date.now(),
+    expectedIssuer: GATE_ISS,
+    expectedAudience: GATE_ISS,
+    jwks: GATE_JWKS,
+  });
+  assert.equal(r.ok, true, "the record itself is a valid token");
+});
+
+test("W6: a scoped licence re-reads an article it was not minted for", async () => {
+  const d = await decide({
+    raw: agentReread(gateScopedLicense(GATE_ISS, ["/essays/*"])),
+    host: "h",
+    path: "/essays/x",
+    publisher: basePublisher,
+    now: NOW,
+    quote: quoteOf,
+    licenseVerification: VERIFY,
+  });
+  assert.equal(d.kind, "reread", "the scope covers /essays/*, so the mint-time slug is irrelevant");
+});
+
+test("W6: a scoped licence is refused outside its scope", async () => {
+  const d = await decide({
+    raw: new Request("http://h/essays/x", {
+      headers: { "user-agent": "GPTBot/1.0", [LICENSE_HEADER]: gateScopedLicense(GATE_ISS, ["/journal/*"]) },
+    }),
+    host: "h",
+    path: "/essays/x",
+    publisher: basePublisher,
+    now: NOW,
+    quote: quoteOf,
+    licenseVerification: VERIFY,
+  });
+  assert.equal(d.kind, "payment-required", "/essays/x is not under /journal/*");
+});
+
+test("W6: an unscoped licence still matches on slug alone, exactly as before", async () => {
+  const d = await decide({
+    raw: agentReread(gateLicense(GATE_ISS)),
+    host: "h",
+    path: "/essays/x",
+    publisher: basePublisher,
+    now: NOW,
+    quote: quoteOf,
+    licenseVerification: VERIFY,
+  });
+  assert.equal(d.kind, "reread");
 });
