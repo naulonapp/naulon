@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.5.2
+Stable tag: 0.5.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,6 +160,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.5.3 =
+* Exa's crawler is now recognised. It identifies itself as a search engine, and for its consumer site it is one — but the same crawler feeds an API that hands an application the full text of your page from Exa's cache, and a reader who gets your article that way never arrives at your site. Exa publishes one user agent for both, so there is no way to welcome the indexing and price the retrieval separately. It is charged by default.
+* That default costs something, and you can change it. Charging Exa means dropping out of its index, consumer surface included. If reach matters more to you than revenue from that channel, set Exa to Allow on your Crawlers screen and it reads free, exactly like Google.
+* Until now this plugin did not know the crawler at all, so it served Exa free whatever your account said.
+
 = 0.5.2 =
 * When an agent is asked to pay, the response now points at your licence. An agent that meets your toll already has that response in its hand — before, it had to go back and read your robots.txt to find out what you allow and what it costs. Now it learns both in the same breath, which is one fewer reason for it to give up and read something else.
 * Nothing is advertised that is not served: if your licence has not been published yet, the pointer stays off rather than sending a crawler to a page that is not there.
@@ -207,6 +212,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+
+= 0.5.3 =
+Exa's crawler was reading your articles free. It calls itself a search engine, and for its consumer site it is one — but the same crawler feeds an API that hands an application the full text of your page, so it is now charged. Charging it means leaving Exa's index: if you would rather keep the reach, set Exa to Allow on your Crawlers screen.
 
 = 0.5.2 =
 When an agent is turned away for payment, the response now points at your licence — so it learns what you allow and what it costs in the same request, instead of going back for your robots.txt.
