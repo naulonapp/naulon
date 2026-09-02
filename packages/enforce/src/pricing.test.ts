@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  activeNetwork,
   usdc,
   walletAddress,
   type ArticleCredits,
@@ -149,8 +150,20 @@ test("quote copies the publisher's settlementNetwork onto the Quote (per-tenant 
   assert.equal(q.network, "base");
 });
 
-test("quote leaves Quote.network undefined when the publisher declares no settlementNetwork", async () => {
+test("quote stamps the pricing runtime's active network when the publisher declares none", async () => {
+  // The regression this replaces asserted `undefined` here, which read as "downstream falls
+  // back to activeNetwork()" — true only when the same PROCESS builds the 402. In API mode the
+  // control plane prices and the publisher's own runtime builds, so an absent network was
+  // resolved against THAT runtime's env: a fleet on Base quoted arcTestnet USDC to live agents.
   const q = await quote(publisher(), "on-passage", "read");
   assert.ok(q);
-  assert.equal(q.network, undefined); // ⇒ downstream falls back to activeNetwork()
+  assert.equal(q.network, activeNetwork().chainName);
+  assert.ok(q.network !== undefined, "a quote must never leave the chain to the reader to guess");
+});
+
+test("an explicit per-tenant chain still beats the runtime default", async () => {
+  const other = activeNetwork().chainName === "base" ? "arcTestnet" : "base";
+  const q = await quote(publisher({ settlementNetwork: other }), "on-passage", "read");
+  assert.ok(q);
+  assert.equal(q.network, other);
 });
