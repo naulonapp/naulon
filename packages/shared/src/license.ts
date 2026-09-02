@@ -33,6 +33,7 @@ import {
   type KeyObject,
 } from "node:crypto";
 import { toAtomicUsdc } from "./networks.ts";
+import { matchesPattern } from "@naulon/sdk/rsl";
 import { primaryPayee, type TieBreak } from "./attribution.ts";
 import type { AttributedEvent, AuthorShare } from "./types.ts";
 
@@ -58,6 +59,38 @@ export interface SigningKey {
   kid: string;
 }
 
+/**
+ * What a licence entitles. Absent ⇒ `"read"` — today's access licence, unchanged.
+ *
+ * `"none"` is the CITATION RECORD: it proves a payment happened and grants nothing,
+ * which is the whole reason it is allowed to be permanent. Anything that reads an
+ * unrecognised value as access would turn a future record into a free read on an old
+ * deployment, so the resolver below fails closed instead.
+ */
+export type LicenseGrant = "read" | "none";
+
+/** RSL 1.0's usage vocabulary — the terms a licence executes. `ai-train` is never sold. */
+export type LicenseTerm = "ai-input" | "ai-index" | "search";
+
+/**
+ * The scope a licence covers: RFC 9309 path patterns, the same grammar RSL borrows for
+ * `content@url` and the same one the RSL emitter already writes. One dialect across the
+ * gate, RSL and licences — a second grammar here is how `/articles/*` silently stops
+ * matching `/articles/2026/x`.
+ */
+export interface LicenseScope {
+  patterns: string[];
+}
+
+/**
+ * The purchased period, epoch seconds. `until: null` is permanent — legal only on a
+ * grant that entitles nothing.
+ */
+export interface LicensePeriod {
+  from: number;
+  until: number | null;
+}
+
 /** The namespaced `naulon` claim — the domain payload. */
 export interface NaulonClaim {
   v: 1;
@@ -74,6 +107,14 @@ export interface NaulonClaim {
   /** Present in "hashed" payees mode. */
   payeesHash?: string;
   payTo?: string;
+  /** What this licence entitles. Absent ⇒ "read" (today's access licence). */
+  grant?: LicenseGrant;
+  /** The paths covered. Absent ⇒ exactly `slug`, matched by equality. */
+  scope?: LicenseScope;
+  /** The RSL usage terms this licence is the executed instance of. */
+  terms?: LicenseTerm[];
+  /** The purchased period, independent of the token's own re-read window. */
+  period?: LicensePeriod;
 }
 
 /**
@@ -94,7 +135,12 @@ export interface CitationLicenseClaims {
   jti: string;
   iat: number;
   nbf: number;
-  exp: number;
+  /**
+   * Absent ONLY on a citation record (`naulon.grant === "none"`). `verifyLicense`
+   * refuses an absent `exp` on anything that entitles a read: a CLT is an unrevocable
+   * bearer credential on the offline tier, so its expiry IS the kill switch.
+   */
+  exp?: number;
   naulon: NaulonClaim;
   /** Present only on holder-of-key licenses (LICENSE_POP). RFC 7800. */
   cnf?: ConfirmationClaim;
@@ -121,6 +167,20 @@ export interface MintInput {
    * license. Must be a real address — never the zero-address fallback.
    */
   popBindAddress?: string;
+  /**
+   * The licence's subject — a stable buyer identity (an account handle or a key).
+   * Absent ⇒ the payer wallet of this transaction, exactly as before.
+   *
+   * It must never carry anything that turns the public verifier into a surveillance
+   * surface: an account handle or key, never an email or a name.
+   */
+  subject?: string;
+  /** The paths this licence covers. Absent ⇒ the single `event.slug`. */
+  scope?: LicenseScope;
+  /** The RSL usage terms this licence is the executed instance of. */
+  terms?: LicenseTerm[];
+  /** The purchased period, independent of the token's own re-read window. */
+  period?: LicensePeriod;
 }
 
 export type VerifyResult =
@@ -211,9 +271,39 @@ function canonicalPayees(payees: AuthorShare[]): string {
  * reads only the in-memory event — never the EventSink.
  */
 export function mintLicense(input: MintInput, key: SigningKey, now: number): string {
-  const { event } = input;
   const iat = Math.floor(now / 1000);
+  return signClaims(
+    {
+      ...baseClaims(input, iat),
+      exp: iat + input.ttlSeconds,
+    },
+    input,
+    key,
+  );
+}
 
+/**
+ * Mint a CITATION RECORD: permanent, and it grants nothing.
+ *
+ * The access licence and the citation record are two objects because they are two jobs.
+ * A CLT's 10-minute window is a security property — it is the only kill switch an
+ * unrevocable bearer credential has — and it is exactly wrong for a citation, which a
+ * reader may check years after the paper was published. A record carries no `exp`
+ * because it entitles no read: there is nothing to revoke.
+ *
+ * `grant: "none"` is stamped here, never taken from the caller, so the permanent shape
+ * cannot be minted with a read grant attached to it.
+ */
+export function mintCitationRecord(input: MintInput, key: SigningKey, now: number): string {
+  const iat = Math.floor(now / 1000);
+  const claims = baseClaims(input, iat);
+  claims.naulon.grant = "none";
+  return signClaims(claims, input, key);
+}
+
+/** The claims both projections share. `exp` is the caller's business. */
+function baseClaims(input: MintInput, iat: number): CitationLicenseClaims {
+  const { event } = input;
   const naulon: NaulonClaim = {
     v: 1,
     slug: event.slug,
@@ -230,23 +320,29 @@ export function mintLicense(input: MintInput, key: SigningKey, now: number): str
   } else {
     naulon.payees = event.payees.map((p) => ({ authorId: p.authorId, wallet: p.wallet, share: p.share }));
   }
+  // Absent ⇒ omitted, so an unwidened mint is byte-identical to what shipped before W6.
+  if (input.scope) naulon.scope = input.scope;
+  if (input.terms) naulon.terms = input.terms;
+  if (input.period) naulon.period = input.period;
 
-  const payload: CitationLicenseClaims = {
+  return {
     iss: input.issuer,
     aud: input.audience,
-    sub: event.payerAddress,
+    sub: input.subject ?? event.payerAddress,
     jti: event.id,
     iat,
     nbf: iat,
-    exp: iat + input.ttlSeconds,
     naulon,
   };
+}
+
+/** Attach holder-of-key binding (when asked) and produce the compact JWS. */
+function signClaims(payload: CitationLicenseClaims, input: MintInput, key: SigningKey): string {
   // Holder-of-key: bind the license to the payer wallet so a re-read needs a
   // proof-of-possession, not just the token. Lowercased for a canonical compare.
   if (input.popBindAddress) {
     payload.cnf = { "naulon:addr": input.popBindAddress.toLowerCase() };
   }
-
   const header = { alg: "EdDSA", typ: "JWT", kid: key.kid };
   const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;
   const sig = sign(null, Buffer.from(signingInput, "ascii"), key.privateKey);
@@ -332,7 +428,16 @@ export function verifyLicense(
   if (claims.aud !== opts.expectedAudience) return fail("audience mismatch");
 
   const nowSec = Math.floor(opts.now / 1000);
-  if (!Number.isFinite(claims.exp) || nowSec >= claims.exp) return fail("expired");
+  // A licence that entitles a read MUST expire — its TTL is the only kill switch an
+  // unrevocable bearer credential has. Only a citation record, which grants nothing and
+  // therefore has nothing to revoke, may omit `exp`. An UNRECOGNISED grant is not a
+  // record (licenseGrant resolves it to "none" for access, but permanence is a stronger
+  // right than refusal, so it is spelled out here rather than inferred).
+  if (claims.exp === undefined) {
+    if (claims.naulon?.grant !== "none") return fail("missing exp (only a citation record may be permanent)");
+  } else {
+    if (!Number.isFinite(claims.exp) || nowSec >= claims.exp) return fail("expired");
+  }
   if (Number.isFinite(claims.nbf) && nowSec < claims.nbf - SKEW_SECONDS) return fail("not yet valid");
   if (Number.isFinite(claims.iat) && claims.iat > nowSec + SKEW_SECONDS) return fail("issued in the future");
 
@@ -378,4 +483,40 @@ export function popMessage(c: PopChallenge): string {
     `ts=${c.ts}`,
     `nonce=${c.nonce}`,
   ].join("\n");
+}
+
+// ── Grant + scope (W6) ───────────────────────────────────────────────────────
+
+/**
+ * What a claim entitles, resolved fail-closed: an absent grant is today's `"read"`,
+ * and anything this build does not recognise is `"none"`.
+ *
+ * The asymmetry is deliberate. Absent must mean read or every licence minted before
+ * W6 stops working; an UNKNOWN value must not, or a grant kind invented later becomes
+ * a free read wherever an old gate is still deployed.
+ */
+export function licenseGrant(claim: NaulonClaim): LicenseGrant {
+  const g = claim.grant;
+  if (g === undefined) return "read";
+  return g === "read" ? "read" : "none";
+}
+
+/**
+ * Does this claim cover the thing being requested?
+ *
+ * Two modes, and the input each uses is not interchangeable:
+ *   - **no scope** — equality against the `slug`, exactly as before.
+ *   - **scope** — RFC 9309 patterns against the request PATH. Prefix mode's slug is the
+ *     captured segment (`on-stillness`), not a path, so a path pattern matched against
+ *     it would never fire; site mode's slug happens to be a pathname, but relying on
+ *     that would make the check mode-dependent.
+ *
+ * A scoped licence does NOT fall back to slug equality — a scope that fails to match
+ * must not silently widen back to whatever slug was current when it was minted.
+ */
+export function licenseCoversPath(claim: NaulonClaim, req: { slug: string; path: string }): boolean {
+  const scope = claim.scope;
+  if (scope === undefined) return claim.slug === req.slug;
+  if (!Array.isArray(scope.patterns)) return false;
+  return scope.patterns.some((p) => typeof p === "string" && matchesPattern(p, req.path));
 }

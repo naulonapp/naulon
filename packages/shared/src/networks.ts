@@ -240,6 +240,16 @@ export function networkByCaip2(caip2: string): SettlementNetwork | undefined {
   return Object.values(NETWORKS).find((n) => n.network === caip2);
 }
 
+/** Resolve a settlement network by its numeric EVM chain id.
+ *
+ *  The ledger stores a settle's chain as `AttributedEvent.chainId`, not as CAIP-2, so
+ *  anything reconstructing a settlement from a stored row (the citation-record mint)
+ *  needs this direction. Unknown id → undefined, and the caller falls back rather than
+ *  naming a chain the toll could not have settled on. */
+export function networkByChainId(chainId: number): SettlementNetwork | undefined {
+  return Object.values(NETWORKS).find((n) => n.chainId === chainId);
+}
+
 /** The network the gate is configured to settle on (`SETTLEMENT_NETWORK`). */
 export function activeNetwork(): SettlementNetwork {
   return NETWORKS[getConfig().SETTLEMENT_NETWORK];

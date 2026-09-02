@@ -30,6 +30,8 @@ import {
   externalUrl,
   type ExternalSchemeOpts,
   getConfig,
+  licenseCoversPath,
+  licenseGrant,
   popBoundAddress,
   verifyLicense,
   type JwkSet,
@@ -113,7 +115,15 @@ export async function licenseEntitlesRead(
   });
   if (!r.ok) return false;
   const n = r.claims.naulon;
-  if (n.slug !== slug) return false;
+  // A CITATION RECORD grants nothing — that is why it is allowed to be permanent. Reading
+  // one as access would turn an unexpiring token into an unrevocable free-read credential,
+  // which is precisely what the CLT's TTL cap exists to prevent. Unknown grants resolve to
+  // "none" here, so a grant kind invented later cannot become access on an old deployment.
+  if (licenseGrant(n) !== "read") return false;
+  // Scope, when present, is matched against the request PATH — prefix mode's slug is a
+  // captured segment, not a path, so patterns could never match it. Unscoped licences keep
+  // exact slug equality, byte-identical to the behaviour before W6.
+  if (!licenseCoversPath(n, { slug, path: new URL(req.url).pathname })) return false;
   if (requestedKind === "citation" && n.kind !== "citation") return false; // no read→citation upgrade
   if (cfg.LICENSE_ONLINE_CHECK && (await revocations.isRevoked(r.claims.jti))) return false;
   // Holder-of-key: a cnf-bound license is NOT a bearer right — require a fresh

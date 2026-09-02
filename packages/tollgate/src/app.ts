@@ -34,6 +34,8 @@ import {
   externalSchemeOf,
   getConfig,
   getNetwork,
+  mintCitationRecord,
+  networkByChainId,
   signBotAuth,
   signBotAuthDirectory,
   type BotAuthKey,
@@ -590,6 +592,62 @@ export function createApp(
     }
     const revoked = cfg.LICENSE_ONLINE_CHECK ? await revocations.isRevoked(jti) : false;
     return c.json({ jti, found: true, revoked, event });
+  });
+
+  /**
+   * The CITATION RECORD for a settled toll: permanent, third-party verifiable, and it
+   * grants nothing.
+   *
+   * The Citation License a payment mints is an ACCESS token — `LICENSE_TTL_SECONDS`
+   * defaults to 600s and is capped at 3600 because it is an unrevocable bearer credential
+   * on the offline tier, so its expiry is the only kill switch it has. That is the wrong
+   * object for a citation: a researcher cites a source and a reader checks it months
+   * later, long after any access window closed. This route mints the other object from
+   * the SAME ledger row — same `jti`, same amount, same payees, same settlementRef — with
+   * `grant: "none"` and no `exp`. It is safe to be permanent precisely because presenting
+   * one buys nothing (`licenseEntitlesRead` refuses any grant that is not "read").
+   *
+   * Host-scoped and publisher-checked exactly like `/licenses/:jti` above: minting must
+   * disclose no more than reading did.
+   *
+   * The record names the resource by `slug`, not by title — the ledger row carries no
+   * title, and inventing one here would put an unverifiable string inside a document
+   * whose entire value is that a stranger can check it.
+   */
+  app.get("/licenses/:jti/record", async (c) => {
+    const jti = c.req.param("jti");
+    if (!licensing) return c.json({ jti, found: false }, 404);
+    const host = c.req.header("host") ?? new URL(c.req.url).host;
+    const publisher = (await resolver.resolve(host)) ?? (await resolveInAppConfig?.(host));
+    if (!publisher) return c.json({ jti, found: false }, 404);
+
+    const event = await getEvent(jti);
+    if (!event || (event.publisherId !== undefined && event.publisherId !== publisher.id)) {
+      return c.json({ jti, found: false }, 404);
+    }
+    // The chain the money actually moved on, recovered from the row. Pre-`chainId` rows
+    // fall back to the tenant's network, then the fleet default — the same order the
+    // manifest uses, so a record never names a chain the toll could not have settled on.
+    const net =
+      (event.chainId !== undefined ? networkByChainId(event.chainId) : undefined) ??
+      (publisher.settlementNetwork ? getNetwork(publisher.settlementNetwork) : activeNetwork());
+    const record = mintCitationRecord(
+      {
+        event,
+        issuer: publisher.licenseIdentity,
+        audience: publisher.licenseIdentity,
+        // Unused by the record (it carries no exp) but required by MintInput; the value
+        // is deliberately the configured one so nothing here invents a term.
+        ttlSeconds: cfg.LICENSE_TTL_SECONDS,
+        payeesMode: cfg.LICENSE_PAYEES_MODE,
+        tieBreak: cfg.PRIMARY_PAYEE_TIEBREAK,
+        title: event.slug,
+        network: { chainId: net.chainId, usdc: net.usdc, gateway: net.gatewayWallet },
+      },
+      licensing.key,
+      Date.now(),
+    );
+    return c.json({ jti, found: true, record });
   });
 
   // Everything else flows through the gate.
