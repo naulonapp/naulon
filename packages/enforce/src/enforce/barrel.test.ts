@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import * as root from "../index.ts";
+import * as configSource from "./config-source.ts";
 import * as fetchHandler from "./fetch-handler.ts";
 import * as middleware from "./middleware.ts";
 import * as observationSink from "./observation-sink.ts";
@@ -29,6 +30,7 @@ import * as quoteSource from "./quote-source.ts";
 const NOT_IN_CORE_BARREL = new Set(["index.ts", "next.ts"]);
 
 const CORE = {
+  "config-source.ts": configSource,
   "fetch-handler.ts": fetchHandler,
   "middleware.ts": middleware,
   "observation-sink.ts": observationSink,

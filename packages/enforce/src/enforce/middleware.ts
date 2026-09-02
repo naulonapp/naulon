@@ -26,16 +26,30 @@ import {
 } from "../decide.ts";
 import { externalUrl, getConfig, type JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
+import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
 import type { DecideObs } from "../decide.ts";
 import type { ObservationReport, ObservationReporter, ReportableVerdict } from "./observation-sink.ts";
 
-export interface NaulonMiddlewareOptions {
+export interface NaulonMiddlewareOptionsBase {
   /**
    * The site's toll config in `PublisherConfig` shape — `decide()` reads
-   * `id`, `articlePrefixes` (or `gateScope`), `licenseIdentity`, `seoAllowlist`,
+   * `articlePrefixes` (or `gateScope`), `licenseIdentity`, `seoAllowlist`,
    * and `crawlerPolicy` from it.
+   *
+   * A LITERAL here is a second copy of state the control plane already owns, and it
+   * cannot track a dashboard edit. Prefer `config` (below) and pass this only for a
+   * self-hosted gate that has no control plane to ask. When both are given, the
+   * control plane wins field by field and this is the cold-start floor.
    */
-  publisher: unknown;
+  publisher?: unknown;
+  /**
+   * Where the enforcement config comes from — `httpPublisherConfigSource(...)` for a
+   * hosted tenant. Cached with stale-if-error, so this is not a per-request fetch.
+   *
+   * This is the difference between "the dashboard says charge OAI-SearchBot" and the
+   * site actually charging it.
+   */
+  config?: PublisherConfigSource;
   /** Price + payees source: `localQuoteSource` (own data) or `httpQuoteSource` (cloud). */
   quote: QuoteSource;
   /** The hosted `POST /verify` URL (settles the presented payment, custody-free). */
@@ -79,6 +93,14 @@ export interface NaulonMiddlewareOptions {
   observe?: ObservationReporter;
 }
 
+/**
+ * At least one source of publisher config is required, and the compiler enforces it:
+ * a mount with neither can only ever pass every request through untolled, which is a
+ * silently-disabled toll and exactly the class of failure this module exists to end.
+ */
+export type NaulonMiddlewareOptions = NaulonMiddlewareOptionsBase &
+  ({ config: PublisherConfigSource } | { publisher: unknown });
+
 export interface MiddlewareResult {
   /** A Response to send (short-circuit), or `null` to pass to the app. */
   response: Response | null;
@@ -113,6 +135,29 @@ function agentOf(obs: DecideObs): NonNullable<ObservationReport["agent"]> {
   };
 }
 
+/**
+ * The config actually in force: the control plane's document over the local floor,
+ * field by field.
+ *
+ * Remote wins because it is the copy a human can edit — the local object is a literal
+ * in a deployed bundle, and a bundle is not a control plane. The merge is per FIELD
+ * rather than all-or-nothing so a tenant that has set no `crawlerPolicy` still gets the
+ * local one, instead of a partial document silently blanking it. `undefined` values are
+ * stripped by the source for the same reason.
+ *
+ * Returns `undefined` when neither side supplied anything — the caller passes through.
+ */
+export function resolvePublisher(
+  local: unknown,
+  remote: PublisherEnforcementConfig | undefined,
+): unknown {
+  const hasLocal = typeof local === "object" && local !== null;
+  const hasRemote = remote !== undefined && Object.keys(remote).length > 0;
+  if (!hasLocal && !hasRemote) return undefined;
+  if (!hasRemote) return local;
+  return { ...(hasLocal ? (local as object) : {}), ...remote };
+}
+
 export function naulonMiddleware(
   opts: NaulonMiddlewareOptions,
 ): (req: Request) => Promise<MiddlewareResult> {
@@ -127,12 +172,15 @@ export function naulonMiddleware(
   const resolveVerification = (() => {
     const lv = opts.licenseVerification;
     if (!lv) return undefined;
-    const issuer = lv.issuer ?? (opts.publisher as { licenseIdentity?: string }).licenseIdentity;
     const jwksUrl = lv.jwksUrl ?? `${new URL(opts.verifyUrl).origin}/.well-known/naulon-jwks.json`;
     const ttl = lv.cacheTtlMs ?? 600_000;
     let cached: JwkSet | undefined;
     let fetchedAt = 0;
-    return async (): Promise<LicenseVerification | undefined> => {
+    // `issuer` is resolved PER REQUEST from the config actually in force, not read once
+    // from a literal at mount time. Pinning iss/aud to a hand-written constant is how a
+    // licence stops verifying the day the control plane restyles what it stamps — and the
+    // symptom is a paid reader being charged twice, which nobody reports as a bug.
+    return async (issuer: string | undefined): Promise<LicenseVerification | undefined> => {
       // Without an issuer we cannot pin iss/aud, so verification would be unsafe — skip
       // (the re-read falls through to the normal 402 path, same as an unconfigured mount).
       if (!issuer) return undefined;
@@ -191,13 +239,25 @@ export function naulonMiddleware(
     });
     // Only resolve the gate JWKS when this request actually presents a license — a
     // human read or a first-time agent 402 carries none, so the hot path never fetches.
+    // The enforcement config in force for THIS request. Cached per host with
+    // stale-if-error inside the source, so a warm hit costs a map lookup.
+    const remote = opts.config ? (await opts.config.load({ resource }))?.enforcement : undefined;
+    const publisher = resolvePublisher(opts.publisher, remote);
+    if (!publisher) {
+      // Neither a control-plane document nor a local floor: nothing is in scope, so there
+      // is nothing to decide. Pass rather than throw — a lookup failure on our side must
+      // never 500 the publisher's site. The source has already reported it, loudly.
+      return { response: null };
+    }
     const licenseVerification =
-      resolveVerification && req.headers.get(LICENSE_HEADER) ? await resolveVerification() : undefined;
+      resolveVerification && req.headers.get(LICENSE_HEADER)
+        ? await resolveVerification((publisher as { licenseIdentity?: string }).licenseIdentity)
+        : undefined;
     const d = await decide({
       raw: req,
       host: url.host,
       path: url.pathname + url.search,
-      publisher: opts.publisher as never,
+      publisher: publisher as never,
       now: clock(),
       quote: (publisher, slug, kind) => opts.quote.quote(publisher, slug, kind, { resource }),
       ...(licenseVerification ? { licenseVerification } : {}),

@@ -42,8 +42,21 @@ export interface X402Manifest {
   /** The product's contract, machine-readable: humans read free, machines pay. */
   humansReadFree: true;
   resources: {
-    /** Path prefixes (no leading slash) whose articles are tolled. */
-    pathPrefixes: string[];
+    /**
+     * What the toll covers — the manifest's spelling of `PublisherConfig.gateScope`.
+     * `"prefixes"` (the default) tolls only paths under `pathPrefixes`; `"site"` tolls
+     * every path except `excludePrefixes` and the always-free discovery surfaces.
+     */
+    scope: "prefixes" | "site";
+    /**
+     * Path prefixes (no leading slash) whose articles are tolled. Present in `"prefixes"`
+     * scope only — a site-scoped publisher has no prefix list, and printing its (usually
+     * vestigial) `articlePrefixes` here told an agent that a handful of paths were tolled
+     * when in fact the whole site was. Absent is honest; a wrong list is not.
+     */
+    pathPrefixes?: string[];
+    /** Publisher-chosen free sections. Present in `"site"` scope only. */
+    excludePrefixes?: string[];
     /** Toll kinds; a citation is priced up from a read. */
     kinds: ["read", "citation"];
     /** Header an agent sets to request the citation toll instead of a read. */
@@ -90,12 +103,25 @@ export function buildX402Manifest(
   return {
     x402Version: 2,
     humansReadFree: true,
-    resources: {
-      pathPrefixes: publisher.articlePrefixes,
-      kinds: ["read", "citation"],
-      selectKindHeader: "X-Naulon-Kind",
-      note: "GET any article URL under a prefix to receive a 402 with concrete PaymentRequirements.",
-    },
+    resources:
+      publisher.gateScope?.mode === "site"
+        ? {
+            scope: "site",
+            excludePrefixes: publisher.gateScope.excludePrefixes,
+            kinds: ["read", "citation"],
+            selectKindHeader: "X-Naulon-Kind",
+            note:
+              "Every path on this site is tolled except the listed exclusions and the always-free"
+              + " discovery surfaces (robots, sitemaps, feeds, favicon). GET any URL to receive a 402"
+              + " with concrete PaymentRequirements.",
+          }
+        : {
+            scope: "prefixes",
+            pathPrefixes: publisher.articlePrefixes,
+            kinds: ["read", "citation"],
+            selectKindHeader: "X-Naulon-Kind",
+            note: "GET any article URL under a prefix to receive a 402 with concrete PaymentRequirements.",
+          },
     payment: {
       scheme: "exact",
       network: net.network,

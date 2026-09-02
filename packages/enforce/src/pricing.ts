@@ -8,6 +8,7 @@
  * one gate prices many publishers correctly.
  */
 import {
+  activeNetwork,
   resolvePayees,
   usdc,
   type AuthorShare,
@@ -53,10 +54,15 @@ export interface Quote {
    */
   memoId?: string;
   /**
-   * Per-tenant settlement chain, carried from `PublisherConfig.settlementNetwork`.
-   * Read by `build402`/`buildRequirements` to advertise the tenant's chain in the
-   * 402, and resolved per-request on the settle path. Absent ⇒ `activeNetwork()`
-   * (fleet default), byte-identical to the single-tenant toll.
+   * The settlement chain this price is payable on — the tenant's
+   * `PublisherConfig.settlementNetwork`, or the pricing runtime's active network when the
+   * tenant sets none. Read by `build402`/`buildRequirements` to advertise it in the 402 and
+   * resolved per-request on the settle path.
+   *
+   * Always present on a quote this function builds, so a runtime that did not do the pricing
+   * never has to fall back to its own env to learn which chain it is quoting. Optional on the
+   * TYPE only, because a quote may arrive from an older control plane that omitted it — in
+   * which case `buildRequirements` still falls back to `activeNetwork()`, as it always did.
    */
   network?: NetworkName;
 }
@@ -114,8 +120,13 @@ export async function quote(
       const memoId = publisher.memoId?.({ slug: credits.slug, kind });
       return memoId ? { memoId } : {};
     })(),
-    // Per-tenant settlement chain. Spread so an unset field leaves the key absent
-    // entirely — build402 then reads activeNetwork(), byte-identical to the default.
-    ...(publisher.settlementNetwork ? { network: publisher.settlementNetwork } : {}),
+    // Per-tenant settlement chain — ALWAYS stamped, never conditional. A quote crosses a process boundary — the control
+    // plane prices, a publisher's own runtime builds the 402 from it — and an absent
+    // `network` there is not "the fleet default", it is "whatever THAT runtime's env says".
+    // Measured 2026-09-02: a tenant with no per-tenant chain quoted `eip155:5042002`
+    // (arcTestnet, the SDK's zod default) on a fleet running Base mainnet, so a live 402
+    // advertised testnet USDC to paying agents. The price and the chain it is payable on
+    // are one fact; they travel together or neither is trustworthy.
+    network: publisher.settlementNetwork ?? activeNetwork().chainName,
   };
 }
