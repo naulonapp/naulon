@@ -231,7 +231,11 @@ export async function decide(input: DecideInput): Promise<Decision> {
       ? slugFromSitePath(path, publisher.gateScope.excludePrefixes, {
           includeExtensions: publisher.gateScope.includeExtensions,
         })
-      : slugFromPath(path, publisher.articlePrefixes);
+      : slugFromPath(path, publisher.articlePrefixes, {
+          // Absent gateScope IS prefix mode, so read the depth off the union only when it is
+          // actually the prefixes variant. Undefined ⇒ "segment", unchanged.
+          depth: publisher.gateScope?.mode === "prefixes" ? publisher.gateScope.depth : undefined,
+        });
 
   // Non-article routes: pure passthrough (assets, home, RSS...).
   if (!slug) return { kind: "passthrough", verdict: "non-article" };
