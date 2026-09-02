@@ -1,6 +1,6 @@
 {
   "name": "@naulon/shared",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "The naulon contract layer: env config, credits + license types, settlement and attribution wire types, event/observation sinks, and the money primitives (network constants, EIP-3009). Builds on @naulon/sdk and re-exports it, so downstream packages get one import.",
   "keywords": [
     "x402",
@@ -55,7 +55,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@naulon/sdk": "^0.3.0",
+    "@naulon/sdk": "^0.4.0",
     "dotenv": "^17.4.2",
     "zod": "^4.4.3"
   }

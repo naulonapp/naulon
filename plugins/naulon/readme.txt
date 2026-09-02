@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.5.0
+Stable tag: 0.5.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -159,6 +159,10 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 5. Diagnostics — the caching check, recent decisions, and connection health.
 
 == Changelog ==
+
+= 0.5.1 =
+* When an agent is asked to pay, the response now points at your licence. An agent that meets your toll already has that response in its hand — before, it had to go back and read your robots.txt to find out what you allow and what it costs. Now it learns both in the same breath, which is one fewer reason for it to give up and read something else.
+* Nothing is advertised that is not served: if your licence has not been published yet, the pointer stays off rather than sending a crawler to a page that is not there.
 
 = 0.5.0 =
 * Your site now publishes its licence. RSL — Really Simple Licensing — is the open standard AI crawlers are starting to check before they read: a machine-readable statement of what a site permits and what it costs. Yours is served at /license.xml, pointed at from robots.txt and from the head of every page, and built from the price and scope already in your naulon account. Nothing to write and nothing to configure.

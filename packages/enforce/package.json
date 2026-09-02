@@ -1,12 +1,12 @@
 {
   "name": "@naulon/enforce",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/naulonapp/naulon.git",
     "directory": "packages/enforce"
   },
-  "description": "Runtime-agnostic naulon toll-decision kernel + in-app enforcement middleware. The neutral low-level core shared by @naulon/tollgate (the gate) and @naulon/sdk (the publisher SDK) — no dependency cycle.",
+  "description": "Runtime-agnostic naulon toll-decision kernel + in-app enforcement middleware. The neutral low-level core shared by @naulon/tollgate (the gate) and @naulon/sdk (the publisher SDK) \u2014 no dependency cycle.",
   "keywords": [
     "x402",
     "usdc",
@@ -44,7 +44,7 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@naulon/sdk": "^0.3.0",
+    "@naulon/sdk": "^0.4.0",
     "@naulon/shared": "^0.4.0",
     "viem": "^2.56.0"
   },

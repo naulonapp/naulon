@@ -16,7 +16,53 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
+## v0.8.0
+
+Ships `@naulon/sdk` 0.4.0 · `@naulon/shared` 0.4.2 · `@naulon/enforce` 0.4.2 ·
+`@naulon/wayfarer` 0.4.0 · `@naulon/wayfarer-mcp` 0.5.0 · the WordPress plugin 0.5.1.
+
+The headline: an agent built on `@naulon/wayfarer` now reads what a publisher **publishes**, not
+only what their 402 charges — and it will refuse a page whose publisher forbids AI use, however
+much budget it has.
+
 ### Added
+
+- **`@naulon/sdk/rsl`** — a reader for RSL 1.0, the open content-licensing standard. Three layers,
+  each usable alone:
+
+  - `locateLicence(url)` finds the document through every HTTP association mechanism the spec
+    defines: the `robots.txt` `License:` directive, the `Link` response header, an HTML
+    `<link rel="license">`, and an inline `<script type="application/rsl+xml">`.
+  - `parseRsl(xml)` / `parseRslOrNull(xml)` read it. `parseRslOrNull` is the one most callers want:
+    a licence that will not parse is a licence you do not have.
+  - `termsForUrl(doc, url)` answers the question an agent actually asks — what is permitted here,
+    at what price, from whom.
+
+  Three readings are deliberate, and each is the one that would otherwise take a publisher's work
+  without paying for it: a payment `type` outside the spec's vocabulary is **not** free; an
+  `<amount>` that will not parse is **not** zero; and precedence is resolved per QUESTION rather
+  than per document, so a narrow priced scope cannot erase a site-wide free `search` grant.
+
+- **The Open Licensing Protocol.** `acquireLicenseToken()` speaks the spec's `/token` endpoint —
+  Basic auth, `grant_type=client_credentials`, the `<license>` element **verbatim** and the resource
+  pattern it sat under. Every error code stays distinct (`invalid_client` is your secret;
+  `invalid_resource` is that publisher not being managed by the server they named), and
+  `olpRetryable()` says which two are worth trying again.
+
+  This matters because RSL's `content@server` is not a hint: the spec requires a client to obtain a
+  licence from that server *before access, even when the licence is free*. Paying the price printed
+  on such a page moves money and licenses nothing.
+
+- **`@naulon/wayfarer` honours all of it.** `spendGate` — the one evaluator both the research run
+  and the MCP pay tool call — refuses a read the publisher prohibits, refuses an **undischarged**
+  licence-server obligation (naming which of the two reasons it is: no credentials configured, or
+  the server refused these), and turns a quote far above the published price into a human approval
+  rather than a payment. `licenceOverchargeTolerance` defaults to 25%, generous enough that a fee
+  leg is not an overcharge.
+
+  Terms are cached per origin with in-flight de-duplication, so ten candidates on one host ask
+  `robots.txt` once. A licence token reaches the wire in exactly one place — `agentFetch` presents
+  `Authorization: License <token>` for any URL the token's resource pattern admits.
 
 - **`gateScope.includeExtensions`** — a whole-site publisher can opt a file extension
   back into the toll. Site mode drops every static extension by default (`.pdf`,
@@ -31,6 +77,19 @@ tags and the auto-generated notes on each GitHub Release.
   `normalizeIncludeExtensions` (`@naulon/shared`) is the write-path validator.
   A consumer deriving slugs for a stored catalog MUST pass the same options the gate
   is configured with, or the two planes key the same URL differently.
+
+### Changed
+
+- **`FetchResult` gains `header(name)`** (`@naulon/sdk/crawl`) and `Fetcher`'s init accepts
+  `method` / `body`. Both are optional and additive. `header` is a METHOD rather than a `headers`
+  record on purpose: a native `Response` already satisfies `Fetcher` structurally, and a property
+  named `headers` would collide with `Response.headers` and break every fake that hands `fetch`'s
+  own result straight to an adapter.
+
+- **The WordPress plugin's payment challenge points at the licence.** A 402 now carries
+  `Link: <…/license.xml>; rel="license"; type="application/rsl+xml"`, so an agent learns the terms
+  from the response it already holds instead of going back for `robots.txt`. Silent when no licence
+  has been published — nothing is advertised that is not served.
 
 ## v0.7.4
 
