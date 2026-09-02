@@ -16,21 +16,41 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
-## v0.8.2
+## v0.8.3
 
-Ships the WordPress plugin 0.5.3. **No npm package changed.**
+Ships the WordPress plugin 0.5.3, and the four npm packages that had changed since v0.8.1
+without their versions moving.
 
-The plugin's copy of the agent list gained `exasearchbot`. Classification runs locally in the
-plugin — that is why the list exists twice — so a crawler added to the kernel list reaches a
-WordPress site only through a plugin release. Between naulon#92 and this tag the fleet gate
-charged Exa and every WordPress site served it free, which is precisely the drift
-`ClassifierParityTest` exists to catch; it caught it, in CI, before the row shipped.
+**v0.8.2 published nothing.** It was tagged with those four versions standing still, and the
+release workflow refused it — correctly, and for exactly the reason this repo added that
+guard: the publish is idempotent, so an unchanged version is skipped, and a skip is
+indistinguishable from a successful release in the log. The tag is left in place as the record
+of a release that did not happen.
 
-That guard was also hardened in the same change. It extracted list entries with a regex over
-the whole array body, so it read every double-quoted string — comments included. The kernel
-list carried no comments until the Exa row added the first one, and a future comment quoting a
-word would have entered the list as a crawler token and failed the test against a PHP copy that
-was perfectly correct.
+`@naulon/enforce` 0.4.2 → **0.4.3**
+* `httpPublisherConfigSource` — an in-app enforcer now reads its scope, licence identity, SEO
+  allowlist and crawler policy from the control plane instead of a literal in the publisher's
+  own bundle. Cached per host with stale-if-error; every failure resolves rather than throws.
+* `serveX402Manifest` answers `/.well-known/x402`, the path every 402's `Link: rel="payment"`
+  header advertises and which an in-app host previously 404'd.
+* A quote now always carries the settlement chain it is payable on. An absent network was
+  being resolved against whichever runtime received the quote, so a fleet on Base emitted 402s
+  advertising testnet USDC.
+* The discovery manifest states its scope. A site-scoped publisher was printing a prefix list
+  that understated what it tolls.
+* `ExaSearchBot` is recognised and charged by default.
+
+`@naulon/shared` 0.4.2 → **0.4.3**
+* The crawler registry gains Exa, with the reasoning for treating a self-described search
+  engine as an assistant recorded on the row.
+* Citation licences, network constants and the Supabase paging helper moved with #89/#95/#96.
+
+`@naulon/wayfarer` 0.4.0 → **0.4.1** — licence store follows the citation-scope change.
+
+`@naulon/wayfarer-mcp` 0.5.0 → **0.5.1** — a mount can restrict which tools it registers, which
+is what stands up an unauthenticated read-only surface safely.
+
+`@naulon/sdk` is unchanged and is not republished.
 
 ## v0.8.1
 
