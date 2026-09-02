@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.5.1
+Stable tag: 0.5.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -160,7 +160,7 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
-= 0.5.1 =
+= 0.5.2 =
 * When an agent is asked to pay, the response now points at your licence. An agent that meets your toll already has that response in its hand — before, it had to go back and read your robots.txt to find out what you allow and what it costs. Now it learns both in the same breath, which is one fewer reason for it to give up and read something else.
 * Nothing is advertised that is not served: if your licence has not been published yet, the pointer stays off rather than sending a crawler to a page that is not there.
 
@@ -208,7 +208,7 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Upgrade Notice ==
 
-= 0.5.1 =
+= 0.5.2 =
 When an agent is turned away for payment, the response now points at your licence — so it learns what you allow and what it costs in the same request, instead of going back for your robots.txt.
 
 = 0.5.0 =

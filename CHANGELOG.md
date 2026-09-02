@@ -16,10 +16,33 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
+## v0.8.1
+
+Ships the WordPress plugin 0.5.2. **No npm package changed** — every one of them shipped in
+v0.8.0 and is on the registry.
+
+This tag exists because v0.8.0 published to npm and then failed while packaging: the plugin's
+readme carried a Changelog entry for the shipping version and no matching Upgrade Notice, and the
+guard that catches that ran *after* the publish. The GitHub Release step was skipped, so the plugin
+zip and the update manifest were never built and no site was offered the update. The plugin version
+folds 0.5.1 into 0.5.2 rather than advertising a version that no site could ever have installed, and
+the guard now runs with the other three, before anything irreversible.
+
+### Changed
+
+- **The plugin's payment challenge points at the licence.** A 402 carries
+  `Link: <…/license.xml>; rel="license"; type="application/rsl+xml"`, so an agent learns the terms
+  from the response it already holds instead of going back for `robots.txt`. Silent when no licence
+  has been published — nothing is advertised that is not served.
+
 ## v0.8.0
 
 Ships `@naulon/sdk` 0.4.0 · `@naulon/shared` 0.4.2 · `@naulon/enforce` 0.4.2 ·
-`@naulon/wayfarer` 0.4.0 · `@naulon/wayfarer-mcp` 0.5.0 · the WordPress plugin 0.5.1.
+`@naulon/wayfarer` 0.4.0 · `@naulon/wayfarer-mcp` 0.5.0.
+
+The plugin was meant to ship here too and did not — packaging failed after the npm publish, so no
+zip and no update manifest were built. It ships in v0.8.1, as 0.5.2. The plugin entry below is
+listed under that tag instead.
 
 The headline: an agent built on `@naulon/wayfarer` now reads what a publisher **publishes**, not
 only what their 402 charges — and it will refuse a page whose publisher forbids AI use, however
@@ -85,11 +108,6 @@ much budget it has.
   record on purpose: a native `Response` already satisfies `Fetcher` structurally, and a property
   named `headers` would collide with `Response.headers` and break every fake that hands `fetch`'s
   own result straight to an adapter.
-
-- **The WordPress plugin's payment challenge points at the licence.** A 402 now carries
-  `Link: <…/license.xml>; rel="license"; type="application/rsl+xml"`, so an agent learns the terms
-  from the response it already holds instead of going back for `robots.txt`. Silent when no licence
-  has been published — nothing is advertised that is not served.
 
 ## v0.7.4
 
