@@ -59,6 +59,7 @@ export function makeGuardedFetcher(opts: GuardedFetcherOpts): Fetcher {
       throw new Error(`crawl fetcher: url must be https (${u.protocol})`);
     }
 
+    const method = init?.method ?? "GET";
     const headers: Record<string, string> = {
       "user-agent": "naulon-crawl/1 (+catalog-draft)",
       accept:
@@ -71,24 +72,37 @@ export function makeGuardedFetcher(opts: GuardedFetcherOpts): Fetcher {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await opts.fetchImpl(url, { method: "GET", headers, redirect: "manual", signal: controller.signal });
-        return wrapResponse(res.status, res.ok, await res.text().catch(() => ""));
+        const res = await opts.fetchImpl(url, {
+          method,
+          headers,
+          ...(method === "POST" && init?.body !== undefined ? { body: init.body } : {}),
+          redirect: "manual",
+          signal: controller.signal,
+        });
+        const out: Record<string, string> = {};
+        res.headers?.forEach?.((v: string, k: string) => {
+          out[k.toLowerCase()] = v;
+        });
+        return wrapResponse(res.status, res.ok, await res.text().catch(() => ""), out);
       } finally {
         clearTimeout(timer);
       }
     }
 
     // Real path — node http(s) with the connect-time guarded lookup (no rebind window).
-    const raw = await getViaNode(url, headers, timeoutMs, allowPrivate, u.protocol);
-    return wrapResponse(raw.status, raw.status >= 200 && raw.status < 300, raw.body);
+    const raw = await getViaNode(url, headers, timeoutMs, allowPrivate, u.protocol, method, init?.body);
+    return wrapResponse(raw.status, raw.status >= 200 && raw.status < 300, raw.body, raw.headers);
   };
 }
 
 /** A `FetchResult` over a buffered body. `json()` throws on non-JSON (the adapter narrows). */
-function wrapResponse(status: number, ok: boolean, body: string): FetchResult {
+function wrapResponse(status: number, ok: boolean, body: string, headers: Record<string, string> = {}): FetchResult {
   return {
     ok,
     status,
+    header(name: string) {
+      return headers[name.toLowerCase()];
+    },
     async text() {
       return body;
     },
@@ -101,6 +115,8 @@ function wrapResponse(status: number, ok: boolean, body: string): FetchResult {
 interface RawResponse {
   status: number;
   body: string;
+  /** Lower-cased, array values joined — node gives `string | string[]` per header. */
+  headers: Record<string, string>;
 }
 
 /** GET via node http(s) with the guarded lookup — the TOCTOU-safe real path. node never
@@ -111,10 +127,12 @@ function getViaNode(
   timeoutMs: number,
   allowPrivate: boolean,
   protocol: string,
+  method: "GET" | "POST" = "GET",
+  body?: string,
 ): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const transport = protocol === "http:" ? http : https;
-    const req = transport.request(urlStr, { method: "GET", headers, lookup: guardedLookup(allowPrivate) }, (res) => {
+    const req = transport.request(urlStr, { method, headers, lookup: guardedLookup(allowPrivate) }, (res) => {
       // A private-IP literal in the URL is caught here too (lookup only runs for DNS names).
       const ip = res.socket.remoteAddress;
       if (ip && !allowPrivate && isBlockedTarget(ip)) {
@@ -126,10 +144,17 @@ function getViaNode(
       res.on("data", (c: string) => {
         if (data.length < MAX_BODY) data += c;
       });
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data.slice(0, MAX_BODY) }));
+      res.on("end", () => {
+        const headers: Record<string, string> = {};
+        for (const [k, v] of Object.entries(res.headers)) {
+          if (typeof v === "string") headers[k.toLowerCase()] = v;
+          else if (Array.isArray(v)) headers[k.toLowerCase()] = v.join(", ");
+        }
+        resolve({ status: res.statusCode ?? 0, body: data.slice(0, MAX_BODY), headers });
+      });
     });
     req.setTimeout(timeoutMs, () => req.destroy(new Error(`crawl fetcher: timeout after ${timeoutMs}ms`)));
     req.on("error", reject);
-    req.end();
+    req.end(method === "POST" && body !== undefined ? body : undefined);
   });
 }

@@ -12,6 +12,23 @@
  * case) — it maximizes total relevance bought per dollar without the overhead of
  * solving a knapsack for sub-cent items.
  */
+import type { RslTermsForUrl } from "@naulon/sdk/rsl";
+
+/**
+ * What the agent knows about one URL's published terms — the resolved terms, plus whether the
+ * licence-server obligation (if any) has actually been DISCHARGED.
+ *
+ * The second half cannot live on `RslTermsForUrl`: that type is the publisher's document resolved,
+ * and whether we hold a token for it is a fact about this agent, not about them.
+ */
+export interface LicenceVerdict {
+  terms: RslTermsForUrl;
+  /** True when an OLP token for this resource is held. Meaningless unless the terms name a server. */
+  tokenHeld: boolean;
+  /** Why not, in the caller's words — a missing credential and a refused one are different problems
+   *  for different people, and collapsing them costs somebody an afternoon. */
+  tokenFailure?: string;
+}
 import { authorizeOrigin } from "./origin-policy.ts";
 import type { AppraisedCandidate, Decision } from "./types.ts";
 
@@ -53,6 +70,18 @@ export interface DecisionPolicy {
   approvalThresholdUsdc?: number;
   /** Kill-switch: when true, halt all new spend this run (free re-reads still allowed). */
   killSwitch?: boolean;
+  /**
+   * How far above a publisher's own PUBLISHED price a quote may go before a human is asked.
+   * A fraction (0.01 = 1%), applied only when the publisher declares an RSL price in USD.
+   *
+   * It is not zero because a declared price and a quote are allowed to differ slightly and
+   * innocently — rounding, and a fee leg whose floor makes it non-proportional. It is not absent
+   * because the opposite case is real and was shipped once already inside naulon itself: a
+   * document declaring `0.001` for a toll that charged `0.0011`. An agent that budgets from
+   * published terms and then pays a bigger number has been overcharged relative to the only
+   * promise the publisher made in public.
+   */
+  licenceOverchargeTolerance?: number;
 }
 
 /** Runtime state injected into `decide()` that can't be known from the candidates alone. */
@@ -69,6 +98,12 @@ export interface DecideContext {
    * treated as unknown — which an allowlist correctly denies by default.
    */
   gateBase?: string;
+  /**
+   * Published RSL terms per PAY URL — the same key `payUrlOf` derives, so a licence can never be
+   * matched to a different url than the one money goes to. Resolved by the caller (it is network
+   * work; `decide` stays pure) and absent for any url with no published licence.
+   */
+  licences?: Record<string, LicenceVerdict | null>;
 }
 
 /** Normalize a host for policy matching: lower-cased, trimmed; `undefined` stays `undefined`. */
@@ -141,6 +176,15 @@ export function spendGate(input: {
   paidCount?: number;
   /** Budget left in USDC — enables the budget gate when provided. */
   remainingUsdc?: number;
+  /**
+   * The publisher's own RSL terms for this URL, when they publish any.
+   *
+   * `undefined`/`null` = the publisher declares nothing, which is the common case and is NOT a
+   * refusal: it is exactly the world every agent operated in before RSL existed, and the operator's
+   * own policy still governs. What a declaration adds is the publisher's stated CONSENT, and that
+   * is the one thing an operator's allowlist cannot supply on their behalf.
+   */
+  licence?: LicenceVerdict | null;
 }): SpendVerdict {
   const { policy, priceUsdc } = input;
   const host = normHost(input.host);
@@ -158,6 +202,42 @@ export function spendGate(input: {
       action: "skip",
       reason: host === undefined ? "host unknown, not in allowlist" : `host ${host} not in allowlist`,
     };
+  }
+
+  // LICENCE — the publisher's own published terms, after the operator's policy (kill/deny/allow
+  // decide whether we deal with this host at all) and before the caps (which are about our budget,
+  // not their consent). A refusal here is the publisher saying no in public; no amount of budget
+  // makes it payable.
+  const verdict = input.licence;
+  const licence = verdict?.terms;
+  if (verdict && licence) {
+    if (licence.usage["ai-input"] === false) {
+      return {
+        ok: false,
+        action: "skip",
+        reason: `publisher's licence prohibits ai-input for this url (RSL scope ${licence.scopes[0] ?? "/"})`,
+      };
+    }
+    // RSL: with `content@server` set, a client MUST obtain the licence from that server —
+    // "regardless of the payment type, including when type='free'". Paying the inline price without
+    // one transfers money and licenses nothing. We DO speak OLP now, so this refuses only when the
+    // obligation is genuinely undischarged — and says which of the two reasons it is.
+    if (licence.obligation === "license-server" && !verdict.tokenHeld) {
+      return {
+        ok: false,
+        action: "skip",
+        reason: `publisher requires an RSL licence server (${licence.server}) and no licence was obtained: ${verdict.tokenFailure ?? "no client credentials are configured for it"}`,
+      };
+    }
+    const declared = licence.read?.amount;
+    const tolerance = policy.licenceOverchargeTolerance;
+    if (declared && declared.currency === "USD" && tolerance !== undefined && priceUsdc > declared.value * (1 + tolerance)) {
+      return {
+        ok: false,
+        action: "approve",
+        reason: `quote $${priceUsdc.toFixed(6)} exceeds the published price $${declared.value.toFixed(6)} — needs human approval`,
+      };
+    }
   }
 
   if (input.paidCount !== undefined && input.paidCount >= policy.maxPaid) {
@@ -200,6 +280,11 @@ export function spendGate(input: {
 export const DEFAULT_POLICY: DecisionPolicy = {
   relevanceFloor: 0.35,
   maxPaid: 5,
+  // Generous on purpose. A publisher's declared price and their quote are allowed to differ — the
+  // declaration may be the author's cut where the quote is the buyer's total, and a fee leg with a
+  // floor is not proportional. 25% absorbs all of that and still catches the case worth a human:
+  // a page that publishes one number and charges a multiple of it.
+  licenceOverchargeTolerance: 0.25,
 };
 
 function rank(candidates: AppraisedCandidate[]): AppraisedCandidate[] {
@@ -289,6 +374,7 @@ export function decide(
       paidForHost: host === undefined ? 0 : (paidByHost.get(host) ?? 0),
       paidCount,
       remainingUsdc: remaining,
+      licence: payUrl === undefined ? null : (context.licences?.[payUrl] ?? null),
     });
     if (!verdict.ok) {
       decisions.push({ ...base, action: verdict.action, reason: verdict.reason });

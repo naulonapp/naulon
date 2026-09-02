@@ -30,6 +30,19 @@ export interface FetchResult {
   status: number;
   text(): Promise<string>;
   json(): Promise<unknown>;
+  /**
+   * One response header by name, case-insensitively; multi-values joined with `, `.
+   *
+   * A METHOD rather than a `headers` record on purpose: a native `Response` already satisfies this
+   * interface structurally, and that is load-bearing — fakes across two repos hand `fetch`'s own
+   * result straight to a `Fetcher`. A property called `headers` would collide with
+   * `Response.headers: Headers` and break every one of them.
+   *
+   * Optional because a hand-written fake has no reason to carry headers, and every adapter that
+   * shipped before RSL discovery reads only the body. It exists for the one discovery channel that
+   * lives nowhere else: RSL's `Link: <…>; rel="license"; type="application/rsl+xml"`.
+   */
+  header?(name: string): string | undefined;
 }
 
 /** The ONLY way an adapter reaches the network. The crawl orchestrator injects an impl that
@@ -37,7 +50,15 @@ export interface FetchResult {
  *  Adapters never import `fetch`/`node:http` — that keeps the SSRF guard un-bypassable and the
  *  whole module network-testable with a plain fake. */
 export interface Fetcher {
-  (url: string, init?: { headers?: Record<string, string> }): Promise<FetchResult>;
+  (url: string, init?: {
+    headers?: Record<string, string>;
+    /** Defaults to GET. `POST` exists for exactly one caller: RSL's Open Licensing Protocol, whose
+     *  `/token` endpoint is a POST — and which must go through the SAME guarded path as everything
+     *  else, because its URL comes out of a publisher-controlled `server` attribute. */
+    method?: "GET" | "POST";
+    /** Request body, already encoded. Ignored on GET. */
+    body?: string;
+  }): Promise<FetchResult>;
 }
 
 /* ── what an adapter discovers ────────────────────────────────────────────────── */
