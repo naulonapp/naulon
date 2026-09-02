@@ -334,6 +334,29 @@ export interface BuildServerOptions {
    * this owns payee identity. Absent (every stdio/self-host caller) ⇒ no payee check, unchanged.
    */
   authorizePayee?: (input: { url: string; payTo: string }) => boolean | Promise<boolean>;
+  /**
+   * Restrict which tools and prompts this server registers. An **allowlist**, deliberately: a
+   * denylist silently exposes every tool added after it was written, and the tools most worth
+   * withholding are the ones that spend money.
+   *
+   * Absent (every stdio/self-host caller, unchanged) ⇒ the full surface.
+   *
+   * This differs from {@link BuildServerOptions.hostedInertSteer}, which leaves a tool REGISTERED
+   * and makes it refuse. That is right when the caller should be told "not on this mount"; it is
+   * wrong when the tool must not appear in the listing at all — a read-only public mount whose
+   * `tools/list` still advertises `naulon_pay_and_read` is not read-only to anything reading the
+   * listing, including a plugin reviewer.
+   *
+   * A name that matches nothing is a no-op, so an allowlist naming a tool this version does not
+   * have narrows the surface rather than widening it.
+   */
+  surface?: {
+    /** Tool names to register. Absent ⇒ all. */
+    tools?: readonly string[];
+    /** Prompt names to register. Absent ⇒ all. Prompts steer toward tools, so a prompt naming a
+     *  tool outside `tools` should be left out too — nothing enforces that, it is the caller's. */
+    prompts?: readonly string[];
+  };
 }
 
 /**
@@ -345,6 +368,31 @@ export interface BuildServerOptions {
  */
 export function buildServer(opts: BuildServerOptions = {}): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+
+  // ── Surface allowlist (opts.surface) ────────────────────────────────────────
+  // Every registration below goes through `reg` / `regPrompt`. An excluded name is registered
+  // on `discarded` — a second server that is never connected and never returned — instead of
+  // being skipped, so these keep the SDK's exact generic signature and the handlers below keep
+  // inferring their argument types from `inputSchema`. What the caller receives is a server whose
+  // `tools/list` genuinely does not contain the excluded tools, which is the property that
+  // matters: a read-only public mount still advertising `naulon_pay_and_read` is not read-only to
+  // anything that reads the listing, a plugin reviewer included.
+  const allowTool = opts.surface?.tools ? new Set(opts.surface.tools) : null;
+  const allowPrompt = opts.surface?.prompts ? new Set(opts.surface.prompts) : null;
+  const discarded = allowTool || allowPrompt ? new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }) : server;
+  // `registerTool`/`registerPrompt` are overloaded generics, so `Parameters<…>` collapses to
+  // `never`. The variadic body is therefore typed loosely and the WHOLE function is cast back to
+  // the SDK's own signature — which is what the call sites read, so every handler below still
+  // infers its arguments from `inputSchema`. The looseness is contained to these two lines.
+  type AnyRegister = (...args: unknown[]) => unknown;
+  const reg = ((...args: unknown[]) =>
+    ((allowTool && !allowTool.has(args[0] as string) ? discarded : server).registerTool as unknown as AnyRegister)(
+      ...args,
+    )) as unknown as McpServer["registerTool"];
+  const regPrompt = ((...args: unknown[]) =>
+    ((allowPrompt && !allowPrompt.has(args[0] as string) ? discarded : server).registerPrompt as unknown as AnyRegister)(
+      ...args,
+    )) as unknown as McpServer["registerPrompt"];
 
   // ── Session spend envelope ──────────────────────────────────────────────────
   // The budget is server-config, not a tool arg: the ceiling is read fresh from env
@@ -552,7 +600,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   };
 
   // ── naulon_discover (free) ──────────────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_discover",
     {
       title: "Discover tollable sources",
@@ -604,6 +652,29 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               // shape as a source that never searched at all. The tool description above carries the
               // rule that separates them (look at whether any sibling candidate carries a flag);
               // each field repeats it, because an agent may read one describe() and not the other.
+              // The fleet directory returns these three BESIDE the six above. They were never
+              // declared, so the SDK — which validates structuredContent with
+              // additionalProperties:false — rejected the ENTIRE naulon_discover response against
+              // a live fleet gate with "must NOT have additional properties". Discovery was dead
+              // on any fleet-directory source, while every test using a local catalog passed.
+              // Two of them are already first-class on `Candidate`, and the `discover` prompt
+              // tells the model to present "teaser price and citation price" — so the product
+              // always meant to surface them; only the schema was behind.
+              site: z
+                .string()
+                .optional()
+                .describe("Publisher host serving this source. Set by the fleet directory; absent for a single-origin source."),
+              priceUsdc: z
+                .number()
+                .optional()
+                .describe(
+                  "Indicative read price in USDC from the catalog. ADVISORY ONLY — naulon_quote's live 402 is the " +
+                    "truth, and the buyer's total may be higher once extra settlement legs are added. Never pay against this.",
+                ),
+              citationPriceUsdc: z
+                .number()
+                .optional()
+                .describe("Indicative citation price in USDC from the catalog. Advisory, same caveat as priceUsdc."),
               matchedInBody: z
                 .boolean()
                 .optional()
@@ -651,7 +722,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_status (free — the "run first" tool) ─────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_status",
     {
       title: "Check wallet, discovery, and gate status",
@@ -749,7 +820,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_appraise (free) ──────────────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_appraise",
     {
       title: "Appraise candidates for a topic",
@@ -815,7 +886,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_quote (free — the killer tool) ────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_quote",
     {
       title: "Quote the toll (free price probe)",
@@ -823,10 +894,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "Probe the real x402 toll for a source WITHOUT paying — the free 402 price check. Returns " +
         "the author price, the buyer's true total (when the publisher adds extra settlement legs such " +
         "as an operator fee, the total is higher than the author price), and the settlement terms. " +
-        "If the source is not gated, returns gated:false (it is a free read — just fetch it). If the " +
-        "server refuses to reach the url (off-gate identity, or operator policy such as a kill-switch " +
-        "or deny-list), returns refused:true with the reason in note — do NOT fetch it; it is neither " +
-        "payable nor free. Quote before paying so you can plan spend against real prices.",
+        "gated:false means one thing only — the origin answered 2xx, so it is a genuinely free read you " +
+        "may just fetch. Anything else returns refused:true with the reason in note: a refusal to reach " +
+        "the url (off-gate identity, or operator policy such as a kill-switch or deny-list), a 404, an " +
+        "unreachable origin, or a malformed 402. A refused url is NEITHER payable nor free — do not fetch " +
+        "it and do not report it as free; retry or fix the url. Quote before paying so you can plan spend " +
+        "against real prices.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug from naulon_discover."),
         url: z
@@ -846,8 +919,21 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .boolean()
           .optional()
           .describe(
-            "True if the server refused to reach this url — off-gate identity or operator policy (kill-switch / deny). " +
-              "The reason is in note; do NOT fetch it. Mutually exclusive with a gated/free result.",
+            "True when this url is NEITHER payable NOR free, so there is nothing to act on: the server refused to " +
+              "reach it (off-gate identity, or operator policy such as a kill-switch / deny-list), the path was not " +
+              "found (404), the origin was unreachable, or the gate answered a malformed 402. The reason is in note; " +
+              "do NOT fetch it, and do NOT treat it as free. Mutually exclusive with a gated/free result.",
+          ),
+        refusedReason: z
+          .enum(["policy", "not_found", "unreachable", "malformed"])
+          .optional()
+          .describe(
+            "WHY it was refused, always present when refused is true. `policy` — we would not even probe it " +
+              "(off-gate identity, kill-switch, deny-list): the url is out of bounds, so do not retry it. " +
+              "`not_found` — the path is wrong; re-quote with the canonical url from naulon_discover. " +
+              "`unreachable` — the origin or gate is down; the url may be fine, so retry later. " +
+              "`malformed` — the gate answered a 402 we cannot read; it is misconfigured, and retrying will not help. " +
+              "Two of these are the caller's to fix and two are not, which is why this is a field and not prose.",
           ),
         priceUsdc: z.number().optional().describe("The author leg price in USDC."),
         totalUsdc: z.number().optional().describe("The buyer's true total across all settlement legs — what the budget is debited."),
@@ -885,12 +971,20 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       if (refusal) {
         // A refusal is neither payable nor free: signal refused (not gated:false, which the tool
         // contract defines as "free read — just fetch it" and a buyer would act on).
-        return structured({ refused: true, note: refusal, ...envelope() });
+        return structured({ refused: true, refusedReason: "policy" as const, note: refusal, ...envelope() });
       }
       const outcome = await probe(target, KIND, payerAddress());
       if (outcome.status !== "gated") {
+        // Only a genuine 2xx is `gated:false`, because this tool DEFINES that as "a free read —
+        // just fetch it" and an agent acts on the field, not on the prose beside it. A 404, an
+        // unreachable origin and a malformed 402 are none of payable, free, or fetchable, which is
+        // exactly what `refused` already means everywhere else in this tool. Returning gated:false
+        // for them told a buyer an outage was a free read; `quoteNote` was written to soften that
+        // in prose, but a model that branches on `gated` never reads the note.
         return structured({
-          gated: false,
+          ...(outcome.status === "free"
+            ? { gated: false }
+            : { refused: true, refusedReason: outcome.status }),
           note: quoteNote(outcome, target),
           ...envelope(),
         });
@@ -916,7 +1010,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_pay_and_read ($ — spends) ─────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_pay_and_read",
     {
       title: "Pay the toll and read the source",
@@ -1187,7 +1281,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_read_held (free) ──────────────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_read_held",
     {
       title: "Re-read a source you already licensed (free)",
@@ -1246,7 +1340,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_research ($ — composite) ──────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_research",
     {
       title: "Research a topic end-to-end (composite)",
@@ -1455,7 +1549,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     `connect a token) — never print a raw environment-variable name to the user. Then offer to retry. ` +
     `If you fall back to your own general knowledge instead of a naulon-tolled source, say so ` +
     `explicitly and label it clearly as NOT naulon-cited.`;
-  server.registerPrompt(
+  regPrompt(
     "research",
     {
       title: "Research a topic (naulon)",
@@ -1481,7 +1575,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       ],
     }),
   );
-  server.registerPrompt(
+  regPrompt(
     "discover",
     {
       title: "Discover sources (naulon, free)",
@@ -1503,7 +1597,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       ],
     }),
   );
-  server.registerPrompt(
+  regPrompt(
     "verify",
     {
       title: "Fact-check a claim (naulon)",

@@ -575,9 +575,13 @@ test("naulon_quote does not pass off a 404 path as a plain free read", async () 
   await withStubGate(handler, async () => {
     const client = await connectedClient();
     const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
-    const q = res.structuredContent as { gated: boolean; note?: string };
-    assert.equal(q.gated, false, "still not gated (nothing was paid)");
-    assert.match(q.note ?? "", /404|not found|canonical url/i, "the note distinguishes a 404 from a genuine free read");
+    const q = res.structuredContent as { gated?: boolean; refused?: boolean; note?: string };
+    // The FIELD must carry this, not only the note. `gated:false` is defined by the tool as "a free
+    // read — just fetch it", and a model branching on it never reads the prose beside it. A 404 is
+    // neither payable nor free, which is what `refused` means.
+    assert.equal(q.refused, true, "a 404 is refused — neither payable nor free");
+    assert.equal(q.gated, undefined, "a refusal must not also claim gated:false, which means 'free, just fetch it'");
+    assert.match(q.note ?? "", /404|not found|canonical url/i, "the note still says which kind of refusal this was");
   });
 });
 
@@ -2008,10 +2012,19 @@ test("WP-2 T2 granular + L-OSS-3: naulon_pay_and_read's fleet-default allow is s
         // silently off-gate-skipped by spendGate's allowlist, having lost the identity-pin match
         // that covered it before any allowlist was stated. Proves it still doesn't.
         const gateHostQuote = await client.callTool({ name: "naulon_quote", arguments: { slug: "some-other-essay" } });
-        const gateHostStructured = gateHostQuote.structuredContent as { refused?: boolean; note?: string };
-        assert.ok(
-          !gateHostStructured.refused,
-          `L-OSS-3: a slug-only target on the gate host must not be off-gate refused even once an allowlist is stated — got ${JSON.stringify(gateHostStructured)}`,
+        const gateHostStructured = gateHostQuote.structuredContent as {
+          refused?: boolean;
+          refusedReason?: string;
+          note?: string;
+        };
+        // The old form asserted `refused !== true`, which stopped saying what this test means once
+        // a 404 became a refusal too. What it is about is the ORIGIN POLICY: a slug-only target on
+        // the gate host must never be refused as out-of-bounds. A 404 from the stub is expected and
+        // fine — it means we were allowed to probe and the path simply was not there.
+        assert.notEqual(
+          gateHostStructured.refusedReason,
+          "policy",
+          `L-OSS-3: a slug-only target on the gate host must not be POLICY-refused once an allowlist is stated — got ${JSON.stringify(gateHostStructured)}`,
         );
       } finally {
         stub.restore();
@@ -2364,4 +2377,123 @@ test("naulon_appraise accepts the match-evidence flags and scores WITH them", as
     "identical teasers, different evidence → different scores, or the flags never arrived",
   );
   assert.match(by("body").rationale, /full text/);
+});
+
+// ── surface allowlist ─────────────────────────────────────────────────────────
+// A restricted mount must not merely refuse the tools it withholds — it must not LIST them.
+// `hostedInertSteer` already covers "registered but refuses"; this covers "not there at all",
+// which is what a public read-only mount needs, because anything reading `tools/list` (a plugin
+// reviewer, or a model deciding what it may do) sees the listing, not the handler.
+
+test("surface.tools narrows what the server lists, and the excluded tools are gone", async () => {
+  const client = await connectedClientWith({ surface: { tools: ["naulon_discover", "naulon_quote"] } });
+  const names = (await client.listTools()).tools.map((t) => t.name).sort();
+  assert.deepEqual(names, ["naulon_discover", "naulon_quote"]);
+  for (const withheld of ["naulon_pay_and_read", "naulon_research", "naulon_read_held", "naulon_status", "naulon_appraise"]) {
+    assert.ok(!names.includes(withheld), `${withheld} is still listed on a restricted mount`);
+  }
+});
+
+test("a withheld tool is not callable, not merely unlisted", async () => {
+  const client = await connectedClientWith({ surface: { tools: ["naulon_discover"] } });
+  // The SDK surfaces a tool-level failure as a RESULT with `isError`, not a rejection — so
+  // asserting a throw here would pass for the wrong reason on any future SDK that stops throwing.
+  // Assert the contract that matters: the server does not know this tool.
+  const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+  assert.equal(res.isError, true, "a tool excluded from the surface must not execute");
+  assert.match(
+    JSON.stringify(res.content),
+    /not found/i,
+    "the refusal must be 'no such tool', not a handler that ran and declined — an unlisted but reachable spend tool is the worst of both",
+  );
+});
+
+test("surface.prompts narrows prompts independently of tools", async () => {
+  const client = await connectedClientWith({ surface: { prompts: ["discover"] } });
+  const prompts = (await client.listPrompts()).prompts.map((p) => p.name).sort();
+  assert.deepEqual(prompts, ["discover"]);
+  // Tools were not restricted, so the full tool surface must survive a prompt-only allowlist.
+  assert.ok((await client.listTools()).tools.length > 1, "restricting prompts must not narrow tools");
+});
+
+test("no surface option leaves the full surface registered (every existing caller)", async () => {
+  const client = await connectedClient();
+  const names = (await client.listTools()).tools.map((t) => t.name);
+  for (const expected of ["naulon_discover", "naulon_appraise", "naulon_quote", "naulon_status", "naulon_pay_and_read", "naulon_read_held", "naulon_research"]) {
+    assert.ok(names.includes(expected), `${expected} vanished from the default surface`);
+  }
+  assert.equal((await client.listPrompts()).prompts.length, 3);
+});
+
+test("an allowlist naming an unknown tool narrows rather than widens", async () => {
+  const client = await connectedClientWith({ surface: { tools: ["naulon_discover", "naulon_not_a_tool"] } });
+  const names = (await client.listTools()).tools.map((t) => t.name);
+  assert.deepEqual(names, ["naulon_discover"]);
+});
+
+// ── regression: the fleet directory's row shape ───────────────────────────────
+// naulon_discover's outputSchema declared six candidate fields; the FLEET directory returns
+// three more (site, priceUsdc, citationPriceUsdc). The SDK validates structuredContent with
+// additionalProperties:false, so against a live fleet gate the ENTIRE discover response was
+// rejected — "data/candidates/0 must NOT have additional properties" — while every test here
+// passed, because `withCatalog` serves only the six. Discovery was dead on the one source the
+// hosted mounts actually use, and no test could see it.
+//
+// This asserts the schema accepts the real shape. It is a SCHEMA test, not a transport test:
+// it drives the declared zod object directly, so it stays true whether or not a catalog is up.
+test("the discover output schema accepts a fleet-directory row verbatim", async () => {
+  const client = await connectedClient();
+  const discover = (await client.listTools()).tools.find((t) => t.name === "naulon_discover");
+  assert.ok(discover?.outputSchema, "naulon_discover lost its output schema");
+  const item = (discover.outputSchema as { properties: { candidates: { items: { properties: Record<string, unknown> } } } })
+    .properties.candidates.items.properties;
+  for (const field of ["slug", "title", "summary", "url", "matchedInBody", "matchedSemantic", "site", "priceUsdc", "citationPriceUsdc"]) {
+    assert.ok(field in item, `the fleet directory returns \`${field}\` and the schema does not declare it — every discover response against a fleet gate will be rejected whole`);
+  }
+});
+
+// ── quote: a refusal must be machine-readable, and never wear `gated:false` ────
+// `gated:false` is DEFINED by this tool as "a free read — just fetch it". A 404, an unreachable
+// origin and a malformed 402 are none of payable, free, or fetchable, and used to return
+// gated:false with the difference explained only in `note`. A model branches on the field and
+// never reads the prose beside it, so an outage read as a free read.
+test("quote maps every non-free probe outcome to a typed refusal", async () => {
+  const cases: { status: number; body: string; reason: string; label: string }[] = [
+    { status: 404, body: "nope", reason: "not_found", label: "a wrong path" },
+    { status: 502, body: "bad gateway", reason: "unreachable", label: "an origin that is down" },
+  ];
+  for (const kase of cases) {
+    await withStubGate(
+      (_req: IncomingMessage, res: ServerResponse): void => {
+        res.writeHead(kase.status, { "content-type": "text/plain" });
+        res.end(kase.body);
+      },
+      async () => {
+        const client = await connectedClient();
+        const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
+        const q = res.structuredContent as { gated?: boolean; refused?: boolean; refusedReason?: string; note?: string };
+        assert.equal(q.refused, true, `${kase.label} must be a refusal`);
+        assert.equal(q.refusedReason, kase.reason, `${kase.label} must say WHY in a field, not only in the note`);
+        assert.equal(q.gated, undefined, `${kase.label} must never also claim gated:false — that means "free, just fetch it"`);
+      },
+    );
+  }
+});
+
+test("quote still reports a genuine 2xx as a free read", async () => {
+  // The other half of the same contract: tightening the refusal must not turn a real free read
+  // into one. This is the only outcome that may say gated:false.
+  await withStubGate(
+    (_req: IncomingMessage, res: ServerResponse): void => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("the whole essay, free");
+    },
+    async () => {
+      const client = await connectedClient();
+      const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
+      const q = res.structuredContent as { gated?: boolean; refused?: boolean };
+      assert.equal(q.gated, false, "a 2xx IS a free read");
+      assert.equal(q.refused, undefined, "a free read is not a refusal");
+    },
+  );
 });
