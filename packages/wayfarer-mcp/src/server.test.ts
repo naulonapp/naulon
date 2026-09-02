@@ -2417,3 +2417,24 @@ test("an allowlist naming an unknown tool narrows rather than widens", async () 
   const names = (await client.listTools()).tools.map((t) => t.name);
   assert.deepEqual(names, ["naulon_discover"]);
 });
+
+// ── regression: the fleet directory's row shape ───────────────────────────────
+// naulon_discover's outputSchema declared six candidate fields; the FLEET directory returns
+// three more (site, priceUsdc, citationPriceUsdc). The SDK validates structuredContent with
+// additionalProperties:false, so against a live fleet gate the ENTIRE discover response was
+// rejected — "data/candidates/0 must NOT have additional properties" — while every test here
+// passed, because `withCatalog` serves only the six. Discovery was dead on the one source the
+// hosted mounts actually use, and no test could see it.
+//
+// This asserts the schema accepts the real shape. It is a SCHEMA test, not a transport test:
+// it drives the declared zod object directly, so it stays true whether or not a catalog is up.
+test("the discover output schema accepts a fleet-directory row verbatim", async () => {
+  const client = await connectedClient();
+  const discover = (await client.listTools()).tools.find((t) => t.name === "naulon_discover");
+  assert.ok(discover?.outputSchema, "naulon_discover lost its output schema");
+  const item = (discover.outputSchema as { properties: { candidates: { items: { properties: Record<string, unknown> } } } })
+    .properties.candidates.items.properties;
+  for (const field of ["slug", "title", "summary", "url", "matchedInBody", "matchedSemantic", "site", "priceUsdc", "citationPriceUsdc"]) {
+    assert.ok(field in item, `the fleet directory returns \`${field}\` and the schema does not declare it — every discover response against a fleet gate will be rejected whole`);
+  }
+});

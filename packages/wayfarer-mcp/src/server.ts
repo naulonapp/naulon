@@ -652,6 +652,29 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               // shape as a source that never searched at all. The tool description above carries the
               // rule that separates them (look at whether any sibling candidate carries a flag);
               // each field repeats it, because an agent may read one describe() and not the other.
+              // The fleet directory returns these three BESIDE the six above. They were never
+              // declared, so the SDK — which validates structuredContent with
+              // additionalProperties:false — rejected the ENTIRE naulon_discover response against
+              // a live fleet gate with "must NOT have additional properties". Discovery was dead
+              // on any fleet-directory source, while every test using a local catalog passed.
+              // Two of them are already first-class on `Candidate`, and the `discover` prompt
+              // tells the model to present "teaser price and citation price" — so the product
+              // always meant to surface them; only the schema was behind.
+              site: z
+                .string()
+                .optional()
+                .describe("Publisher host serving this source. Set by the fleet directory; absent for a single-origin source."),
+              priceUsdc: z
+                .number()
+                .optional()
+                .describe(
+                  "Indicative read price in USDC from the catalog. ADVISORY ONLY — naulon_quote's live 402 is the " +
+                    "truth, and the buyer's total may be higher once extra settlement legs are added. Never pay against this.",
+                ),
+              citationPriceUsdc: z
+                .number()
+                .optional()
+                .describe("Indicative citation price in USDC from the catalog. Advisory, same caveat as priceUsdc."),
               matchedInBody: z
                 .boolean()
                 .optional()
