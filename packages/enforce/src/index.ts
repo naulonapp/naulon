@@ -54,6 +54,7 @@ export { X402_MANIFEST_PATH, buildX402Manifest, type X402Manifest } from "./disc
 // "@naulon/enforce"`, threw at module load; and `NaulonMiddlewareOptions.observe` was a
 // slot whose type (`ObservationReporter`) no consumer could name.
 export * from "./enforce/quote-source.ts";
+export * from "./enforce/config-source.ts";
 export * from "./enforce/observation-sink.ts";
 export * from "./enforce/middleware.ts";
 export * from "./enforce/fetch-handler.ts";

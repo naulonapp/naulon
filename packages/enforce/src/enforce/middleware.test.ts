@@ -252,3 +252,109 @@ test("without `observe` the middleware behaves exactly as before (no throw, no r
   const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0") }));
   assert.equal(out.response?.status, 402);
 });
+
+// ── The control plane owns the policy ────────────────────────────────────────────
+// Reproductions of the two failures measured on a live site on 2026-09-02, where the
+// dashboard held the policy and the deployed bundle held a literal. There was no test
+// here that could have caught either, because the config had no way to arrive at all.
+
+import { staticPublisherConfigSource, httpPublisherConfigSource } from "./config-source.ts";
+import { resolvePublisher } from "./middleware.ts";
+
+const SEARCHBOT = "Mozilla/5.0 AppleWebKit/537.36; compatible; OAI-SearchBot/1.0; +https://openai.com/searchbot";
+
+test("a search indexer reads FREE by default — tolling one deindexes the site", async () => {
+  const mw = naulonMiddleware(opts);
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": SEARCHBOT } }));
+  assert.equal(out.response, null);
+});
+
+test("crawlerPolicy.charge from the CONTROL PLANE tolls that indexer", async () => {
+  // The prod bug: this policy sat in the tenant record while the site read a literal, so an
+  // indexer the publisher had explicitly set to charge read every article free for weeks.
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({
+      enforcement: { articlePrefixes: ["essays"], crawlerPolicy: { allow: [], block: [], charge: ["oai-searchbot"] } },
+    }),
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": SEARCHBOT } }));
+  assert.equal(out.response?.status, 402);
+});
+
+test("crawlerPolicy.block from the control plane refuses BEFORE payment", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({
+      enforcement: { articlePrefixes: ["essays"], crawlerPolicy: { allow: [], block: ["badbot"], charge: [] } },
+    }),
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "BadBot/1.0" } }));
+  assert.equal(out.response?.status, 403);
+});
+
+test("gateScope:site from the control plane tolls a path no local prefix covers", async () => {
+  // Second prod symptom: the dashboard said whole-site, the bundle said ["articles"], and
+  // every other page on the site was free to agents while the operator believed otherwise.
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({
+      enforcement: { gateScope: { mode: "site", excludePrefixes: ["api"] } },
+    }),
+  });
+  const tolled = await mw(new Request("http://h/about", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(tolled.response?.status, 402, "site mode covers /about");
+  const excluded = await mw(new Request("http://h/api/credits/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(excluded.response, null, "excludePrefixes still carves out the publisher's own API");
+});
+
+test("the licence issuer is pinned to the config in force, not a literal read at mount", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    publisher: { articlePrefixes: ["essays"], licenseIdentity: "naulon:stale.example" },
+    config: staticPublisherConfigSource({
+      enforcement: { articlePrefixes: ["essays"], licenseIdentity: "naulon:h" },
+    }),
+    licenseVerification: {},
+    fetchImpl: (async () => new Response(JSON.stringify({ keys: [] }), { status: 200 })) as unknown as typeof fetch,
+  });
+  // A licence is presented; verification cannot succeed against an empty JWKS, so the read
+  // falls through to a 402 — the assertion is that this path runs at all without throwing on
+  // the mount-time issuer that is no longer true.
+  const out = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": "not-a-jws" } }),
+  );
+  assert.equal(out.response?.status, 402);
+});
+
+test("resolvePublisher: remote wins per FIELD, local survives where remote is silent", () => {
+  const merged = resolvePublisher(
+    { articlePrefixes: ["old"], licenseIdentity: "naulon:local", seoAllowlist: ["bingbot"] },
+    { articlePrefixes: ["new"], crawlerPolicy: { allow: [], block: [], charge: ["oai-searchbot"] } },
+  ) as Record<string, unknown>;
+  assert.deepEqual(merged["articlePrefixes"], ["new"]);
+  assert.deepEqual(merged["seoAllowlist"], ["bingbot"], "a field the tenant never set keeps the local floor");
+  assert.equal(merged["licenseIdentity"], "naulon:local");
+  assert.ok(merged["crawlerPolicy"]);
+});
+
+test("resolvePublisher: neither source ⇒ undefined (the caller passes through)", () => {
+  assert.equal(resolvePublisher(undefined, undefined), undefined);
+  assert.equal(resolvePublisher(undefined, {}), undefined);
+});
+
+test("a control plane that cannot be reached passes the request through — never a 500", async () => {
+  const mw = naulonMiddleware({
+    quote,
+    verifyUrl: opts.verifyUrl,
+    apiKey: opts.apiKey,
+    config: httpPublisherConfigSource("http://cloud/c", "k", {
+      fetchImpl: (async () => {
+        throw new Error("ECONNREFUSED");
+      }) as unknown as typeof fetch,
+      onFailure: () => {},
+    }),
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(out.response, null, "a lookup failure on our side must not break their site");
+});

@@ -26,12 +26,14 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { logger } from "hono/logger";
 import {
+  activeNetwork,
   botAuthDirectoryBody,
   botAuthKeyFromSeed,
   BOT_AUTH_DIRECTORY_CONTENT_TYPE,
   BOT_AUTH_DIRECTORY_PATH,
   externalSchemeOf,
   getConfig,
+  getNetwork,
   signBotAuth,
   signBotAuthDirectory,
   type BotAuthKey,
@@ -542,7 +544,12 @@ export function createApp(
     const host = c.req.header("host") ?? new URL(c.req.url).host;
     const publisher = await resolver.resolve(host);
     if (!publisher) return c.json({ error: "no toll for this host" }, 404);
-    return c.json(buildX402Manifest(publisher));
+    // Pinned to the TENANT's chain, not the fleet default. The 402 this host emits already
+    // resolves per tenant (`quote.network` → `buildRequirements`); the manifest did not, so a
+    // publisher settling on another chain published terms naming ours. An agent that reads the
+    // manifest, prepares a payment on that chain and then meets a 402 for a different one reads
+    // it as our bug — correctly.
+    return c.json(buildX402Manifest(publisher, publisher.settlementNetwork ? getNetwork(publisher.settlementNetwork) : activeNetwork()));
   });
 
   // Online verify tier: confirm a license's event is real and (optionally) not
