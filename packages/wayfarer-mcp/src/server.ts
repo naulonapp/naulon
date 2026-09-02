@@ -894,10 +894,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "Probe the real x402 toll for a source WITHOUT paying — the free 402 price check. Returns " +
         "the author price, the buyer's true total (when the publisher adds extra settlement legs such " +
         "as an operator fee, the total is higher than the author price), and the settlement terms. " +
-        "If the source is not gated, returns gated:false (it is a free read — just fetch it). If the " +
-        "server refuses to reach the url (off-gate identity, or operator policy such as a kill-switch " +
-        "or deny-list), returns refused:true with the reason in note — do NOT fetch it; it is neither " +
-        "payable nor free. Quote before paying so you can plan spend against real prices.",
+        "gated:false means one thing only — the origin answered 2xx, so it is a genuinely free read you " +
+        "may just fetch. Anything else returns refused:true with the reason in note: a refusal to reach " +
+        "the url (off-gate identity, or operator policy such as a kill-switch or deny-list), a 404, an " +
+        "unreachable origin, or a malformed 402. A refused url is NEITHER payable nor free — do not fetch " +
+        "it and do not report it as free; retry or fix the url. Quote before paying so you can plan spend " +
+        "against real prices.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug from naulon_discover."),
         url: z
@@ -917,8 +919,21 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .boolean()
           .optional()
           .describe(
-            "True if the server refused to reach this url — off-gate identity or operator policy (kill-switch / deny). " +
-              "The reason is in note; do NOT fetch it. Mutually exclusive with a gated/free result.",
+            "True when this url is NEITHER payable NOR free, so there is nothing to act on: the server refused to " +
+              "reach it (off-gate identity, or operator policy such as a kill-switch / deny-list), the path was not " +
+              "found (404), the origin was unreachable, or the gate answered a malformed 402. The reason is in note; " +
+              "do NOT fetch it, and do NOT treat it as free. Mutually exclusive with a gated/free result.",
+          ),
+        refusedReason: z
+          .enum(["policy", "not_found", "unreachable", "malformed"])
+          .optional()
+          .describe(
+            "WHY it was refused, always present when refused is true. `policy` — we would not even probe it " +
+              "(off-gate identity, kill-switch, deny-list): the url is out of bounds, so do not retry it. " +
+              "`not_found` — the path is wrong; re-quote with the canonical url from naulon_discover. " +
+              "`unreachable` — the origin or gate is down; the url may be fine, so retry later. " +
+              "`malformed` — the gate answered a 402 we cannot read; it is misconfigured, and retrying will not help. " +
+              "Two of these are the caller's to fix and two are not, which is why this is a field and not prose.",
           ),
         priceUsdc: z.number().optional().describe("The author leg price in USDC."),
         totalUsdc: z.number().optional().describe("The buyer's true total across all settlement legs — what the budget is debited."),
@@ -956,12 +971,20 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       if (refusal) {
         // A refusal is neither payable nor free: signal refused (not gated:false, which the tool
         // contract defines as "free read — just fetch it" and a buyer would act on).
-        return structured({ refused: true, note: refusal, ...envelope() });
+        return structured({ refused: true, refusedReason: "policy" as const, note: refusal, ...envelope() });
       }
       const outcome = await probe(target, KIND, payerAddress());
       if (outcome.status !== "gated") {
+        // Only a genuine 2xx is `gated:false`, because this tool DEFINES that as "a free read —
+        // just fetch it" and an agent acts on the field, not on the prose beside it. A 404, an
+        // unreachable origin and a malformed 402 are none of payable, free, or fetchable, which is
+        // exactly what `refused` already means everywhere else in this tool. Returning gated:false
+        // for them told a buyer an outage was a free read; `quoteNote` was written to soften that
+        // in prose, but a model that branches on `gated` never reads the note.
         return structured({
-          gated: false,
+          ...(outcome.status === "free"
+            ? { gated: false }
+            : { refused: true, refusedReason: outcome.status }),
           note: quoteNote(outcome, target),
           ...envelope(),
         });

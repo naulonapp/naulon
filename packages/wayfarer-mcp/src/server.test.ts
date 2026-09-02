@@ -575,9 +575,13 @@ test("naulon_quote does not pass off a 404 path as a plain free read", async () 
   await withStubGate(handler, async () => {
     const client = await connectedClient();
     const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
-    const q = res.structuredContent as { gated: boolean; note?: string };
-    assert.equal(q.gated, false, "still not gated (nothing was paid)");
-    assert.match(q.note ?? "", /404|not found|canonical url/i, "the note distinguishes a 404 from a genuine free read");
+    const q = res.structuredContent as { gated?: boolean; refused?: boolean; note?: string };
+    // The FIELD must carry this, not only the note. `gated:false` is defined by the tool as "a free
+    // read — just fetch it", and a model branching on it never reads the prose beside it. A 404 is
+    // neither payable nor free, which is what `refused` means.
+    assert.equal(q.refused, true, "a 404 is refused — neither payable nor free");
+    assert.equal(q.gated, undefined, "a refusal must not also claim gated:false, which means 'free, just fetch it'");
+    assert.match(q.note ?? "", /404|not found|canonical url/i, "the note still says which kind of refusal this was");
   });
 });
 
@@ -2008,10 +2012,19 @@ test("WP-2 T2 granular + L-OSS-3: naulon_pay_and_read's fleet-default allow is s
         // silently off-gate-skipped by spendGate's allowlist, having lost the identity-pin match
         // that covered it before any allowlist was stated. Proves it still doesn't.
         const gateHostQuote = await client.callTool({ name: "naulon_quote", arguments: { slug: "some-other-essay" } });
-        const gateHostStructured = gateHostQuote.structuredContent as { refused?: boolean; note?: string };
-        assert.ok(
-          !gateHostStructured.refused,
-          `L-OSS-3: a slug-only target on the gate host must not be off-gate refused even once an allowlist is stated — got ${JSON.stringify(gateHostStructured)}`,
+        const gateHostStructured = gateHostQuote.structuredContent as {
+          refused?: boolean;
+          refusedReason?: string;
+          note?: string;
+        };
+        // The old form asserted `refused !== true`, which stopped saying what this test means once
+        // a 404 became a refusal too. What it is about is the ORIGIN POLICY: a slug-only target on
+        // the gate host must never be refused as out-of-bounds. A 404 from the stub is expected and
+        // fine — it means we were allowed to probe and the path simply was not there.
+        assert.notEqual(
+          gateHostStructured.refusedReason,
+          "policy",
+          `L-OSS-3: a slug-only target on the gate host must not be POLICY-refused once an allowlist is stated — got ${JSON.stringify(gateHostStructured)}`,
         );
       } finally {
         stub.restore();
@@ -2437,4 +2450,50 @@ test("the discover output schema accepts a fleet-directory row verbatim", async 
   for (const field of ["slug", "title", "summary", "url", "matchedInBody", "matchedSemantic", "site", "priceUsdc", "citationPriceUsdc"]) {
     assert.ok(field in item, `the fleet directory returns \`${field}\` and the schema does not declare it — every discover response against a fleet gate will be rejected whole`);
   }
+});
+
+// ── quote: a refusal must be machine-readable, and never wear `gated:false` ────
+// `gated:false` is DEFINED by this tool as "a free read — just fetch it". A 404, an unreachable
+// origin and a malformed 402 are none of payable, free, or fetchable, and used to return
+// gated:false with the difference explained only in `note`. A model branches on the field and
+// never reads the prose beside it, so an outage read as a free read.
+test("quote maps every non-free probe outcome to a typed refusal", async () => {
+  const cases: { status: number; body: string; reason: string; label: string }[] = [
+    { status: 404, body: "nope", reason: "not_found", label: "a wrong path" },
+    { status: 502, body: "bad gateway", reason: "unreachable", label: "an origin that is down" },
+  ];
+  for (const kase of cases) {
+    await withStubGate(
+      (_req: IncomingMessage, res: ServerResponse): void => {
+        res.writeHead(kase.status, { "content-type": "text/plain" });
+        res.end(kase.body);
+      },
+      async () => {
+        const client = await connectedClient();
+        const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
+        const q = res.structuredContent as { gated?: boolean; refused?: boolean; refusedReason?: string; note?: string };
+        assert.equal(q.refused, true, `${kase.label} must be a refusal`);
+        assert.equal(q.refusedReason, kase.reason, `${kase.label} must say WHY in a field, not only in the note`);
+        assert.equal(q.gated, undefined, `${kase.label} must never also claim gated:false — that means "free, just fetch it"`);
+      },
+    );
+  }
+});
+
+test("quote still reports a genuine 2xx as a free read", async () => {
+  // The other half of the same contract: tightening the refusal must not turn a real free read
+  // into one. This is the only outcome that may say gated:false.
+  await withStubGate(
+    (_req: IncomingMessage, res: ServerResponse): void => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("the whole essay, free");
+    },
+    async () => {
+      const client = await connectedClient();
+      const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
+      const q = res.structuredContent as { gated?: boolean; refused?: boolean };
+      assert.equal(q.gated, false, "a 2xx IS a free read");
+      assert.equal(q.refused, undefined, "a free read is not a refusal");
+    },
+  );
 });
