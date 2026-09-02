@@ -134,7 +134,20 @@ export interface PublisherConfig {
    * publisher-chosen free sections on top (no leading slash, like articlePrefixes).
    */
   gateScope?:
-    | { mode: "prefixes" }
+    | {
+        mode: "prefixes";
+        /**
+         * How much of the path after a matching prefix becomes the slug — `@naulon/sdk`'s
+         * `PrefixDepth`. Absent ⇒ `"segment"`, today's behaviour byte for byte.
+         *
+         * `"rest"` exists for dated and nested URLs (`/blog/2026/09/post`), which `"segment"`
+         * keys to the DATE — so every post in that month collides on one slug and the credits
+         * lookup answers one article's contributors for all of them, or 404s and gives the lot
+         * away free. It is opt-in because the inverse shape (an article with sub-pages) is
+         * broken by `"rest"`, and no single default serves both.
+         */
+        depth?: "segment" | "rest";
+      }
     | {
         mode: "site";
         excludePrefixes: string[];

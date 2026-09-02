@@ -254,3 +254,77 @@ test("an extension NOT on the list was never free, so opting it in changes nothi
 test("the list is sorted and unique — it is read by humans and diffed by reviewers", () => {
   assert.deepEqual([...STATIC_EXTENSIONS], [...new Set(STATIC_EXTENSIONS)].sort());
 });
+
+/**
+ * Prefix depth (`PrefixDepth`) — the nested-path bug.
+ *
+ * `slugFromPath` captured ONE segment, so a dated or nested URL keyed to its first segment.
+ * That is not a missed toll, it is a COLLISION: every article under `/papers/2026/` keyed to
+ * `2026`, so one credits lookup answered for all of them — paying one article's contributors
+ * for another's read, or 404ing and giving the whole year away free.
+ */
+test("segment depth is the default, and is byte-identical to the pre-option behaviour", () => {
+  const p = ["papers"];
+  for (const path of ["/papers/quantum-x", "/papers/2026/quantum-x.pdf", "/papers/a/b/c"]) {
+    assert.equal(slugFromPath(path, p), slugFromPath(path, p, {}), path);
+    assert.equal(slugFromPath(path, p), slugFromPath(path, p, { depth: "segment" }), path);
+  }
+  assert.equal(slugFromPath("/papers/quantum-x", p), "quantum-x");
+  assert.equal(slugFromPath("/papers/2026/quantum-x.pdf", p), "2026");
+});
+
+test("segment depth COLLIDES every article under one nested parent — the bug this option exists for", () => {
+  const p = ["blog"];
+  const a = slugFromPath("/blog/2026/09/first-post", p);
+  const b = slugFromPath("/blog/2026/09/second-post", p);
+  assert.equal(a, "2026");
+  assert.equal(a, b, "two different articles keyed the same — this is the defect, pinned");
+});
+
+test("rest depth keys the whole remainder, so nested articles stop colliding", () => {
+  const p = ["blog"];
+  const o = { depth: "rest" } as const;
+  assert.equal(slugFromPath("/blog/2026/09/first-post", p, o), "2026/09/first-post");
+  assert.equal(slugFromPath("/blog/2026/09/second-post", p, o), "2026/09/second-post");
+  assert.notEqual(slugFromPath("/blog/2026/09/first-post", p, o), slugFromPath("/blog/2026/09/second-post", p, o));
+});
+
+test("rest depth is unchanged from segment for a flat path — the common case does not move", () => {
+  const p = ["essays"];
+  assert.equal(slugFromPath("/essays/on-stillness", p, { depth: "rest" }), "on-stillness");
+  assert.equal(slugFromPath("/essays/on-stillness", p, { depth: "rest" }), slugFromPath("/essays/on-stillness", p));
+});
+
+test("rest depth still stops at a query or hash, and still decodes", () => {
+  const p = ["papers"];
+  const o = { depth: "rest" } as const;
+  assert.equal(slugFromPath("/papers/2026/a-b?utm=x", p, o), "2026/a-b");
+  assert.equal(slugFromPath("/papers/2026/a-b#s", p, o), "2026/a-b");
+  assert.equal(slugFromPath("/papers/2026/caf%C3%A9", p, o), "2026/café");
+  assert.equal(slugFromPath("/papers/2026/100%", p, o), null, "undecodable stays unkeyed under rest too");
+});
+
+test("rest depth never turns a control route or an unprefixed path into an article", () => {
+  const p = ["papers"];
+  const o = { depth: "rest" } as const;
+  assert.equal(slugFromPath("/_naulon/health", p, o), null);
+  assert.equal(slugFromPath("/other/2026/x", p, o), null);
+  assert.equal(slugFromPath("/papers", p, o), null, "the prefix alone is not an article");
+  assert.equal(slugFromPath("/papers/x", [], o), null, "no prefixes, no article");
+});
+
+test("the matcher cache is keyed by depth, so flipping it is not served a stale regex", () => {
+  const p = ["papers"];
+  // Same prefix set, both depths, in both orders — a cache keyed on prefixes alone returns the
+  // first-compiled matcher for the second call and the option silently does nothing.
+  assert.equal(slugFromPath("/papers/2026/x", p, { depth: "segment" }), "2026");
+  assert.equal(slugFromPath("/papers/2026/x", p, { depth: "rest" }), "2026/x");
+  assert.equal(slugFromPath("/papers/2026/x", p, { depth: "segment" }), "2026");
+});
+
+test("deriveSlug carries the depth, so the crawler keys what the gate will ask for", () => {
+  const url = "https://site.test/blog/2026/09/post";
+  assert.equal(deriveSlug(url, ["blog"]), "2026");
+  assert.equal(deriveSlug(url, ["blog"], { depth: "rest" }), "2026/09/post");
+  assert.equal(deriveSlug(url, ["blog"], { depth: "rest" }), slugFromPath("/blog/2026/09/post", ["blog"], { depth: "rest" }));
+});

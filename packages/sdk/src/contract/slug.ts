@@ -31,11 +31,15 @@ function escapeRe(s: string): string {
 // distinct prefix configs, not one per request, and a crawl sweep matches one config
 // against thousands of URLs. Either way the regex is compiled once.
 const articleReCache = new Map<string, RegExp>();
-function articleRe(prefixes: string[]): RegExp {
-  const key = prefixes.join("|");
+function articleRe(prefixes: string[], depth: PrefixDepth): RegExp {
+  const key = `${depth}\u0000${prefixes.join("|")}`;
   let re = articleReCache.get(key);
   if (!re) {
-    re = new RegExp(`^/(?:${prefixes.map(escapeRe).join("|")})/([^/?#]+)`);
+    // `segment` stops at the next `/`; `rest` takes the whole remainder. The two differ ONLY
+    // for a nested path, and the cache key carries the depth because a publisher that flips
+    // it must not be served the previously compiled matcher.
+    const tail = depth === "rest" ? "([^?#]+)" : "([^/?#]+)";
+    re = new RegExp(`^/(?:${prefixes.map(escapeRe).join("|")})/${tail}`);
     articleReCache.set(key, re);
   }
   return re;
@@ -71,18 +75,59 @@ export function decodeSlug(raw: string): string | null {
 }
 
 /**
+ * How much of the path after a matching prefix becomes the slug.
+ *
+ * `"segment"` (the default, and what every publisher configured before this existed) takes ONE
+ * segment: `/papers/quantum-x` → `quantum-x`. `"rest"` takes the whole remainder:
+ * `/papers/2026/quantum-x.pdf` → `2026/quantum-x.pdf`.
+ *
+ * **Why this is a publisher choice and not a bug fix with one right answer.** They differ only
+ * on a nested path, and each is wrong for the other's URL shape:
+ *
+ * | path | `segment` | `rest` |
+ * |---|---|---|
+ * | `/papers/quantum-x` | `quantum-x` | `quantum-x` |
+ * | `/papers/2026/quantum-x` | **`2026`** — every article that year collides | `2026/quantum-x` |
+ * | `/papers/quantum-x/figures` | `quantum-x` — a sub-page keys to its article | **`quantum-x/figures`** — a separate key |
+ *
+ * A dated-URL publisher (`/blog/2026/09/post`) is silently broken under `segment`: every post in
+ * a month keys to the same slug, so the credits lookup answers one article's contributors for all
+ * of them, or 404s and gives the lot away free. A publisher whose articles have sub-pages is
+ * broken under `rest`. Neither default can serve both, which is why this is opt-in and why the
+ * absent value reproduces today's behaviour byte for byte.
+ */
+export type PrefixDepth = "segment" | "rest";
+
+/** Options for prefix-mode slugging. Absent reproduces today's behaviour exactly. */
+export interface PrefixSlugOpts {
+  /** See {@link PrefixDepth}. Absent ⇒ `"segment"`. */
+  depth?: PrefixDepth;
+}
+
+/**
  * Article slug from a request path like `/essays/on-stillness` (a trailing query/hash is
  * tolerated), using the publisher's article prefixes. Returns the decoded slug, or `null`
  * when the path is not a gateable article — no prefix matches, it is a gate control route,
  * there are no usable prefixes, or the key does not decode.
+ *
+ * `opts.depth` MUST be the one the publisher is configured with everywhere this is called —
+ * the gate, the crawler and the buy-side payee check all derive the key independently, and a
+ * disagreement means the crawl stages a row under a key the gate never asks for, or the buy
+ * side refuses a payment for the publisher's own wallet. That failure has happened once
+ * already for the site-mode branch (§PAYEE-SITE-MODE).
+ *
+ * A `"rest"` slug keeps a trailing slash if the path had one (`/papers/a/` → `a/`), exactly as
+ * site mode keeps it in the full pathname. That is deliberate consistency with the shipped
+ * function, not an oversight: normalising here and not there would give the two modes different
+ * answers for the same URL.
  */
-export function slugFromPath(path: string, prefixes: string[]): string | null {
+export function slugFromPath(path: string, prefixes: string[], opts?: PrefixSlugOpts): string | null {
   if (isControlRoute(path)) return null;
   // Drop empty prefixes — an empty alternative would make the regex match `//x` or any
   // leading slash and gate routes the publisher never opted in.
   const clean = prefixes.filter(Boolean);
   if (clean.length === 0) return null;
-  const m = path.match(articleRe(clean));
+  const m = path.match(articleRe(clean, opts?.depth ?? "segment"));
   return m ? decodeSlug(m[1]!) : null;
 }
 
@@ -209,9 +254,9 @@ function pathnameOf(url: string): string | null {
  * spelling of `slugFromPath`, so a staged catalog row is keyed exactly as the gate will key
  * the request that comes for it.
  */
-export function deriveSlug(url: string, prefixes: string[]): string | null {
+export function deriveSlug(url: string, prefixes: string[], opts?: PrefixSlugOpts): string | null {
   const pathname = pathnameOf(url);
-  return pathname === null ? null : slugFromPath(pathname, prefixes);
+  return pathname === null ? null : slugFromPath(pathname, prefixes, opts);
 }
 
 /** Site-mode slug from a full URL — the crawler-side spelling of `slugFromSitePath`.
