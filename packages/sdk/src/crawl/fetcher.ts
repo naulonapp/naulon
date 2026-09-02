@@ -72,7 +72,11 @@ export function makeGuardedFetcher(opts: GuardedFetcherOpts): Fetcher {
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const res = await opts.fetchImpl(url, { method: "GET", headers, redirect: "manual", signal: controller.signal });
-        return wrapResponse(res.status, res.ok, await res.text().catch(() => ""));
+        const out: Record<string, string> = {};
+        res.headers?.forEach?.((v, k) => {
+          out[k.toLowerCase()] = v;
+        });
+        return wrapResponse(res.status, res.ok, await res.text().catch(() => ""), out);
       } finally {
         clearTimeout(timer);
       }
@@ -80,15 +84,16 @@ export function makeGuardedFetcher(opts: GuardedFetcherOpts): Fetcher {
 
     // Real path — node http(s) with the connect-time guarded lookup (no rebind window).
     const raw = await getViaNode(url, headers, timeoutMs, allowPrivate, u.protocol);
-    return wrapResponse(raw.status, raw.status >= 200 && raw.status < 300, raw.body);
+    return wrapResponse(raw.status, raw.status >= 200 && raw.status < 300, raw.body, raw.headers);
   };
 }
 
 /** A `FetchResult` over a buffered body. `json()` throws on non-JSON (the adapter narrows). */
-function wrapResponse(status: number, ok: boolean, body: string): FetchResult {
+function wrapResponse(status: number, ok: boolean, body: string, headers: Record<string, string> = {}): FetchResult {
   return {
     ok,
     status,
+    headers,
     async text() {
       return body;
     },
@@ -101,6 +106,8 @@ function wrapResponse(status: number, ok: boolean, body: string): FetchResult {
 interface RawResponse {
   status: number;
   body: string;
+  /** Lower-cased, array values joined — node gives `string | string[]` per header. */
+  headers: Record<string, string>;
 }
 
 /** GET via node http(s) with the guarded lookup — the TOCTOU-safe real path. node never
@@ -126,7 +133,14 @@ function getViaNode(
       res.on("data", (c: string) => {
         if (data.length < MAX_BODY) data += c;
       });
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data.slice(0, MAX_BODY) }));
+      res.on("end", () => {
+        const headers: Record<string, string> = {};
+        for (const [k, v] of Object.entries(res.headers)) {
+          if (typeof v === "string") headers[k.toLowerCase()] = v;
+          else if (Array.isArray(v)) headers[k.toLowerCase()] = v.join(", ");
+        }
+        resolve({ status: res.statusCode ?? 0, body: data.slice(0, MAX_BODY), headers });
+      });
     });
     req.setTimeout(timeoutMs, () => req.destroy(new Error(`crawl fetcher: timeout after ${timeoutMs}ms`)));
     req.on("error", reject);

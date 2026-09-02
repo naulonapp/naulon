@@ -67,6 +67,11 @@ export type { DecisionPolicy, DecideContext, SpendVerdict } from "./decide.ts";
 // The one answer to that question; `spendGate` above stays the one answer to "how
 // much". `PayableTarget` is mintable only by `authorizeOrigin`, so a pay path that
 // skips the check fails to typecheck rather than failing in production.
+// The publisher's own PUBLISHED terms (RSL). Exported so the MCP's granular pay path resolves them
+// through the same cache the composite run does, instead of growing a second lookup.
+export { makeLicenceResolver } from "./licence.ts";
+export type { LicenceLookup, LicenceResolver, LicenceResolverOptions } from "./licence.ts";
+
 export { authorizeOrigin } from "./origin-policy.ts";
 export type { OriginRequest, OriginVerdict, PayableTarget } from "./origin-policy.ts";
 

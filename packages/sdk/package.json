@@ -15,7 +15,9 @@
     "ai-crawler",
     "citation",
     "stablecoin",
-    "naulon"
+    "naulon",
+    "rsl",
+    "content-licensing"
   ],
   "homepage": "https://naulon.app",
   "bugs": {
@@ -45,6 +47,10 @@
     "./slug": {
       "types": "./dist/contract/slug.d.ts",
       "import": "./dist/contract/slug.js"
+    },
+    "./rsl": {
+      "types": "./dist/rsl/index.d.ts",
+      "import": "./dist/rsl/index.js"
     },
     "./net": {
       "types": "./dist/crawl/net.d.ts",

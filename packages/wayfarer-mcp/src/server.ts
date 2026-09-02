@@ -61,6 +61,7 @@ import {
   resolvedDiscoverySourceUrl,
   run,
   selectBuyer,
+  makeLicenceResolver,
   spendGate,
   tollgateBase,
   verifyAgainst,
@@ -359,6 +360,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // from that run's `pay` decisions afterward (B3) — so a cap hit through either tool carries to
   // the other, for the life of this session. Never a second, run-scoped counter.
   const paidByHost = new Map<string, number>();
+  /**
+   * Publishers' PUBLISHED terms (RSL), cached for the life of this MCP session.
+   *
+   * The granular pay tool is the path the tool descriptions tell agents to PREFER, so a licence
+   * gate that existed only inside `naulon_research` would be bypassable by using the tool we
+   * recommend. That is the same hole `spendGate` was extracted to close for domain policy, reopened
+   * one layer up — so this resolver feeds the identical evaluator.
+   */
+  const licences = makeLicenceResolver({ userAgent: "naulon-wayfarer" });
   // WP-2 T2: the distinct hostnames THIS session's most recent naulon_discover call
   // actually returned. Fleet-default auto-trust for the GRANULAR pay path (naulon_quote /
   // naulon_pay_and_read) is keyed off this — unlike naulon_research, which discovers
@@ -1035,12 +1045,17 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // loop, not a session-wide cap on this granular tool; passing it would newly enforce a 5-pay
       // ceiling across the whole MCP session, which nothing here asked for.
       const payHost = hostnameOf(target);
+      // The publisher's own terms for THIS url. A refusal here is the publisher saying no in
+      // public — no budget makes it payable — and it is evaluated by the same `spendGate` the
+      // composite run uses, in the same order.
+      const licence = (await licences.forUrl(target)).terms;
       const verdict = spendGate({
         host: payHost ?? undefined,
         priceUsdc: cost,
         policy,
         paidForHost: payHost ? (paidByHost.get(payHost) ?? 0) : 0,
         remainingUsdc: remainingUsdc(),
+        licence,
       });
       if (!verdict.ok) {
         const reason =

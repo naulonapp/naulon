@@ -30,6 +30,14 @@ export interface FetchResult {
   status: number;
   text(): Promise<string>;
   json(): Promise<unknown>;
+  /**
+   * Response headers, lower-cased, multi-values joined with `, `.
+   *
+   * Optional because a hand-written fake in a test has no reason to carry them, and every adapter
+   * that shipped before RSL discovery reads only the body. It exists for the one discovery channel
+   * that lives nowhere else: RSL's `Link: <…>; rel="license"; type="application/rsl+xml"`.
+   */
+  headers?: Record<string, string>;
 }
 
 /** The ONLY way an adapter reaches the network. The crawl orchestrator injects an impl that

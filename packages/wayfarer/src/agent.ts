@@ -13,6 +13,8 @@ import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
 import { memoBuyer, type MemoSigner } from "./memo.ts";
 import { railBuyer, type RailSigners } from "./rail.ts";
 import { decide, DEFAULT_POLICY, payHostOf, payUrlOf, spendGate } from "./decide.ts";
+import { makeLicenceResolver, type LicenceResolver } from "./licence.ts";
+import type { RslTermsForUrl } from "@naulon/sdk/rsl";
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
 import { authorizeOrigin } from "./origin-policy.ts";
@@ -113,6 +115,16 @@ export interface RunOptions {
   authorizePayee?: (input: { url: string; payTo: string }) => boolean | Promise<boolean>;
   /** Window state for per-domain rate caps across runs (prior pays per host). */
   decideContext?: DecideContext;
+  /**
+   * Resolver for publishers' PUBLISHED terms (RSL). Omitted ⇒ one is built with the SDK's guarded
+   * fetcher; `null` turns the lookup off entirely.
+   *
+   * On by default, because the alternative is an agent that can read a publisher's "do not use this
+   * for AI input" and pay anyway. The cost is one `robots.txt` per origin per run (cached, and
+   * deduplicated across concurrent candidates), and every failure mode — no robots, no licence,
+   * unreachable — degrades to exactly the pre-RSL behaviour rather than to a refusal.
+   */
+  licences?: LicenceResolver | null;
   /**
    * Gate this run settles into (base URL). Server/config-supplied, never
    * LLM-controlled — same principle as `budgetUsdc`/`policy`. Lets a hosted caller
@@ -308,11 +320,32 @@ export async function run(
   const licensed = new Set([...held.values()].filter((h) => isLive(h, nowSec)).map((h) => h.slug));
   if (licensed.size) log(`\nholding ${licensed.size} live license(s) — those re-read free`);
 
+  // 4a. published terms. Only the PRICED candidates are looked up — an ungated or refused one is
+  // never going to be paid for, and asking a stranger's server about it is a request we owe no one.
+  // Resolved here rather than inside decide() because decide() is pure and this is the network.
+  const licenceResolver = opts.licences === null ? null : (opts.licences ?? makeLicenceResolver({ userAgent: "naulon-wayfarer" }));
+  const licences: Record<string, RslTermsForUrl | null> = {};
+  if (licenceResolver) {
+    const payUrls = [
+      ...new Set(
+        appraised
+          .map((c) => payUrlOf(c.url, opts.decideContext?.gateBase ?? base, c.slug))
+          .filter((u): u is string => u !== undefined),
+      ),
+    ];
+    const looked = await Promise.all(payUrls.map(async (u) => [u, await licenceResolver.forUrl(u)] as const));
+    for (const [u, l] of looked) {
+      licences[u] = l.terms;
+      if (l.terms) log(`  § ${u} — terms via ${l.source}${l.terms.read?.amount ? ` @ ${l.terms.read.amount.value} ${l.terms.read.amount.currency}` : ""}`);
+    }
+  }
+
   // gateBase lets decide() resolve a slug-only candidate to the SAME url the pay step below uses,
   // so domain policy is evaluated against the host that actually gets paid (never Candidate.host).
   const decisions = decide(appraised, budget, licensed, effectivePolicy, {
     ...opts.decideContext,
     gateBase: opts.decideContext?.gateBase ?? base,
+    licences: { ...opts.decideContext?.licences, ...licences },
   });
   log(`\ndecisions:`);
   for (const d of decisions) log(`  [${d.action.toUpperCase()}] ${d.slug} — ${d.reason}`);
