@@ -213,6 +213,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Upgrade Notice ==
 
+= 0.5.3 =
+Exa's crawler was reading your articles free. It calls itself a search engine, and for its consumer site it is one — but the same crawler feeds an API that hands an application the full text of your page, so it is now charged. Charging it means leaving Exa's index: if you would rather keep the reach, set Exa to Allow on your Crawlers screen.
+
 = 0.5.2 =
 When an agent is turned away for payment, the response now points at your licence — so it learns what you allow and what it costs in the same request, instead of going back for your robots.txt.
 
