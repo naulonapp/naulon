@@ -39,6 +39,7 @@ import {
   type ObservationVerdict,
   type PaymentFailureReason,
   classifyPaymentFailure,
+  type PublisherConfig,
   type PublisherResolver,
   type TollKind,
   type Usdc,
@@ -439,6 +440,25 @@ export interface CreateAppOptions {
    * byte-identical to before this option existed.
    */
   onUpstreamOutcome?: (publisherId: string, outcome: UpstreamOutcome) => void;
+
+  /**
+   * Optional identity seam: resolve the publisher that OWNS a host the resolver does not ROUTE.
+   *
+   * `PublisherResolver.resolve` answers "the publisher this host routes to", which is the only
+   * question the gate needs to serve a toll. But a host can be served by the publisher's own runtime
+   * (the `@naulon/enforce` SDK in front of their app) instead of being proxied here — such a host is
+   * legitimately absent from the resolver's routing set, so `resolve` returns undefined for it.
+   * A downstream control plane that knows those publishers by some other proof of ownership supplies
+   * this; the single-tenant default has no such distinction and omits it, which is byte-identical to
+   * before the option existed.
+   *
+   * Consumed ONLY by `GET /licenses/:jti`, which asks an identity question rather than a routing one
+   * and was answering "no such licence" for every self-served publisher. It must not be given a
+   * function that prices, routes or settles: a host nothing routes must not become routable by being
+   * verifiable. It does not widen what may be READ either — the route still refuses an event whose
+   * `publisherId` is not the resolved publisher's.
+   */
+  resolveInAppConfig?: (host: string) => Promise<PublisherConfig | undefined>;
 }
 
 export function createApp(
@@ -446,6 +466,7 @@ export function createApp(
   opts?: CreateAppOptions,
 ): Hono {
   const onUpstreamOutcome = opts?.onUpstreamOutcome;
+  const resolveInAppConfig = opts?.resolveInAppConfig;
   const app = new Hono();
   app.use("*", logger());
   app.use("*", rateLimit());
@@ -536,7 +557,17 @@ export function createApp(
     // via publisher A's host. Unknown host → 404, leaking nothing (fail-closed,
     // matches the manifest route).
     const host = c.req.header("host") ?? new URL(c.req.url).host;
-    const publisher = await resolver.resolve(host);
+    // ROUTING first, then OWNERSHIP. `resolve` answers "the publisher this host routes to" and is
+    // the common case; `resolveOwner` (optional, and absent on the single-tenant default) answers
+    // "the publisher that owns this host", which is the only question that has an answer for a host
+    // served by the publisher's OWN runtime rather than proxied by this gate. Such a host is
+    // legitimately absent from the routing set, so verification of its licences used to 404 every
+    // time — measured against a live multi-tenant deploy on 2026-09-02, where every settlement of
+    // every self-served publisher reported "not on the ledger" while sitting in the ledger.
+    //
+    // This widens WHO CAN BE RESOLVED, never what they may read: the publisherId check below is
+    // unchanged, so an event attributed to another publisher is still the same fail-closed 404.
+    const publisher = (await resolver.resolve(host)) ?? (await resolveInAppConfig?.(host));
     if (!publisher) return c.json({ jti, found: false }, 404);
 
     const event = await getEvent(jti);
