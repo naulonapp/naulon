@@ -334,6 +334,29 @@ export interface BuildServerOptions {
    * this owns payee identity. Absent (every stdio/self-host caller) ⇒ no payee check, unchanged.
    */
   authorizePayee?: (input: { url: string; payTo: string }) => boolean | Promise<boolean>;
+  /**
+   * Restrict which tools and prompts this server registers. An **allowlist**, deliberately: a
+   * denylist silently exposes every tool added after it was written, and the tools most worth
+   * withholding are the ones that spend money.
+   *
+   * Absent (every stdio/self-host caller, unchanged) ⇒ the full surface.
+   *
+   * This differs from {@link BuildServerOptions.hostedInertSteer}, which leaves a tool REGISTERED
+   * and makes it refuse. That is right when the caller should be told "not on this mount"; it is
+   * wrong when the tool must not appear in the listing at all — a read-only public mount whose
+   * `tools/list` still advertises `naulon_pay_and_read` is not read-only to anything reading the
+   * listing, including a plugin reviewer.
+   *
+   * A name that matches nothing is a no-op, so an allowlist naming a tool this version does not
+   * have narrows the surface rather than widening it.
+   */
+  surface?: {
+    /** Tool names to register. Absent ⇒ all. */
+    tools?: readonly string[];
+    /** Prompt names to register. Absent ⇒ all. Prompts steer toward tools, so a prompt naming a
+     *  tool outside `tools` should be left out too — nothing enforces that, it is the caller's. */
+    prompts?: readonly string[];
+  };
 }
 
 /**
@@ -345,6 +368,31 @@ export interface BuildServerOptions {
  */
 export function buildServer(opts: BuildServerOptions = {}): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+
+  // ── Surface allowlist (opts.surface) ────────────────────────────────────────
+  // Every registration below goes through `reg` / `regPrompt`. An excluded name is registered
+  // on `discarded` — a second server that is never connected and never returned — instead of
+  // being skipped, so these keep the SDK's exact generic signature and the handlers below keep
+  // inferring their argument types from `inputSchema`. What the caller receives is a server whose
+  // `tools/list` genuinely does not contain the excluded tools, which is the property that
+  // matters: a read-only public mount still advertising `naulon_pay_and_read` is not read-only to
+  // anything that reads the listing, a plugin reviewer included.
+  const allowTool = opts.surface?.tools ? new Set(opts.surface.tools) : null;
+  const allowPrompt = opts.surface?.prompts ? new Set(opts.surface.prompts) : null;
+  const discarded = allowTool || allowPrompt ? new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }) : server;
+  // `registerTool`/`registerPrompt` are overloaded generics, so `Parameters<…>` collapses to
+  // `never`. The variadic body is therefore typed loosely and the WHOLE function is cast back to
+  // the SDK's own signature — which is what the call sites read, so every handler below still
+  // infers its arguments from `inputSchema`. The looseness is contained to these two lines.
+  type AnyRegister = (...args: unknown[]) => unknown;
+  const reg = ((...args: unknown[]) =>
+    ((allowTool && !allowTool.has(args[0] as string) ? discarded : server).registerTool as unknown as AnyRegister)(
+      ...args,
+    )) as unknown as McpServer["registerTool"];
+  const regPrompt = ((...args: unknown[]) =>
+    ((allowPrompt && !allowPrompt.has(args[0] as string) ? discarded : server).registerPrompt as unknown as AnyRegister)(
+      ...args,
+    )) as unknown as McpServer["registerPrompt"];
 
   // ── Session spend envelope ──────────────────────────────────────────────────
   // The budget is server-config, not a tool arg: the ceiling is read fresh from env
@@ -552,7 +600,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   };
 
   // ── naulon_discover (free) ──────────────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_discover",
     {
       title: "Discover tollable sources",
@@ -651,7 +699,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_status (free — the "run first" tool) ─────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_status",
     {
       title: "Check wallet, discovery, and gate status",
@@ -749,7 +797,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_appraise (free) ──────────────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_appraise",
     {
       title: "Appraise candidates for a topic",
@@ -815,7 +863,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_quote (free — the killer tool) ────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_quote",
     {
       title: "Quote the toll (free price probe)",
@@ -916,7 +964,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_pay_and_read ($ — spends) ─────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_pay_and_read",
     {
       title: "Pay the toll and read the source",
@@ -1187,7 +1235,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_read_held (free) ──────────────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_read_held",
     {
       title: "Re-read a source you already licensed (free)",
@@ -1246,7 +1294,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_research ($ — composite) ──────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_research",
     {
       title: "Research a topic end-to-end (composite)",
@@ -1455,7 +1503,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     `connect a token) — never print a raw environment-variable name to the user. Then offer to retry. ` +
     `If you fall back to your own general knowledge instead of a naulon-tolled source, say so ` +
     `explicitly and label it clearly as NOT naulon-cited.`;
-  server.registerPrompt(
+  regPrompt(
     "research",
     {
       title: "Research a topic (naulon)",
@@ -1481,7 +1529,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       ],
     }),
   );
-  server.registerPrompt(
+  regPrompt(
     "discover",
     {
       title: "Discover sources (naulon, free)",
@@ -1503,7 +1551,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       ],
     }),
   );
-  server.registerPrompt(
+  regPrompt(
     "verify",
     {
       title: "Fact-check a claim (naulon)",

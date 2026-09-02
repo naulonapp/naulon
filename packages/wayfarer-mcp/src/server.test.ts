@@ -2365,3 +2365,55 @@ test("naulon_appraise accepts the match-evidence flags and scores WITH them", as
   );
   assert.match(by("body").rationale, /full text/);
 });
+
+// ── surface allowlist ─────────────────────────────────────────────────────────
+// A restricted mount must not merely refuse the tools it withholds — it must not LIST them.
+// `hostedInertSteer` already covers "registered but refuses"; this covers "not there at all",
+// which is what a public read-only mount needs, because anything reading `tools/list` (a plugin
+// reviewer, or a model deciding what it may do) sees the listing, not the handler.
+
+test("surface.tools narrows what the server lists, and the excluded tools are gone", async () => {
+  const client = await connectedClientWith({ surface: { tools: ["naulon_discover", "naulon_quote"] } });
+  const names = (await client.listTools()).tools.map((t) => t.name).sort();
+  assert.deepEqual(names, ["naulon_discover", "naulon_quote"]);
+  for (const withheld of ["naulon_pay_and_read", "naulon_research", "naulon_read_held", "naulon_status", "naulon_appraise"]) {
+    assert.ok(!names.includes(withheld), `${withheld} is still listed on a restricted mount`);
+  }
+});
+
+test("a withheld tool is not callable, not merely unlisted", async () => {
+  const client = await connectedClientWith({ surface: { tools: ["naulon_discover"] } });
+  // The SDK surfaces a tool-level failure as a RESULT with `isError`, not a rejection — so
+  // asserting a throw here would pass for the wrong reason on any future SDK that stops throwing.
+  // Assert the contract that matters: the server does not know this tool.
+  const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+  assert.equal(res.isError, true, "a tool excluded from the surface must not execute");
+  assert.match(
+    JSON.stringify(res.content),
+    /not found/i,
+    "the refusal must be 'no such tool', not a handler that ran and declined — an unlisted but reachable spend tool is the worst of both",
+  );
+});
+
+test("surface.prompts narrows prompts independently of tools", async () => {
+  const client = await connectedClientWith({ surface: { prompts: ["discover"] } });
+  const prompts = (await client.listPrompts()).prompts.map((p) => p.name).sort();
+  assert.deepEqual(prompts, ["discover"]);
+  // Tools were not restricted, so the full tool surface must survive a prompt-only allowlist.
+  assert.ok((await client.listTools()).tools.length > 1, "restricting prompts must not narrow tools");
+});
+
+test("no surface option leaves the full surface registered (every existing caller)", async () => {
+  const client = await connectedClient();
+  const names = (await client.listTools()).tools.map((t) => t.name);
+  for (const expected of ["naulon_discover", "naulon_appraise", "naulon_quote", "naulon_status", "naulon_pay_and_read", "naulon_read_held", "naulon_research"]) {
+    assert.ok(names.includes(expected), `${expected} vanished from the default surface`);
+  }
+  assert.equal((await client.listPrompts()).prompts.length, 3);
+});
+
+test("an allowlist naming an unknown tool narrows rather than widens", async () => {
+  const client = await connectedClientWith({ surface: { tools: ["naulon_discover", "naulon_not_a_tool"] } });
+  const names = (await client.listTools()).tools.map((t) => t.name);
+  assert.deepEqual(names, ["naulon_discover"]);
+});
