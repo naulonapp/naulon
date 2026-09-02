@@ -59,6 +59,7 @@ export function makeGuardedFetcher(opts: GuardedFetcherOpts): Fetcher {
       throw new Error(`crawl fetcher: url must be https (${u.protocol})`);
     }
 
+    const method = init?.method ?? "GET";
     const headers: Record<string, string> = {
       "user-agent": "naulon-crawl/1 (+catalog-draft)",
       accept:
@@ -71,7 +72,13 @@ export function makeGuardedFetcher(opts: GuardedFetcherOpts): Fetcher {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await opts.fetchImpl(url, { method: "GET", headers, redirect: "manual", signal: controller.signal });
+        const res = await opts.fetchImpl(url, {
+          method,
+          headers,
+          ...(method === "POST" && init?.body !== undefined ? { body: init.body } : {}),
+          redirect: "manual",
+          signal: controller.signal,
+        });
         const out: Record<string, string> = {};
         res.headers?.forEach?.((v: string, k: string) => {
           out[k.toLowerCase()] = v;
@@ -83,7 +90,7 @@ export function makeGuardedFetcher(opts: GuardedFetcherOpts): Fetcher {
     }
 
     // Real path — node http(s) with the connect-time guarded lookup (no rebind window).
-    const raw = await getViaNode(url, headers, timeoutMs, allowPrivate, u.protocol);
+    const raw = await getViaNode(url, headers, timeoutMs, allowPrivate, u.protocol, method, init?.body);
     return wrapResponse(raw.status, raw.status >= 200 && raw.status < 300, raw.body, raw.headers);
   };
 }
@@ -120,10 +127,12 @@ function getViaNode(
   timeoutMs: number,
   allowPrivate: boolean,
   protocol: string,
+  method: "GET" | "POST" = "GET",
+  body?: string,
 ): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const transport = protocol === "http:" ? http : https;
-    const req = transport.request(urlStr, { method: "GET", headers, lookup: guardedLookup(allowPrivate) }, (res) => {
+    const req = transport.request(urlStr, { method, headers, lookup: guardedLookup(allowPrivate) }, (res) => {
       // A private-IP literal in the URL is caught here too (lookup only runs for DNS names).
       const ip = res.socket.remoteAddress;
       if (ip && !allowPrivate && isBlockedTarget(ip)) {
@@ -146,6 +155,6 @@ function getViaNode(
     });
     req.setTimeout(timeoutMs, () => req.destroy(new Error(`crawl fetcher: timeout after ${timeoutMs}ms`)));
     req.on("error", reject);
-    req.end();
+    req.end(method === "POST" && body !== undefined ? body : undefined);
   });
 }

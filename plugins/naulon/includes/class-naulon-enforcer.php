@@ -479,6 +479,14 @@ class Naulon_Enforcer {
 		$this->no_store();
 		status_header( 402 );
 		header( self::PAYMENT_REQUIRED_HEADER . ': ' . $decision['header'] );
+		// The licence, on the response that most needs it. An agent meeting a 402 holds this
+		// response already; without the pointer it must fetch robots.txt before it can learn what
+		// the terms are, and the terms are what decide whether paying is even permitted. Empty
+		// when no document is stored — we never advertise what we do not serve.
+		$license_link = Naulon_License::instance()->link_header();
+		if ( '' !== $license_link ) {
+			header( 'Link: ' . $license_link, false );
+		}
 		header( 'Content-Type: application/json; charset=utf-8' );
 		echo wp_json_encode(
 			array(

@@ -10,6 +10,7 @@
  * verifier holds for unsigned traffic.
  */
 import { botAuthKeyFromSeed, getConfig, signBotAuth, type BotAuthKey } from "@naulon/shared";
+import { licenseTokenFor } from "./license-token.ts";
 
 interface AgentIdentity {
   key: BotAuthKey;
@@ -52,7 +53,15 @@ export function botAuthHeadersFor(url: string): Record<string, string> | null {
  */
 export async function agentFetch(url: string, init?: RequestInit): Promise<Response> {
   const signed = botAuthHeadersFor(url);
-  if (!signed) return fetch(url, init);
-  const headers = { ...signed, ...((init?.headers as Record<string, string> | undefined) ?? {}) };
+  // An OLP licence token, if we hold one for this URL. Attached HERE because every request the
+  // agent makes passes through this function, and four separate places in buyer.ts build headers of
+  // their own — a token remembered at each is a token forgotten at one. A caller that set its own
+  // `authorization` wins: it knows something we do not.
+  const licenseToken = licenseTokenFor(url);
+  const caller = (init?.headers as Record<string, string> | undefined) ?? {};
+  const hasOwnAuth = Object.keys(caller).some((k) => k.toLowerCase() === "authorization");
+  const license = licenseToken && !hasOwnAuth ? { authorization: `License ${licenseToken}` } : {};
+  if (!signed && !licenseToken) return fetch(url, init);
+  const headers = { ...signed, ...license, ...caller };
   return fetch(url, { ...init, headers });
 }

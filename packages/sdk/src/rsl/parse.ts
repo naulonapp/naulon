@@ -32,6 +32,7 @@
  * body), not by the parser: a string already in memory is already the cost.
  */
 import { parseXml, toArray, textOf } from "../crawl/xml.ts";
+import { rawLicensesByContent } from "./raw.ts";
 import type {
   RslAccepts,
   RslConstraints,
@@ -163,7 +164,7 @@ function contactOf(license: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function licenseOf(node: Record<string, unknown>): RslLicense {
+function licenseOf(node: Record<string, unknown>, raw?: string): RslLicense {
   const termsUrl = textOf(toArray(pick(node, "terms") as unknown)[0]);
   const contact = contactOf(node);
   const pay = payment(node);
@@ -173,10 +174,11 @@ function licenseOf(node: Record<string, unknown>): RslLicense {
     ...(pay ? { payment: pay } : {}),
     ...(contact ? { contact } : {}),
     ...(termsUrl ? { termsUrl } : {}),
+    ...(raw ? { raw } : {}),
   };
 }
 
-function contentOf(node: Record<string, unknown>): RslContent {
+function contentOf(node: Record<string, unknown>, raw: string[] = []): RslContent {
   const server = attr(node, "server");
   const lastmod = attr(node, "lastmod");
   return {
@@ -187,7 +189,7 @@ function contentOf(node: Record<string, unknown>): RslContent {
     ...(server ? { server } : {}),
     ...(attr(node, "encrypted") === "true" ? { encrypted: true } : {}),
     ...(lastmod ? { lastmod } : {}),
-    licenses: children(node, "license").map(licenseOf),
+    licenses: children(node, "license").map((l, i) => licenseOf(l, raw[i])),
   };
 }
 
@@ -208,7 +210,11 @@ export function parseRsl(xml: string): RslDocument {
   const root = pick(doc, "rsl");
   const node = (Array.isArray(root) ? root[0] : root) as Record<string, unknown> | undefined;
   if (!node || typeof node !== "object") return { contents: [] };
-  return { contents: children(node, "content").map(contentOf) };
+  // The raw source, paired BY INDEX with the parsed blocks — both walks are in document order, and
+  // `raw.test.ts` pins the pairing. A mismatch would ask a licence server about terms the publisher
+  // did not offer, so the scan degrades to an empty list rather than to a shifted one.
+  const raw = rawLicensesByContent(xml);
+  return { contents: children(node, "content").map((c, i) => contentOf(c, raw[i] ?? [])) };
 }
 
 /**

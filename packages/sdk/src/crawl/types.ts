@@ -50,7 +50,15 @@ export interface FetchResult {
  *  Adapters never import `fetch`/`node:http` — that keeps the SSRF guard un-bypassable and the
  *  whole module network-testable with a plain fake. */
 export interface Fetcher {
-  (url: string, init?: { headers?: Record<string, string> }): Promise<FetchResult>;
+  (url: string, init?: {
+    headers?: Record<string, string>;
+    /** Defaults to GET. `POST` exists for exactly one caller: RSL's Open Licensing Protocol, whose
+     *  `/token` endpoint is a POST — and which must go through the SAME guarded path as everything
+     *  else, because its URL comes out of a publisher-controlled `server` attribute. */
+    method?: "GET" | "POST";
+    /** Request body, already encoded. Ignored on GET. */
+    body?: string;
+  }): Promise<FetchResult>;
 }
 
 /* ── what an adapter discovers ────────────────────────────────────────────────── */

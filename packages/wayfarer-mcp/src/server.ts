@@ -1048,7 +1048,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // The publisher's own terms for THIS url. A refusal here is the publisher saying no in
       // public — no budget makes it payable — and it is evaluated by the same `spendGate` the
       // composite run uses, in the same order.
-      const licence = (await licences.forUrl(target)).terms;
+      const lookup = await licences.forUrl(target);
+      const licence = lookup.terms
+        ? { terms: lookup.terms, tokenHeld: lookup.tokenHeld, ...(lookup.tokenFailure ? { tokenFailure: lookup.tokenFailure } : {}) }
+        : null;
       const verdict = spendGate({
         host: payHost ?? undefined,
         priceUsdc: cost,

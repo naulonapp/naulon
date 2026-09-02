@@ -21,19 +21,30 @@
  * publisher to ask permission has answered its own question badly.
  */
 import {
+  acquireLicenseToken,
   locateFromObserved,
   locateFromRobots,
   termsForUrl,
   type LocatedLicence,
   type ObservedResponse,
+  type OlpCredentials,
   type RslSource,
   type RslTermsForUrl,
 } from "@naulon/sdk/rsl";
 import type { Fetcher } from "@naulon/sdk/crawl";
+import { licenseTokenFor, rememberLicenseToken } from "./license-token.ts";
 
 /** What the agent learned about one URL. `terms: null` = nothing published that covers it. */
 export interface LicenceLookup {
   terms: RslTermsForUrl | null;
+  /**
+   * Has the licence-server obligation been discharged for this URL? Only meaningful when the terms
+   * name a `server`; `true` for everything else, since there is nothing to discharge.
+   */
+  tokenHeld: boolean;
+  /** Why the token could not be obtained, when it could not. Never invented — either the OLP error
+   *  code the server returned, or the fact that nobody configured credentials for it. */
+  tokenFailure?: string;
   /** Which association mechanism the document came from — evidence for the decision log. */
   source?: RslSource;
   documentUrl?: string;
@@ -44,6 +55,12 @@ export interface LicenceResolverOptions {
   fetcherFor?: (origin: string) => Fetcher;
   /** The agent's robots.txt token, so a `License:` inside its own User-agent group is honoured. */
   userAgent?: string;
+  /**
+   * Client credentials for an RSL licence server, by its URL — the operator's own, never the
+   * model's. Absent, or returning null, means we cannot discharge that publisher's obligation and
+   * the read is refused with that reason rather than paid for anyway.
+   */
+  licenseServers?: (server: string) => OlpCredentials | null;
   /**
    * How long an origin-level answer stays fresh. Ten minutes: long enough that one research run
    * makes one request per host, short enough that a publisher who changes their price is not
@@ -56,7 +73,7 @@ export interface LicenceResolverOptions {
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
 /** Nothing published — a shared frozen value, so a caller cannot mutate one lookup into another. */
-const NONE: LicenceLookup = Object.freeze({ terms: null });
+const NONE: LicenceLookup = Object.freeze({ terms: null, tokenHeld: true });
 
 export interface LicenceResolver {
   /**
@@ -97,7 +114,7 @@ export function makeLicenceResolver(opts: LicenceResolverOptions = {}): LicenceR
     return p;
   };
 
-  const resolve = (located: LocatedLicence | null, url: string): LicenceLookup => {
+  const resolve = async (located: LocatedLicence | null, url: string): Promise<LicenceLookup> => {
     if (!located) return NONE;
     const terms = termsForUrl(located.doc, url, {
       ...(located.associationPath ? { associationPath: located.associationPath } : {}),
@@ -106,11 +123,42 @@ export function makeLicenceResolver(opts: LicenceResolverOptions = {}): LicenceR
     // That is a real and different answer from "no document" only to a debugger; to a decision it
     // is the same, and collapsing them here keeps every caller from having to know that.
     if (!terms) return NONE;
-    return {
+    const base = {
       terms,
       source: located.source,
       ...(located.documentUrl ? { documentUrl: located.documentUrl } : {}),
     };
+    if (terms.obligation !== "license-server" || !terms.server) return { ...base, tokenHeld: true };
+
+    // The obligation is real: the spec requires a licence from that server before access, whatever
+    // the inline price says. Discharge it if we can, and report precisely why not if we cannot.
+    if (licenseTokenFor(url)) return { ...base, tokenHeld: true };
+    const credentials = opts.licenseServers?.(terms.server) ?? null;
+    if (!credentials) {
+      return { ...base, tokenHeld: false, tokenFailure: `no client credentials are configured for ${terms.server}` };
+    }
+    if (!terms.read?.licenseXml) {
+      // We cannot ask about a licence we could not recover the source of; inventing one would ask
+      // the server about terms the publisher never published.
+      return { ...base, tokenHeld: false, tokenFailure: "the licence element could not be read from the document" };
+    }
+    const acquired = await acquireLicenseToken({
+      server: terms.server,
+      licenseXml: terms.read.licenseXml,
+      resource: terms.read.scope,
+      credentials,
+      ...(opts.fetcherFor ? { fetcherFor: opts.fetcherFor } : {}),
+    });
+    if (!acquired.ok) {
+      return { ...base, tokenHeld: false, tokenFailure: `the licence server answered ${acquired.failure.code}` };
+    }
+    rememberLicenseToken({
+      origin: new URL(url).origin,
+      resource: terms.read.scope,
+      token: acquired.token.accessToken,
+      expiresAt: acquired.token.expiresAt,
+    });
+    return { ...base, tokenHeld: true };
   };
 
   return {
@@ -129,9 +177,9 @@ export function makeLicenceResolver(opts: LicenceResolverOptions = {}): LicenceR
           observed,
           opts.fetcherFor ? { fetcherFor: opts.fetcherFor } : {},
         ).catch(() => null);
-        if (found) return resolve(found, url);
+        if (found) return await resolve(found, url);
       }
-      return resolve(await originDoc(origin), url);
+      return await resolve(await originDoc(origin), url);
     },
     originsSeen: () => cache.size,
   };

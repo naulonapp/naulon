@@ -143,3 +143,16 @@ test("the contact from the governing scope is carried for a human follow-up", ()
   </license></content>`);
   assert.equal(termsForUrl(d, "/x")!.contact, "mailto:r@example.com");
 });
+
+test("the offer carries the licence's own source, for a licence server to be asked about", () => {
+  // OLP's /token takes "the URL-encoded RSL <license> XML element" — the publisher's bytes, not our
+  // re-serialization of them.
+  const d = doc(`<content url="/" server="https://olp.example/api">
+    <license><permits type="usage">ai-input</permits>
+      <payment type="crawl"><amount currency="USD">0.01</amount></payment></license></content>`);
+  const t = termsForUrl(d, "/x")!;
+  assert.ok(t.read?.licenseXml?.startsWith("<license>"));
+  assert.ok(t.read?.licenseXml?.includes("ai-input"));
+  assert.ok(t.read?.licenseXml?.endsWith("</license>"));
+  assert.equal(t.obligation, "license-server");
+});

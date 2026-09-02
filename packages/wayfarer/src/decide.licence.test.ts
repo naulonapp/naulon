@@ -1,16 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { RslTermsForUrl } from "@naulon/sdk/rsl";
-import { DEFAULT_POLICY, decide, spendGate, type DecisionPolicy } from "./decide.ts";
+import { DEFAULT_POLICY, decide, spendGate, type DecisionPolicy, type LicenceVerdict } from "./decide.ts";
 import type { AppraisedCandidate } from "./types.ts";
 import type { Usdc } from "@naulon/shared";
 
-const terms = (over: Partial<RslTermsForUrl> = {}): RslTermsForUrl => ({
-  scopes: ["/"],
-  usage: { "ai-input": true },
-  read: { paymentType: "crawl", amount: { value: 0.01, currency: "USD" }, accepts: [], scope: "/" },
-  obligation: "inline",
-  ...over,
+/** The published terms, wrapped in the agent's own verdict about them (`LicenceVerdict`). A URL
+ *  with no licence server has nothing to discharge, so `tokenHeld` defaults to true. */
+const terms = (over: Partial<RslTermsForUrl> = {}, verdict: Partial<LicenceVerdict> = {}): LicenceVerdict => ({
+  terms: {
+    scopes: ["/"],
+    usage: { "ai-input": true },
+    read: { paymentType: "crawl", amount: { value: 0.01, currency: "USD" }, accepts: [], scope: "/" },
+    obligation: "inline",
+    ...over,
+  },
+  tokenHeld: true,
+  ...verdict,
 });
 
 const policy: DecisionPolicy = { relevanceFloor: 0.1, maxPaid: 10 };
@@ -33,16 +39,60 @@ test("a licence prohibiting ai-input refuses the pay, whatever the budget says",
   assert.match(v.ok === false ? v.reason : "", /prohibits ai-input/);
 });
 
-test("a licence-server obligation refuses: paying the inline price licenses nothing", () => {
+test("an UNDISCHARGED licence-server obligation refuses: paying the inline price licenses nothing", () => {
   const v = spendGate({
     host: "pub.example",
     priceUsdc: 0.01,
     policy,
-    licence: terms({ obligation: "license-server", server: "https://olp.example/api" }),
+    licence: terms(
+      { obligation: "license-server", server: "https://olp.example/api" },
+      { tokenHeld: false, tokenFailure: "no client credentials are configured for https://olp.example/api" },
+    ),
   });
   assert.equal(v.ok, false);
   assert.equal(v.ok === false && v.action, "skip");
   assert.match(v.ok === false ? v.reason : "", /olp\.example/);
+  assert.match(v.ok === false ? v.reason : "", /no client credentials/);
+});
+
+test("a DISCHARGED licence-server obligation pays — the token is the whole point of OLP", () => {
+  assert.deepEqual(
+    spendGate({
+      host: "pub.example",
+      priceUsdc: 0.01,
+      policy,
+      licence: terms({ obligation: "license-server", server: "https://olp.example/api" }, { tokenHeld: true }),
+    }),
+    { ok: true },
+  );
+});
+
+test("the refusal names WHICH problem it is — a missing credential is not a rejected one", () => {
+  // Two different people fix these. An operator who reads "the licence server said no" for a typo
+  // in their own secret spends an afternoon on the publisher's infrastructure.
+  const refusal = (tokenFailure: string) => {
+    const v = spendGate({
+      host: "pub.example",
+      priceUsdc: 0.01,
+      policy,
+      licence: terms({ obligation: "license-server", server: "https://olp.example" }, { tokenHeld: false, tokenFailure }),
+    });
+    return v.ok === false ? v.reason : "";
+  };
+  assert.match(refusal("the licence server answered invalid_client"), /invalid_client/);
+  assert.match(refusal("the licence server answered invalid_resource"), /invalid_resource/);
+  assert.match(
+    spendGate({
+      host: "pub.example",
+      priceUsdc: 0.01,
+      policy,
+      licence: terms({ obligation: "license-server", server: "https://olp.example" }, { tokenHeld: false }),
+    }).ok === false
+      ? "fallback"
+      : "",
+    /fallback/,
+    "a verdict with no stated reason still refuses",
+  );
 });
 
 test("a quote far above the published price asks a human rather than paying it", () => {

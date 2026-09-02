@@ -181,6 +181,26 @@ class Naulon_License {
 	}
 
 	/**
+	 * The `Link:` header value pointing at this site's licence, or '' when none is published.
+	 *
+	 * The third association mechanism, and the one that matters most on a 402: a buying agent that
+	 * meets a payment challenge already HAS the response in its hand, and without this header it has
+	 * to go and fetch robots.txt before it can learn what the terms are. Measured against production
+	 * on 2026-09-02 — the challenge carried `payment-required` and nothing about the licence.
+	 *
+	 * Same rule as the other two pointers: nothing is advertised that is not served. A header
+	 * pointing at a 404 tells a crawler the terms exist and then refuses to show them.
+	 *
+	 * @return string
+	 */
+	public function link_header() {
+		if ( '' === $this->document() ) {
+			return '';
+		}
+		return '<' . self::url() . '>; rel="license"; type="application/rsl+xml"';
+	}
+
+	/**
 	 * Refresh the stored document if it is stale. Called from the hourly heartbeat, where a
 	 * fetch costs nobody's page view.
 	 *

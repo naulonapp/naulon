@@ -13,6 +13,22 @@
  * solving a knapsack for sub-cent items.
  */
 import type { RslTermsForUrl } from "@naulon/sdk/rsl";
+
+/**
+ * What the agent knows about one URL's published terms — the resolved terms, plus whether the
+ * licence-server obligation (if any) has actually been DISCHARGED.
+ *
+ * The second half cannot live on `RslTermsForUrl`: that type is the publisher's document resolved,
+ * and whether we hold a token for it is a fact about this agent, not about them.
+ */
+export interface LicenceVerdict {
+  terms: RslTermsForUrl;
+  /** True when an OLP token for this resource is held. Meaningless unless the terms name a server. */
+  tokenHeld: boolean;
+  /** Why not, in the caller's words — a missing credential and a refused one are different problems
+   *  for different people, and collapsing them costs somebody an afternoon. */
+  tokenFailure?: string;
+}
 import { authorizeOrigin } from "./origin-policy.ts";
 import type { AppraisedCandidate, Decision } from "./types.ts";
 
@@ -87,7 +103,7 @@ export interface DecideContext {
    * matched to a different url than the one money goes to. Resolved by the caller (it is network
    * work; `decide` stays pure) and absent for any url with no published licence.
    */
-  licences?: Record<string, RslTermsForUrl | null>;
+  licences?: Record<string, LicenceVerdict | null>;
 }
 
 /** Normalize a host for policy matching: lower-cased, trimmed; `undefined` stays `undefined`. */
@@ -168,7 +184,7 @@ export function spendGate(input: {
    * own policy still governs. What a declaration adds is the publisher's stated CONSENT, and that
    * is the one thing an operator's allowlist cannot supply on their behalf.
    */
-  licence?: RslTermsForUrl | null;
+  licence?: LicenceVerdict | null;
 }): SpendVerdict {
   const { policy, priceUsdc } = input;
   const host = normHost(input.host);
@@ -192,8 +208,9 @@ export function spendGate(input: {
   // decide whether we deal with this host at all) and before the caps (which are about our budget,
   // not their consent). A refusal here is the publisher saying no in public; no amount of budget
   // makes it payable.
-  const licence = input.licence;
-  if (licence) {
+  const verdict = input.licence;
+  const licence = verdict?.terms;
+  if (verdict && licence) {
     if (licence.usage["ai-input"] === false) {
       return {
         ok: false,
@@ -201,14 +218,15 @@ export function spendGate(input: {
         reason: `publisher's licence prohibits ai-input for this url (RSL scope ${licence.scopes[0] ?? "/"})`,
       };
     }
-    if (licence.obligation === "license-server") {
-      // RSL: with `content@server` set, a client MUST obtain the licence from that server —
-      // "regardless of the payment type, including when type='free'". Paying the inline price
-      // would transfer money and license nothing.
+    // RSL: with `content@server` set, a client MUST obtain the licence from that server —
+    // "regardless of the payment type, including when type='free'". Paying the inline price without
+    // one transfers money and licenses nothing. We DO speak OLP now, so this refuses only when the
+    // obligation is genuinely undischarged — and says which of the two reasons it is.
+    if (licence.obligation === "license-server" && !verdict.tokenHeld) {
       return {
         ok: false,
         action: "skip",
-        reason: `publisher requires an RSL licence server (${licence.server}); this agent does not speak OLP`,
+        reason: `publisher requires an RSL licence server (${licence.server}) and no licence was obtained: ${verdict.tokenFailure ?? "no client credentials are configured for it"}`,
       };
     }
     const declared = licence.read?.amount;

@@ -26,6 +26,10 @@ export type {
   RslUserClass,
 } from "./types.ts";
 export { parseRsl, parseRslOrNull } from "./parse.ts";
+export { rawLicensesByContent } from "./raw.ts";
+// The Open Licensing Protocol — how the obligation `terms.ts` reports is actually discharged.
+export { acquireLicenseToken, olpRetryable, tokenEndpoint } from "./olp.ts";
+export type { OlpCredentials, OlpFailure, OlpFailureCode, OlpResult, OlpToken } from "./olp.ts";
 export { matchesPattern, specificity } from "./pattern.ts";
 export { grantsUsage, termsForUrl, x402Offer, X402_MEDIA_TYPE } from "./terms.ts";
 export type { RslObligation, RslOffer, RslTermsForUrl } from "./terms.ts";

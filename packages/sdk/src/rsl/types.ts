@@ -83,6 +83,14 @@ export interface RslLicense {
   contact?: string;
   /** `<terms>` — URL of the human-readable terms of service. */
   termsUrl?: string;
+  /**
+   * This licence's own source, verbatim.
+   *
+   * OLP's `/token` takes "the URL-encoded RSL `<license>` XML element" — the publisher's bytes, not
+   * a re-serialization of our parse of them. Recovered by `raw.ts` and paired by index; absent only
+   * when a caller built an `RslLicense` by hand.
+   */
+  raw?: string;
 }
 
 /** One `<content>` scope and its licences. */

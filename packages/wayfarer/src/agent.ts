@@ -12,9 +12,9 @@ import { quotedTotalAtomic, rereadWithLicense, selectBuyer } from "./buyer.ts";
 import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
 import { memoBuyer, type MemoSigner } from "./memo.ts";
 import { railBuyer, type RailSigners } from "./rail.ts";
-import { decide, DEFAULT_POLICY, payHostOf, payUrlOf, spendGate } from "./decide.ts";
+import { decide, DEFAULT_POLICY, payHostOf, payUrlOf, spendGate, type LicenceVerdict } from "./decide.ts";
 import { makeLicenceResolver, type LicenceResolver } from "./licence.ts";
-import type { RslTermsForUrl } from "@naulon/sdk/rsl";
+
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
 import { authorizeOrigin } from "./origin-policy.ts";
@@ -324,7 +324,7 @@ export async function run(
   // never going to be paid for, and asking a stranger's server about it is a request we owe no one.
   // Resolved here rather than inside decide() because decide() is pure and this is the network.
   const licenceResolver = opts.licences === null ? null : (opts.licences ?? makeLicenceResolver({ userAgent: "naulon-wayfarer" }));
-  const licences: Record<string, RslTermsForUrl | null> = {};
+  const licences: Record<string, LicenceVerdict | null> = {};
   if (licenceResolver) {
     const payUrls = [
       ...new Set(
@@ -335,7 +335,7 @@ export async function run(
     ];
     const looked = await Promise.all(payUrls.map(async (u) => [u, await licenceResolver.forUrl(u)] as const));
     for (const [u, l] of looked) {
-      licences[u] = l.terms;
+      licences[u] = l.terms ? { terms: l.terms, tokenHeld: l.tokenHeld, ...(l.tokenFailure ? { tokenFailure: l.tokenFailure } : {}) } : null;
       if (l.terms) log(`  § ${u} — terms via ${l.source}${l.terms.read?.amount ? ` @ ${l.terms.read.amount.value} ${l.terms.read.amount.currency}` : ""}`);
     }
   }

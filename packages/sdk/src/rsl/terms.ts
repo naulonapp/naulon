@@ -36,6 +36,8 @@ export interface RslOffer {
   accepts: { type: string; meta?: string }[];
   /** The `<content url>` this offer came from — the audit trail for why this price applied. */
   scope: string;
+  /** The source of the `<license>` this offer came from. What OLP's `/token` wants, verbatim. */
+  licenseXml?: string;
 }
 
 /** How a client is allowed to obtain the licence. */
@@ -141,6 +143,7 @@ function readOffer(scopes: RslContent[]): { offer: RslOffer; scope: RslContent }
         ...(p.amount ? { amount: p.amount } : {}),
         accepts: p.accepts,
         scope: scope.url,
+        ...(chosen.raw ? { licenseXml: chosen.raw } : {}),
       },
       scope,
     };

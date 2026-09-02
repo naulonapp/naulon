@@ -61,7 +61,7 @@ export type { RailSigners } from "./rail.ts";
 
 // ── decide (policy) ─────────────────────────────────────────────────────────
 export { decide, DEFAULT_POLICY, payHostOf, spendGate } from "./decide.ts";
-export type { DecisionPolicy, DecideContext, SpendVerdict } from "./decide.ts";
+export type { DecisionPolicy, DecideContext, LicenceVerdict, SpendVerdict } from "./decide.ts";
 
 // ── origin policy (whose origin may money touch) ─────────────────────────────
 // The one answer to that question; `spendGate` above stays the one answer to "how
@@ -70,6 +70,8 @@ export type { DecisionPolicy, DecideContext, SpendVerdict } from "./decide.ts";
 // The publisher's own PUBLISHED terms (RSL). Exported so the MCP's granular pay path resolves them
 // through the same cache the composite run does, instead of growing a second lookup.
 export { makeLicenceResolver } from "./licence.ts";
+// The OLP tokens the agent holds, and the single place they reach the wire (`sign.ts`).
+export { clearLicenseTokens, licenseTokenFor, rememberLicenseToken } from "./license-token.ts";
 export type { LicenceLookup, LicenceResolver, LicenceResolverOptions } from "./licence.ts";
 
 export { authorizeOrigin } from "./origin-policy.ts";
