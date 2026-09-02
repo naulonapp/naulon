@@ -44,7 +44,13 @@ class ClassifierParityTest extends TestCase {
 		$matched = preg_match( '/const KNOWN_AGENT_UA = \[(.*?)\];/s', $source, $m );
 		$this->assertSame( 1, $matched, 'could not locate KNOWN_AGENT_UA in the kernel source' );
 
-		preg_match_all( '/"([^"]+)"/', $m[1], $entries );
+		// Strip line comments BEFORE extracting. The entry parser takes every double-quoted
+		// string in the block, so a comment that quotes a word — `// the "contents" fetch` —
+		// would enter the list as a crawler token and fail this test against a PHP copy that
+		// is perfectly correct. The upstream list carried no comments until 2026-09-02, when
+		// the Exa row added the first; the guard has to survive the second.
+		$body = preg_replace( '#//[^\n]*#', '', $m[1] );
+		preg_match_all( '/"([^"]+)"/', $body, $entries );
 		$upstream = $entries[1];
 
 		$this->assertNotEmpty( $upstream, 'parsed an empty upstream list — the parser is wrong, not the lists' );

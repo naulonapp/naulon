@@ -109,6 +109,11 @@ export const KNOWN_AGENT_UA = [
   "meta-externalfetcher",
   "amzn-user",
   "mistralai-user",
+  // Exa's index crawler. Its operator documents it as a search engine, but ONE token does
+  // both the indexing and the on-demand /contents fetch an agent pays Exa for — see the
+  // divergence note on its CRAWLER_REGISTRY row. Exa signs every request, so the verified
+  // branch above already charges it; this entry covers an unsigned or spoofed fetch.
+  "exasearchbot",
   "python-requests",
   "node-fetch",
   "axios",
