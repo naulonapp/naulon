@@ -151,6 +151,73 @@ test("GET /licenses/:jti is scoped — another publisher's host cannot read the 
   assert.equal(owned.status, 200);
 });
 
+/* ── resolveInAppConfig: the host nothing ROUTES but somebody OWNS ─────────────
+ * A host served by the publisher's own runtime (`@naulon/enforce` in front of their app) is
+ * legitimately absent from whatever routing set `resolve` consults, so `resolve` returns undefined
+ * and this route used to 404 every one of that publisher's licences. Measured against a live
+ * multi-tenant deploy on 2026-09-02: every settlement of every self-served publisher reported "not
+ * on the ledger" while sitting in the ledger — the verification tier inverted for the publishers who
+ * most needed it.
+ *
+ * It is a `createApp` OPTION, not a method on `PublisherResolver`: this is an embedder concern (a
+ * single-tenant gate has no routes-vs-owns distinction at all), and `CreateAppOptions` is already
+ * the seam documented "for a downstream host". It also keeps ONE name for this fallback — the cloud
+ * calls the identical `resolveConfig ?? resolveInAppConfig` shape in its payee authority.
+ */
+
+test("resolveInAppConfig answers when routing does not — the self-served publisher's licence verifies", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const selfServed = createApp(
+    { async resolve() { return undefined; } }, // routes nothing — the in-app shape
+    { resolveInAppConfig: (host) => envPublisherResolver().resolve(host) },
+  );
+  const res = await selfServed.request(`/licenses/${jti}`);
+  assert.equal(res.status, 200, "a host nothing routes but somebody owns must still verify");
+  assert.equal(((await res.json()) as { found: boolean }).found, true);
+});
+
+test("resolveInAppConfig does NOT widen what may be read — a foreign event is the same 404", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const otherOwner = createApp(
+    { async resolve() { return undefined; } },
+    {
+      resolveInAppConfig: async (host) => {
+        const p = await envPublisherResolver().resolve(host);
+        return p ? { ...p, id: "other-tenant" } : undefined;
+      },
+    },
+  );
+  const leaked = await otherOwner.request(`/licenses/${jti}`);
+  assert.equal(leaked.status, 404, "ownership resolves the publisher; it never unlocks another's event");
+  assert.equal(((await leaked.json()) as { found: boolean }).found, false);
+});
+
+test("routing WINS when both answer — the in-app hook is a fallback, never an override", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  let inAppCalls = 0;
+  const both = createApp(envPublisherResolver(), {
+    resolveInAppConfig: async (host) => {
+      inAppCalls++;
+      const p = await envPublisherResolver().resolve(host);
+      return p ? { ...p, id: "other-tenant" } : undefined;
+    },
+  });
+  assert.equal((await both.request(`/licenses/${jti}`)).status, 200);
+  assert.equal(inAppCalls, 0, "a routed host must never consult ownership — routing is the answer");
+});
+
+test("omitting resolveInAppConfig is byte-identical to before the option existed", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const legacy = createApp({ async resolve() { return undefined; } });
+  const res = await legacy.request(`/licenses/${jti}`);
+  assert.equal(res.status, 404);
+  assert.equal(((await res.json()) as { found: boolean }).found, false);
+});
+
 test("GET /licenses/:jti returns 404 for an unknown host (fail-closed, no leak)", async () => {
   const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
   const jti = payload(jws).jti as string;
