@@ -2445,8 +2445,15 @@ test("the discover output schema accepts a fleet-directory row verbatim", async 
   const client = await connectedClient();
   const discover = (await client.listTools()).tools.find((t) => t.name === "naulon_discover");
   assert.ok(discover?.outputSchema, "naulon_discover lost its output schema");
-  const item = (discover.outputSchema as { properties: { candidates: { items: { properties: Record<string, unknown> } } } })
-    .properties.candidates.items.properties;
+  // The SDK types `outputSchema.properties` as `Record<string, object> | undefined`, which a single
+  // cast to the nested shape cannot reach. Narrow one hop at a time instead of casting past all
+  // three: a schema that loses `candidates` or `items` then fails with the hop named, rather than
+  // throwing on `undefined.properties` and reading as a broken test.
+  const properties = discover.outputSchema.properties;
+  assert.ok(properties, "naulon_discover's output schema declares no properties");
+  const candidates = properties["candidates"] as { items?: { properties?: Record<string, unknown> } } | undefined;
+  const item = candidates?.items?.properties;
+  assert.ok(item, "naulon_discover's output schema declares no candidates[].items.properties");
   for (const field of ["slug", "title", "summary", "url", "matchedInBody", "matchedSemantic", "site", "priceUsdc", "citationPriceUsdc"]) {
     assert.ok(field in item, `the fleet directory returns \`${field}\` and the schema does not declare it — every discover response against a fleet gate will be rejected whole`);
   }
