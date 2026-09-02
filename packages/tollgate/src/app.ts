@@ -493,7 +493,28 @@ export function createApp(
 
   // Public key set for offline CLT verification. Registered BEFORE the catch-all
   // so it's served by the gate, never proxied. Empty when disabled.
-  app.get("/.well-known/naulon-jwks.json", (c) => c.json(licensing ? licensing.jwks : { keys: [] }));
+  /**
+   * The public key set, and it must be readable FROM A BROWSER.
+   *
+   * A Citation License is worth what it is because a stranger can check it against these
+   * keys without asking us. That story is Node-only without CORS: the same-origin policy
+   * blocks every browser-based verifier — including naulon's own public verify page — at
+   * the fetch, before any signature is checked.
+   *
+   * `*` is the correct value, not a lax one. A key set is world-readable by definition,
+   * and anything narrower would be us deciding which origins are allowed to check our
+   * signatures, which is the opposite of the property being sold. It is scoped to THIS
+   * route: no tolled path becomes cross-origin readable, which `jwks-cors.test.ts` pins.
+   */
+  const JWKS_CORS = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, OPTIONS",
+    "cache-control": "public, max-age=3600",
+  } as const;
+  app.get("/.well-known/naulon-jwks.json", (c) =>
+    c.json(licensing ? licensing.jwks : { keys: [] }, 200, { ...JWKS_CORS }),
+  );
+  app.options("/.well-known/naulon-jwks.json", (c) => c.body(null, 204, { ...JWKS_CORS }));
 
   // Edge-identity probe: a host-independent 200 that ONLY a naulon gate serves. It lets a
   // caller confirm a custom domain actually ROUTES through the gate — not merely that its
