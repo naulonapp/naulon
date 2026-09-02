@@ -4,7 +4,7 @@ Tags: ai, monetization, paywall, crawlers, licensing
 Requires at least: 6.2
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 0.5.2
+Stable tag: 0.5.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -159,6 +159,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 5. Diagnostics — the caching check, recent decisions, and connection health.
 
 == Changelog ==
+
+= 0.5.3 =
+* Exa's crawler is now recognised. It identifies itself as a search engine, and for its consumer site it is one — but the same crawler feeds an API that hands an application the full text of your page from Exa's cache, and a reader who gets your article that way never arrives at your site. Exa publishes one user agent for both, so there is no way to welcome the indexing and price the retrieval separately. It is charged by default.
+* That default costs something, and you can change it. Charging Exa means dropping out of its index, consumer surface included. If reach matters more to you than revenue from that channel, set Exa to Allow on your Crawlers screen and it reads free, exactly like Google.
+* Until now this plugin did not know the crawler at all, so it served Exa free whatever your account said.
 
 = 0.5.2 =
 * When an agent is asked to pay, the response now points at your licence. An agent that meets your toll already has that response in its hand — before, it had to go back and read your robots.txt to find out what you allow and what it costs. Now it learns both in the same breath, which is one fewer reason for it to give up and read something else.

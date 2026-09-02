@@ -16,6 +16,22 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
+## v0.8.2
+
+Ships the WordPress plugin 0.5.3. **No npm package changed.**
+
+The plugin's copy of the agent list gained `exasearchbot`. Classification runs locally in the
+plugin — that is why the list exists twice — so a crawler added to the kernel list reaches a
+WordPress site only through a plugin release. Between naulon#92 and this tag the fleet gate
+charged Exa and every WordPress site served it free, which is precisely the drift
+`ClassifierParityTest` exists to catch; it caught it, in CI, before the row shipped.
+
+That guard was also hardened in the same change. It extracted list entries with a regex over
+the whole array body, so it read every double-quoted string — comments included. The kernel
+list carried no comments until the Exa row added the first one, and a future comment quoting a
+word would have entered the list as a crawler token and failed the test against a PHP copy that
+was perfectly correct.
+
 ## v0.8.1
 
 Ships the WordPress plugin 0.5.2. **No npm package changed** — every one of them shipped in

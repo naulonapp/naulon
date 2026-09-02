@@ -4,7 +4,7 @@
  * Plugin URI:        https://naulon.app
  * Update URI:        https://naulon.app/wp/naulon
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
- * Version:           0.5.2
+ * Version:           0.5.3
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
@@ -27,7 +27,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NAULON_VERSION', '0.5.2' );
+define( 'NAULON_VERSION', '0.5.3' );
 define( 'NAULON_PLUGIN_FILE', __FILE__ );
 define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 
