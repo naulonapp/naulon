@@ -10,6 +10,7 @@
 import {
   activeNetwork,
   resolvePayees,
+  resolvePriceRule,
   usdc,
   type AuthorShare,
   type NetworkName,
@@ -79,9 +80,26 @@ export interface Quote {
  * Pure and synchronous — it reads only the fields the resolver already put on the
  * config, never the credits source. `quote()` calls it for exactly the same reason a
  * verifier does, so the two can never disagree.
+ *
+ * `path` is the request PATHNAME (`/papers/x`), never a full URL, and it selects the publisher's
+ * per-path price rule. It is optional ONLY so an older control plane that predates price rules
+ * still typechecks; every caller in this repo passes it. Omitting it on a publisher that HAS
+ * rules silently prices at the site base — which on the verifying side reads as "the quote does
+ * not match the tenant record" and refuses a settle the publisher priced correctly. So the
+ * quoting and verifying calls move together, as they already had to for the formula itself.
  */
-export function tollPrice(publisher: Pick<PublisherConfig, "price" | "citationMultiplier">, kind: TollKind): Usdc {
-  return usdc(kind === "citation" ? publisher.price * publisher.citationMultiplier : publisher.price);
+export function tollPrice(
+  publisher: Pick<PublisherConfig, "price" | "citationMultiplier" | "priceRules">,
+  kind: TollKind,
+  path?: string,
+): Usdc {
+  // A rule overrides either money field INDEPENDENTLY: one that names only a citation multiplier
+  // keeps the site's read price, and vice versa. No path, no rules, or no rule matching ⇒ the two
+  // site values, byte-identical to before this field existed.
+  const rule = resolvePriceRule(publisher.priceRules, path);
+  const price = rule?.priceUsdc ?? publisher.price;
+  const multiplier = rule?.citationMultiplier ?? publisher.citationMultiplier;
+  return usdc(kind === "citation" ? price * multiplier : price);
 }
 
 /**
@@ -89,16 +107,21 @@ export function tollPrice(publisher: Pick<PublisherConfig, "price" | "citationMu
  * citation has downstream reach), but both resolve to the same author payees.
  * Returns undefined for an article the publisher's credits source doesn't know —
  * the gate treats that as "don't gate".
+ *
+ * `path` is the request pathname, carried only so `tollPrice` can select a per-path rule. It is
+ * NOT the slug and cannot be derived from it: in prefix mode a slug is one segment of the path,
+ * and in site mode the two coincide only by accident of configuration. Absent ⇒ site pricing.
  */
 export async function quote(
   publisher: PublisherConfig,
   slug: string,
   kind: TollKind,
+  path?: string,
 ): Promise<Quote | undefined> {
   const credits = await publisher.credits.resolve(slug);
   if (!credits) return undefined;
 
-  const price = tollPrice(publisher, kind);
+  const price = tollPrice(publisher, kind, path);
 
   return {
     slug: credits.slug,

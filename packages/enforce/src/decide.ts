@@ -223,8 +223,17 @@ export interface DecideInput {
   publisher: PublisherConfig;
   /** Single timestamp for build402; the caller reuses it for settle/event/mint. */
   now: number;
-  /** Price + payees resolver — local (own data) or hosted (`/quote`). */
-  quote: (publisher: PublisherConfig, slug: string, kind: TollKind) => Promise<Quote | null | undefined>;
+  /** Price + payees resolver — local (own data) or hosted (`/quote`).
+   *  `path` is the request PATHNAME, carried so the resolver can select a per-path price rule.
+   *  Deliberately the pathname and not `input.path`, which also carries the query string: a
+   *  licence scope already matches on the pathname alone (`licenseCoversPath`), and a price that
+   *  could move with a query string is one an agent could shop for. */
+  quote: (
+    publisher: PublisherConfig,
+    slug: string,
+    kind: TollKind,
+    path?: string,
+  ) => Promise<Quote | null | undefined>;
   /** Web-Bot-Auth options (e.g. `allowInsecureHttp` on a dev/plaintext origin). */
   botAuthOpts?: BotAuthOptions;
   /** API mode — verify a re-read license against the MINTING gate's JWKS + issuer
@@ -313,8 +322,9 @@ export async function decide(input: DecideInput): Promise<Decision> {
     return { kind: "reread", tollKind, obs };
   }
 
-  // Price it.
-  const q = await quote(publisher, slug, tollKind);
+  // Price it. The pathname (not `path`, which carries the query string) selects the per-path
+  // price rule — the same input, in the same dialect, that a licence scope matches against.
+  const q = await quote(publisher, slug, tollKind, new URL(raw.url).pathname);
   if (!q) return { kind: "passthrough", verdict: "unknown-article" }; // unknown article — don't gate.
 
   // The resource identifier goes into a SIGNED quote, so it must be the URL the buyer
