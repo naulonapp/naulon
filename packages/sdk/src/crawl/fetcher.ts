@@ -73,7 +73,7 @@ export function makeGuardedFetcher(opts: GuardedFetcherOpts): Fetcher {
       try {
         const res = await opts.fetchImpl(url, { method: "GET", headers, redirect: "manual", signal: controller.signal });
         const out: Record<string, string> = {};
-        res.headers?.forEach?.((v, k) => {
+        res.headers?.forEach?.((v: string, k: string) => {
           out[k.toLowerCase()] = v;
         });
         return wrapResponse(res.status, res.ok, await res.text().catch(() => ""), out);
@@ -93,7 +93,9 @@ function wrapResponse(status: number, ok: boolean, body: string, headers: Record
   return {
     ok,
     status,
-    headers,
+    header(name: string) {
+      return headers[name.toLowerCase()];
+    },
     async text() {
       return body;
     },

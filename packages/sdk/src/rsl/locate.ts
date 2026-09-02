@@ -288,7 +288,12 @@ export async function locateLicence(
     const fetcherFor = opts.fetcherFor ?? defaultFetcherFor;
     try {
       const res = await fetcherFor(target.origin)(target.toString());
-      return await locateFromObserved(targetUrl, { headers: res.headers, body: await res.text() }, opts);
+      const link = res.header?.("link");
+      return await locateFromObserved(
+        targetUrl,
+        { ...(link ? { headers: { link } } : {}), body: await res.text() },
+        opts,
+      );
     } catch {
       return null;
     }

@@ -31,13 +31,18 @@ export interface FetchResult {
   text(): Promise<string>;
   json(): Promise<unknown>;
   /**
-   * Response headers, lower-cased, multi-values joined with `, `.
+   * One response header by name, case-insensitively; multi-values joined with `, `.
    *
-   * Optional because a hand-written fake in a test has no reason to carry them, and every adapter
-   * that shipped before RSL discovery reads only the body. It exists for the one discovery channel
-   * that lives nowhere else: RSL's `Link: <…>; rel="license"; type="application/rsl+xml"`.
+   * A METHOD rather than a `headers` record on purpose: a native `Response` already satisfies this
+   * interface structurally, and that is load-bearing — fakes across two repos hand `fetch`'s own
+   * result straight to a `Fetcher`. A property called `headers` would collide with
+   * `Response.headers: Headers` and break every one of them.
+   *
+   * Optional because a hand-written fake has no reason to carry headers, and every adapter that
+   * shipped before RSL discovery reads only the body. It exists for the one discovery channel that
+   * lives nowhere else: RSL's `Link: <…>; rel="license"; type="application/rsl+xml"`.
    */
-  headers?: Record<string, string>;
+  header?(name: string): string | undefined;
 }
 
 /** The ONLY way an adapter reaches the network. The crawl orchestrator injects an impl that

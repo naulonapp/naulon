@@ -88,6 +88,17 @@ const UMBRELLA: Record<string, RslUsage[]> = {
   "ai-all": ["ai-train", "ai-input", "ai-index"],
 };
 
+/**
+ * Does a declared usage set grant `token`, umbrellas included?
+ *
+ * Exported because "is this licence about ai-input?" is asked outside the per-URL resolution too —
+ * by anything auditing a whole document rather than one address. A second copy of the umbrella
+ * table is how `ai-all` ends up granting `ai-input` in one place and not the other.
+ */
+export function grantsUsage(declared: readonly RslUsage[], token: RslUsage): boolean {
+  return covers(declared as RslUsage[], token);
+}
+
 function covers(declared: RslUsage[], token: RslUsage): boolean {
   if (declared.includes(token)) return true;
   return declared.some((d) => UMBRELLA[d]?.includes(token) ?? false);

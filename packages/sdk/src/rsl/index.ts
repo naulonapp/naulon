@@ -27,7 +27,7 @@ export type {
 } from "./types.ts";
 export { parseRsl, parseRslOrNull } from "./parse.ts";
 export { matchesPattern, specificity } from "./pattern.ts";
-export { termsForUrl, x402Offer, X402_MEDIA_TYPE } from "./terms.ts";
+export { grantsUsage, termsForUrl, x402Offer, X402_MEDIA_TYPE } from "./terms.ts";
 export type { RslObligation, RslOffer, RslTermsForUrl } from "./terms.ts";
 export {
   inlineRslFromHtml,
