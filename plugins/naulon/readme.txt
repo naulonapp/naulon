@@ -208,6 +208,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Upgrade Notice ==
 
+= 0.5.1 =
+When an agent is turned away for payment, the response now points at your licence — so it learns what you allow and what it costs in the same request, instead of going back for your robots.txt.
+
 = 0.5.0 =
 Your site now states its terms where a crawler looks for them: /license.xml, a line in robots.txt, and a link in every page head. Built from the price you already set — nothing to configure.
 
