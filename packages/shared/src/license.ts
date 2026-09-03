@@ -60,36 +60,31 @@ export interface SigningKey {
 }
 
 /**
- * What a licence entitles. Absent ⇒ `"read"` — today's access licence, unchanged.
+ * The licence vocabulary lives in `licence-facts.ts` and is re-exported here unchanged.
  *
- * `"none"` is the CITATION RECORD: it proves a payment happened and grants nothing,
- * which is the whole reason it is allowed to be permanent. Anything that reads an
- * unrecognised value as access would turn a future record into a free read on an old
- * deployment, so the resolver below fails closed instead.
+ * It moved there because the ledger EVENT carries the same four facts the signed claim does —
+ * a sale's citation record is a second projection of the same row — and `types.ts` cannot import
+ * from this module without a cycle. Re-exported so every `from "@naulon/shared"` import, and the
+ * package's `export * from "./license.ts"`, keep resolving exactly as before.
+ *
+ * `LicenseGrant` in particular: absent ⇒ `"read"`, today's access licence, unchanged. `"none"` is
+ * the CITATION RECORD — it proves a payment happened and grants nothing, which is the whole reason
+ * it is allowed to be permanent. Anything that read an unrecognised value as access would turn a
+ * future record into a free read on an old deployment, so `licenseGrant` below fails closed.
  */
-export type LicenseGrant = "read" | "none";
-
-/** RSL 1.0's usage vocabulary — the terms a licence executes. `ai-train` is never sold. */
-export type LicenseTerm = "ai-input" | "ai-index" | "search";
-
-/**
- * The scope a licence covers: RFC 9309 path patterns, the same grammar RSL borrows for
- * `content@url` and the same one the RSL emitter already writes. One dialect across the
- * gate, RSL and licences — a second grammar here is how `/articles/*` silently stops
- * matching `/articles/2026/x`.
- */
-export interface LicenseScope {
-  patterns: string[];
-}
-
-/**
- * The purchased period, epoch seconds. `until: null` is permanent — legal only on a
- * grant that entitles nothing.
- */
-export interface LicensePeriod {
-  from: number;
-  until: number | null;
-}
+export type {
+  LicenceFacts,
+  LicenseGrant,
+  LicensePeriod,
+  LicenseScope,
+  LicenseTerm,
+} from "./licence-facts.ts";
+import type {
+  LicenseGrant,
+  LicensePeriod,
+  LicenseScope,
+  LicenseTerm,
+} from "./licence-facts.ts";
 
 /** The namespaced `naulon` claim — the domain payload. */
 export interface NaulonClaim {
@@ -514,9 +509,19 @@ export function licenseGrant(claim: NaulonClaim): LicenseGrant {
  * A scoped licence does NOT fall back to slug equality — a scope that fails to match
  * must not silently widen back to whatever slug was current when it was minted.
  */
-export function licenseCoversPath(claim: NaulonClaim, req: { slug: string; path: string }): boolean {
+export function licenseCoversPath(
+  // Structurally typed, not `NaulonClaim`: the buyer's held-licence store answers the same
+  // question about the same two fields, and it holds a decoded record rather than a claim. One
+  // matcher for both sides is the point — a second copy on the buyer side would be the place
+  // where `/articles/*` quietly stops meaning what the gate thinks it means.
+  claim: { slug: string; scope?: LicenseScope },
+  // `path` is optional so a caller that has only a slug fails CLOSED against a scoped licence
+  // rather than matching an empty path by accident.
+  req: { slug: string; path?: string },
+): boolean {
   const scope = claim.scope;
   if (scope === undefined) return claim.slug === req.slug;
-  if (!Array.isArray(scope.patterns)) return false;
-  return scope.patterns.some((p) => typeof p === "string" && matchesPattern(p, req.path));
+  if (!Array.isArray(scope.patterns) || req.path === undefined) return false;
+  const path = req.path;
+  return scope.patterns.some((p) => typeof p === "string" && matchesPattern(p, path));
 }

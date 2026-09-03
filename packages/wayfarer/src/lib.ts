@@ -20,7 +20,7 @@ export type { Logger, RunOptions } from "./agent.ts";
 // article URL from a slug against the configured gate, to derive the gate's
 // canonical license identity from a paid-into URL, and to verify a captured
 // license against the gate's JWKS — single-sourced here so the two can't drift.
-export { tollgateBase, articleUrl, fetchJwks, verifyAgainst, licenseIdentityFor } from "./agent.ts";
+export { tollgateBase, articleUrl, fetchJwks, heldRequestFor, verifyAgainst, licenseIdentityFor } from "./agent.ts";
 
 // ── discover ────────────────────────────────────────────────────────────────
 export { discover } from "./discover.ts";
@@ -82,7 +82,7 @@ export { allocateByContribution } from "./allocation.ts";
 export type { SourceAllocation } from "./allocation.ts";
 
 // ── citation licenses (pay once, re-read free) ──────────────────────────────
-export { decodeHeld, fileHeldStore, isLive, loadHeld, memoryHeldStore, saveHeld } from "./licenseStore.ts";
+export { decodeHeld, fileHeldStore, findHeld, isLive, loadHeld, memoryHeldStore, saveHeld } from "./licenseStore.ts";
 export type { HeldLicense, HeldStore } from "./licenseStore.ts";
 export { buildPopProof } from "./pop.ts";
 

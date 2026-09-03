@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MAX_PATTERN_LEN, MAX_PRICE_RULES, normalizePriceRules, resolvePriceRule } from "./price-rules.ts";
+import {
+  MAX_PATTERN_LEN,
+  MAX_PRICE_RULES,
+  normalizePathPatterns,
+  normalizePriceRules,
+  resolvePriceRule,
+} from "./price-rules.ts";
 
 /* ── the ordering contract ─────────────────────────────────────────────────── */
 
@@ -163,4 +169,33 @@ test("an unnormalised list still resolves, in the caller's own order", () => {
     { pattern: "/papers/*", priceUsdc: 0.05 },
   ];
   assert.equal(resolvePriceRule(handBuilt, "/papers/x")?.priceUsdc, 0.01);
+});
+
+// ── normalizePathPatterns — the list form a licence scope uses ────────────────
+// The single-pattern half is already exercised through normalizePriceRules above; these
+// cover what only the list form owns: the ceiling, dedupe, ordering, and the label that
+// tells a caller WHICH list is wrong.
+
+test("a pattern list comes back most-specific-first", () => {
+  assert.deepEqual(normalizePathPatterns(["/essays/*", "/essays/2026/*"], "licence scope", 10), [
+    "/essays/2026/*",
+    "/essays/*",
+  ]);
+});
+
+test("the list ceiling belongs to the caller, not the validator", () => {
+  assert.throws(() => normalizePathPatterns(["/a", "/b"], "licence scope", 1), /too many licence scope patterns \(max 1\)/);
+});
+
+test("one pattern twice in a scope has no resolution order, so it is refused", () => {
+  assert.throws(() => normalizePathPatterns(["/a/*", "/a/*"], "licence scope", 10), /listed twice/);
+});
+
+test("the label names the list the caller got wrong", () => {
+  assert.throws(() => normalizePathPatterns(["essays/*"], "licence scope", 10), /licence scope "essays\/\*" must start with "\/"/);
+  assert.throws(() => normalizePathPatterns([" "], "price rule", 10), /a price rule has an empty pattern/);
+});
+
+test("a trimmed pattern is what gets stored, so trailing whitespace cannot fork a scope", () => {
+  assert.deepEqual(normalizePathPatterns(["  /essays/*  "], "licence scope", 10), ["/essays/*"]);
 });

@@ -872,7 +872,7 @@ test("A1: a held license whose re-read throws (network reject) is logged-and-ski
               title: "Held Essay",
               jti: "jti-held",
               exp,
-              aud: "gate://test",
+              aud: "naulon:gate.test", // what the gate at GATE actually mints
               pop: false,
               jws: "held.jws.sig",
               url: `${GATE}/essays/${HELD_SLUG}`,
@@ -979,7 +979,7 @@ test("FU-A1b: a held license whose PoP-proof signing THROWS is logged-and-skippe
               title: "Held Essay",
               jti: "jti-held",
               exp,
-              aud: "gate://test",
+              aud: "naulon:gate.test", // what the gate at GATE actually mints
               pop: true, // holder-of-key bound — a re-read requires a signed PoP proof
               jws: "held.jws.sig",
               url: `${GATE}/essays/${HELD_SLUG}`,
