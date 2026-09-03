@@ -48,6 +48,17 @@ export interface SettleResult {
   /** The minted Citation License (re-read entitlement); absent for a zero-address payer. */
   licenseJws?: string;
   /**
+   * The attributed event's id — which is also the minted licence's `jti`.
+   *
+   * Returned so a caller that has to key its OWN record by the licence (naulon-cloud's licence
+   * sale does: the sale row's id IS the jti, so a verifier resolves one from the other) does not
+   * have to base64-decode the token it was just handed. Reading an id out of an unverified JWS is
+   * a habit worth not starting, even on a token we minted a line earlier.
+   *
+   * Always set on a successful settle, including when licensing is off and no token was minted.
+   */
+  eventId?: string;
+  /**
    * Legs this buyer was asked for and never authorized (the stock-payer path, naulon#73).
    * Booked onto the ledger row here; also returned so the CALLER can tell the buyer the truth —
    * `crawler-charged` is what money moved, and for a stock payer that is the ask minus this.
@@ -206,6 +217,7 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
 
   return {
     ok: true,
+    eventId: event.id,
     settlementRef: result.settlementRef,
     payer: payerResolved === ZERO_ADDRESS ? result.payer : payerResolved,
     responseHeader: result.responseHeader,

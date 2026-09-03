@@ -128,6 +128,17 @@ test("a sale carries the scope, terms, period and subject through to the claim",
   assert.equal(c.sub, "acct:11111111-1111-4111-8111-111111111111");
 });
 
+test("a successful settle names the event id, which is the licence jti", async () => {
+  // A caller keying its own record by the licence must not have to decode the token to learn its
+  // id. Both halves are asserted together so they cannot drift apart.
+  const now = Math.floor(Date.now() / 1000);
+  const res = await settleAndAttribute(args(now));
+  assert.equal(res.ok, true);
+  assert.ok(res.eventId, "expected the event id back");
+  const c = await claimsOf(res);
+  assert.equal(c.jti, res.eventId);
+});
+
 test("a sale's purchased PERIOD is not its re-read window — exp stays the TTL", async () => {
   // The whole reason period is a separate field: a 30-day licence must not become a 30-day
   // bearer token. `exp` is the kill switch and stays capped at the TTL.
