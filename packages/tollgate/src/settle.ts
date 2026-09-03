@@ -38,6 +38,9 @@ export interface SettleResult {
   ok: boolean;
   /** Set on failure — the x402 verify/settle error (drop the caller to a 402). */
   error?: string;
+  /** Set on failure — `verify` when nothing was broadcast, `settle` when the author leg's relay
+   *  failed. Carried verbatim from `verifyAndSettle`; see `VerifyResult.stage`. */
+  stage?: "verify" | "settle";
   settlementRef?: string;
   /** The resolved payer wallet (a real 0x… address, else undefined). */
   payer?: string;
@@ -106,7 +109,7 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
   const { payment, legs, quote: q, publisher, host, now, licence } = args;
 
   const result = await verifyAndSettle(payment, legs, now, publisher.id);
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: result.error, ...(result.stage ? { stage: result.stage } : {}) };
 
   // Paid. Resolve the chain this settled on from the author leg the 402 advertised
   // (per-tenant), falling back to the fleet default — so the license + the earnings

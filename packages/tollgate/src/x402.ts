@@ -72,6 +72,15 @@ export interface LegSettlement {
 
 export interface VerifyResult {
   ok: boolean;
+  /**
+   * On a refusal: whether it happened BEFORE anything was broadcast (`verify`) or while settling
+   * the author leg (`settle`). A caller that took an irreversible debit before presenting the
+   * payment — a buyer-wallet reserve — may credit it back on `verify` and must not on `settle`,
+   * where the relay may have submitted before it failed. Stamped explicitly on every pre-broadcast
+   * return so that an unstamped refusal reads as ambiguous, which is the direction a caller must
+   * not credit.
+   */
+  stage?: "verify" | "settle";
   payer?: string;
   settlementRef?: string;
   responseHeader?: string;
@@ -187,7 +196,7 @@ export async function verifyAndSettle(
   publisherId?: string,
 ): Promise<VerifyResult> {
   const legReqs = normalizeLegs(legs);
-  if (legReqs.length === 0) return { ok: false, error: "no settlement legs" };
+  if (legReqs.length === 0) return { ok: false, stage: "verify", error: "no settlement legs" };
 
   // Multi-leg payers send an ARRAY of per-leg payloads (leg order); a single-leg
   // payer sends today's bare object — treat it as a one-element array (back-compat).
@@ -195,7 +204,7 @@ export async function verifyAndSettle(
   try {
     parsed = JSON.parse(Buffer.from(paymentSignature, "base64").toString("utf8"));
   } catch {
-    return { ok: false, error: "malformed payment-signature" };
+    return { ok: false, stage: "verify", error: "malformed payment-signature" };
   }
   const payloads = Array.isArray(parsed) ? parsed : [parsed];
 
@@ -223,7 +232,7 @@ export async function verifyAndSettle(
     : undefined;
 
   if (payloads.length !== required.length) {
-    return { ok: false, error: `leg count mismatch: ${payloads.length} signed, ${required.length} required` };
+    return { ok: false, stage: "verify", error: `leg count mismatch: ${payloads.length} signed, ${required.length} required` };
   }
   const pairs: LegPair[] = required.map((leg, i) => ({
     role: leg.role,
@@ -260,10 +269,10 @@ export async function verifyAndSettle(
  *  relayer EOA, not Circle's facilitator. Custody-free: the inner transfer is the
  *  buyer's authorization; the relayer only pays gas. */
 async function settleMemo(pairs: LegPair[], net: SettlementNetwork, now: number, publisherId?: string): Promise<VerifyResult> {
-  if (!supportsMemo(net)) return { ok: false, error: `network ${net.chainName} has no Memo predeploy` };
+  if (!supportsMemo(net)) return { ok: false, stage: "verify", error: `network ${net.chainName} has no Memo predeploy` };
   const relayerKey = relayerKeyFor(net);
   if (!relayerKey) {
-    return { ok: false, error: net.testnet
+    return { ok: false, stage: "verify", error: net.testnet
       ? "RELAYER_PRIVATE_KEY required for memo-network settlement"
       : "RELAYER_PRIVATE_KEY_MAINNET required for mainnet memo-network settlement" };
   }
@@ -276,16 +285,16 @@ async function settleMemo(pairs: LegPair[], net: SettlementNetwork, now: number,
     const p = pairs[i]!;
     const payload = p.payload as { authorization?: MemoAuthorization; signature?: `0x${string}` };
     if (!payload?.authorization || !payload?.signature) {
-      return { ok: false, error: `leg ${i}: malformed memo payload (need {authorization, signature})` };
+      return { ok: false, stage: "verify", error: `leg ${i}: malformed memo payload (need {authorization, signature})` };
     }
     const { authorization: auth, signature } = payload;
     // The buyer must have signed THIS leg's recipient and amount — else a valid sig for
     // some other transfer could be replayed against this leg.
     if (auth.to.toLowerCase() !== p.requirements.payTo.toLowerCase() || auth.value !== p.requirements.amount) {
-      return { ok: false, error: `leg ${i}: authorization (to ${auth.to}, value ${auth.value}) != requirements (payTo ${p.requirements.payTo}, amount ${p.requirements.amount})` };
+      return { ok: false, stage: "verify", error: `leg ${i}: authorization (to ${auth.to}, value ${auth.value}) != requirements (payTo ${p.requirements.payTo}, amount ${p.requirements.amount})` };
     }
     const pre = await preverifyEip3009(auth, signature, net, now, cfg.USDC_EIP712_NAME);
-    if (!pre.ok) return { ok: false, error: `leg ${i} (${p.requirements.payTo}): ${pre.reason}` };
+    if (!pre.ok) return { ok: false, stage: "verify", error: `leg ${i} (${p.requirements.payTo}): ${pre.reason}` };
     parsed.push({ auth, signature, req: p.requirements });
   }
 
@@ -305,7 +314,7 @@ async function settleMemo(pairs: LegPair[], net: SettlementNetwork, now: number,
     usdcNameOverride: cfg.USDC_EIP712_NAME,
   });
   if (!authorSettle.success) {
-    return { ok: false, error: `author leg settle failed: ${authorSettle.errorReason ?? "settlement failed"}` };
+    return { ok: false, stage: "settle", error: `author leg settle failed: ${authorSettle.errorReason ?? "settlement failed"}` };
   }
   const legSettlements: LegSettlement[] = [
     { payTo: author.req.payTo, amount: author.req.amount, settlementRef: authorSettle.transaction, settled: true },
@@ -351,7 +360,7 @@ async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: numb
     const { requirements, payload } = pairs[i]!;
     const v = await facilitator.verify(payload, requirements);
     if (!v.isValid) {
-      return { ok: false, error: `leg ${i} (${requirements.payTo}): ${v.invalidReason ?? "verification failed"}` };
+      return { ok: false, stage: "verify", error: `leg ${i} (${requirements.payTo}): ${v.invalidReason ?? "verification failed"}` };
     }
     payers.push(v.payer);
   }
@@ -360,7 +369,7 @@ async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: numb
   const author = pairs[0]!;
   const authorSettle = await facilitator.settle(author.payload, author.requirements);
   if (!authorSettle.success) {
-    return { ok: false, error: `author leg settle failed: ${authorSettle.errorReason ?? "settlement failed"}` };
+    return { ok: false, stage: "settle", error: `author leg settle failed: ${authorSettle.errorReason ?? "settlement failed"}` };
   }
   const legSettlements: LegSettlement[] = [
     { payTo: author.requirements.payTo, amount: author.requirements.amount, settlementRef: authorSettle.transaction, settled: true },
@@ -386,11 +395,11 @@ async function settleMock(pairs: LegPair[], now: number, publisherId?: string): 
   for (let i = 0; i < pairs.length; i++) {
     const { requirements, payload } = pairs[i]!;
     const m = (payload ?? {}) as { payer?: string; amount?: string; nonce?: string };
-    if (!m.payer) return { ok: false, error: `leg ${i}: missing payer` };
+    if (!m.payer) return { ok: false, stage: "verify", error: `leg ${i}: missing payer` };
     if (m.amount === undefined || BigInt(m.amount) < BigInt(requirements.amount)) {
-      return { ok: false, error: `leg ${i}: insufficient payment amount` };
+      return { ok: false, stage: "verify", error: `leg ${i}: insufficient payment amount` };
     }
-    if (!m.nonce) return { ok: false, error: `leg ${i}: missing nonce` };
+    if (!m.nonce) return { ok: false, stage: "verify", error: `leg ${i}: missing nonce` };
     mocks.push({ payer: m.payer, nonce: m.nonce });
   }
 
@@ -398,7 +407,7 @@ async function settleMock(pairs: LegPair[], now: number, publisherId?: string): 
   // content). A full replay is rejected here without re-spending anything.
   const author = pairs[0]!;
   const authorConsume = await consumeNonce(mocks[0]!.nonce, bindingOf(author.requirements), now);
-  if (!authorConsume.ok) return { ok: false, error: authorConsume.error };
+  if (!authorConsume.ok) return { ok: false, stage: "verify", error: authorConsume.error };
   const legSettlements: LegSettlement[] = [
     { payTo: author.requirements.payTo, amount: author.requirements.amount, settlementRef: mockRef(author.requirements), settled: true },
   ];

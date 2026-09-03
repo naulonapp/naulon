@@ -38,6 +38,39 @@ function isGateway402(quoted: Quoted): boolean {
   return (quoted.requirements as BatchingRequirements).extra?.name === "GatewayWalletBatched";
 }
 
+/**
+ * Sign a 402 the caller already holds, on the rail the GATE will settle it on — the payment
+ * builder `railBuyer` runs inside its fetch loop, exposed on its own for a host that never needs
+ * the loop: one that built the 402 itself and is now paying it from the buyer's session signers
+ * (the cloud selling a licence it just offered). Picking the rail here, once, is what keeps a
+ * sale and a toll on the same envelope for the same tenant chain.
+ *
+ * Throws on a rail with no signer, and lets `gatewayLegPayload` / the signer throw their own
+ * coded refusals (N-leg on the Circle SDK, a grant refusal) — the caller owns the mapping.
+ */
+export async function assembleRailPayment(quoted: Quoted, nowMs: number, signers: RailSigners): Promise<string> {
+  if (isGateway402(quoted)) {
+    if (!signers.gateway) {
+      throw new Error("no gateway signer for a Circle Gateway 402 (this tenant settles on a memo-less chain)");
+    }
+    // gatewayLegPayload owns the N-leg + GatewayWalletBatched guards, so the mixed-fleet
+    // rail gets the same loud, actionable refusals gatewayBuyer gives (it previously had
+    // neither, silently dropping extra legs until the gate rejected on leg-count mismatch).
+    const payload = await gatewayLegPayload(signers.gateway, quoted, 2);
+    return Buffer.from(JSON.stringify(payload)).toString("base64");
+  }
+  if (!signers.memo) {
+    throw new Error("no memo signer for a memo-rail 402 (this tenant settles on a memo chain)");
+  }
+  // Resolve the memo chain from the 402's advertised network so a non-fleet memo chain signs
+  // against the right USDC domain (registry: memo = arcTestnet today, but keep it honest). An
+  // unknown CAIP-2 falls back to activeNetwork() inside assembleMemoPayment (undefined triggers the
+  // default). A multi-leg toll signed by a batch-capable injected signer reserves atomically here;
+  // a single leg or a batch-less signer takes the per-leg path — same framing either way.
+  const net = networkByCaip2(quoted.requirements.network);
+  return assembleMemoPayment(quoted, nowMs, signers.memo, net);
+}
+
 export function railBuyer(signers: RailSigners): Buyer {
   const address = (signers.memo?.address ?? signers.gateway?.address ?? "0x") as `0x${string}`;
   return {
@@ -49,28 +82,8 @@ export function railBuyer(signers: RailSigners): Buyer {
       return probe(url, kind, address).then((o) => (o.status === "gated" ? o.quoted : null));
     },
     async fetch(url, kind, guard?: PayGuard): Promise<Fetched> {
-      const buildPayment = async (quoted: Quoted, nowMs: number): Promise<string> => {
-        if (isGateway402(quoted)) {
-          if (!signers.gateway) {
-            throw new Error("no gateway signer for a Circle Gateway 402 (this tenant settles on a memo-less chain)");
-          }
-          // gatewayLegPayload owns the N-leg + GatewayWalletBatched guards, so the mixed-fleet
-          // rail gets the same loud, actionable refusals gatewayBuyer gives (it previously had
-          // neither, silently dropping extra legs until the gate rejected on leg-count mismatch).
-          const payload = await gatewayLegPayload(signers.gateway, quoted, 2);
-          return Buffer.from(JSON.stringify(payload)).toString("base64");
-        }
-        if (!signers.memo) {
-          throw new Error("no memo signer for a memo-rail 402 (this tenant settles on a memo chain)");
-        }
-        // Resolve the memo chain from the 402's advertised network so a non-fleet memo chain signs
-        // against the right USDC domain (registry: memo = arcTestnet today, but keep it honest). An
-        // unknown CAIP-2 falls back to activeNetwork() inside assembleMemoPayment (undefined triggers the
-        // default). A multi-leg toll signed by a batch-capable injected signer reserves atomically here;
-        // a single leg or a batch-less signer takes the per-leg path — same framing either way.
-        const net = networkByCaip2(quoted.requirements.network);
-        return assembleMemoPayment(quoted, nowMs, signers.memo, net);
-      };
+      const buildPayment = (quoted: Quoted, nowMs: number): Promise<string> =>
+        assembleRailPayment(quoted, nowMs, signers);
       const onSignError = (error: string): Fetched => {
         // Parity with memoBuyer/gatewayBuyer: a hosted session signer throws a coded refusal
         // (grant exhausted/expired/no session) → typed so the agent can act; any other throw (incl.

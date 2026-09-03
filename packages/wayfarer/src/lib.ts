@@ -56,7 +56,7 @@ export {
 export type { GatewaySigner, GatewayDepositOpts, GatewaySettlementState } from "./gateway.ts";
 export { memoBuyer, signMemoPayment, assembleMemoPayment } from "./memo.ts";
 export type { MemoSigner, MemoTypedData } from "./memo.ts";
-export { railBuyer } from "./rail.ts";
+export { railBuyer, assembleRailPayment } from "./rail.ts";
 export type { RailSigners } from "./rail.ts";
 
 // ── decide (policy) ─────────────────────────────────────────────────────────

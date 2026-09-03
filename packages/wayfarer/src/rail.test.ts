@@ -14,7 +14,7 @@ process.env.PAYMENT_MODE = "gateway";
 process.env.LICENSES_ENABLED = "false";
 process.env.BUYER_PRIVATE_KEY = generatePrivateKey(); // throwaway, never funded
 
-const { railBuyer } = await import("./rail.ts");
+const { railBuyer, assembleRailPayment } = await import("./rail.ts");
 const { activeNetwork, supportsMemo } = await import("@naulon/shared");
 
 const AUTHOR = "0x1111111111111111111111111111111111111111";
@@ -209,4 +209,100 @@ test("railBuyer returns a typed failure when the 402's rail has no matching sign
   } finally {
     restore();
   }
+});
+
+/* ── assembleRailPayment: the same rail pick, without the fetch loop ──────────
+ * A host that already HOLDS a 402 it built itself (the cloud selling a licence it just offered)
+ * needs to sign it with the buyer's session signers and nothing else — no probe, no paid GET. It
+ * must pick the rail exactly as railBuyer does, or the sale and the toll drift on which envelope
+ * a tenant's chain gets. */
+
+const FEE = "0x7777777777777777777777777777777777777777";
+
+function memoQuoted(legs: { payTo: string; amount: string }[]): Parameters<typeof assembleRailPayment>[0] {
+  const net = activeNetwork();
+  const first = legs[0]!;
+  return {
+    priceUsdc: 0,
+    amountAtomic: first.amount,
+    requirements: { network: net.network, asset: net.usdc, payTo: first.payTo, amount: first.amount, maxTimeoutSeconds: 691200 },
+    ...(legs.length > 1 ? { legs: legs.map((l) => ({ role: "leg", payTo: l.payTo, amount: l.amount })) } : {}),
+  };
+}
+
+/** A batch-capable memo signer (the cloud's in-process shape) that counts which method was used. */
+function batchRecorder() {
+  const acct = privateKeyToAccount(generatePrivateKey());
+  const counts = { single: 0, batch: 0 };
+  return {
+    counts,
+    address: acct.address,
+    signer: {
+      address: acct.address,
+      async signTypedData(a: Parameters<typeof acct.signTypedData>[0]) {
+        counts.single++;
+        return acct.signTypedData(a);
+      },
+      async signTypedDataBatch(list: Parameters<typeof acct.signTypedData>[0][]) {
+        counts.batch++;
+        return Promise.all(list.map((a) => acct.signTypedData(a)));
+      },
+    },
+  };
+}
+
+test("assembleRailPayment: a multi-leg memo 402 is signed in ONE batch and framed as the leg array", async () => {
+  const memo = batchRecorder();
+  const gw = recorder();
+  const payment = await assembleRailPayment(
+    memoQuoted([{ payTo: AUTHOR, amount: "600000" }, { payTo: FEE, amount: "300000" }]),
+    Date.now(),
+    { memo: memo.signer, gateway: gw.signer },
+  );
+  const payloads = JSON.parse(Buffer.from(payment, "base64").toString("utf8")) as Array<{
+    authorization: { from: string; to: string; value: string };
+    signature: string;
+  }>;
+  assert.ok(Array.isArray(payloads) && payloads.length === 2, "two legs → the leg array the gate parses");
+  assert.equal(payloads[0]!.authorization.to, AUTHOR);
+  assert.equal(payloads[0]!.authorization.value, "600000");
+  assert.equal(payloads[1]!.authorization.to, FEE);
+  assert.equal(payloads[1]!.authorization.value, "300000");
+  assert.equal(payloads[0]!.authorization.from, memo.address, "every leg is FROM the injected signer");
+  assert.equal(memo.counts.batch, 1, "a batch-capable signer signs the whole toll in ONE call (atomic reserve)");
+  assert.equal(memo.counts.single, 0);
+  assert.equal(gw.calls.length, 0, "a memo 402 never touches the gateway signer");
+});
+
+test("assembleRailPayment: a Gateway 402 routes to the gateway signer and carries the Circle envelope", async () => {
+  const memo = batchRecorder();
+  const gw = recorder();
+  const quoted: Parameters<typeof assembleRailPayment>[0] = {
+    priceUsdc: 0,
+    amountAtomic: "10000",
+    requirements: {
+      network: "eip155:84532",
+      asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      payTo: AUTHOR,
+      amount: "10000",
+      maxTimeoutSeconds: 691200,
+      ...({ scheme: "exact", extra: { name: "GatewayWalletBatched", version: "1", verifyingContract: GATEWAY_WALLET } } as object),
+    },
+    resource: { url: "https://x.test/a", description: "naulon read toll: A", mimeType: "text/html" },
+  };
+  const payment = await assembleRailPayment(quoted, Date.now(), { memo: memo.signer, gateway: gw.signer });
+  const envelope = JSON.parse(Buffer.from(payment, "base64").toString("utf8")) as { accepted?: { extra?: { name?: string } }; resource?: unknown };
+  assert.equal(gw.calls.length, 1, "the gateway signer signs a Gateway 402");
+  assert.equal(memo.counts.batch + memo.counts.single, 0);
+  assert.equal(envelope.accepted?.extra?.name, "GatewayWalletBatched");
+  assert.ok(envelope.resource, "the facilitator's verify rejects an envelope without `resource`");
+});
+
+test("assembleRailPayment: a memo 402 with no memo signer throws naming the rail", async () => {
+  const gw = recorder();
+  await assert.rejects(
+    assembleRailPayment(memoQuoted([{ payTo: AUTHOR, amount: "5000" }]), Date.now(), { gateway: gw.signer }),
+    /no memo signer/i,
+  );
+  assert.equal(gw.calls.length, 0);
 });
