@@ -635,16 +635,34 @@ export function createApp(
    * title, and inventing one here would put an unverifiable string inside a document
    * whose entire value is that a stranger can check it.
    */
+  // A record is opened FROM A BROWSER by whoever holds its link, so it carries the same
+  // cross-origin headers the key set does — on every status, because "not here" (a 404) and
+  // "unreachable" (a fetch the same-origin policy blocked) are different answers a verifier
+  // must be able to tell apart, and only one of them says anything about the document.
+  //
+  // `?host=` lets a browser name the publisher, which `Host` cannot do for it: a publisher
+  // serving their own site through the SDK has no record route on their origin, and the fleet
+  // edge answers a spoofed `Host` with 403 — measured 2026-09-02, so from a browser there was
+  // no way at all to ask about such a publisher's record. The hint only chooses WHO is
+  // resolved; the `publisherId` ownership check below is untouched, so it discloses nothing a
+  // `curl` with a chosen `Host` could not already ask for. A malformed hint (a scheme, a path,
+  // a query) is ignored rather than cleaned — it falls through to `Host` exactly as before.
+  const RECORD_CORS = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, OPTIONS",
+  } as const;
+  app.options("/licenses/:jti/record", (c) => c.body(null, 204, { ...RECORD_CORS }));
   app.get("/licenses/:jti/record", async (c) => {
     const jti = c.req.param("jti");
-    if (!licensing) return c.json({ jti, found: false }, 404);
-    const host = c.req.header("host") ?? new URL(c.req.url).host;
+    const notFound = () => c.json({ jti, found: false }, 404, { ...RECORD_CORS, "cache-control": "no-store" });
+    if (!licensing) return notFound();
+    const host = publisherHostHint(c.req.query("host")) ?? c.req.header("host") ?? new URL(c.req.url).host;
     const publisher = (await resolver.resolve(host)) ?? (await resolveInAppConfig?.(host));
-    if (!publisher) return c.json({ jti, found: false }, 404);
+    if (!publisher) return notFound();
 
     const event = await getEvent(jti);
     if (!event || (event.publisherId !== undefined && event.publisherId !== publisher.id)) {
-      return c.json({ jti, found: false }, 404);
+      return notFound();
     }
     // The chain the money actually moved on, recovered from the row. Pre-`chainId` rows
     // fall back to the tenant's network, then the fleet default — the same order the
@@ -668,7 +686,9 @@ export function createApp(
       licensing.key,
       Date.now(),
     );
-    return c.json({ jti, found: true, record });
+    // The record is permanent, so anyone may cache it; each mint carries a fresh `iat` and a
+    // fresh signature, and every one of them is valid.
+    return c.json({ jti, found: true, record }, 200, { ...RECORD_CORS, "cache-control": "public, max-age=3600" });
   });
 
   // Everything else flows through the gate.
@@ -945,3 +965,13 @@ export function createApp(
  * Vercel function. A downstream embedder builds its own via `createApp(resolver)`.
  */
 export const app = createApp();
+
+/**
+ * A `?host=` hint on the record route is a host with an optional port, or nothing. A scheme, a
+ * path or a query is refused outright (never "cleaned" into a host), because the value becomes
+ * the `iss` of a document a stranger is told to trust.
+ */
+function publisherHostHint(raw: string | undefined): string | undefined {
+  const h = raw?.trim().toLowerCase();
+  return h && /^[a-z0-9.-]+(:\d+)?$/.test(h) ? h : undefined;
+}

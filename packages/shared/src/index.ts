@@ -12,6 +12,7 @@ export * from "./eip3009.ts";
 export * from "./credits.ts";
 export * from "./botAuthSign.ts";
 export * from "./fleet.ts";
+export * from "./proof.ts";
 export * from "./webhooks/index.ts";
 export * from "./webhookEndpointsEnv.ts";
 export * from "./csv.ts";

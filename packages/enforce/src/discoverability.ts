@@ -15,7 +15,7 @@
  * Everything here derives from the resolved `PublisherConfig` + the Arc network
  * constants — no new per-publisher seam.
  */
-import { activeNetwork, toAtomicUsdc, type PublisherConfig, type SettlementNetwork } from "@naulon/shared";
+import { activeNetwork, getConfig, issuerHost, toAtomicUsdc, type PublisherConfig, type SettlementNetwork } from "@naulon/shared";
 // The manifest MUST advertise the same validity window the real 402 does, so import it rather than
 // re-declaring it (see the note at the old constant's site below).
 import { MAX_TIMEOUT_SECONDS } from "./build402.ts";
@@ -26,6 +26,19 @@ export const X402_MANIFEST_PATH = "/.well-known/x402";
 const JWKS_PATH = "/.well-known/naulon-jwks.json";
 /** Online license verification path template. */
 const LICENSE_VERIFY_PATH = "/licenses/{jti}";
+/** The permanent citation record, minted from the same ledger row. */
+const LICENSE_RECORD_PATH = "/licenses/{jti}/record";
+
+/**
+ * The proof-page template, `host` filled in from the publisher's identity and `{jti}` left for
+ * the buyer. Built by hand rather than through `proofPageUrl` because that helper would encode
+ * the braces; the query joiner still respects a page URL that already carries a query.
+ */
+function proofTemplate(licenseIdentity: string): string {
+  const base = getConfig().VERIFY_PAGE_URL;
+  const host = issuerHost(licenseIdentity) ?? "";
+  return `${base}${base.includes("?") ? "&" : "?"}host=${encodeURIComponent(host)}&jti={jti}`;
+}
 
 /** `Link` header value pointing an agent at the manifest (RFC 8288). */
 export const PAYMENT_LINK_HEADER = `<${X402_MANIFEST_PATH}>; rel="payment"; type="application/json"`;
@@ -77,6 +90,14 @@ export interface X402Manifest {
   license: {
     jwks: string;
     verify: string;
+    /** The permanent citation record for a settlement — `{jti}` is the licence's `jti`. */
+    record: string;
+    /**
+     * The page a reader opens to see the record checked against this gate's published keys, in
+     * their own browser. `host` is pre-filled with this publisher; `{jti}` is the licence's.
+     * This is the link a citation should carry beside the source.
+     */
+    proof: string;
     /** issuer === audience for this publisher's Citation License Tokens. */
     identity: string;
   };
@@ -140,7 +161,13 @@ export function buildX402Manifest(
       payTo:
         "Resolved per article to the primary author from the publisher's credits graph; the recursive co-author split is recorded on each settled event. Custody-free: settlement is buyer → author.",
     },
-    license: { jwks: JWKS_PATH, verify: LICENSE_VERIFY_PATH, identity: publisher.licenseIdentity },
+    license: {
+      jwks: JWKS_PATH,
+      verify: LICENSE_VERIFY_PATH,
+      record: LICENSE_RECORD_PATH,
+      proof: proofTemplate(publisher.licenseIdentity),
+      identity: publisher.licenseIdentity,
+    },
     ...(publisher.catalogUrl ? { catalog: { url: publisher.catalogUrl } } : {}),
   };
 }
