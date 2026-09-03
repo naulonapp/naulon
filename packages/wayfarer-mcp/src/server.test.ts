@@ -2617,3 +2617,79 @@ test("quote still reports a genuine 2xx as a free read", async () => {
     },
   );
 });
+
+// ── PROOF-1 — every tool output that carries a licenseId carries a proof link ───────────
+// `naulon_pay_and_read` returned a `jti` and an explorer link. A transaction hash proves a
+// transfer; it does not prove THIS content was licensed to THIS buyer. The record does, and the
+// page that checks it in a reader's browser is what a citation should carry — so the tool says so.
+function fakeLicenceJws(jti: string, aud: string, slug: string): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const exp = Math.floor(Date.now() / 1000) + 600;
+  return `${b64({ alg: "EdDSA", kid: "k" })}.${b64({ jti, exp, aud, iss: aud, naulon: { slug, title: slug } })}.sig`;
+}
+
+/** A pay gate that hands back a DECODABLE licence, so the held store keeps it. */
+function licensingPayGate(amountAtomic: string, licence: string) {
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    if (req.url?.includes("/.well-known/")) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    if (req.headers["payment-signature"] || req.headers["x-naulon-license"]) {
+      res.writeHead(200, { "content-type": "text/plain", "x-naulon-license": licence });
+      res.end("paid content");
+    } else {
+      res.writeHead(402, { "payment-required": paymentRequired(amountAtomic), "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "payment required" }));
+    }
+  };
+}
+
+test("PROOF-1: naulon_pay_and_read and naulon_read_held return proofUrl + recordUrl beside licenseId", async () => {
+  await withEnv({ WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-proof-${process.pid}.json`), VERIFY_PAGE_URL: undefined, CATALOG_URL: "http://catalog.test/c.json" }, async () => {
+    // The stub gate's aud must match its own host for the links to derive; read it off the env.
+    const gate = await standGate((req, res) => {
+      const host = req.headers.host ?? "";
+      licensingPayGate("5000", fakeLicenceJws("j-mcp-1", `naulon:${host}`, "zeybek"))(req, res);
+    });
+    try {
+      await withEnv({ TOLLGATE_URL: gate.url }, async () => {
+        const client = await connectedClient();
+        const paid = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } });
+        const p = paid.structuredContent as { ok: boolean; licenseId?: string; proofUrl?: string; recordUrl?: string };
+        assert.equal(p.ok, true);
+        assert.equal(p.licenseId, "j-mcp-1");
+        const host = new URL(gate.url).host;
+        assert.equal(p.proofUrl, `https://naulon.app/verify?host=${encodeURIComponent(host)}&jti=j-mcp-1`);
+        assert.equal(p.recordUrl, `${gate.url}/licenses/j-mcp-1/record`, "self-host: the record is on the gate paid, no hint");
+
+        const held = await client.callTool({ name: "naulon_read_held", arguments: { slug: "zeybek" } });
+        const h = held.structuredContent as { ok: boolean; licenseId?: string; proofUrl?: string; recordUrl?: string };
+        assert.equal(h.ok, true, "the licence was held and is live");
+        assert.equal(h.licenseId, "j-mcp-1");
+        assert.equal(h.proofUrl, p.proofUrl, "a re-read carries the same page as the pay that minted it");
+        assert.equal(h.recordUrl, p.recordUrl);
+      });
+    } finally {
+      await gate.close();
+    }
+  });
+});
+
+test("PROOF-1: the tool descriptions tell the model to CITE the proof page, and the research prompt asks for it", async () => {
+  const client = await connectedClient();
+  const { tools } = await client.listTools();
+  for (const name of ["naulon_pay_and_read", "naulon_read_held", "naulon_research"]) {
+    const tool = tools.find((t) => t.name === name);
+    assert.ok(tool, `${name} is registered`);
+    const schema = JSON.stringify(tool.outputSchema ?? {});
+    assert.match(schema, /proofUrl/, `${name} declares proofUrl in its output`);
+    assert.match(schema, /recordUrl/, `${name} declares recordUrl in its output`);
+  }
+  const pay = tools.find((t) => t.name === "naulon_pay_and_read")!;
+  assert.match(JSON.stringify(pay.outputSchema), /cite/i, "the field says what to do with it");
+  const p = await client.getPrompt({ name: "research", arguments: { topic: "x" } });
+  const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+  assert.match(text, /proofUrl/, "the research prompt asks for the proof page beside each citation");
+});

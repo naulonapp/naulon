@@ -176,6 +176,7 @@ Only read by the wayfarer agent and the MCP server. See [buying.md](./buying.md)
 | `WAYFARER_LICENSE_PATH` | `data/wayfarer-licenses.json` | Where the agent caches licenses it has been issued, so a live one buys a free re-read across runs. |
 | `DEPOSIT_AMOUNT_USDC` | `1` | USDC deposited into the Gateway Wallet at the start of a run. |
 | `CATALOG_URL` | the naulon fleet directory | Where the agent discovers candidate articles. |
+| `VERIFY_PAGE_URL` | `https://naulon.app/verify` | The page a citation's proof link opens. It fetches the record from the issuing gate and checks the signature in the reader's browser against that gate's published keys, so the default verifies a self-hosted gate's records too. Point it at your own page if you host one. |
 | `PUBLISHER_URL` | unset | Discover from one publisher's live feed instead. |
 | `RSS_URL` | unset | An explicit feed URL. Precedence is `RSS_URL` > `PUBLISHER_URL` > `CATALOG_URL`; with none of them the agent refuses rather than inventing sources. |
 | `SITEMAP_URL` | unset | Reserved for sitemap-based discovery, which fills the slugs an RSS feed truncates. Unused until that parsing lands. |

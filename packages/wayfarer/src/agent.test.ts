@@ -1100,3 +1100,116 @@ test("A4 follow-up: licenseIdentityFor includes the port, matching the gate's na
     "a license minted for naulon:host:port must verify when the buyer derives its expected identity from the same host:port URL",
   );
 });
+
+// ── PROOF-1 — the citation carries its own verifier ─────────────────────────────
+// `[1] Title (slug) · licensed 🎫 07e4a7de` gave a reader eight hex characters and nothing to
+// open. Every cited source now carries the proof page (a human opens it, the record is checked in
+// their browser against the issuer's keys) and the record route (a machine fetches the document).
+function fakeLicence(jti: string, aud: string, slug: string): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const exp = Math.floor(Date.now() / 1000) + 600;
+  return `${b64({ alg: "EdDSA", kid: "k" })}.${b64({ jti, exp, aud, iss: aud, naulon: { slug, title: slug } })}.sig`;
+}
+
+function withLicensingStubGate(licence: string, fn: () => Promise<void>): Promise<void> {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+    const u = String(url);
+    const cat = catalogResponse(u);
+    if (cat) return cat;
+    if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+    // A paid read AND a licence-bearing re-read both get the bytes; the stub gate honours the
+    // licence it issued, as a real one would.
+    if (init?.headers?.["payment-signature"] || init?.headers?.["x-naulon-license"]) {
+      return new Response("the toll is the fare paid to cross", { status: 200, headers: { "x-naulon-license": licence } });
+    }
+    const header = Buffer.from(
+      JSON.stringify({
+        accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+      }),
+    ).toString("base64");
+    return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+  }) as typeof globalThis.fetch;
+  return Promise.resolve(fn()).finally(() => {
+    globalThis.fetch = real;
+  });
+}
+
+test("PROOF-1: a paid source carries proofUrl + recordUrl, and the citation block prints the page, never a prefix", async () => {
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: TEST_CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      VERIFY_PAGE_URL: undefined,
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-proof-${process.pid}.json`),
+    },
+    async () => {
+      await withLicensingStubGate(fakeLicence("j-run-1", "naulon:gate.test", "the-naulon"), async () => {
+        const result = await run("payment and passage", () => {});
+        const naulon = result.sources.find((s) => s.slug === "the-naulon");
+        assert.ok(naulon, "the on-topic essay is paid for");
+        assert.equal(naulon.licenseId, "j-run-1");
+        assert.equal(naulon.proofUrl, "https://naulon.app/verify?host=gate.test&jti=j-run-1");
+        // A self-hosted single gate: the record lives on the gate the toll was paid at, no hint.
+        assert.equal(naulon.recordUrl, "http://gate.test/licenses/j-run-1/record");
+        assert.match(result.answer, /https:\/\/naulon\.app\/verify\?host=gate\.test&jti=j-run-1/, "the citation block carries the page");
+        assert.doesNotMatch(result.answer, /🎫/, "the emoji-and-prefix rendering is gone");
+      });
+    },
+  );
+});
+
+test("PROOF-1: a held re-read carries the same links as the pay that minted it", async () => {
+  const licPath = join(tmpdir(), `naulon-proof-held-${process.pid}.json`);
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: TEST_CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: "http://gate.test",
+      VERIFY_PAGE_URL: undefined,
+      WAYFARER_LICENSE_PATH: licPath,
+    },
+    async () => {
+      await withLicensingStubGate(fakeLicence("j-run-2", "naulon:gate.test", "the-naulon"), async () => {
+        await run("payment and passage", () => {});
+        // Second run: the licence is held and live, so the source is re-read free.
+        const again = await run("payment and passage", () => {});
+        const naulon = again.sources.find((s) => s.slug === "the-naulon");
+        assert.ok(naulon);
+        assert.equal(naulon.paidUsdc, 0, "re-read from the held licence");
+        assert.equal(naulon.proofUrl, "https://naulon.app/verify?host=gate.test&jti=j-run-2");
+        assert.equal(naulon.recordUrl, "http://gate.test/licenses/j-run-2/record");
+      });
+    },
+  );
+});
+
+test("PROOF-1: proofLinksFor points the record at the FLEET gate, with the publisher hint, under fleet-default discovery", async () => {
+  const { proofLinksFor } = await import("./agent.ts");
+  await withEnv({ CATALOG_URL: undefined, RSS_URL: undefined, PUBLISHER_URL: undefined, VERIFY_PAGE_URL: undefined }, async () => {
+    // Fleet default: a publisher serving their own site has no record route on their origin; the
+    // fleet gate mints it, and can only be told WHICH publisher by the hint.
+    const links = proofLinksFor({ jti: "j-3", aud: "naulon:publisher.example", paidUrl: "https://publisher.example/articles/x" });
+    assert.deepEqual(links, {
+      proofUrl: "https://naulon.app/verify?host=publisher.example&jti=j-3",
+      recordUrl: "https://gate.naulon.app/licenses/j-3/record?host=publisher.example",
+    });
+  });
+  await withEnv({ CATALOG_URL: "http://catalog.test/c.json", VERIFY_PAGE_URL: "https://self.host/verify" }, async () => {
+    // Self-host: the paid origin IS the gate, and the page is theirs.
+    const links = proofLinksFor({ jti: "j-4", aud: "naulon:gate.test", paidUrl: "http://gate.test/essays/x" });
+    assert.deepEqual(links, {
+      proofUrl: "https://self.host/verify?host=gate.test&jti=j-4",
+      recordUrl: "http://gate.test/licenses/j-4/record",
+    });
+  });
+  // No usable identity ⇒ no links, never a guessed host.
+  assert.deepEqual(proofLinksFor({ jti: "j-5", aud: "not-an-identity", paidUrl: "http://gate.test/x" }), {});
+});

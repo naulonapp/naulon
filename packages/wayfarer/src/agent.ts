@@ -6,7 +6,19 @@
  * tollgate over the real x402 contract; the Buyer is mock (offline) or Circle
  * Gateway (PAYMENT_MODE=gateway), chosen at startup.
  */
-import { activeNetwork, getConfig, supportsMemo, usdc, verifyLicense, type JwkSet } from "@naulon/shared";
+import {
+  activeNetwork,
+  FLEET_ORIGIN,
+  getConfig,
+  isFleetDefaultDiscovery,
+  issuerHost,
+  proofPageUrl,
+  recordUrl,
+  supportsMemo,
+  usdc,
+  verifyLicense,
+  type JwkSet,
+} from "@naulon/shared";
 import { appraise } from "./appraise.ts";
 import { quotedTotalAtomic, rereadWithLicense, selectBuyer } from "./buyer.ts";
 import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
@@ -91,6 +103,39 @@ export function licenseIdentityFor(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The two links a cited source carries: the page a reader opens, and the record a machine
+ * fetches. Both name the publisher by the licence's own `aud` (= the issuer identity), never by
+ * the discovery URL, so a candidate found at B and licensed by B's gate links to B.
+ *
+ * Where the record lives depends on who minted it. Under fleet-default discovery every
+ * publisher — routed through the fleet gate or serving their own site through the SDK — has
+ * their record minted by the FLEET gate, which a browser can only point at the right publisher
+ * with the `host` hint (a self-served publisher's origin has no record route at all). A
+ * self-hosted gate mints its own, at the origin the toll was paid to, and needs no hint.
+ *
+ * No usable identity ⇒ no links. A guessed host would put a wrong publisher in a document a
+ * reader is told to trust.
+ */
+export function proofLinksFor(input: { jti: string; aud: string | undefined; paidUrl: string }): {
+  proofUrl?: string;
+  recordUrl?: string;
+} {
+  const host = issuerHost(input.aud);
+  if (!host) return {};
+  const cfg = getConfig();
+  let gateOrigin: string;
+  try {
+    gateOrigin = isFleetDefaultDiscovery(cfg) ? FLEET_ORIGIN : new URL(input.paidUrl).origin;
+  } catch {
+    return {};
+  }
+  return {
+    proofUrl: proofPageUrl({ verifyUrl: cfg.VERIFY_PAGE_URL, host, jti: input.jti }),
+    recordUrl: recordUrl({ gateOrigin, host, jti: input.jti }),
+  };
 }
 
 /**
@@ -427,7 +472,14 @@ export async function run(
       }
       const reread = await rereadWithLicense(target, "citation", h.jws, buyer.address, proof);
       if (reread.ok) {
-        sources.push({ slug: d.slug, title: d.title, content: reread.content ?? "", paidUsdc: 0, licenseId: h.jti });
+        sources.push({
+          slug: d.slug,
+          title: d.title,
+          content: reread.content ?? "",
+          paidUsdc: 0,
+          licenseId: h.jti,
+          ...proofLinksFor({ jti: h.jti, aud: h.aud, paidUrl: target }),
+        });
         log(`  🎫 re-read ${d.slug} FREE with held license (${h.jti.slice(0, 8)})${h.pop ? " 🔑 proof-of-possession" : ""}`);
       } else {
         log(`  ✗ re-read failed for ${d.slug}: ${reread.error}`);
@@ -463,6 +515,7 @@ export async function run(
     spent += result.costUsdc ?? result.paidUsdc ?? d.price;
 
     let licenseId: string | undefined;
+    let links: { proofUrl?: string; recordUrl?: string } = {};
     if (result.license) {
       const decoded = decodeHeld(result.license);
       // The canonical identity of the gate this read just settled into — derived from
@@ -475,6 +528,7 @@ export async function run(
         // held record (a slug-only re-read can then target the real link, not a template).
         held.set(d.slug, { ...decoded, jws: result.license, url });
         licenseId = decoded.jti;
+        links = proofLinksFor({ jti: decoded.jti, aud: decoded.aud, paidUrl: url });
         // Save NOW, not only once after the loop (A1): a later candidate's re-read
         // throwing (or any other mid-loop failure) must never discard a license this
         // run already paid for. Idempotent — the final save below is a safety net.
@@ -482,7 +536,8 @@ export async function run(
       }
       const mark =
         verified === true ? " → 🎫 license verified" : verified === false ? " → ⚠ license UNVERIFIED" : " → 🎫 license";
-      log(`  ✓ paid $${(result.paidUsdc ?? d.price).toFixed(6)} for ${d.slug} (ref ${result.settlementRef})${mark} ${licenseId?.slice(0, 8) ?? ""}`);
+      // The proof page, not a truncated id: the log is what a human reads back.
+      log(`  ✓ paid $${(result.paidUsdc ?? d.price).toFixed(6)} for ${d.slug} (ref ${result.settlementRef})${mark} ${links.proofUrl ?? licenseId ?? ""}`);
     } else {
       log(`  ✓ paid $${(result.paidUsdc ?? d.price).toFixed(6)} for ${d.slug} (ref ${result.settlementRef})`);
     }
@@ -494,6 +549,7 @@ export async function run(
       paidUsdc: result.paidUsdc ?? d.price,
       settlementRef: result.settlementRef,
       licenseId,
+      ...links,
     });
   }
   await heldStore.save(held);
@@ -510,7 +566,9 @@ async function ground(topic: string, sources: Source[]): Promise<string> {
     return `No sources were worth paying for under budget for "${topic}".`;
   }
   const citations = sources
-    .map((s, i) => `[${i + 1}] ${s.title} (${s.slug})${s.licenseId ? ` · licensed 🎫 ${s.licenseId.slice(0, 8)}` : ""}`)
+    // The link a reader can open — never eight hex characters and an emoji, which resolved to
+    // nothing. A licence with no derivable proof page (no usable issuer) still names its id in full.
+    .map((s, i) => `[${i + 1}] ${s.title} (${s.slug})${s.proofUrl ? ` · licensed · ${s.proofUrl}` : s.licenseId ? ` · licensed (${s.licenseId})` : ""}`)
     .join("\n");
 
   if (getConfig().OPENAI_API_KEY) {

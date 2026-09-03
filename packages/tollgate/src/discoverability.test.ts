@@ -125,3 +125,28 @@ test("the manifest's chain follows the TENANT's settlementNetwork", async () => 
   assert.equal(m.payment.chainId, 8453);
   assert.equal(m.payment.asset, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
 });
+
+// ── The proof link, discoverable ──────────────────────────────────────────────
+// A non-SDK buyer reads the manifest to learn the gate's shape. `license.verify` told it where
+// an event could be looked up; it said nothing about the permanent record or the page a reader
+// opens, so a buyer building its own citation block had to know both from documentation.
+test("the manifest advertises the record route and the proof page, host pre-filled", () => {
+  const m = buildX402Manifest(fixturePublisher());
+  assert.equal(m.license.record, "/licenses/{jti}/record");
+  assert.equal(m.license.proof, "https://naulon.app/verify?host=test.host&jti={jti}");
+});
+
+test("the proof template follows VERIFY_PAGE_URL, and keeps a query the page already carries", async () => {
+  const { resetConfig } = await import("@naulon/shared");
+  const prev = process.env.VERIFY_PAGE_URL;
+  process.env.VERIFY_PAGE_URL = "https://self.host/check?lang=de";
+  resetConfig();
+  try {
+    const m = buildX402Manifest(fixturePublisher());
+    assert.equal(m.license.proof, "https://self.host/check?lang=de&host=test.host&jti={jti}");
+  } finally {
+    if (prev === undefined) delete process.env.VERIFY_PAGE_URL;
+    else process.env.VERIFY_PAGE_URL = prev;
+    resetConfig();
+  }
+});
