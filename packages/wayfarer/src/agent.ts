@@ -94,36 +94,36 @@ export function licenseIdentityFor(url: string): string | undefined {
 }
 
 /**
- * The lookup a held licence is matched against, with the url pinned to THIS gate.
+ * The lookup a held licence is matched against — against the url this candidate would ACTUALLY
+ * be read at, which is the same one the pay step uses (`d.url ?? articleUrl(base, d.slug)`).
  *
- * A candidate's own `url` comes from `discover()` and is untrusted, so it is honoured only when
- * it is on the gate we are about to pay; anything else falls back to the slug template. Doing
- * that here — once, before matching — is what lets the cache branch re-read a scoped licence at
- * `req.url` without re-deriving the trust decision at the call site.
+ * It used to pin the url to the configured gate whenever the candidate named another origin, on
+ * the theory that `discover()` is untrusted. That made the two steps disagree: a candidate found
+ * at publisher B was PRICED at B and then matched against a licence held for A, because the match
+ * had quietly been rewritten to A's own `/essays/<slug>`. The re-read then fetched A's article and
+ * the run cited it under B's title — free, and with nothing raised anywhere.
  *
- * The fallback is why a scope licence usually works from a slug alone: `/essays/<slug>` is the
- * gate's canonical path, so a scope written over it covers the template. A publisher serving
- * somewhere else (`/articles/…`) is exactly the case where the candidate url has to be supplied,
- * and where a slug-only lookup correctly finds nothing rather than guessing.
+ * The credential never leaked to B, and that was the guarantee the old pinning was written for.
+ * But it bought that guarantee by reading the wrong publisher instead, which for a product whose
+ * whole claim is a verifiable citation is the worse of the two. Binding the match to `aud` gives
+ * the same guarantee directly: a licence minted by A cannot be selected for a candidate at B at
+ * all, so B is priced and paid like any other source.
+ *
+ * The template fallback remains for a candidate that names no url of its own — `/essays/<slug>` on
+ * the configured gate is then the only thing it can mean, and it is also why a scope licence
+ * usually works from a slug alone.
  */
 export function heldRequestFor(
   base: string,
   slug: string,
   candidateUrl?: string,
 ): { slug: string; path: string; aud: string | undefined; url: string } {
-  let url = articleUrl(base, slug);
-  if (candidateUrl) {
-    try {
-      if (new URL(candidateUrl).origin === new URL(base).origin) url = candidateUrl;
-    } catch {
-      // An unparseable candidate url is simply not used; the template already stands.
-    }
-  }
+  const url = candidateUrl ?? articleUrl(base, slug);
   let path = `/${slug}`;
   try {
     path = new URL(url).pathname;
   } catch {
-    // Unreachable for a url we just built from `base`, but a bad `base` must not throw here.
+    // An unparseable candidate url yields no identity below, so nothing will match it.
   }
   return { slug, path, aud: licenseIdentityFor(url), url };
 }
@@ -411,10 +411,10 @@ export async function run(
       // keyed by slug alone, so a same-slug candidate from a DIFFERENT (still
       // allow-listed) publisher must never receive this license/PoP proof (B1).
       //
-      // A SCOPED licence has no single paid url (it was bought before any read), so it re-reads
-      // at the url its scope was matched against — which `heldRequestFor` has already pinned to
-      // this gate's origin, so it is no less trusted than the template it replaces.
-      const target = h.scope ? req.url : (h.url ?? articleUrl(base, d.slug));
+      // The url the licence was actually paid at, when there is one. A SCOPED licence has none —
+      // it was bought before any read — so it re-reads at the url its scope was matched against,
+      // which is the same url this candidate was priced at and is bound to the licence's own gate.
+      const target = h.url ?? req.url;
       // Holder-of-key license: sign a fresh proof-of-possession so the gate knows
       // we still hold the payer wallet, not just a captured token.
       let proof: string | undefined;

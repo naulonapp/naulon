@@ -22,7 +22,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
-import { DEFAULT_POLICY, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
+import { DEFAULT_POLICY, licenseIdentityFor, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
 import { buildServer, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
 
@@ -1158,8 +1158,28 @@ const mockSigner: MemoSigner = {
   },
 };
 
-function heldLicense(slug: string, exp: number): HeldLicense {
-  return { slug, title: slug, jti: `jti-${slug}`, exp, aud: "gate://naulon", pop: false, jws: "h.p.s" };
+/**
+ * A held licence as the CONFIGURED gate would have minted it.
+ *
+ * `aud` is derived, not a placeholder: a held licence is only usable at the gate that issued it,
+ * and `naulon:${host}` is what a gate stamps. A fixture carrying `gate://naulon` describes a
+ * token no deployment produces, and a test built on one proves nothing about the real path.
+ */
+function heldLicense(slug: string, exp: number, gate?: string): HeldLicense {
+  // Derived through `licenseIdentityFor`, the same function the tool computes the request's
+  // identity with, against the same gate `gateBase()` will resolve — `TOLLGATE_URL` when it is
+  // set, otherwise the fleet origin. A fixture with a hand-written `aud` describes a token no
+  // deployment mints, and a held licence is only usable at the gate that issued it.
+  const base = gate ?? process.env.TOLLGATE_URL ?? FLEET_ORIGIN;
+  return {
+    slug,
+    title: slug,
+    jti: `jti-${slug}`,
+    exp,
+    aud: licenseIdentityFor(base) ?? "naulon:unknown",
+    pop: false,
+    jws: "h.p.s",
+  };
 }
 
 test("C1 — read_held consults the INJECTED per-session store, not the process file", async () => {
@@ -1282,7 +1302,9 @@ test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /
   try {
     const exp = Math.floor(Date.now() / 1000) + 3600; // live
     const store = memoryHeldStore([
-      ["custom", { ...heldLicense("custom", exp), url: `${urlGate.url}/articles/the-real-path` }],
+      // `baseGate` is the identity: ONE publisher has one gate, and the second stub exists only
+      // to prove which url was fetched, not to model a second issuer.
+      ["custom", { ...heldLicense("custom", exp, baseGate.url), url: `${urlGate.url}/articles/the-real-path` }],
     ]);
     const client = await connectedClientWith({ heldStore: store, tollgateUrl: baseGate.url });
     const res = await client.callTool({ name: "naulon_read_held", arguments: { slug: "custom" } });
@@ -1340,7 +1362,7 @@ test("FU-A1b: naulon_read_held's PoP-proof signing THROWING returns a typed erro
 // was actually PAID at, a same-slug candidate served from pubB gets pubA's
 // license/PoP-proof headers on the wire — a credential leak across publisher
 // origins, independent of whether pubB's response ultimately honors them.
-test("B1: a held license (issued by pubA) never leaks to a same-slug candidate discovered at pubB, even though both are allow-listed", async () => {
+test("B1: a same-slug candidate at pubB is PAID FOR — pubA's licence is neither leaked to it nor silently read in its place", async () => {
   const PUB_A = "http://pub-a.test";
   const PUB_B = "http://pub-b.test";
   const CATALOG = "http://catalog.test/b1";
@@ -1396,7 +1418,7 @@ test("B1: a held license (issued by pubA) never leaks to a same-slug candidate d
           title: "Shared Slug",
           jti: `jti-${slug}`,
           exp,
-          aud: "gate://pub-a",
+          aud: "naulon:pub-a.test", // what pubA's gate actually mints
           pop: true,
           jws: "held.jws.sig",
           url: `${PUB_A}/essays/${slug}`,
@@ -1413,18 +1435,30 @@ test("B1: a held license (issued by pubA) never leaks to a same-slug candidate d
 
         const r = (await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } }))
           .structuredContent as { decisions: Array<{ slug: string; action: string }> };
-        assert.ok(
-          r.decisions.some((d) => d.slug === slug && d.action === "cache"),
-          `expected a "cache" decision for the shared slug, got ${JSON.stringify(r.decisions)}`,
-        );
 
+        // The original subject, unchanged: the credential never reaches the other publisher.
         assert.ok(
           !hitsB.some((h) => h["x-naulon-license"] || h["x-naulon-proof"]),
           "pubB (the untrusted same-slug candidate) must NEVER receive pubA's license/PoP proof",
         );
+
+        // And the other half, which this test used to ASSERT the wrong way round. It required a
+        // "cache" decision and a free re-read of pubA — meaning a candidate discovered at pubB,
+        // carrying pubB's title, was answered with pubA's article body. Nothing leaked and nothing
+        // errored; the run simply cited the wrong publisher. Two independently-run sites sharing a
+        // generic slug (`faq`, `about`) is all it takes.
+        //
+        // A licence is now bound to the gate that minted it, so pubA's cannot be selected for a
+        // pubB candidate at all. pubB is priced and paid like any other source — which costs a
+        // toll, and is the correct outcome.
         assert.ok(
-          hitsA.some((h) => h["x-naulon-license"]),
-          "pubA (the url the license was actually paid at) receives the free re-read WITH its own license",
+          r.decisions.some((d) => d.slug === slug && d.action === "pay"),
+          `expected a "pay" decision for pubB's candidate, got ${JSON.stringify(r.decisions)}`,
+        );
+        assert.equal(
+          hitsA.length,
+          0,
+          "pubA is never read for a candidate that belongs to pubB — its bytes must not be cited under pubB's title",
         );
       },
     );
