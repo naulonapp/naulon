@@ -14,6 +14,7 @@
  * nothing about how the config is sourced.
  */
 import type { NetworkName } from "./networks.ts";
+import type { PriceRule } from "./price-rules.ts";
 import type { CreditsResolver, TollKind, Usdc, WalletAddress } from "./types.ts";
 
 /**
@@ -87,6 +88,19 @@ export interface PublisherConfig {
    * default sources this from `CITATION_MULTIPLIER`.
    */
   citationMultiplier: number;
+  /**
+   * Per-path overrides of the two fields above — "everything under /papers costs more".
+   *
+   * Absent or empty is byte-identical to before this field existed: `tollPrice` resolves no
+   * rule and reads `price`/`citationMultiplier` exactly as it always did. Ordered
+   * most-specific-first by `normalizePriceRules` on the write path, and the FIRST match wins
+   * (RFC 9309 §2.2.2, the same precedence RSL declares) — so the stored order IS the
+   * resolution order, and a resolver must not reorder it.
+   *
+   * A rule prices a PATH, while `credits` still keys on the slug: the two answer different
+   * questions (what it costs vs. who is paid) and neither derives the other.
+   */
+  priceRules?: PriceRule[];
   /**
    * Slug → credits graph: who gets paid for this article, and in what shares.
    * THE publisher-agnostic seam (see `CreditsResolver`). An HTTP API, a static

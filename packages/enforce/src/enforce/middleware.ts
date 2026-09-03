@@ -259,7 +259,7 @@ export function naulonMiddleware(
       path: url.pathname + url.search,
       publisher: publisher as never,
       now: clock(),
-      quote: (publisher, slug, kind) => opts.quote.quote(publisher, slug, kind, { resource }),
+      quote: (publisher, slug, kind, path) => opts.quote.quote(publisher, slug, kind, { resource, path }),
       ...(licenseVerification ? { licenseVerification } : {}),
     });
 
