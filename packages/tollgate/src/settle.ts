@@ -23,6 +23,9 @@ import {
   walletAddress,
   type AttributedEvent,
   type ForgoneLeg,
+  type LicensePeriod,
+  type LicenseScope,
+  type LicenseTerm,
   type PublisherConfig,
 } from "@naulon/shared";
 import { licensing, type Quote, type SettlementLegReq } from "@naulon/enforce";
@@ -70,10 +73,33 @@ export interface SettleArgs {
   host: string;
   /** Single timestamp shared with the advertised 402 (build402) — pass decide()'s `now`. */
   now: number;
+  /**
+   * A licence SALE rather than a toll.
+   *
+   * A toll is one payment for one slug, made AFTER a read, and mints the short-window access
+   * licence this gate has always minted — that is what `licence` being absent means, and the
+   * minted token is then byte-identical to before this field existed.
+   *
+   * A sale is one payment for a SCOPE and a PERIOD, made BEFORE any read. The money path is
+   * identical (the same verify, the same buyer→author legs, the same custody-free rule), so it
+   * settles through here rather than through a second implementation; the only difference is
+   * what the minted claim says. These four fields are the difference, and they are handed to
+   * `mintLicense` unchanged — this layer decides nothing about them, because pricing a scope and
+   * deciding who may buy one are the control plane's business, not the gate's.
+   *
+   * `period` is the PURCHASED term and is independent of `LICENSE_TTL_SECONDS`, which stays the
+   * re-read window and stays capped. A licence that entitles a read still expires.
+   */
+  licence?: {
+    scope?: LicenseScope;
+    terms?: LicenseTerm[];
+    period?: LicensePeriod;
+    subject?: string;
+  };
 }
 
 export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult> {
-  const { payment, legs, quote: q, publisher, host, now } = args;
+  const { payment, legs, quote: q, publisher, host, now, licence } = args;
 
   const result = await verifyAndSettle(payment, legs, now, publisher.id);
   if (!result.ok) return { ok: false, error: result.error };
@@ -142,6 +168,13 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
         // Holder-of-key: bind to the (already non-zero) payer wallet so re-reads
         // need a proof-of-possession. Off → a v1 bearer license, demo unchanged.
         popBindAddress: cfg.LICENSE_POP ? payerResolved : undefined,
+        // Spread so every key stays ABSENT on a toll. `mintLicense` treats absent as "today's
+        // single-slug licence with sub = the payer", so a settle that passes no `licence` emits
+        // the same bytes it did before this field existed — which is what the parity test asserts.
+        ...(licence?.scope ? { scope: licence.scope } : {}),
+        ...(licence?.terms ? { terms: licence.terms } : {}),
+        ...(licence?.period ? { period: licence.period } : {}),
+        ...(licence?.subject ? { subject: licence.subject } : {}),
       },
       licensing.key,
       now,
