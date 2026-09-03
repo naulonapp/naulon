@@ -89,7 +89,7 @@ async function claimsOf(res: Awaited<ReturnType<typeof settleAndAttribute>>): Pr
   const jws = (res as { licenseJws?: string }).licenseJws;
   assert.ok(jws, "expected a minted licence");
   const verified = verifyLicense(jws, {
-    now: Math.floor(Date.now() / 1000),
+    now: Date.now(),
     expectedIssuer: "https://example.test",
     expectedAudience: "https://example.test",
     jwks: licensing!.jwks,
@@ -100,7 +100,7 @@ async function claimsOf(res: Awaited<ReturnType<typeof settleAndAttribute>>): Pr
 }
 
 test("a toll mints exactly what it always did — no scope, no terms, no period, sub = the payer", async () => {
-  const c = await claimsOf(await settleAndAttribute(args(Math.floor(Date.now() / 1000))));
+  const c = await claimsOf(await settleAndAttribute(args(Date.now())));
   assert.equal(c.naulon.scope, undefined);
   assert.equal(c.naulon.terms, undefined);
   assert.equal(c.naulon.period, undefined);
@@ -110,8 +110,10 @@ test("a toll mints exactly what it always did — no scope, no terms, no period,
 });
 
 test("a sale carries the scope, terms, period and subject through to the claim", async () => {
-  const now = Math.floor(Date.now() / 1000);
-  const period = { from: now, until: now + 30 * 86_400 };
+  const now = Date.now();
+  // The PERIOD is epoch seconds — the unit the claim uses — while `now` is milliseconds.
+  const nowSec = Math.floor(now / 1000);
+  const period = { from: nowSec, until: nowSec + 30 * 86_400 };
   const c = await claimsOf(
     await settleAndAttribute(
       args(now, {
@@ -131,7 +133,7 @@ test("a sale carries the scope, terms, period and subject through to the claim",
 test("a successful settle names the event id, which is the licence jti", async () => {
   // A caller keying its own record by the licence must not have to decode the token to learn its
   // id. Both halves are asserted together so they cannot drift apart.
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now();
   const res = await settleAndAttribute(args(now));
   assert.equal(res.ok, true);
   assert.ok(res.eventId, "expected the event id back");
@@ -142,12 +144,23 @@ test("a successful settle names the event id, which is the licence jti", async (
 test("a sale's purchased PERIOD is not its re-read window — exp stays the TTL", async () => {
   // The whole reason period is a separate field: a 30-day licence must not become a 30-day
   // bearer token. `exp` is the kill switch and stays capped at the TTL.
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now();
   const c = await claimsOf(
     await settleAndAttribute(
-      args(now, { scope: { patterns: ["/essays/*"] }, period: { from: now, until: now + 30 * 86_400 } }),
+      args(now, {
+        scope: { patterns: ["/essays/*"] },
+        period: { from: Math.floor(now / 1000), until: Math.floor(now / 1000) + 30 * 86_400 },
+      }),
     ),
   );
+  // Compared against the SECONDS form of the same instant. The earlier version of this assertion
+  // subtracted a millisecond `now` from a seconds `exp`, which is hugely negative and therefore
+  // <= 3600 for any implementation at all — it passed while the clock unit was wrong.
+  const nowSecCheck = Math.floor(now / 1000);
   assert.ok(c.exp !== undefined, "an access licence must still expire");
-  assert.ok(c.exp - now <= 3600, `exp is ${c.exp - now}s out — the TTL cap is 3600`);
+  assert.ok(c.exp > nowSecCheck, `exp ${c.exp} is not in the future of ${nowSecCheck}`);
+  assert.ok(
+    c.exp - nowSecCheck <= 3600,
+    `exp is ${c.exp - nowSecCheck}s out — the TTL cap is 3600`,
+  );
 });
