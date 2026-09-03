@@ -22,7 +22,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
-import { DEFAULT_POLICY, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
+import { DEFAULT_POLICY, licenseIdentityFor, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
 import { buildServer, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
 
@@ -1158,8 +1158,28 @@ const mockSigner: MemoSigner = {
   },
 };
 
-function heldLicense(slug: string, exp: number): HeldLicense {
-  return { slug, title: slug, jti: `jti-${slug}`, exp, aud: "gate://naulon", pop: false, jws: "h.p.s" };
+/**
+ * A held licence as the CONFIGURED gate would have minted it.
+ *
+ * `aud` is derived, not a placeholder: a held licence is only usable at the gate that issued it,
+ * and `naulon:${host}` is what a gate stamps. A fixture carrying `gate://naulon` describes a
+ * token no deployment produces, and a test built on one proves nothing about the real path.
+ */
+function heldLicense(slug: string, exp: number, gate?: string): HeldLicense {
+  // Derived through `licenseIdentityFor`, the same function the tool computes the request's
+  // identity with, against the same gate `gateBase()` will resolve — `TOLLGATE_URL` when it is
+  // set, otherwise the fleet origin. A fixture with a hand-written `aud` describes a token no
+  // deployment mints, and a held licence is only usable at the gate that issued it.
+  const base = gate ?? process.env.TOLLGATE_URL ?? FLEET_ORIGIN;
+  return {
+    slug,
+    title: slug,
+    jti: `jti-${slug}`,
+    exp,
+    aud: licenseIdentityFor(base) ?? "naulon:unknown",
+    pop: false,
+    jws: "h.p.s",
+  };
 }
 
 test("C1 — read_held consults the INJECTED per-session store, not the process file", async () => {
@@ -1183,7 +1203,86 @@ test("C1 — two sessions with separate stores do not cross-read (the hosted lea
   const rb = (await b.callTool({ name: "naulon_read_held", arguments: { slug: "secret" } }))
     .structuredContent as { ok: boolean; error?: string };
   assert.match(ra.error ?? "", /expired/i, "A sees its own held license");
-  assert.match(rb.error ?? "", /No held license/i, "B never sees A's license — isolation holds");
+  // The isolation signal is that B gets the NOTHING-HELD answer while A gets the EXPIRED one:
+  // "expired" can only be said about a licence the store actually holds. Asserted as the
+  // absence of A's answer rather than as B's exact prose, which is copy and will be reworded.
+  assert.equal(rb.ok, false);
+  assert.doesNotMatch(rb.error ?? "", /expired/i, "B never sees A's license — isolation holds");
+  assert.match(rb.error ?? "", /no live license covers this/i);
+});
+
+test("W8 — read_held serves a SCOPE licence when given the url, and refuses without one", async () => {
+  // A scope licence is filed under a synthetic slug (`scope:/articles/*`) that no caller will
+  // ever ask for, so before this the whole purchase was unreachable from the buyer's own tools.
+  // The url is what makes it findable: coverage is decided by path, never by slug.
+  let served = 0;
+  await withStubGate(
+    (req, res) => {
+      if (req.headers["x-naulon-license"]) {
+        served += 1;
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("the licensed content");
+        return;
+      }
+      res.writeHead(402).end();
+    },
+    async () => {
+      const gate = process.env.TOLLGATE_URL!;
+      const aud = `naulon:${new URL(gate).host}`;
+      // Deliberately OFF-template: this publisher serves at /articles/, while the slug template
+      // is /essays/. That is the case the url argument exists for — a same-shape scope would be
+      // covered by the template alone and would prove nothing about it.
+      const scope = { patterns: ["/articles/*"] };
+      const store = memoryHeldStore([
+        [
+          "scope:/articles/*",
+          {
+            slug: "scope:/articles/*",
+            title: "Licence over /articles/*",
+            jti: "jti-scope",
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            aud,
+            pop: false,
+            jws: "h.p.s",
+            scope,
+          },
+        ],
+      ]);
+      const client = await connectedClientWith({ heldStore: store });
+
+      const withUrl = (
+        await client.callTool({
+          name: "naulon_read_held",
+          arguments: { slug: "on-stillness", url: `${gate}/articles/on-stillness` },
+        })
+      ).structuredContent as { ok: boolean; content?: string; licenseId?: string; paidUsdc?: number };
+      assert.equal(withUrl.ok, true, "a scope licence covers a path inside it");
+      assert.equal(withUrl.content, "the licensed content");
+      assert.equal(withUrl.licenseId, "jti-scope");
+      assert.equal(withUrl.paidUsdc, 0, "a held re-read is free");
+      assert.equal(served, 1);
+
+      // Slug alone resolves to the gate's CANONICAL path (`/essays/<slug>`), which this
+      // publisher does not serve — so the scope does not cover it and the refusal names the way
+      // out rather than silently guessing which of the scope's paths was meant.
+      const slugOnly = (
+        await client.callTool({ name: "naulon_read_held", arguments: { slug: "on-stillness" } })
+      ).structuredContent as { ok: boolean; error?: string };
+      assert.equal(slugOnly.ok, false);
+      assert.match(slugOnly.error ?? "", /pass the exact url/i, "the refusal names the way out");
+      assert.equal(served, 1, "a path the scope does not cover must not reach the gate");
+
+      // Outside the scope: no licence, and the gate is never asked.
+      const outside = (
+        await client.callTool({
+          name: "naulon_read_held",
+          arguments: { slug: "x", url: `${gate}/notes/x` },
+        })
+      ).structuredContent as { ok: boolean };
+      assert.equal(outside.ok, false);
+      assert.equal(served, 1, "an uncovered path must not reach the gate carrying the licence");
+    },
+  );
 });
 
 test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /essays/ path", async () => {
@@ -1203,7 +1302,9 @@ test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /
   try {
     const exp = Math.floor(Date.now() / 1000) + 3600; // live
     const store = memoryHeldStore([
-      ["custom", { ...heldLicense("custom", exp), url: `${urlGate.url}/articles/the-real-path` }],
+      // `baseGate` is the identity: ONE publisher has one gate, and the second stub exists only
+      // to prove which url was fetched, not to model a second issuer.
+      ["custom", { ...heldLicense("custom", exp, baseGate.url), url: `${urlGate.url}/articles/the-real-path` }],
     ]);
     const client = await connectedClientWith({ heldStore: store, tollgateUrl: baseGate.url });
     const res = await client.callTool({ name: "naulon_read_held", arguments: { slug: "custom" } });
@@ -1261,7 +1362,7 @@ test("FU-A1b: naulon_read_held's PoP-proof signing THROWING returns a typed erro
 // was actually PAID at, a same-slug candidate served from pubB gets pubA's
 // license/PoP-proof headers on the wire — a credential leak across publisher
 // origins, independent of whether pubB's response ultimately honors them.
-test("B1: a held license (issued by pubA) never leaks to a same-slug candidate discovered at pubB, even though both are allow-listed", async () => {
+test("B1: a same-slug candidate at pubB is PAID FOR — pubA's licence is neither leaked to it nor silently read in its place", async () => {
   const PUB_A = "http://pub-a.test";
   const PUB_B = "http://pub-b.test";
   const CATALOG = "http://catalog.test/b1";
@@ -1317,7 +1418,7 @@ test("B1: a held license (issued by pubA) never leaks to a same-slug candidate d
           title: "Shared Slug",
           jti: `jti-${slug}`,
           exp,
-          aud: "gate://pub-a",
+          aud: "naulon:pub-a.test", // what pubA's gate actually mints
           pop: true,
           jws: "held.jws.sig",
           url: `${PUB_A}/essays/${slug}`,
@@ -1334,18 +1435,30 @@ test("B1: a held license (issued by pubA) never leaks to a same-slug candidate d
 
         const r = (await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } }))
           .structuredContent as { decisions: Array<{ slug: string; action: string }> };
-        assert.ok(
-          r.decisions.some((d) => d.slug === slug && d.action === "cache"),
-          `expected a "cache" decision for the shared slug, got ${JSON.stringify(r.decisions)}`,
-        );
 
+        // The original subject, unchanged: the credential never reaches the other publisher.
         assert.ok(
           !hitsB.some((h) => h["x-naulon-license"] || h["x-naulon-proof"]),
           "pubB (the untrusted same-slug candidate) must NEVER receive pubA's license/PoP proof",
         );
+
+        // And the other half, which this test used to ASSERT the wrong way round. It required a
+        // "cache" decision and a free re-read of pubA — meaning a candidate discovered at pubB,
+        // carrying pubB's title, was answered with pubA's article body. Nothing leaked and nothing
+        // errored; the run simply cited the wrong publisher. Two independently-run sites sharing a
+        // generic slug (`faq`, `about`) is all it takes.
+        //
+        // A licence is now bound to the gate that minted it, so pubA's cannot be selected for a
+        // pubB candidate at all. pubB is priced and paid like any other source — which costs a
+        // toll, and is the correct outcome.
         assert.ok(
-          hitsA.some((h) => h["x-naulon-license"]),
-          "pubA (the url the license was actually paid at) receives the free re-read WITH its own license",
+          r.decisions.some((d) => d.slug === slug && d.action === "pay"),
+          `expected a "pay" decision for pubB's candidate, got ${JSON.stringify(r.decisions)}`,
+        );
+        assert.equal(
+          hitsA.length,
+          0,
+          "pubA is never read for a candidate that belongs to pubB — its bytes must not be cited under pubB's title",
         );
       },
     );

@@ -43,6 +43,8 @@ import {
   authorizeOrigin,
   buildPopProof,
   decodeHeld,
+  findHeld,
+  heldRequestFor,
   DEFAULT_POLICY,
   discover,
   fetchJwks,
@@ -1287,13 +1289,23 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       title: "Re-read a source you already licensed (free)",
       description:
         "Re-read a source you previously paid for, FREE, using the held Citation License — no second " +
-        "payment. If the license is holder-of-key bound, a fresh wallet proof-of-possession is signed " +
-        "automatically. Returns ok:false (telling you to pay) if no live license is held for the slug. " +
+        "payment. This also covers a source inside a SCOPE licence you bought up front: pass the url " +
+        "and any live licence whose scope covers that path is used. If the license is holder-of-key " +
+        "bound, a fresh wallet proof-of-possession is signed automatically. Returns ok:false (telling " +
+        "you to pay) if no live license covers it. " +
         "A citation must always carry a LIVE license (jti): when the held one has expired this returns " +
         "ok:false — re-read here to re-verify, or pay again. Any locally-cached copy of earlier content " +
         "is your own continuity only; it carries no live license and must never be cited as a paid read.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug you previously paid for with naulon_pay_and_read."),
+        url: z
+          .string()
+          .url()
+          .optional()
+          .describe(
+            "The exact url to re-read. Required to use a SCOPE licence, whose coverage is decided by " +
+              "path and which is therefore filed under no single slug. Ignored unless it is on this gate.",
+          ),
       },
       outputSchema: {
         ok: z.boolean(),
@@ -1304,17 +1316,23 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ slug }) => {
+    async ({ slug, url }) => {
       const held = await heldStore.load();
-      const license = held.get(slug);
+      const req = heldRequestFor(gateBase(), slug, url);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const license = findHeld([...held.values()], req, nowSec);
       if (!license) {
+        // The two misses are different problems and deserve different next moves: an EXPIRED
+        // licence means pay again, a missing one means you never bought this. Distinguished by
+        // asking the same matcher without the liveness cut-off, so the two answers cannot drift.
+        const expired = findHeld([...held.values()], req, 0) !== null;
         return structured({
           ok: false,
-          error: "No held license for this slug — pay for it first with naulon_pay_and_read.",
+          error: expired
+            ? "Held license has expired — pay again with naulon_pay_and_read."
+            : "No live license covers this — pay for it with naulon_pay_and_read. " +
+              "If you hold a scope licence, pass the exact url so its scope can be matched.",
         });
-      }
-      if (!isLive(license, Math.floor(Date.now() / 1000))) {
-        return structured({ ok: false, error: "Held license has expired — pay again with naulon_pay_and_read." });
       }
 
       let proof: string | undefined;
@@ -1329,8 +1347,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       }
 
       // Re-read the exact url the license was paid at; fall back to the template only
-      // for a legacy license captured before the url was stored.
-      const target = license.url ?? slugUrl(slug);
+      // for a legacy license captured before the url was stored. A SCOPED licence was bought
+      // before any read and has no paid url, so it re-reads at the path its scope matched —
+      // already pinned to this gate by `heldRequestFor`.
+      const target = license.scope ? req.url : (license.url ?? slugUrl(slug));
       const reread = await rereadWithLicense(target, KIND, license.jws, popWallet().address, proof);
       if (!reread.ok) {
         return structured({ ok: false, error: reread.error ?? "re-read failed" });

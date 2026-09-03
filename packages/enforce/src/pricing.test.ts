@@ -167,3 +167,61 @@ test("an explicit per-tenant chain still beats the runtime default", async () =>
   assert.ok(q);
   assert.equal(q.network, other);
 });
+
+/* ── per-path price rules (W2) ─────────────────────────────────────────────── */
+
+const RULES = [
+  { pattern: "/papers/preview$", priceUsdc: 0.0005 },
+  { pattern: "/papers/*", priceUsdc: 0.05, citationMultiplier: 20 },
+  { pattern: "/notes/*", citationMultiplier: 2 },
+];
+
+test("no path, no rules, or no match prices exactly as it did before price rules existed", async () => {
+  const base = publisher();
+  const ruled = publisher({ priceRules: RULES });
+  for (const kind of ["read", "citation"] as const) {
+    // A publisher with no rules is unaffected whether or not a path is supplied.
+    assert.equal(tollPrice(base, kind, "/papers/x"), tollPrice(base, kind));
+    // A publisher WITH rules, priced without a path, falls back to the site values. This is the
+    // shape that would refuse a settle if a verifier forgot the argument, so it is pinned.
+    assert.equal(tollPrice(ruled, kind), tollPrice(base, kind));
+    // A path no rule covers is the site price too.
+    assert.equal(tollPrice(ruled, kind, "/blog/x"), tollPrice(base, kind));
+  }
+});
+
+test("a rule prices the path it covers, for both kinds", () => {
+  const p = publisher({ priceRules: RULES });
+  assert.equal(tollPrice(p, "read", "/papers/quantum"), 0.05);
+  assert.equal(tollPrice(p, "citation", "/papers/quantum"), 1); // 0.05 × 20
+});
+
+test("the most specific rule wins, and each field is inherited independently", () => {
+  const p = publisher({ priceRules: RULES });
+  // /papers/preview matches BOTH rules; the anchored one is more specific and is listed first.
+  assert.equal(tollPrice(p, "read", "/papers/preview"), 0.0005);
+  // It sets no multiplier, so the citation multiple comes from the SITE (5), not from the
+  // less-specific /papers/* rule (20). A rule is an override, not a cascade.
+  assert.equal(tollPrice(p, "citation", "/papers/preview"), 0.0025);
+  // The mirror case: a rule with only a multiplier keeps the site's read price.
+  assert.equal(tollPrice(p, "read", "/notes/x"), 0.001);
+  assert.equal(tollPrice(p, "citation", "/notes/x"), 0.002);
+});
+
+test("quote() charges what tollPrice says for the same path — the two cannot disagree", async () => {
+  const p = publisher({ priceRules: [{ pattern: "/essays/*", priceUsdc: 0.07 }] });
+  for (const kind of ["read", "citation"] as const) {
+    const q = await quote(p, "on-passage", kind, "/essays/on-passage");
+    assert.ok(q);
+    assert.equal(q.price, tollPrice(p, kind, "/essays/on-passage"));
+  }
+  assert.equal((await quote(p, "on-passage", "read", "/essays/on-passage"))?.price, 0.07);
+});
+
+test("the rule matches the PATH, never the slug", async () => {
+  // The slug here is `on-passage`; the rule names `/essays/*`. A rule keyed on the slug would
+  // miss, and in site mode the two only coincide by accident of configuration.
+  const p = publisher({ priceRules: [{ pattern: "/on-passage", priceUsdc: 9 }] });
+  assert.equal((await quote(p, "on-passage", "read", "/essays/on-passage"))?.price, 0.001);
+  assert.equal((await quote(p, "on-passage", "read", "/on-passage"))?.price, 9);
+});

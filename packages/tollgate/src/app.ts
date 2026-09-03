@@ -682,6 +682,17 @@ export function createApp(
         tieBreak: cfg.PRIMARY_PAYEE_TIEBREAK,
         title: event.slug,
         network: { chainId: net.chainId, usdc: net.usdc, gateway: net.gatewayWallet },
+        // What a SALE bought, replayed from the row rather than re-derived. Absent on a toll, so
+        // its record is byte-identical to what this route emitted before sales existed.
+        //
+        // Spread individually rather than as one object: `MintInput` takes these four flat, and
+        // the record is the ONLY place a buyer's scope, terms and period become permanently
+        // checkable. Passing the row's facts through unchanged is what makes the record and the
+        // access licence two projections of one row instead of two documents that agree by habit.
+        ...(event.licence?.scope ? { scope: event.licence.scope } : {}),
+        ...(event.licence?.terms ? { terms: event.licence.terms } : {}),
+        ...(event.licence?.period ? { period: event.licence.period } : {}),
+        ...(event.licence?.subject ? { subject: event.licence.subject } : {}),
       },
       licensing.key,
       Date.now(),

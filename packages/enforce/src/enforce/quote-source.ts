@@ -17,6 +17,9 @@ import type { Quote, TollKind } from "../decide.ts";
 export interface QuoteContext {
   /** The full resource URL being decided (what the hosted `/quote` looks up). */
   resource: string;
+  /** The resource's PATHNAME — what a per-path price rule matches against. Derivable from
+   *  `resource`, and carried anyway so a source never has to parse a URL to price one. */
+  path?: string;
 }
 
 export interface QuoteSource {
@@ -25,11 +28,14 @@ export interface QuoteSource {
 
 /** Wrap a publisher's own price+payees lookup. `undefined`/`null` → free read. */
 export function localQuoteSource(
-  fn: (publisher: unknown, slug: string, kind: TollKind) => Promise<Quote | null | undefined>,
+  fn: (publisher: unknown, slug: string, kind: TollKind, path?: string) => Promise<Quote | null | undefined>,
 ): QuoteSource {
   return {
-    async quote(publisher, slug, kind) {
-      return (await fn(publisher, slug, kind)) ?? null;
+    async quote(publisher, slug, kind, ctx) {
+      // `ctx.path` reaches the publisher's own pricing so a self-hosting site's price rules
+      // resolve exactly as the hosted gate's do. A wrapper that ignores the argument keeps
+      // today's site-wide pricing, which is what every existing caller does.
+      return (await fn(publisher, slug, kind, ctx.path)) ?? null;
     },
   };
 }

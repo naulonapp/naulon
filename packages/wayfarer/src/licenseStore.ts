@@ -6,7 +6,7 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { getConfig } from "@naulon/shared";
+import { getConfig, licenseCoversPath } from "@naulon/shared";
 
 export interface HeldLicense {
   slug: string;
@@ -78,6 +78,66 @@ export function decodeHeld(jws: string): Omit<HeldLicense, "jws"> | null {
 /** Is this held license still valid at `nowSec` (epoch seconds)? */
 export function isLive(held: HeldLicense, nowSec: number): boolean {
   return held.exp > nowSec;
+}
+
+/**
+ * Find the live held licence that covers a request, or null.
+ *
+ * The store is a `Map` keyed by SLUG, which answers exactly one question: "did I pay for this
+ * one essay?". A scoped licence — bought over `/articles/*` before anything was read — is filed
+ * under a synthetic key nobody will ever look up, so without this it is unreachable the moment
+ * it is bought. That was the whole of the buyer-side gap.
+ *
+ * Coverage is decided by `licenseCoversPath`, the SAME function the gate uses to admit a
+ * presented licence. Re-deriving the rule here would let the buyer believe it holds a right the
+ * gate will refuse — a free-read the agent plans for and then pays for twice.
+ *
+ * When several cover the request, the most specific wins: an unscoped licence bought for exactly
+ * this slug outranks any scope, and a narrower scope outranks a wider one. That ordering matters
+ * because the licences are not interchangeable — presenting the widest one first would burn a
+ * broad entitlement on a read a narrow one already covered.
+ */
+export function findHeld(
+  held: Iterable<HeldLicense>,
+  req: { slug: string; path?: string; aud?: string },
+  nowSec: number,
+): HeldLicense | null {
+  let best: HeldLicense | null = null;
+  let bestRank = -1;
+  for (const h of held) {
+    if (!isLive(h, nowSec)) continue;
+    // Bound to the gate that minted it — scoped or not.
+    //
+    // The selling gate re-verifies `aud` itself (`licenseEntitlesRead`), so an unbound match was
+    // never a way to spend one publisher's licence at another. The damage is on the BUYER's side
+    // and is worse than a refusal: two independently-run sites share a generic slug (`faq`,
+    // `about`), the slug-only match marks it licensed, and the re-read then fetches the licence's
+    // OWN paid url — so the agent cites site A's bytes under site B's title, free, with nothing
+    // raised anywhere. For a product whose whole claim is a verifiable citation, that is the
+    // expensive failure.
+    //
+    // The cost of binding is a publisher who overrode `LICENSE_ISSUER` away from `naulon:${host}`:
+    // their held licences miss and the agent pays a second time. That is bounded and visible,
+    // where the substitution is unbounded and silent — and such a deployment is already degraded,
+    // since `agent.ts` verifies captured licences against the same derived identity and marks
+    // them UNVERIFIED. `license-token.ts` has bound its own cache by origin all along; this was
+    // the outlier.
+    //
+    // A caller that cannot name the gate gets nothing, rather than a slug-only guess.
+    if (req.aud === undefined || h.aud !== req.aud) continue;
+    if (!licenseCoversPath(h, req)) continue;
+    // An exact-slug licence is rank Infinity-ish: it names one resource and cannot be beaten.
+    // A scope's rank is its longest matching pattern's literal length, mirroring RFC 9309's
+    // "longest rule wins" — the same tie-break the gate's price rules and RSL both use.
+    const rank = h.scope
+      ? Math.max(...h.scope.patterns.map((p) => p.replace(/\*/g, "").length))
+      : Number.MAX_SAFE_INTEGER;
+    if (rank > bestRank) {
+      best = h;
+      bestRank = rank;
+    }
+  }
+  return best;
 }
 
 export async function loadHeld(): Promise<Map<string, HeldLicense>> {

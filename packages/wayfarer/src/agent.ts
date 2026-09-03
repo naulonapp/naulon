@@ -18,7 +18,7 @@ import { makeLicenceResolver, type LicenceResolver } from "./licence.ts";
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
 import { authorizeOrigin } from "./origin-policy.ts";
-import { decodeHeld, fileHeldStore, isLive } from "./licenseStore.ts";
+import { decodeHeld, fileHeldStore, findHeld } from "./licenseStore.ts";
 import type { HeldStore } from "./licenseStore.ts";
 import { buildPopProof } from "./pop.ts";
 import { agentFetch } from "./sign.ts";
@@ -91,6 +91,41 @@ export function licenseIdentityFor(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The lookup a held licence is matched against — against the url this candidate would ACTUALLY
+ * be read at, which is the same one the pay step uses (`d.url ?? articleUrl(base, d.slug)`).
+ *
+ * It used to pin the url to the configured gate whenever the candidate named another origin, on
+ * the theory that `discover()` is untrusted. That made the two steps disagree: a candidate found
+ * at publisher B was PRICED at B and then matched against a licence held for A, because the match
+ * had quietly been rewritten to A's own `/essays/<slug>`. The re-read then fetched A's article and
+ * the run cited it under B's title — free, and with nothing raised anywhere.
+ *
+ * The credential never leaked to B, and that was the guarantee the old pinning was written for.
+ * But it bought that guarantee by reading the wrong publisher instead, which for a product whose
+ * whole claim is a verifiable citation is the worse of the two. Binding the match to `aud` gives
+ * the same guarantee directly: a licence minted by A cannot be selected for a candidate at B at
+ * all, so B is priced and paid like any other source.
+ *
+ * The template fallback remains for a candidate that names no url of its own — `/essays/<slug>` on
+ * the configured gate is then the only thing it can mean, and it is also why a scope licence
+ * usually works from a slug alone.
+ */
+export function heldRequestFor(
+  base: string,
+  slug: string,
+  candidateUrl?: string,
+): { slug: string; path: string; aud: string | undefined; url: string } {
+  const url = candidateUrl ?? articleUrl(base, slug);
+  let path = `/${slug}`;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    // An unparseable candidate url yields no identity below, so nothing will match it.
+  }
+  return { slug, path, aud: licenseIdentityFor(url), url };
 }
 
 /** Optional overrides for a single run. `budgetUsdc` lets a caller spend LESS than
@@ -317,8 +352,16 @@ export async function run(
   // zero-cost "cache" — pay once, re-read free.
   const held = await heldStore.load();
   const nowSec = Math.floor(Date.now() / 1000);
-  const licensed = new Set([...held.values()].filter((h) => isLive(h, nowSec)).map((h) => h.slug));
-  if (licensed.size) log(`\nholding ${licensed.size} live license(s) — those re-read free`);
+  // Which CANDIDATES a live licence covers — not which licences are live. The two differ the
+  // moment a scope exists: one licence over `/articles/*` covers many candidates and is filed
+  // under none of their slugs, so counting licences both under-reports the free reads and hands
+  // decide() a set of keys it will never look up.
+  const licensed = new Set(
+    appraised
+      .filter((c) => findHeld([...held.values()], heldRequestFor(base, c.slug, c.url), nowSec) !== null)
+      .map((c) => c.slug),
+  );
+  if (licensed.size) log(`\n${licensed.size} candidate(s) already licensed — those re-read free`);
 
   // 4a. published terms. Only the PRICED candidates are looked up — an ungated or refused one is
   // never going to be paid for, and asking a stranger's server about it is a request we owe no one.
@@ -359,14 +402,19 @@ export async function run(
     const url = d.url ?? articleUrl(base, d.slug);
 
     if (d.action === "cache") {
-      const h = held.get(d.slug);
+      const req = heldRequestFor(base, d.slug, d.url);
+      const h = findHeld([...held.values()], req, Math.floor(Date.now() / 1000));
       if (!h) continue;
       // Re-read at the license's OWN paid url — NEVER the untrusted candidate `d.url`
       // (discover() can hand back anything). Mirrors naulon_read_held's
       // `license.url ?? slugUrl(slug)` (wayfarer-mcp/server.ts) — the held store is
       // keyed by slug alone, so a same-slug candidate from a DIFFERENT (still
       // allow-listed) publisher must never receive this license/PoP proof (B1).
-      const target = h.url ?? articleUrl(base, d.slug);
+      //
+      // The url the licence was actually paid at, when there is one. A SCOPED licence has none —
+      // it was bought before any read — so it re-reads at the url its scope was matched against,
+      // which is the same url this candidate was priced at and is bound to the licence's own gate.
+      const target = h.url ?? req.url;
       // Holder-of-key license: sign a fresh proof-of-possession so the gate knows
       // we still hold the payer wallet, not just a captured token.
       let proof: string | undefined;
