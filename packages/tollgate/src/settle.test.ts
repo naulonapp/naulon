@@ -197,3 +197,26 @@ test("a normal settle leaves the key ABSENT, not zero", async () => {
   assert.ok(written);
   assert.equal("forgoneLegs" in written, false);
 });
+
+/* ── The STAGE of a refusal: did any money move? ──────────────────────────────
+ * A caller that took an irreversible debit (a buyer-wallet reserve) before presenting the payment
+ * needs to know whether a refusal came BEFORE anything was broadcast. "The payment was refused" on
+ * its own cannot say: a rejected signature and a relay that died after submit both read as
+ * `ok: false`. The stage is stamped explicitly on every pre-broadcast return, so an unstamped
+ * refusal reads as ambiguous — and ambiguous is the direction a caller must NOT credit back. */
+
+test("a payment refused before anything moved is stamped stage 'verify'", async () => {
+  const now = Date.now();
+  const res = await settleAndAttribute({ ...args("busy.example.com", now), payment: "not-a-payment" });
+  assert.equal(res.ok, false);
+  assert.equal(res.stage, "verify", "a malformed payment is refused before any leg is broadcast");
+});
+
+test("a replayed nonce is a verify-stage refusal — nothing was re-spent", async () => {
+  const now = Date.now();
+  const a = args("busy.example.com", now);
+  assert.equal((await settleAndAttribute(a)).ok, true);
+  const replay = await settleAndAttribute(a);
+  assert.equal(replay.ok, false);
+  assert.equal(replay.stage, "verify");
+});
