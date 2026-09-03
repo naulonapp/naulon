@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { NETWORKS, networkByChainId } from "./networks.ts";
+import { activeNetwork, NETWORKS, networkByChainId, networkForEvent } from "./networks.ts";
 
 test("a known chainId resolves to its network", () => {
   const base = NETWORKS.base;
@@ -20,4 +20,15 @@ test("every configured network is findable by its own chainId", () => {
 
 test("an unknown chainId is undefined — the caller falls back, never guesses", () => {
   assert.equal(networkByChainId(999_999_999), undefined);
+});
+
+// ── networkForEvent — ONE owner for "which chain did this row settle on" ─────────
+// The citation record and the re-issued access token are two projections of one ledger row, minted
+// in two repos. Each carried its own copy of this fallback chain; a second copy is exactly where
+// the two would stop naming the same chain.
+test("networkForEvent: the row's chainId wins, then the tenant's network, then the fleet default", () => {
+  const base = networkByChainId(8453)!;
+  assert.equal(networkForEvent({ chainId: 8453 }, { settlementNetwork: "arcTestnet" }).chainId, base.chainId, "a stamped chainId is the truth");
+  assert.equal(networkForEvent({}, { settlementNetwork: "arcTestnet" }).chainId, NETWORKS.arcTestnet.chainId, "a pre-chainId row falls back to the tenant");
+  assert.equal(networkForEvent({}, {}).chainId, activeNetwork().chainId, "and then to the fleet default");
 });
