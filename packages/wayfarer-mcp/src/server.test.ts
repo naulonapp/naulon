@@ -1183,7 +1183,86 @@ test("C1 — two sessions with separate stores do not cross-read (the hosted lea
   const rb = (await b.callTool({ name: "naulon_read_held", arguments: { slug: "secret" } }))
     .structuredContent as { ok: boolean; error?: string };
   assert.match(ra.error ?? "", /expired/i, "A sees its own held license");
-  assert.match(rb.error ?? "", /No held license/i, "B never sees A's license — isolation holds");
+  // The isolation signal is that B gets the NOTHING-HELD answer while A gets the EXPIRED one:
+  // "expired" can only be said about a licence the store actually holds. Asserted as the
+  // absence of A's answer rather than as B's exact prose, which is copy and will be reworded.
+  assert.equal(rb.ok, false);
+  assert.doesNotMatch(rb.error ?? "", /expired/i, "B never sees A's license — isolation holds");
+  assert.match(rb.error ?? "", /no live license covers this/i);
+});
+
+test("W8 — read_held serves a SCOPE licence when given the url, and refuses without one", async () => {
+  // A scope licence is filed under a synthetic slug (`scope:/articles/*`) that no caller will
+  // ever ask for, so before this the whole purchase was unreachable from the buyer's own tools.
+  // The url is what makes it findable: coverage is decided by path, never by slug.
+  let served = 0;
+  await withStubGate(
+    (req, res) => {
+      if (req.headers["x-naulon-license"]) {
+        served += 1;
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("the licensed content");
+        return;
+      }
+      res.writeHead(402).end();
+    },
+    async () => {
+      const gate = process.env.TOLLGATE_URL!;
+      const aud = `naulon:${new URL(gate).host}`;
+      // Deliberately OFF-template: this publisher serves at /articles/, while the slug template
+      // is /essays/. That is the case the url argument exists for — a same-shape scope would be
+      // covered by the template alone and would prove nothing about it.
+      const scope = { patterns: ["/articles/*"] };
+      const store = memoryHeldStore([
+        [
+          "scope:/articles/*",
+          {
+            slug: "scope:/articles/*",
+            title: "Licence over /articles/*",
+            jti: "jti-scope",
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            aud,
+            pop: false,
+            jws: "h.p.s",
+            scope,
+          },
+        ],
+      ]);
+      const client = await connectedClientWith({ heldStore: store });
+
+      const withUrl = (
+        await client.callTool({
+          name: "naulon_read_held",
+          arguments: { slug: "on-stillness", url: `${gate}/articles/on-stillness` },
+        })
+      ).structuredContent as { ok: boolean; content?: string; licenseId?: string; paidUsdc?: number };
+      assert.equal(withUrl.ok, true, "a scope licence covers a path inside it");
+      assert.equal(withUrl.content, "the licensed content");
+      assert.equal(withUrl.licenseId, "jti-scope");
+      assert.equal(withUrl.paidUsdc, 0, "a held re-read is free");
+      assert.equal(served, 1);
+
+      // Slug alone resolves to the gate's CANONICAL path (`/essays/<slug>`), which this
+      // publisher does not serve — so the scope does not cover it and the refusal names the way
+      // out rather than silently guessing which of the scope's paths was meant.
+      const slugOnly = (
+        await client.callTool({ name: "naulon_read_held", arguments: { slug: "on-stillness" } })
+      ).structuredContent as { ok: boolean; error?: string };
+      assert.equal(slugOnly.ok, false);
+      assert.match(slugOnly.error ?? "", /pass the exact url/i, "the refusal names the way out");
+      assert.equal(served, 1, "a path the scope does not cover must not reach the gate");
+
+      // Outside the scope: no licence, and the gate is never asked.
+      const outside = (
+        await client.callTool({
+          name: "naulon_read_held",
+          arguments: { slug: "x", url: `${gate}/notes/x` },
+        })
+      ).structuredContent as { ok: boolean };
+      assert.equal(outside.ok, false);
+      assert.equal(served, 1, "an uncovered path must not reach the gate carrying the licence");
+    },
+  );
 });
 
 test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /essays/ path", async () => {

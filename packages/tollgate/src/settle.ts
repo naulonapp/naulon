@@ -23,9 +23,7 @@ import {
   walletAddress,
   type AttributedEvent,
   type ForgoneLeg,
-  type LicensePeriod,
-  type LicenseScope,
-  type LicenseTerm,
+  type LicenceFacts,
   type PublisherConfig,
 } from "@naulon/shared";
 import { licensing, type Quote, type SettlementLegReq } from "@naulon/enforce";
@@ -50,8 +48,8 @@ export interface SettleResult {
   /**
    * The attributed event's id — which is also the minted licence's `jti`.
    *
-   * Returned so a caller that has to key its OWN record by the licence (naulon-cloud's licence
-   * sale does: the sale row's id IS the jti, so a verifier resolves one from the other) does not
+   * Returned so a caller that has to key its OWN record by the licence — a control plane built on
+   * this core keys a sale row by the jti, so a verifier resolves one from the other — does not
    * have to base64-decode the token it was just handed. Reading an id out of an unverified JWS is
    * a habit worth not starting, even on a token we minted a line earlier.
    *
@@ -101,12 +99,7 @@ export interface SettleArgs {
    * `period` is the PURCHASED term and is independent of `LICENSE_TTL_SECONDS`, which stays the
    * re-read window and stays capped. A licence that entitles a read still expires.
    */
-  licence?: {
-    scope?: LicenseScope;
-    terms?: LicenseTerm[];
-    period?: LicensePeriod;
-    subject?: string;
-  };
+  licence?: LicenceFacts;
 }
 
 export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult> {
@@ -157,6 +150,12 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     // settle — the overwhelmingly common case — keeping the ledger row byte-identical to what it
     // was, rather than adding an empty array to millions of rows to describe nothing happening.
     ...(forgoneLegs.length > 0 ? { forgoneLegs } : {}),
+    // What a SALE bought. Spread so a toll's row is byte-identical to what it was before sales
+    // existed. It has to be on the ROW, not only in the token minted three lines below: the
+    // permanent citation record is minted from the STORED event by `/licenses/:jti/record`, long
+    // after this function's `licence` argument is gone, so anything absent here can never appear
+    // in the object a stranger verifies.
+    ...(licence ? { licence } : {}),
     at: now,
   };
 

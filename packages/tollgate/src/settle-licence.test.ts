@@ -164,3 +164,46 @@ test("a sale's purchased PERIOD is not its re-read window — exp stays the TTL"
     `exp is ${c.exp - nowSecCheck}s out — the TTL cap is 3600`,
   );
 });
+
+/**
+ * The ledger row, not the token.
+ *
+ * The access licence and the citation record are two projections of ONE row, and only the token
+ * is minted inside `settleAndAttribute`. The permanent record is minted later, from storage, by
+ * `GET /licenses/:jti/record` — so any fact the row does not carry can never reach the object a
+ * stranger actually verifies. That made a scope purchase's permanent proof able to name the
+ * payment but not what was bought.
+ */
+async function rowFor(eventId: string): Promise<Record<string, unknown>> {
+  const { readFile } = await import("node:fs/promises");
+  const lines = (await readFile(process.env.EVENTS_PATH!, "utf8")).trim().split("\n");
+  for (const line of lines) {
+    const row = JSON.parse(line) as Record<string, unknown>;
+    if (row.id === eventId) return row;
+  }
+  throw new Error(`no ledger row for ${eventId}`);
+}
+
+test("a sale's ledger row carries the licence facts, so the permanent record can project them", async () => {
+  const now = Date.now();
+  const nowSec = Math.floor(now / 1000);
+  const period = { from: nowSec, until: nowSec + 30 * 86_400 };
+  const licence = {
+    scope: { patterns: ["/essays/a$"] },
+    terms: ["ai-input"] as const,
+    period,
+    subject: "acct:22222222-2222-4222-8222-222222222222",
+  };
+  const res = await settleAndAttribute(args(now, licence as never));
+  assert.equal(res.ok, true);
+  assert.deepEqual((await rowFor(res.eventId!)).licence, licence);
+});
+
+test("a TOLL's ledger row has no licence key at all — absent, not an empty object", async () => {
+  // Millions of historical rows say nothing about a sale by having no such field. Writing `{}`
+  // would be a new, different statement on every toll forever, for the sake of describing
+  // nothing happening.
+  const res = await settleAndAttribute(args(Date.now()));
+  assert.equal(res.ok, true);
+  assert.equal("licence" in (await rowFor(res.eventId!)), false);
+});
