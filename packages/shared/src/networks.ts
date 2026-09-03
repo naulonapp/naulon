@@ -320,3 +320,26 @@ export function toAtomicUsdc(amount: number | string): string {
   const n = typeof amount === "string" ? parseFloat(amount.replace("$", "")) : amount;
   return Math.round(n * 1_000_000).toString();
 }
+
+/**
+ * The chain a settled event's money actually moved on.
+ *
+ * Recovered from the row's `chainId`; a row written before per-tenant networks existed carries
+ * none, and falls back to the tenant's configured network and then the fleet default — the same
+ * order the manifest uses, so a licence minted from an event never names a chain that event
+ * could not have settled on.
+ *
+ * One owner because a licence has TWO projections minted in two places: the citation record, and
+ * the access token a control plane re-issues while a purchased period is live. Both must name the
+ * same chain for the same row, and a second copy of this chain of fallbacks is exactly where they
+ * would stop doing so.
+ */
+export function networkForEvent(
+  event: { chainId?: number },
+  publisher: { settlementNetwork?: NetworkName },
+): SettlementNetwork {
+  return (
+    (event.chainId !== undefined ? networkByChainId(event.chainId) : undefined) ??
+    (publisher.settlementNetwork ? getNetwork(publisher.settlementNetwork) : activeNetwork())
+  );
+}

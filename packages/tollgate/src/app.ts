@@ -35,7 +35,7 @@ import {
   getConfig,
   getNetwork,
   mintCitationRecord,
-  networkByChainId,
+  networkForEvent,
   signBotAuth,
   signBotAuthDirectory,
   type BotAuthKey,
@@ -664,12 +664,10 @@ export function createApp(
     if (!event || (event.publisherId !== undefined && event.publisherId !== publisher.id)) {
       return notFound();
     }
-    // The chain the money actually moved on, recovered from the row. Pre-`chainId` rows
-    // fall back to the tenant's network, then the fleet default — the same order the
-    // manifest uses, so a record never names a chain the toll could not have settled on.
-    const net =
-      (event.chainId !== undefined ? networkByChainId(event.chainId) : undefined) ??
-      (publisher.settlementNetwork ? getNetwork(publisher.settlementNetwork) : activeNetwork());
+    // The chain the money actually moved on, recovered from the row — one owner in shared,
+    // because the control plane re-issues an access token from this same row and both
+    // projections must name the same chain.
+    const net = networkForEvent(event, publisher);
     const record = mintCitationRecord(
       {
         event,
