@@ -74,6 +74,61 @@ const PRINTABLE_PATH = /^[\x21-\x7e]+$/;
  * specificity that could both match one path) keep their authored order, which is a stable
  * sort's own guarantee and is asserted by the tests rather than left to the engine.
  */
+/**
+ * Validate ONE RFC 9309 path pattern; return it trimmed, or throw a sentence a person can act on.
+ *
+ * `label` names the list the pattern came from ("price rule", "licence scope") so the message says
+ * WHICH list is wrong, which is the only thing the caller knows and the validator does not.
+ *
+ * Shared by price rules and licence scopes deliberately. The header above is a warning about what
+ * a second pattern dialect costs; two validators of one dialect is that second dialect with extra
+ * steps, and it drifts the first time one of them learns a rule the other does not.
+ */
+export function normalizePathPattern(pattern: unknown, label: string): string {
+  if (typeof pattern !== "string") throw new Error(`a ${label} has no pattern`);
+  const p = pattern.trim();
+  if (p === "") throw new Error(`a ${label} has an empty pattern`);
+  if (!p.startsWith("/")) {
+    throw new Error(`${label} "${p}" must start with "/" — an RFC 9309 pattern is an absolute path`);
+  }
+  if (p.length > MAX_PATTERN_LEN) {
+    throw new Error(`${label} "${p.slice(0, 40)}…" is too long (max ${MAX_PATTERN_LEN})`);
+  }
+  // A pattern reaches a path comparison. Whitespace or a control character in it is a matcher
+  // operating on something that is not a path, and it is far likelier to be a paste artefact
+  // than an intent — a URL path carries %20, never a raw space.
+  if (!PRINTABLE_PATH.test(p)) {
+    throw new Error(`${label} "${p}" has a character that is not printable ASCII — percent-encode it (a space is %20)`);
+  }
+  return p;
+}
+
+/**
+ * Validate a LIST of patterns and return it deduped and most-specific-first — the order
+ * `matchesPattern` scanning should follow, the same order `normalizePriceRules` returns.
+ *
+ * `max` is the caller's ceiling: a price list and a licence scope have different reasons to cap,
+ * so neither number belongs here.
+ */
+export function normalizePathPatterns(
+  input: readonly unknown[],
+  label: string,
+  max: number,
+): string[] {
+  if (input.length > max) throw new Error(`too many ${label} patterns (max ${max})`);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    const p = normalizePathPattern(raw, label);
+    if (seen.has(p)) {
+      throw new Error(`${label} "${p}" is listed twice`);
+    }
+    seen.add(p);
+    out.push(p);
+  }
+  return out.sort((a, b) => specificity(b) - specificity(a));
+}
+
 export function normalizePriceRules(input: readonly unknown[]): PriceRule[] {
   if (input.length > MAX_PRICE_RULES) {
     throw new Error(`priceRules exceeds ${MAX_PRICE_RULES} entries`);
@@ -87,21 +142,7 @@ export function normalizePriceRules(input: readonly unknown[]): PriceRule[] {
     }
     const { pattern, priceUsdc, citationMultiplier } = raw as Record<string, unknown>;
 
-    if (typeof pattern !== "string") throw new Error("a price rule has no pattern");
-    const p = pattern.trim();
-    if (p === "") throw new Error("a price rule has an empty pattern");
-    if (!p.startsWith("/")) {
-      throw new Error(`price rule "${p}" must start with "/" — an RFC 9309 pattern is an absolute path`);
-    }
-    if (p.length > MAX_PATTERN_LEN) {
-      throw new Error(`price rule "${p.slice(0, 40)}…" is too long (max ${MAX_PATTERN_LEN})`);
-    }
-    // A pattern reaches a path comparison. Whitespace or a control character in it is a matcher
-    // operating on something that is not a path, and it is far likelier to be a paste artefact
-    // than an intent — a URL path carries %20, never a raw space.
-    if (!PRINTABLE_PATH.test(p)) {
-      throw new Error(`price rule "${p}" has a character that is not printable ASCII — percent-encode it (a space is %20)`);
-    }
+    const p = normalizePathPattern(pattern, "price rule");
     if (seen.has(p)) {
       throw new Error(`price rule "${p}" is listed twice — two prices for one pattern have no resolution order`);
     }
