@@ -1196,10 +1196,10 @@ test("PROOF-1: proofLinksFor points the record at the FLEET gate, with the publi
   await withEnv({ CATALOG_URL: undefined, RSS_URL: undefined, PUBLISHER_URL: undefined, VERIFY_PAGE_URL: undefined }, async () => {
     // Fleet default: a publisher serving their own site has no record route on their origin; the
     // fleet gate mints it, and can only be told WHICH publisher by the hint.
-    const links = proofLinksFor({ jti: "j-3", aud: "naulon:inneraxiom.com", paidUrl: "https://inneraxiom.com/articles/x" });
+    const links = proofLinksFor({ jti: "j-3", aud: "naulon:publisher.example", paidUrl: "https://publisher.example/articles/x" });
     assert.deepEqual(links, {
-      proofUrl: "https://naulon.app/verify?host=inneraxiom.com&jti=j-3",
-      recordUrl: "https://gate.naulon.app/licenses/j-3/record?host=inneraxiom.com",
+      proofUrl: "https://naulon.app/verify?host=publisher.example&jti=j-3",
+      recordUrl: "https://gate.naulon.app/licenses/j-3/record?host=publisher.example",
     });
   });
   await withEnv({ CATALOG_URL: "http://catalog.test/c.json", VERIFY_PAGE_URL: "https://self.host/verify" }, async () => {

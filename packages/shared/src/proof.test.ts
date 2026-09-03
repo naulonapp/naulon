@@ -11,7 +11,7 @@ import { test } from "node:test";
 import { issuerHost, proofPageUrl, recordUrl } from "./proof.ts";
 
 test("issuerHost strips the naulon: prefix and nothing else", () => {
-  assert.equal(issuerHost("naulon:inneraxiom.com"), "inneraxiom.com");
+  assert.equal(issuerHost("naulon:publisher.example"), "publisher.example");
   assert.equal(issuerHost("naulon:localhost:11100"), "localhost:11100", "a port is part of the host");
   assert.equal(issuerHost("NAULON:Gate.Naulon.App"), "gate.naulon.app", "lower-cased, like licenseIdentityFor");
 });
@@ -19,14 +19,14 @@ test("issuerHost strips the naulon: prefix and nothing else", () => {
 test("issuerHost refuses anything that is not a naulon identity", () => {
   assert.equal(issuerHost(undefined), undefined);
   assert.equal(issuerHost(""), undefined);
-  assert.equal(issuerHost("https://inneraxiom.com"), undefined, "a URL is not an identity");
+  assert.equal(issuerHost("https://publisher.example"), undefined, "a URL is not an identity");
   assert.equal(issuerHost("naulon:"), undefined, "an empty host is no host");
   assert.equal(issuerHost("naulon:evil.com/path?x"), undefined, "a host carries no path or query");
 });
 
 test("proofPageUrl names the publisher and the settlement, encoded, on the verify page", () => {
-  const url = proofPageUrl({ verifyUrl: "https://naulon.app/verify", host: "inneraxiom.com", jti: "07e4a7de-1111-2222-3333-444444444444" });
-  assert.equal(url, "https://naulon.app/verify?host=inneraxiom.com&jti=07e4a7de-1111-2222-3333-444444444444");
+  const url = proofPageUrl({ verifyUrl: "https://naulon.app/verify", host: "publisher.example", jti: "07e4a7de-1111-2222-3333-444444444444" });
+  assert.equal(url, "https://naulon.app/verify?host=publisher.example&jti=07e4a7de-1111-2222-3333-444444444444");
 });
 
 test("proofPageUrl survives a verify page that already carries a query, and a jti that needs encoding", () => {
@@ -54,8 +54,8 @@ test("recordUrl carries the publisher hint when the gate fronts many publishers"
   // The self-served publisher: their own origin has no record route, the fleet gate does, and a
   // browser cannot set Host — so the hint is the only way to name them.
   assert.equal(
-    recordUrl({ gateOrigin: "https://gate.naulon.app", host: "inneraxiom.com", jti: "j-2" }),
-    "https://gate.naulon.app/licenses/j-2/record?host=inneraxiom.com",
+    recordUrl({ gateOrigin: "https://gate.naulon.app", host: "publisher.example", jti: "j-2" }),
+    "https://gate.naulon.app/licenses/j-2/record?host=publisher.example",
   );
   const encoded = recordUrl({ gateOrigin: "https://gate.naulon.app", host: "localhost:11100", jti: "a/b" });
   assert.equal(encoded, "https://gate.naulon.app/licenses/a%2Fb/record?host=localhost%3A11100");
