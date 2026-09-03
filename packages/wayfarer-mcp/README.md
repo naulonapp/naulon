@@ -198,8 +198,8 @@ spend within the envelope but can't widen it.
 | `naulon_discover` | free | Candidate teasers for a topic (slug, title, summary). Start here. |
 | `naulon_appraise` | free | Relevance + rationale for teasers already held. |
 | `naulon_quote` | free | The x402 `402` probe — real price + terms, **no spend**. |
-| `naulon_pay_and_read` | **$** | Pays the toll, returns content + settlement ref + citation license. |
-| `naulon_read_held` | free | Re-read a held live license (PoP-signed if cnf-bound). |
+| `naulon_pay_and_read` | **$** | Pays the toll, returns content + settlement ref + citation license, and `proofUrl` — the page a reader opens to see the author was paid. Cite it beside the source. |
+| `naulon_read_held` | free | Re-read a held live license (PoP-signed if cnf-bound). Carries the same `proofUrl`. |
 | `naulon_research` | **$** | One composite that runs the whole discover→quote→pay→ground loop. |
 | `naulon_ask`\* | **$** | Hosted-only reading agent — grounded, numbered-citation answer. |
 

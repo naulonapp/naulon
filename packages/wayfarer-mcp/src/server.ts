@@ -53,6 +53,7 @@ import {
   getWallet,
   isLive,
   licenseIdentityFor,
+  proofLinksFor,
   memoBuyer,
   payHostOf,
   probe,
@@ -1041,7 +1042,19 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         explorerTxUrl: z.string().optional().describe("A clickable block-explorer link for settlementRef (<explorer>/tx/<ref>), when the chain has a known explorer. Cite this so a human can verify the on-chain settlement."),
         paidUsdc: z.number().optional().describe("The author leg paid, in USDC."),
         costUsdc: z.number().optional().describe("The true total debited from the session budget (author + any fee legs)."),
-        licenseId: z.string().optional().describe("Citation License jti — cite this as proof of a paid read."),
+        licenseId: z.string().optional().describe("Citation License jti — the settlement's id. Prefer citing proofUrl, which a reader can open."),
+        proofUrl: z
+          .string()
+          .optional()
+          .describe(
+            "CITE THIS beside the source. The page a reader opens to see this read's citation record checked against the " +
+              "publisher's published keys, in their own browser — it shows the author who was paid, the amount and the " +
+              "on-chain settlement, and naulon is never asked whether it is valid.",
+          ),
+        recordUrl: z
+          .string()
+          .optional()
+          .describe("The gate's permanent citation record for this settlement (a signed JWS), for auditors and tools."),
         licenseVerified: z
           .boolean()
           .optional()
@@ -1225,10 +1238,14 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
 
       let licenseId: string | undefined;
       let licenseVerified: boolean | undefined;
+      let proofLinks: { proofUrl?: string; recordUrl?: string } = {};
       if (result.license) {
         const decoded = decodeHeld(result.license);
         if (decoded) {
           licenseId = decoded.jti;
+          // The page a reader opens, named by the licence's own `aud`, never by the url the
+          // model passed (A4 again: the token's claims are the gate's word, the url is the model's).
+          proofLinks = proofLinksFor({ jti: decoded.jti, aud: decoded.aud, paidUrl: target });
           // BEST-EFFORT, exactly like emitAudit: the money has ALREADY moved by here. A hosted
           // store (DB/KV) that throws on a transient failure must never turn a successful paid
           // read into an error — that would lose the content + receipt the buyer just paid for
@@ -1275,6 +1292,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         // Report the total ACTUALLY authorized (what the budget was debited), not the pre-pay quote.
         costUsdc: result.costUsdc ?? cost,
         ...(licenseId ? { licenseId } : {}),
+        ...proofLinks,
         ...(licenseVerified === undefined ? {} : { licenseVerified }),
         ...envelope(),
       });
@@ -1311,6 +1329,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ok: z.boolean(),
         content: z.string().optional(),
         licenseId: z.string().optional(),
+        proofUrl: z.string().optional().describe("CITE THIS beside the source — the same proof page the original pay returned."),
+        recordUrl: z.string().optional().describe("The gate's permanent citation record for the settlement behind this licence."),
         paidUsdc: z.number().optional().describe("Always 0 on a held re-read."),
         error: z.string().optional(),
       },
@@ -1355,7 +1375,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       if (!reread.ok) {
         return structured({ ok: false, error: reread.error ?? "re-read failed" });
       }
-      return structured({ ok: true, content: reread.content, licenseId: license.jti, paidUsdc: 0 });
+      return structured({
+        ok: true,
+        content: reread.content,
+        licenseId: license.jti,
+        ...proofLinksFor({ jti: license.jti, aud: license.aud, paidUrl: target }),
+        paidUsdc: 0,
+      });
     },
   );
 
@@ -1407,6 +1433,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             paidUsdc: z.number(),
             settlementRef: z.string().optional(),
             licenseId: z.string().optional(),
+            proofUrl: z.string().optional().describe("CITE THIS beside the source — the page a reader opens to see the author was paid."),
+            recordUrl: z.string().optional().describe("The gate's permanent citation record for this settlement."),
           }),
         ),
         log: z.array(z.string()).describe("The auditable, human-readable decision log for the run."),
@@ -1541,6 +1569,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           paidUsdc: s.paidUsdc,
           ...(s.settlementRef ? { settlementRef: s.settlementRef } : {}),
           ...(s.licenseId ? { licenseId: s.licenseId } : {}),
+          ...(s.proofUrl ? { proofUrl: s.proofUrl } : {}),
+          ...(s.recordUrl ? { recordUrl: s.recordUrl } : {}),
         })),
         log,
       });
@@ -1588,7 +1618,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               `1. Call naulon_discover("${topic}") — free — to list candidate essays.\n` +
               `2. Use naulon_appraise and naulon_quote to judge relevance and see exact prices. Nothing is spent until a paying tool runs.\n` +
               `3. Pay only the most relevant sources with naulon_pay_and_read, or call naulon_research to run the whole discover→quote→pay→ground loop within the session budget.\n\n` +
-              `Return a grounded answer with numbered citations and report exactly what was spent. Distinguish naulon-cited evidence from your own general knowledge.` +
+              `Return a grounded answer with numbered citations and report exactly what was spent. Put each source's proofUrl beside its citation — it is the link a reader opens to see the author was paid. Distinguish naulon-cited evidence from your own general knowledge.` +
               SELF_HEAL_PROMPT_TAIL,
           },
         },
@@ -1634,7 +1664,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               `Fact-check the claim: "${claim}".\n\n` +
               `Use naulon_discover to find relevant tolled sources, then naulon_appraise / naulon_quote (free) to see relevance and price. ` +
               `Only if grounding needs it, pay the most relevant sources with naulon_pay_and_read (or run naulon_research) within budget.\n\n` +
-              `State whether the claim is SUPPORTED, REFUTED, or UNVERIFIABLE, cite the paid sources by title, and report the spend. Keep naulon-cited evidence separate from your own general knowledge.` +
+              `State whether the claim is SUPPORTED, REFUTED, or UNVERIFIABLE, cite the paid sources by title with each one's proofUrl beside it, and report the spend. Keep naulon-cited evidence separate from your own general knowledge.` +
               SELF_HEAL_PROMPT_TAIL,
           },
         },
