@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name:       naulon — citation toll
+ * Plugin Name:       naulon
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
  * Version:           0.5.0
@@ -16,6 +16,11 @@
  * writes a credits route; a WordPress site cannot, so this plugin IS that surface: the credits
  * contract from real WP author data, wallet administration, ownership verification, and (from
  * S2 on) the local decision path.
+ *
+ * Naming note: wordpress.org generates the permalink from the Plugin Name above, and the
+ * Text Domain must equal that slug or translate.wordpress.org serves nothing. So the header
+ * carries the bare mark and the slug is `naulon`; the directory's display name comes from
+ * readme.txt's first line, which keeps the descriptor (`naulon — citation toll`).
  *
  * Licensing note: the rest of this monorepo is MIT. wordpress.org requires GPLv2-or-later, and
  * we hold the copyright, so this directory ships GPL-2.0-or-later. MIT is GPL-compatible, so
