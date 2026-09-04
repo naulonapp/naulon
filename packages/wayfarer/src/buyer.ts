@@ -6,7 +6,7 @@
  *   - mock: sign a simple offline payment-signature the mock gate accepts.
  *   - gateway: Circle's GatewayClient does the full deposit-backed 402 flow.
  */
-import { activeNetwork, getConfig, supportsMemo } from "@naulon/shared";
+import { activeNetwork, getConfig } from "@naulon/shared";
 import { agentFetch } from "./sign.ts";
 
 const AGENT_UA = "naulon-wayfarer/0.1";
@@ -523,14 +523,11 @@ export async function rereadWithLicense(
 export async function selectBuyer(): Promise<Buyer> {
   const cfg = getConfig();
   if (cfg.PAYMENT_MODE === "gateway") {
-    // On a memo-capable network (Arc) the gate settles via the self-relay rail, which
-    // expects a RAW USDC EIP-3009 authorization (USDC domain), not Circle's Gateway
-    // payload (GatewayWallet domain) — so the buyer signs differently. Field-presence
-    // gate, mirroring the gate's settle routing: a swap to Base falls back to the SDK.
-    if (supportsMemo(activeNetwork())) {
-      const { memoBuyer } = await import("./memo.ts");
-      return memoBuyer();
-    }
+    // Every network settles through Circle Gateway since 2026-09-04, Arc included — so this always
+    // signs the Gateway envelope. It used to branch on `supportsMemo(activeNetwork())` and hand a
+    // memo-capable network a raw USDC EIP-3009 authorization instead, mirroring a gate settle path
+    // that no longer exists. Left branching, a buyer on Arc would sign against the USDC domain while
+    // the gate verified against the GatewayWallet one: "malformed memo payload", every time.
     const { gatewayBuyer } = await import("./gateway.ts");
     return gatewayBuyer();
   }

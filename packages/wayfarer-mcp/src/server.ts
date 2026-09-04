@@ -54,7 +54,6 @@ import {
   isLive,
   licenseIdentityFor,
   proofLinksFor,
-  memoBuyer,
   payHostOf,
   probe,
   probeFailure,
@@ -70,7 +69,7 @@ import {
   verifyAgainst,
 } from "@naulon/wayfarer";
 import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners } from "@naulon/wayfarer";
-import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, supportsMemo, usdc } from "@naulon/shared";
+import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
@@ -247,7 +246,7 @@ export interface BuildServerOptions {
    * This session's custody-free cloud signer (else `cloudSignerFromEnv()`). A `MemoSigner`
    * (memo/Arc rail) or a `GatewaySigner` (memo-less Circle rails — Base + every Gateway
    * chain); the cloud injects the one matching the active settlement network's rail, and
-   * `buildServer` routes it to the matching buyer (`supportsMemo(activeNetwork())`).
+   * `buildServer` routes it to `gatewayBuyer` — every chain settles through Circle since 2026-09-04.
    */
   signer?: MemoSigner | GatewaySigner;
   /**
@@ -1187,14 +1186,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // fleet) railBuyer picks the rail from the TENANT's advertised 402 — a gateway 402 signs the
       // Circle envelope even under a memo-default fleet, and vice-versa. With a single injected signer
       // (one-network host / stdio) keep the activeNetwork() branch: a memo-LESS network (Base + every
-      // Gateway chain) settles via gatewayBuyer, else memoBuyer. Neither reads BUYER_PRIVATE_KEY.
+      // Gateway chain, which is all of them) settles via gatewayBuyer. Neither reads BUYER_PRIVATE_KEY.
       // Default: the BYO-key buyer selectBuyer() picks (which branches the same way for the env path).
       const buyer = opts.railSigners
         ? railBuyer(opts.railSigners)
         : cloudSigner
-          ? supportsMemo(activeNetwork())
-            ? memoBuyer(cloudSigner as MemoSigner)
-            : gatewayBuyer(cloudSigner as GatewaySigner)
+          ? gatewayBuyer(cloudSigner as GatewaySigner)
           : await selectBuyer();
       await buyer.init();
       // Re-quote at pay time and abort if the toll moved past the quote we gated the

@@ -128,14 +128,18 @@ test("PayGuard.authorizePayee: a refused payTo returns payee_refused, and NOTHIN
 test("PayGuard.authorizePayee: an authorized payTo pays as normal", async () => {
   const memo = recorder();
   const gw = recorder();
-  const restore = stubFetch(memo402());
+  // The 402 the real gate builds always carries the Gateway descriptor (build402 stamps it on
+  // every gateway-mode challenge). This test is about the payee guard, not the rail, so it uses
+  // that real shape rather than the memo-only fixture it happened to use while Arc self-relayed.
+  const restore = stubFetch(memo402WithGatewayExtra());
   try {
     const result = await railBuyer({ memo: memo.signer, gateway: gw.signer }).fetch("https://x.test/a", "read", {
       maxTotalAtomic: "1000000",
       authorizePayee: (payTo) => payTo === AUTHOR,
     });
     assert.equal(result.ok, true, `expected a paid read, got ${JSON.stringify(result)}`);
-    assert.ok(memo.calls.length >= 1, "an authorized payee signs normally");
+    assert.ok(gw.calls.length >= 1, "an authorized payee signs normally");
+    assert.equal(memo.calls.length, 0, "settlement is Gateway on every chain now");
   } finally {
     restore();
   }
@@ -155,15 +159,23 @@ test("railBuyer selects the GATEWAY builder when the 402 advertises GatewayWalle
   }
 });
 
-test("railBuyer selects the MEMO builder when the 402 has no gateway extra", async () => {
+test("a 402 on a known chain with no Gateway descriptor is REFUSED, not signed as memo", async () => {
+  // Before 2026-09-04 this selected the memo builder, because Arc self-relayed. Now the gate
+  // settles every chain through Circle, so a challenge missing the Gateway descriptor does not
+  // match anything the gate can settle — and signing a raw EIP-3009 for it would produce a payment
+  // the facilitator rejects. Refusing here, by name, is the correct outcome.
   const memo = recorder();
   const gw = recorder();
   const restore = stubFetch(memo402());
   try {
     const result = await railBuyer({ memo: memo.signer, gateway: gw.signer }).fetch("https://x.test/a", "read");
-    assert.equal(result.ok, true, `expected a paid read, got ${JSON.stringify(result)}`);
-    assert.ok(memo.calls.length >= 1, "the memo signer must be consulted for a memo 402");
-    assert.equal(gw.calls.length, 0, "the gateway signer must NOT be consulted for a memo 402");
+    assert.equal(result.ok, false, "a non-gateway 402 cannot be paid");
+    assert.equal(memo.calls.length, 0, "the memo signer must never be selected for a toll");
+    assert.match(
+      String((result as { error?: string }).error ?? ""),
+      /GatewayWalletBatched/,
+      "the refusal must name the descriptor that was missing",
+    );
   } finally {
     restore();
   }
@@ -184,15 +196,21 @@ test("railBuyer decision is independent of activeNetwork() (gateway 402 under a 
   }
 });
 
-test("railBuyer picks MEMO for a memo-network 402 even when it carries the GatewayWalletBatched extra (the real gate shape)", async () => {
+test("a memo-CAPABLE chain signs the Gateway envelope — the predeploy is not a rail instruction", async () => {
+  // The exact inverse of what this test asserted before, and the reason it is kept rather than
+  // deleted: arcTestnet still carries `memo` in the registry (a withdrawal may yet want to tag a
+  // transaction with it), so the tempting reading is that a memo-capable chain signs memo-style.
+  // It does not. The gate settles Arc through Circle, and buyer and gate must agree or the settle
+  // fails as "malformed memo payload".
   const memo = recorder();
   const gw = recorder();
+  assert.equal(supportsMemo(activeNetwork()), true, "precondition: the fleet default still ships a Memo predeploy");
   const restore = stubFetch(memo402WithGatewayExtra());
   try {
     const result = await railBuyer({ memo: memo.signer, gateway: gw.signer }).fetch("https://x.test/a", "read");
     assert.equal(result.ok, true, `expected a paid read, got ${JSON.stringify(result)}`);
-    assert.ok(memo.calls.length >= 1, "the memo signer must be consulted — the registry rail beats the extra tell");
-    assert.equal(gw.calls.length, 0, "the gateway signer must NOT be consulted for a known memo network");
+    assert.ok(gw.calls.length >= 1, "the gateway signer must be consulted on a memo-capable chain");
+    assert.equal(memo.calls.length, 0, "the memo signer must NOT be consulted for a toll");
   } finally {
     restore();
   }
@@ -230,6 +248,28 @@ function memoQuoted(legs: { payTo: string; amount: string }[]): Parameters<typeo
   };
 }
 
+/** The shape the real gate advertises: every leg carries the Circle descriptor `build402` stamps,
+ *  and `legs` is present only for a multi-leg toll (author + operator fee, or co-author splits). */
+function gatewayQuoted(legs: { payTo: string; amount: string }[]): Parameters<typeof assembleRailPayment>[0] {
+  const net = activeNetwork();
+  const first = legs[0]!;
+  const extra = { name: "GatewayWalletBatched", version: "1", verifyingContract: GATEWAY_WALLET };
+  return {
+    priceUsdc: 0,
+    amountAtomic: first.amount,
+    requirements: {
+      network: net.network,
+      asset: net.usdc,
+      payTo: first.payTo,
+      amount: first.amount,
+      maxTimeoutSeconds: 691200,
+      ...({ scheme: "exact", extra } as object),
+    },
+    resource: { url: "https://x.test/a", description: "naulon read toll: A", mimeType: "text/html" },
+    ...(legs.length > 1 ? { legs: legs.map((l) => ({ role: "leg", payTo: l.payTo, amount: l.amount })) } : {}),
+  };
+}
+
 /** A batch-capable memo signer (the cloud's in-process shape) that counts which method was used. */
 function batchRecorder() {
   const acct = privateKeyToAccount(generatePrivateKey());
@@ -251,27 +291,46 @@ function batchRecorder() {
   };
 }
 
-test("assembleRailPayment: a multi-leg memo 402 is signed in ONE batch and framed as the leg array", async () => {
+test("assembleRailPayment: a multi-leg Gateway 402 signs ONE ENVELOPE PER LEG, in leg order", async () => {
+  // The operator fee is a second buyer→operator leg, and custody-free requires it to stay that way
+  // rather than becoming a skim from the author's cut. Circle's SDK signs one leg per call, so a
+  // two-leg toll used to be memo-rail-only — which made the fee collectable on exactly one chain.
+  // The rail was never the limit: the gate parses an array of per-leg payloads and verifies each
+  // leg against its own requirements, so N legs settle on Gateway once the buyer signs N envelopes.
   const memo = batchRecorder();
   const gw = recorder();
   const payment = await assembleRailPayment(
-    memoQuoted([{ payTo: AUTHOR, amount: "600000" }, { payTo: FEE, amount: "300000" }]),
+    gatewayQuoted([{ payTo: AUTHOR, amount: "600000" }, { payTo: FEE, amount: "300000" }]),
     Date.now(),
     { memo: memo.signer, gateway: gw.signer },
   );
-  const payloads = JSON.parse(Buffer.from(payment, "base64").toString("utf8")) as Array<{
-    authorization: { from: string; to: string; value: string };
-    signature: string;
+  const envelopes = JSON.parse(Buffer.from(payment, "base64").toString("utf8")) as Array<{
+    accepted?: { payTo?: string; amount?: string; extra?: { name?: string } };
   }>;
-  assert.ok(Array.isArray(payloads) && payloads.length === 2, "two legs → the leg array the gate parses");
-  assert.equal(payloads[0]!.authorization.to, AUTHOR);
-  assert.equal(payloads[0]!.authorization.value, "600000");
-  assert.equal(payloads[1]!.authorization.to, FEE);
-  assert.equal(payloads[1]!.authorization.value, "300000");
-  assert.equal(payloads[0]!.authorization.from, memo.address, "every leg is FROM the injected signer");
-  assert.equal(memo.counts.batch, 1, "a batch-capable signer signs the whole toll in ONE call (atomic reserve)");
-  assert.equal(memo.counts.single, 0);
-  assert.equal(gw.calls.length, 0, "a memo 402 never touches the gateway signer");
+  assert.ok(Array.isArray(envelopes), "multi-leg frames as the ARRAY the gate parses");
+  assert.equal(envelopes.length, 2, "one envelope per advertised leg");
+  assert.equal(gw.calls.length, 2, "the gateway signer is called once per leg");
+  assert.equal(memo.counts.batch + memo.counts.single, 0, "the memo signer is never involved");
+  // Leg ORDER is the contract — the gate pairs payloads[i] with its own legs[i].
+  assert.equal(envelopes[0]!.accepted?.payTo, AUTHOR, "leg 0 is the author");
+  assert.equal(envelopes[0]!.accepted?.amount, "600000");
+  assert.equal(envelopes[1]!.accepted?.payTo, FEE, "leg 1 is the operator fee");
+  assert.equal(envelopes[1]!.accepted?.amount, "300000");
+  for (const e of envelopes) {
+    assert.equal(e.accepted?.extra?.name, "GatewayWalletBatched", "every leg carries the Circle descriptor");
+  }
+});
+
+test("assembleRailPayment: a single-leg Gateway 402 stays a bare envelope, not a one-element array", async () => {
+  // Stock x402 clients send the bare object and the gate accepts either shape, so the common case
+  // must not change on the wire just because the multi-leg path grew an array.
+  const gw = recorder();
+  const payment = await assembleRailPayment(gatewayQuoted([{ payTo: AUTHOR, amount: "5000" }]), Date.now(), {
+    gateway: gw.signer,
+  });
+  const parsed = JSON.parse(Buffer.from(payment, "base64").toString("utf8")) as unknown;
+  assert.equal(Array.isArray(parsed), false, "one leg → the bare envelope");
+  assert.equal(gw.calls.length, 1);
 });
 
 test("assembleRailPayment: a Gateway 402 routes to the gateway signer and carries the Circle envelope", async () => {
@@ -298,11 +357,14 @@ test("assembleRailPayment: a Gateway 402 routes to the gateway signer and carrie
   assert.ok(envelope.resource, "the facilitator's verify rejects an envelope without `resource`");
 });
 
-test("assembleRailPayment: a memo 402 with no memo signer throws naming the rail", async () => {
+test("assembleRailPayment: a single-leg 402 with no Gateway descriptor throws naming the descriptor", async () => {
+  // Was "no memo signer": before 2026-09-04 a known memo chain routed to the memo signer, so an
+  // absent one was the first thing to fail. Every chain routes to Gateway now, so the first guard
+  // reached is the descriptor check — and a memo signer being present or absent is irrelevant.
   const gw = recorder();
   await assert.rejects(
     assembleRailPayment(memoQuoted([{ payTo: AUTHOR, amount: "5000" }]), Date.now(), { gateway: gw.signer }),
-    /no memo signer/i,
+    /GatewayWalletBatched/,
   );
-  assert.equal(gw.calls.length, 0);
+  assert.equal(gw.calls.length, 0, "the signer is never reached — nothing is spent on a malformed 402");
 });

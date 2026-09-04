@@ -55,21 +55,26 @@ export interface SettlementNetwork {
    *  the per-network memo/usdcName verification). Absent ⇒ callers omit the link and
    *  fall back to citing the raw reference. Populated as chains are enrolled. */
   explorer?: string;
-  /** Arc-only transaction-extension capability. Present ONLY on chains that ship the
-   *  Memo predeploy (Arc); ABSENT on Base / Base Sepolia (they have no equivalent).
-   *  The settle path gates memo emission on the PRESENCE of this field, NEVER on
-   *  chainName — so a chain swap to Base omits memos automatically (illegal state
-   *  unrepresentable). The memo wraps the buyer→author transfer via a self-relay,
-   *  which stays custody-free (the relayer pays gas, never touches the USDC).
+  /** Arc-only transaction-extension CAPABILITY: does this chain ship the Memo predeploy?
+   *  Present on Arc; absent on Base / Base Sepolia, which have no equivalent.
    *
-   *  COST — read before adding this to any network. Presence of this field does not
-   *  merely add a label, it SELECTS THE SETTLEMENT RAIL. Without it a settle goes
-   *  through Circle Gateway, which BATCHES (gas paid once per batch, nothing per
-   *  read). With it, `settleMemo` self-relays ONE ON-CHAIN TRANSACTION PER TOLL and
-   *  our relayer pays that gas. Measured 2026-08-27 on arcTestnet at 21 Gwei:
-   *  $0.00137–$0.00315 per settle against a $0.0003 operator fee on the live $0.003
-   *  toll — a 4.5x–10x loss per read. Harmless on a testnet (fake gas); on MAINNET it
-   *  is a real loss on every settle. `networks.test.ts` pins the set for this reason. */
+   *  IT NO LONGER SELECTS THE SETTLEMENT RAIL (changed 2026-09-04). Every chain settles
+   *  through Circle Gateway's batching facilitator, Arc included — `verifyAndSettle` does
+   *  not read this field, and neither does the buyer's rail picker (`assembleRailPayment`)
+   *  or the cloud's funding guard (`railFor`). All three moved together, because a buyer
+   *  and a gate that disagree about the envelope produce a payment nobody can settle.
+   *
+   *  WHY IT STOPPED. Emitting the memo required SELF-RELAYING one on-chain transaction per
+   *  toll, with our relayer paying the gas — individual settlement, which Circle prices at a
+   *  ~$0.01 viable minimum per payment against $0.000001 for batched. Measured 2026-09-04
+   *  across the 30 real production settles: 112,512–137,524 gas at 20.2–25 gwei, so
+   *  $0.0023–$0.0034 each against a $0.003 toll. What it bought was an on-chain reconciliation
+   *  id that `naulon_events`, the licence `jti` and `settlementRef` already carry off-chain.
+   *
+   *  WHAT IT IS STILL FOR. Tagging a transaction that has to happen anyway and is large enough
+   *  that gas is a rounding error — a buyer's one-time Gateway deposit, a withdrawal. Nothing
+   *  writes a memo today; the predeploy address is kept so that work does not start by
+   *  re-verifying a contract on-chain. `networks.test.ts` still pins the set. */
   memo?: {
     /** The Memo predeploy. `memo(target,data,memoId,memoData)` executes the subcall
      *  through the CALL_FROM precompile (preserving the relayer as caller) AND emits

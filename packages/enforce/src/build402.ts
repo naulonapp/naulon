@@ -52,7 +52,7 @@ export interface PaymentRequirements {
   maxTimeoutSeconds: number;
   extra: Record<string, unknown>;
   /** Optional on-chain memo reconciliation id (Arc only). Carried from the quote;
-   *  read ONLY by the self-relay settle path on a memo-capable network. */
+   *  was read ONLY by the self-relay settle path, which retired 2026-09-04 — carried, unconsumed. */
   memoId?: string;
 }
 

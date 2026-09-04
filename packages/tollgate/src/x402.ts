@@ -21,8 +21,6 @@ import {
   arcPreviewHeaders,
   getConfig,
   networkByCaip2,
-  relayerKeyFor,
-  supportsMemo,
   type ForgoneLeg,
   type MemoAuthorization,
   type SettlementNetwork,
@@ -31,14 +29,7 @@ import {
 /** Re-exported so the settle surface reads unchanged; the type is owned by `@naulon/shared`
  *  because `AttributedEvent` carries it and shared is the base package. */
 export type { ForgoneLeg };
-import {
-  preverifyEip3009,
-  relayerAddress,
-  settleViaMemo,
-  signMemoAuthorization,
-  toMemoData,
-  toMemoId,
-} from "./arcRelay.ts";
+import { signMemoAuthorization } from "./arcRelay.ts";
 import { getPendingLegSink, type PendingLeg, type PendingLegSink } from "./pendingLegs.ts";
 // The x402 BUILD side now lives in @naulon/enforce (the runtime-agnostic kernel);
 // this module is the SETTLE side and consumes the build-side primitives from there.
@@ -251,84 +242,22 @@ export async function verifyAndSettle(
   // not the process-global — so a base tenant settles on base even when the fleet
   // default is Arc. Fallback to activeNetwork() keeps the single-tenant path exact.
   const net = networkByCaip2(legReqs[0]!.requirements.network) ?? activeNetwork();
-  // On a memo-capable network (Arc) the buyer signs a RAW USDC EIP-3009 authorization
-  // and we self-relay it through the Memo predeploy — Circle's facilitator can't verify
-  // that domain. Field-presence gate, never a chainName check (see supportsMemo): a
-  // memo-less leg (Base) falls through to the stock Gateway path with no edit here.
-  return withForgone(
-    supportsMemo(net)
-      ? await settleMemo(pairs, net, now, publisherId)
-      : await settleGateway(pairs, net, now, publisherId),
-  );
-}
-
-/** Memo-network settlement: pre-verify every leg's raw EIP-3009 authorization, then
- *  self-relay the author leg through the Arc Memo predeploy (emitting the indexed Memo)
- *  and DEFER the rest to the drain (which relays them too). Mirrors `settleGateway`'s
- *  N-leg protocol (verify all → settle author sync → defer extras), but the rail is the
- *  relayer EOA, not Circle's facilitator. Custody-free: the inner transfer is the
- *  buyer's authorization; the relayer only pays gas. */
-async function settleMemo(pairs: LegPair[], net: SettlementNetwork, now: number, publisherId?: string): Promise<VerifyResult> {
-  if (!supportsMemo(net)) return { ok: false, stage: "verify", error: `network ${net.chainName} has no Memo predeploy` };
-  const relayerKey = relayerKeyFor(net);
-  if (!relayerKey) {
-    return { ok: false, stage: "verify", error: net.testnet
-      ? "RELAYER_PRIVATE_KEY required for memo-network settlement"
-      : "RELAYER_PRIVATE_KEY_MAINNET required for mainnet memo-network settlement" };
-  }
-  const key = (relayerKey.startsWith("0x") ? relayerKey : `0x${relayerKey}`) as `0x${string}`;
-  const relayer = await relayerAddress(key);
-
-  // Verify EVERY leg first — any invalid → 402, settle nothing (no partial charge).
-  const parsed: { auth: MemoAuthorization; signature: `0x${string}`; req: PaymentRequirements }[] = [];
-  for (let i = 0; i < pairs.length; i++) {
-    const p = pairs[i]!;
-    const payload = p.payload as { authorization?: MemoAuthorization; signature?: `0x${string}` };
-    if (!payload?.authorization || !payload?.signature) {
-      return { ok: false, stage: "verify", error: `leg ${i}: malformed memo payload (need {authorization, signature})` };
-    }
-    const { authorization: auth, signature } = payload;
-    // The buyer must have signed THIS leg's recipient and amount — else a valid sig for
-    // some other transfer could be replayed against this leg.
-    if (auth.to.toLowerCase() !== p.requirements.payTo.toLowerCase() || auth.value !== p.requirements.amount) {
-      return { ok: false, stage: "verify", error: `leg ${i}: authorization (to ${auth.to}, value ${auth.value}) != requirements (payTo ${p.requirements.payTo}, amount ${p.requirements.amount})` };
-    }
-    const pre = await preverifyEip3009(auth, signature, net, now, cfg.USDC_EIP712_NAME);
-    if (!pre.ok) return { ok: false, stage: "verify", error: `leg ${i} (${p.requirements.payTo}): ${pre.reason}` };
-    parsed.push({ auth, signature, req: p.requirements });
-  }
-
-  // Author leg (0) settles synchronously through the Memo predeploy and gates content.
-  const author = parsed[0]!;
-  const memoId = await toMemoId(author.req.memoId ?? author.auth.nonce);
-  const memoData = await toMemoData(`naulon:${publisherId ?? "default"}:${author.req.memoId ?? author.req.payTo}`);
-  const authorSettle = await settleViaMemo({
-    net,
-    auth: author.auth,
-    signature: author.signature,
-    payTo: author.req.payTo,
-    relayerAddress: relayer,
-    memoId,
-    memoData,
-    nowMs: now,
-    usdcNameOverride: cfg.USDC_EIP712_NAME,
-  });
-  if (!authorSettle.success) {
-    return { ok: false, stage: "settle", error: `author leg settle failed: ${authorSettle.errorReason ?? "settlement failed"}` };
-  }
-  const legSettlements: LegSettlement[] = [
-    { payTo: author.req.payTo, amount: author.req.amount, settlementRef: authorSettle.transaction, settled: true },
-  ];
-
-  // Extra legs: buyer-authorized, settlement DEFERRED to the drain (which relays them on
-  // a memo network too). Same shape as the gateway path — no partial-failure window.
-  await deferExtraLegs(pairs, now, publisherId, legSettlements);
-
-  const payer = authorSettle.payer ?? author.auth.from;
-  const responseHeader = Buffer.from(
-    JSON.stringify({ success: true, transaction: authorSettle.transaction, network: author.req.network, payer }),
-  ).toString("base64");
-  return { ok: true, payer, settlementRef: authorSettle.transaction, responseHeader, legSettlements };
+  // EVERY chain settles through Circle Gateway's batching facilitator — Arc included, which until
+  // now self-relayed through the Memo predeploy.
+  //
+  // WHY THAT BRANCH IS GONE. Memo settlement is INDIVIDUAL settlement: one on-chain transaction
+  // per read, our relayer paying the gas. Circle's own figure for that mode is a viable minimum of
+  // ~$0.01 per payment; batched settlement costs gas ÷ batch size and reaches $0.000001. Measured
+  // 2026-09-04 against the 30 real production settles: 112,512–137,524 gas at 20.2–25 gwei, so
+  // $0.0023–$0.0034 of gas each — against a $0.003 toll. The memo bought exactly one thing, an
+  // on-chain reconciliation id, which `naulon_events`, the licence `jti` and `settlementRef`
+  // already carry off-chain. A transaction per read for a fourth copy of an identifier was the
+  // trade, and it never paid.
+  //
+  // The Memo predeploy is NOT gone: `supportsMemo` still answers whether a chain ships it, because
+  // tagging a transaction that must happen anyway — a buyer deposit, a withdrawal — costs almost
+  // nothing extra. It simply no longer decides how a toll settles.
+  return withForgone(await settleGateway(pairs, net, now, publisherId));
 }
 
 /** Accept either the full per-leg list from `build402` (with roles — today's gate path)
@@ -355,10 +284,26 @@ function mockRef(r: PaymentRequirements): string {
 async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: number, publisherId?: string): Promise<VerifyResult> {
   const facilitator = await getFacilitator(net);
   // Verify EVERY leg first.
+  //
+  // The SDK THROWS on a malformed payload or a transport failure rather than returning
+  // `isValid: false` — a 400 from Circle's verify arrives as an exception. Letting that escape
+  // turns a buyer's bad signature into a 500 from the gate instead of a 402 they can act on, and
+  // since 2026-09-04 every chain reaches this path, so the throw is no longer a Base-only edge.
+  // Caught as `stage: "verify"`: verify never broadcasts, so a caller holding a buyer-wallet
+  // reserve may safely credit it back.
   const payers: (string | undefined)[] = [];
   for (let i = 0; i < pairs.length; i++) {
     const { requirements, payload } = pairs[i]!;
-    const v = await facilitator.verify(payload, requirements);
+    let v: { isValid: boolean; invalidReason?: string; payer?: string };
+    try {
+      v = await facilitator.verify(payload, requirements);
+    } catch (err) {
+      return {
+        ok: false,
+        stage: "verify",
+        error: `leg ${i} (${requirements.payTo}): ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
     if (!v.isValid) {
       return { ok: false, stage: "verify", error: `leg ${i} (${requirements.payTo}): ${v.invalidReason ?? "verification failed"}` };
     }
@@ -366,8 +311,17 @@ async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: numb
   }
 
   // Author leg (0) settles synchronously and gates content.
+  //
+  // A throw HERE is deliberately NOT stamped `verify`: the request may have reached the
+  // facilitator and moved money before it failed, and an unstamped refusal reads as ambiguous —
+  // the direction a caller must not credit back. Same rule the memo path used to carry.
   const author = pairs[0]!;
-  const authorSettle = await facilitator.settle(author.payload, author.requirements);
+  let authorSettle: { success: boolean; errorReason?: string; payer?: string; transaction?: string };
+  try {
+    authorSettle = await facilitator.settle(author.payload, author.requirements);
+  } catch (err) {
+    return { ok: false, error: `author leg settle failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
   if (!authorSettle.success) {
     return { ok: false, stage: "settle", error: `author leg settle failed: ${authorSettle.errorReason ?? "settlement failed"}` };
   }
@@ -507,10 +461,11 @@ async function settleOneLeg(leg: PendingLeg, now: number): Promise<SettleAttempt
     // Resolve from the leg's OWN advertised network so a deferred re-settle lands on
     // the chain it was authorized for, even across a multi-network fleet.
     const net = networkByCaip2(leg.requirements.network) ?? activeNetwork();
-    // Memo network: the pending leg's payload is a raw EIP-3009 authorization, not a
-    // Gateway one — relay it through the Memo predeploy (same primitive as the sync
-    // author leg). Field-presence gated, so a Base deploy never reaches this branch.
-    if (supportsMemo(net)) return relayPendingLeg(leg, net, now);
+    // Every leg drains through the facilitator now — the memo self-relay branch went with the
+    // sync one (see `verifyAndSettle`). Nothing is stranded by that: a leg is only ever deferred
+    // in the shape the settle that created it used, and no unsettled memo-shaped leg existed when
+    // the branch was removed (checked against production on 2026-09-04 — one row, already
+    // settled). A leg authorized for Arc still drains here, because Gateway settles Arc too.
     try {
       const facilitator = await getFacilitator(net);
       const s = await facilitator.settle(leg.payload, leg.requirements);
@@ -537,51 +492,6 @@ async function settleOneLeg(leg: PendingLeg, now: number): Promise<SettleAttempt
   // In mock, this leg's own nonce having been consumed means a prior attempt settled it — the
   // same reconciliation the real rails get from the token contract.
   return isAlreadyConsumed(c.error) ? { kind: "already_settled" } : { kind: "failed" };
-}
-
-/** Relay a deferred leg through the Arc Memo predeploy (the drain's memo-network path).
- *  Idempotency stays the drain's job (markSettled compare-and-set); on-chain the buyer's
- *  EIP-3009 nonce prevents a double charge regardless. */
-async function relayPendingLeg(
-  leg: PendingLeg,
-  net: ReturnType<typeof activeNetwork>,
-  now: number,
-): Promise<SettleAttempt> {
-  const relayerKey = relayerKeyFor(net);
-  if (!relayerKey) {
-    const msg = net.testnet
-      ? "RELAYER_PRIVATE_KEY required for memo settlement"
-      : "RELAYER_PRIVATE_KEY_MAINNET required for mainnet memo settlement";
-    console.error(`[tollgate] pending leg ${leg.id}: ${msg}`);
-    return { kind: "failed" };
-  }
-  const payload = leg.payload as { authorization?: MemoAuthorization; signature?: `0x${string}` };
-  if (!payload?.authorization || !payload?.signature) {
-    console.error(`[tollgate] pending leg ${leg.id} (${leg.payTo}): malformed memo payload`);
-    return { kind: "failed" };
-  }
-  const key = (relayerKey.startsWith("0x") ? relayerKey : `0x${relayerKey}`) as `0x${string}`;
-  const relayer = await relayerAddress(key);
-  const memoId = await toMemoId(leg.requirements.memoId ?? payload.authorization.nonce);
-  const memoData = await toMemoData(leg.requirements.memoId ?? `naulon:${leg.payTo}`);
-  const r = await settleViaMemo({
-    net,
-    auth: payload.authorization,
-    signature: payload.signature,
-    payTo: leg.requirements.payTo,
-    relayerAddress: relayer,
-    memoId,
-    memoData,
-    nowMs: now,
-    usdcNameOverride: cfg.USDC_EIP712_NAME,
-  });
-  if (r.success && r.transaction) return { kind: "settled", ref: r.transaction };
-  if (isAlreadyConsumed(r.errorReason)) {
-    console.warn(`[tollgate] pending leg ${leg.id} (${leg.payTo}) was already relayed on-chain — reconciling`);
-    return { kind: "already_settled" };
-  }
-  console.error(`[tollgate] pending leg ${leg.id} (${leg.payTo}) relay failed: ${r.errorReason}`);
-  return { kind: "failed" };
 }
 
 /** Scope for a pending-leg drain pass. `publisherId` drains one publisher's legs only (the

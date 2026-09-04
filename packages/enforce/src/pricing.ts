@@ -46,7 +46,7 @@ export interface Quote {
   /**
    * Optional reconciliation id for the on-chain memo (Arc only). When set AND the
    * active network ships the Memo predeploy, the synchronous author leg settles via
-   * the self-relay path and emits a `Memo` event keyed by this id (keccak256'd to
+   * the self-relay path (RETIRED 2026-09-04 — carried but unconsumed) and emitted a `Memo` event keyed by this id (keccak256'd to
    * `bytes32` if not already 32-byte hex) — tying the settlement to a citation /
    * license id for offchain reconciliation. Absent, or on a memo-less network (Base),
    * the settle path is byte-identical to the stock Circle Gateway toll. Supplied by
