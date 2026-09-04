@@ -131,7 +131,11 @@ function withStubGate(amountAtomic: string, fn: () => Promise<void>): Promise<vo
     }
     const header = Buffer.from(
       JSON.stringify({
-        accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: amountAtomic, maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+        // The real gate shape: a CAIP-2 network and the `GatewayWalletBatched` descriptor `build402`
+        // stamps on every gateway-mode 402. Before 2026-09-04 a memo-capable fleet default routed the
+        // buyer to the memo signer, which read neither, so the fixture could get away with a synthetic
+        // network name and no descriptor. Every chain settles through Circle now.
+        accepts: [{ network: "eip155:5042002", asset: "0x3600000000000000000000000000000000000000", payTo: "0x00000000000000000000000000000000000000Ad", amount: amountAtomic, maxTimeoutSeconds: 120, extra: { nonce: "n", name: "GatewayWalletBatched", version: "1", verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" } }],
       }),
     ).toString("base64");
     return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
@@ -332,11 +336,15 @@ test("BUY-4.3 P2: an injected session signer pays through run() — no BUYER_PRI
   );
 });
 
-test("RAS-B: injected railSigners rail-pick PER-402 in run() — a memo-network 402 under a gateway-default fleet pays via the MEMO signer", async () => {
-  // The naulon_research half of the mixed-fleet fix: run() with BOTH rail signers must route
-  // like railBuyer (per-402 network registry), not by supportsMemo(activeNetwork()). Fleet default
-  // here is baseSepolia (gateway) while the 402 advertises Arc — with the REAL gate shape, i.e.
-  // the GatewayWalletBatched extra stamped on it (build402 stamps it on every gateway-mode 402).
+test("RAS-B: injected railSigners route PER-402 in run() — an Arc 402 under a gateway-default fleet pays via the GATEWAY signer", async () => {
+  // The naulon_research half of the mixed-fleet fix: run() with BOTH rail signers must route like
+  // railBuyer (per-402, off the network registry) rather than off the fleet default. The fleet
+  // default here is baseSepolia while the 402 advertises Arc, so a router keyed off the default
+  // would be indistinguishable from one keyed off the 402.
+  //
+  // Since 2026-09-04 both answers are the GATEWAY signer — the gate settles every chain through
+  // Circle — so what this now pins is that the memo signer is never reached even when one is
+  // supplied for a chain that still ships the Memo predeploy.
   const mkSigner = () => {
     const calls: { count: number } = { count: 0 };
     return {
@@ -398,8 +406,8 @@ test("RAS-B: injected railSigners rail-pick PER-402 in run() — a memo-network 
           railSigners: { memo: memo.signer, gateway: gateway.signer },
         });
         assert.ok((result.spent as number) > 0, "the run paid for at least one source");
-        assert.ok(memo.calls.count >= 1, "the MEMO signer must sign an Arc 402 — per-402 rail pick, not the fleet default");
-        assert.equal(gateway.calls.count, 0, "the gateway signer must NOT be consulted despite the fleet-default gateway rail");
+        assert.ok(gateway.calls.count >= 1, "the GATEWAY signer signs an Arc 402 — every chain settles through Circle");
+        assert.equal(memo.calls.count, 0, "the memo signer is never consulted for a toll, predeploy or not");
       } finally {
         globalThis.fetch = real;
       }

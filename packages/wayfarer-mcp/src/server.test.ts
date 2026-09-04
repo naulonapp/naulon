@@ -208,17 +208,27 @@ function failingPayGate(amountAtomic: string) {
   };
 }
 
-/** A base64 x402 PAYMENT-REQUIRED header advertising a single author leg. */
+/** A base64 x402 PAYMENT-REQUIRED header advertising a single author leg.
+ *
+ *  Carries the `GatewayWalletBatched` descriptor `build402` stamps on every gateway-mode 402 — the
+ *  real gate shape. It did not until 2026-09-04, because a memo-capable fleet default routed the
+ *  buyer to the memo signer and the descriptor was ignored on that rail. Every chain settles through
+ *  Circle now, so a 402 without it is one no gate here would ever emit. */
 function paymentRequired(amountAtomic: string): string {
   const body = {
     accepts: [
       {
-        network: "arc-testnet",
-        asset: "USDC",
+        network: "eip155:5042002",
+        asset: "0x3600000000000000000000000000000000000000",
         payTo: "0x000000000000000000000000000000000000dEaD",
         amount: amountAtomic,
         maxTimeoutSeconds: 120,
-        extra: { nonce: "nonce-1" },
+        extra: {
+          nonce: "nonce-1",
+          name: "GatewayWalletBatched",
+          version: "1",
+          verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        },
       },
     ],
   };
@@ -515,7 +525,7 @@ test("naulon_quote reads real price + terms from a 402, and reports gated:false 
     assert.equal(gated.gated, true, "the gated slug is quoted");
     assert.equal(gated.priceUsdc, 0.005, "author price decoded from the 402 (5000 micro)");
     assert.equal(gated.totalUsdc, 0.005, "no extra legs → total equals the author price");
-    assert.equal(gated.network, "arc-testnet");
+    assert.equal(gated.network, "eip155:5042002");
     assert.equal(typeof gated.payTo, "string");
 
     const freeRes = await client.callTool({ name: "naulon_quote", arguments: { slug: "free" } });

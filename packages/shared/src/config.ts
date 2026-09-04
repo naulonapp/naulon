@@ -80,7 +80,9 @@ export const configSchema = z.object({
   // requires this. Fail-loud at settle time (not boot), so testnet deploys never need it.
   ARC_RPC_URL: z.string().url().optional(),
 
-  // Relayer key for the Arc self-relay (memo) settlement path. Required ONLY when
+  // Relayer key for the Arc self-relay (memo) path. The SETTLE path no longer uses it (2026-09-04:
+  // every chain batches through Circle Gateway); kept for the deposit/withdrawal tagging the Memo
+  // predeploy is still the right tool for. Required ONLY when
   // PAYMENT_MODE=gateway AND the active network ships the Memo predeploy (Arc) —
   // on Base/Base Sepolia the rail is Circle Gateway and this is unused. The relayer
   // is an EOA (the Memo precompile is EOA-only) that signs the OUTER tx and pays gas

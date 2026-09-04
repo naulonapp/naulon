@@ -14,7 +14,6 @@ import {
   issuerHost,
   proofPageUrl,
   recordUrl,
-  supportsMemo,
   usdc,
   verifyLicense,
   type JwkSet,
@@ -22,7 +21,7 @@ import {
 import { appraise } from "./appraise.ts";
 import { quotedTotalAtomic, rereadWithLicense, selectBuyer } from "./buyer.ts";
 import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
-import { memoBuyer, type MemoSigner } from "./memo.ts";
+import { type MemoSigner } from "./memo.ts";
 import { railBuyer, type RailSigners } from "./rail.ts";
 import { decide, DEFAULT_POLICY, payHostOf, payUrlOf, spendGate, type LicenceVerdict } from "./decide.ts";
 import { makeLicenceResolver, type LicenceResolver } from "./licence.ts";
@@ -220,13 +219,13 @@ export interface RunOptions {
    * `naulon_pay_and_read`. Omitted ⇒ `selectBuyer()` picks the env buyer (the OSS
    * self-host path). Server/config-supplied, never LLM-controlled. A `MemoSigner`
    * (memo/Arc rail) or a `GatewaySigner` (memo-less Circle rails); `run` routes it to
-   * the matching buyer via `supportsMemo(activeNetwork())`, like `selectBuyer()`.
+   * the Gateway buyer, like `selectBuyer()` — every chain settles through Circle since 2026-09-04.
    */
   signer?: MemoSigner | GatewaySigner;
   /**
    * BOTH rail signers over the same sealed session key (RAS-B mixed fleet). When present, the run
    * pays through `railBuyer`, which picks memo vs gateway PER-402 from each tenant's advertised
-   * network — exactly like `naulon_pay_and_read` — instead of the fleet-global `supportsMemo`
+   * network — exactly like `naulon_pay_and_read` — instead of a fleet-global default
    * routing a single `signer` gets. Wins over `signer`. Server/config-supplied, never LLM-controlled.
    */
   railSigners?: RailSigners;
@@ -331,9 +330,7 @@ export async function run(
   const buyer = opts.railSigners
     ? railBuyer(opts.railSigners)
     : opts.signer
-      ? supportsMemo(activeNetwork())
-        ? memoBuyer(opts.signer as MemoSigner)
-        : gatewayBuyer(opts.signer as GatewaySigner)
+      ? gatewayBuyer(opts.signer as GatewaySigner)
       : await selectBuyer();
   // Per-session held store + PoP signer (BUY-4): the injected pair keeps the composite loop's
   // free re-reads isolated per buyer and signed by the paying session EOA. Omitted ⇒ OSS defaults.
