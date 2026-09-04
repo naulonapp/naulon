@@ -16,6 +16,40 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
+## v0.8.4
+
+Every chain settles through Circle Gateway. The Arc memo settle path — one self-relayed
+on-chain transaction per read, with our relayer paying the gas — is retired. It cost
+$0.0023–$0.0034 in gas against a $0.003 toll across the 30 real production settles, and what
+it bought was an on-chain reconciliation id that the event record, the licence `jti` and the
+settlement reference already carry. The Memo predeploy itself is kept: tagging a transaction
+that has to happen anyway, such as a deposit or a withdrawal, is still what it is good at.
+
+**If you inject a signer, you now inject a `GatewaySigner` on every network, Arc included.**
+A buyer that kept signing the memo envelope against Arc would have its payment rejected as
+malformed by a gate on this version, because the two sides must agree on the envelope. The
+`RailSigners` path is unaffected — it already picked per-402.
+
+`@naulon/wayfarer` 0.4.1 → **0.4.2**
+* `selectBuyer()` and `run()` route to `gatewayBuyer` on every network. Both previously
+  branched on whether the active chain ships the Memo predeploy.
+* `assembleRailPayment` signs **one Circle envelope per leg** of a multi-leg toll, in leg
+  order. Multi-leg tolls were previously memo-rail-only, which is what confined the operator
+  fee leg to a single chain; the rail always carried N legs, the buyer just had to sign them
+  individually rather than asking the SDK for one payload covering all of them.
+
+`@naulon/wayfarer-mcp` 0.5.1 → **0.5.2** — the hosted MCP's single-signer path routes to
+`gatewayBuyer` too. This is the path an agent reaches you on, so it is the one that mattered.
+
+`@naulon/shared` 0.4.3 → **0.4.4** — `supportsMemo` still answers whether a chain ships the
+Memo predeploy, and no longer selects a settlement rail. Documented on the field, along with
+the measurement.
+
+`@naulon/enforce` 0.4.3 → **0.4.4** — a quote's `memoId` is still carried and is now
+unconsumed by the settle path.
+
+`@naulon/sdk` is unchanged and is not republished.
+
 ## v0.8.3
 
 Ships the WordPress plugin 0.5.3, and the four npm packages that had changed since v0.8.1
