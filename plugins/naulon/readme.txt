@@ -1,5 +1,5 @@
 === naulon — citation toll ===
-Contributors: naulon
+Contributors: ravianxreaver
 Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
