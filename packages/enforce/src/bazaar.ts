@@ -91,11 +91,13 @@ const INFO_SCHEMA = {
  * the publisher's own page, so the honest declaration is the origin's media type, not a
  * JSON envelope naulon does not impose.
  */
-export function bazaarExtension(mimeType: string): {
-  info: { input: { type: "http"; method: "GET" }; output: { type: string; format: string } };
+export function bazaarExtension(mimeType: string, routeTemplate?: string): {
+  info: { input: { type: "http"; method: "GET"; pathParams?: Record<string, string> }; output: { type: string; format: string } };
   schema: typeof INFO_SCHEMA;
+  routeTemplate?: string;
 } {
   return {
+    ...(routeTemplate ? { routeTemplate } : {}),
     info: {
       input: { type: "http", method: "GET" },
       // `type` is the coarse family a catalog filters on; `format` keeps the exact
@@ -104,4 +106,52 @@ export function bazaarExtension(mimeType: string): {
     },
     schema: INFO_SCHEMA,
   };
+}
+
+/**
+ * The catalog KEY for a parameterised toll: `/essays/:slug` rather than
+ * `/essays/on-stillness`.
+ *
+ * Without it a publisher with 500 tolled essays produces 500 near-identical catalog
+ * rows — one per URL a crawler happened to hit — and an agent browsing the Bazaar sees
+ * a wall of the same offer. The spec makes this the server's job: a facilitator maps
+ * every concrete request onto the template, and treats an absent one as "catalog the
+ * concrete path".
+ *
+ * ONLY emitted where the template is exactly what the publisher configured: prefix
+ * mode at single-segment depth, where every path under `/<prefix>/` is tolled alike.
+ * Site mode and deeper prefix scopes get NO template rather than a generalisation that
+ * would claim paths the gate does not actually toll — over-claiming in someone else's
+ * catalog is worse than a few extra rows in it.
+ */
+export function routeTemplateFor(pathname: string, prefixes: readonly string[]): string | undefined {
+  for (const prefix of prefixes) {
+    if (!prefix) continue;
+    const head = `/${prefix.replace(/^\/+|\/+$/g, "")}/`;
+    if (!pathname.startsWith(head)) continue;
+    // Exactly one segment after the prefix, or this is not the shape we can generalise.
+    const rest = pathname.slice(head.length);
+    if (rest.length === 0 || rest.includes("/")) return undefined;
+    const template = `${head}:slug`;
+    return isValidRouteTemplate(template) ? template : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * The spec's own validation, applied before we SEND rather than trusting the facilitator
+ * to drop it: percent-decode first, then the traversal and scheme checks. A template a
+ * facilitator discards is a catalog row that silently splits back into one-per-URL, so
+ * the failure is invisible from here — better to know we never sent a bad one.
+ */
+export function isValidRouteTemplate(template: string): boolean {
+  if (!template || !template.startsWith("/")) return false;
+  if (!/^\/[a-zA-Z0-9_/:.\-~%]+$/.test(template)) return false;
+  let decoded = template;
+  try {
+    decoded = decodeURIComponent(template);
+  } catch {
+    return false; // malformed percent-encoding
+  }
+  return !decoded.includes("..") && !decoded.includes("://");
 }

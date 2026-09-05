@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bazaarExtension, serviceMetadata } from "./bazaar.ts";
+import { bazaarExtension, isValidRouteTemplate, routeTemplateFor, serviceMetadata } from "./bazaar.ts";
 
 test("the declaration matches the spec's HTTP GET discovery shape", () => {
   const ext = bazaarExtension("text/html");
@@ -41,4 +41,35 @@ test("no iconUrl is ever offered", () => {
   // The fleet is multi-tenant; the only icon it could send is the operator's, which
   // would brand every publisher's catalog entry with someone else's mark.
   assert.equal("iconUrl" in serviceMetadata("https://h.test/x", "read"), false);
+});
+
+test("a prefixed toll catalogs as ONE route, not one row per article", () => {
+  assert.equal(routeTemplateFor("/essays/on-stillness", ["essays"]), "/essays/:slug");
+  assert.equal(routeTemplateFor("/essays/on-stillness", ["blog", "essays"]), "/essays/:slug");
+  assert.equal(routeTemplateFor("/essays/on-stillness", ["/essays/"]), "/essays/:slug");
+});
+
+test("a shape the configured scope does not actually cover gets NO template", () => {
+  // Over-claiming in someone else's catalog is worse than a few extra rows in it.
+  assert.equal(routeTemplateFor("/essays/2026/on-stillness", ["essays"]), undefined, "deeper than one segment");
+  assert.equal(routeTemplateFor("/essays/", ["essays"]), undefined, "no slug at all");
+  assert.equal(routeTemplateFor("/about", ["essays"]), undefined, "not under the prefix");
+  assert.equal(routeTemplateFor("/essays/x", []), undefined, "no prefixes configured (site mode)");
+});
+
+test("the spec's template rules are applied before we send, not after they drop it", () => {
+  assert.equal(isValidRouteTemplate("/essays/:slug"), true);
+  assert.equal(isValidRouteTemplate("/weather/:country/:city"), true);
+  assert.equal(isValidRouteTemplate("essays/:slug"), false, "must start with /");
+  assert.equal(isValidRouteTemplate(""), false);
+  assert.equal(isValidRouteTemplate("/essays/../admin"), false, "traversal");
+  assert.equal(isValidRouteTemplate("/essays/%2e%2e/admin"), false, "traversal, percent-encoded");
+  assert.equal(isValidRouteTemplate("/http://evil.com"), false, "scheme injection");
+  assert.equal(isValidRouteTemplate("/essays/%zz"), false, "malformed percent-encoding");
+  assert.equal(isValidRouteTemplate("/essays/:slug?x=1"), false, "not a path character");
+});
+
+test("the extension omits routeTemplate entirely when there is none", () => {
+  assert.equal("routeTemplate" in bazaarExtension("text/html"), false);
+  assert.equal(bazaarExtension("text/html", "/essays/:slug").routeTemplate, "/essays/:slug");
 });

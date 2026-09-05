@@ -25,6 +25,7 @@ import { licensing } from "./license.ts";
 import { revocations } from "./revocation.ts";
 import { verifyPopProof } from "./pop.ts";
 import { slugFromPath, slugFromSitePath } from "@naulon/sdk/slug";
+import { routeTemplateFor } from "./bazaar.ts";
 import {
   externalSchemeOf,
   externalUrl,
@@ -330,10 +331,17 @@ export async function decide(input: DecideInput): Promise<Decision> {
   // The resource identifier goes into a SIGNED quote, so it must be the URL the buyer
   // actually fetched — not the one this process observed. TLS terminates at the edge in
   // every real deployment, so `raw.url` reads `http:` for an `https:` read.
+  // Discovery catalog key. Prefix mode at single-segment depth only — see
+  // `routeTemplateFor`; site mode and deeper scopes deliberately get none.
+  const routeTemplate =
+    publisher.gateScope?.mode === "site" || publisher.gateScope?.depth
+      ? undefined
+      : routeTemplateFor(new URL(raw.url).pathname, publisher.articlePrefixes ?? []);
   const { legs, header } = build402(
     q,
     externalUrl(raw, { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS }),
     now,
+    routeTemplate,
   );
 
   const payment = raw.headers.get(PAYMENT_SIGNATURE_HEADER);

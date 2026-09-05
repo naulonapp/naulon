@@ -100,7 +100,7 @@ export interface SettlementLegReq {
   requirements: PaymentRequirements;
 }
 
-export function build402(quote: Quote, resourceUrl: string, now: number): {
+export function build402(quote: Quote, resourceUrl: string, now: number, routeTemplate?: string): {
   requirements: PaymentRequirements;
   legs: SettlementLegReq[];
   header: string;
@@ -176,7 +176,7 @@ export function build402(quote: Quote, resourceUrl: string, now: number): {
     // — there is no directory to submit to — so without this block no x402 discovery
     // layer can list a naulon resource even in principle. Unaffiliated with any one
     // facilitator: the extension is part of the open scheme.
-    extensions: { bazaar: bazaarExtension(mimeType) },
+    extensions: { bazaar: bazaarExtension(mimeType, routeTemplate) },
   };
   // Simultaneous extra legs (co-author splits and/or `extraLegs`) are a naulon
   // extension. A plain single-author quote has only the author leg → omit it ENTIRELY
