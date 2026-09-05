@@ -38,6 +38,22 @@ export {
   totalChargedMicro,
 } from "./crawlerPrice.ts";
 
+// The 402's BODY — the advertisement half, in the vendor-neutral shape `@crawlertoll/core`
+// established, so a buyer written against that library can price a naulon origin with no
+// naulon code. The signed obligation stays in the PAYMENT-REQUIRED header.
+export {
+  PAYMENT_BODY_CONTENT_TYPE,
+  paymentRequiredBody,
+  paymentRequiredBodyText,
+  type PaymentBodyInput,
+  type PaymentOffer,
+  type PaymentOfferMetadata,
+  type PaymentRequiredBody,
+} from "./paymentBody.ts";
+
+// Header hygiene for the verdict header both emitters set.
+export { headerSafe } from "./headerSafe.ts";
+
 // Pricing (the `quote` value; the `Quote` type comes through `./decide.ts`).
 export { quote, tollPrice } from "./pricing.ts";
 

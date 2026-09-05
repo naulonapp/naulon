@@ -174,3 +174,34 @@ test("a human's free read carries no crawler-* headers at all", async () => {
   assert.equal(res.headers.get("crawler-price"), null);
   assert.equal(res.headers.get("crawler-charged"), null);
 });
+
+// A 402 used to be zero bytes: everything a buyer needed rode in PAYMENT-REQUIRED, which is
+// correct for an x402 client and blank for every other crawler. The body is the advertisement
+// half — the shape `@crawlertoll/core` established, so a buyer written against the
+// vendor-neutral middleware can price this origin with no naulon code.
+test("a 402 carries a readable body, and it agrees with the headers", async () => {
+  const res = await app.request("/essays/on-stillness", { headers: AGENT });
+  assert.equal(res.status, 402);
+  assert.match(res.headers.get("content-type") ?? "", /application\/json/);
+
+  const body = (await res.json()) as {
+    error: string;
+    message: string;
+    offer: { rail: string; priceMicros: number; currency: string; publisher: string; endpoint: string; metadata: Record<string, unknown> };
+  };
+  assert.equal(body.error, "payment_required");
+  assert.equal(body.offer.rail, "x402");
+  assert.equal(body.offer.currency, "USDC");
+  assert.equal(body.offer.endpoint, "/essays/on-stillness");
+  assert.equal(body.offer.metadata["crawlerPrice"], res.headers.get("crawler-price"));
+  assert.equal(BigInt(body.offer.priceMicros), parseCrawlerPrice(res.headers.get("crawler-price")));
+  assert.equal(body.offer.metadata["humansReadFree"], true);
+});
+
+test("the body advertises but never obligates — the signed requirements stay in the header", async () => {
+  const res = await app.request("/essays/on-stillness", { headers: AGENT });
+  const text = await res.text();
+  assert.ok(res.headers.get("PAYMENT-REQUIRED"), "the obligation is still header-borne");
+  assert.ok(!text.includes("nonce"), "no signed material is duplicated into the advertisement");
+  assert.match(text, /PAYMENT-REQUIRED/, "but the body says where to find it");
+});

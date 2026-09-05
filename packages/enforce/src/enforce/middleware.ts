@@ -24,6 +24,18 @@ import {
   LICENSE_HEADER,
   type LicenseVerification,
 } from "../decide.ts";
+import {
+  CRAWLER_CHARGED_HEADER,
+  CRAWLER_EXACT_PRICE_HEADER,
+  CRAWLER_MAX_PRICE_HEADER,
+  CRAWLER_PRICE_HEADER,
+  crawlerBudgetVerdict,
+  declaredCrawlerBudget,
+  formatCrawlerPrice,
+  totalChargedMicro,
+} from "../crawlerPrice.ts";
+import { PAYMENT_BODY_CONTENT_TYPE, paymentRequiredBodyText } from "../paymentBody.ts";
+import { headerSafe } from "../headerSafe.ts";
 import { externalUrl, getConfig, type JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
 import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
@@ -116,6 +128,13 @@ interface VerifyResponse {
   payer?: string;
   responseHeader?: string;
   licenseJws?: string;
+  /** What the buyer was ACTUALLY charged, in integer micro-USDC, summed across the legs
+   *  that settled. Not the ask: a stock x402 payer signs `accepts[0]` alone, so the
+   *  operator fee and any co-author cut never left their wallet. Only the settling side
+   *  knows which legs were forgone, so only it can report this — the in-app path cannot
+   *  compute it and must not guess, because `crawler-charged` is a claim about money.
+   *  Absent from an older control plane, in which case no `crawler-charged` is emitted. */
+  chargedMicro?: string;
 }
 
 /**
@@ -125,6 +144,21 @@ interface VerifyResponse {
  * Absent fields are omitted rather than sent as `null`: the receiver treats absence as
  * "not observed", which is true, while `null` reads as "observed to be nothing".
  */
+/**
+ * The control plane's settled figure, or null. Strict on purpose: this number becomes
+ * `crawler-charged`, a public claim about money that left a buyer's wallet, and it arrives
+ * over the network from a service this runtime does not control. Anything that is not a
+ * plain non-negative integer of micro-USDC — a float, a sign, an empty string, a value big
+ * enough to lose precision — is treated as "not reported" rather than coerced, so the
+ * header is absent instead of wrong. A magnitude cap keeps the value exactly representable.
+ */
+const MAX_REPORTED_MICRO_DIGITS = 15;
+function chargedMicroOf(raw: string | undefined): bigint | null {
+  if (raw === undefined) return null;
+  if (!/^\d+$/.test(raw) || raw.length > MAX_REPORTED_MICRO_DIGITS) return null;
+  return BigInt(raw);
+}
+
 function agentOf(obs: DecideObs): NonNullable<ObservationReport["agent"]> {
   return {
     ...(obs.agentUa !== undefined ? { ua: obs.agentUa } : {}),
@@ -283,14 +317,40 @@ export function naulonMiddleware(
         report(d.obs, "blocked", resource);
         return { response: new Response("This crawler is refused by the publisher.", { status: 403 }) };
 
-      case "payment-required":
+      case "payment-required": {
         report(d.obs, "denied", resource, { kind: d.tollKind, priceUsdc: d.quote.price });
-        return {
-          response: new Response(null, {
-            status: 402,
-            headers: { [PAYMENT_REQUIRED_HEADER]: d.header, Link: PAYMENT_LINK_HEADER },
+        const askMicro = totalChargedMicro(d.legs);
+        // The SAME advertisement the hosted gate emits (`tollgate/app.ts`, the
+        // payment-required branch): the Cloudflare pay-per-crawl price vocabulary a
+        // crawler already speaks, and a body for every buyer that does not decode
+        // PAYMENT-REQUIRED. Until now this path emitted neither, so a publisher who
+        // installed the SDK instead of routing through the fleet was silent to exactly
+        // the crawlers the fleet talks to — the same toll, two different wires.
+        const budget = crawlerBudgetVerdict(
+          declaredCrawlerBudget({
+            maxPrice: req.headers.get(CRAWLER_MAX_PRICE_HEADER),
+            exactPrice: req.headers.get(CRAWLER_EXACT_PRICE_HEADER),
           }),
+          askMicro,
+        );
+        return {
+          response: new Response(
+            paymentRequiredBodyText({ askMicro, publisher: url.host, endpoint: url.pathname, tollKind: d.tollKind }),
+            {
+              status: 402,
+              headers: {
+                [PAYMENT_REQUIRED_HEADER]: d.header,
+                [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
+                "content-type": PAYMENT_BODY_CONTENT_TYPE,
+                Link: PAYMENT_LINK_HEADER,
+                "X-Naulon-Verdict": headerSafe(
+                  `agent (${d.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,
+                ),
+              },
+            },
+          ),
         };
+      }
 
       case "payment-presented": {
         // No `report(...)` on this branch, deliberately: the hosted /verify writes the
@@ -337,6 +397,12 @@ export function naulonMiddleware(
           const setHeaders: Record<string, string> = {};
           if (body.responseHeader) setHeaders[PAYMENT_RESPONSE_HEADER] = body.responseHeader;
           if (body.licenseJws) setHeaders[LICENSE_HEADER] = body.licenseJws;
+          // `crawler-charged` is a claim that money moved, so it is emitted only from the
+          // settling side's own figure and only after it said `ok`. A control plane that
+          // does not report one gets no header rather than the ask — overstating what left
+          // a buyer's wallet is the one failure this header cannot have.
+          const charged = chargedMicroOf(body.chargedMicro);
+          if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
           return { response: null, setHeaders };
         }
         return {

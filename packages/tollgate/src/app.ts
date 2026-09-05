@@ -112,6 +112,9 @@ import {
   formatCrawlerPrice,
   settledChargedMicro,
   totalChargedMicro,
+  PAYMENT_BODY_CONTENT_TYPE,
+  paymentRequiredBodyText,
+  headerSafe,
 } from "@naulon/enforce";
 
 // Global license POLICY (online check) + settlement network coordinates are
@@ -266,37 +269,10 @@ function forwardHeaders(req: Request, clientIp: string, originHost: string): Hea
   return out;
 }
 
-/**
- * X-Naulon-Verdict values can embed config-derived text (block/charge/allow
- * fragments, classifier reasons that quote them). Fleet-written configs are
- * control-char-rejected at the write path, but a self-hosted, hand-written config
- * is not — and a CR/LF smuggled into a header value is a response-splitting
- * primitive (or, in runtimes that validate header values, an exception that turns
- * a served request into a 500). Strip C0 controls + DEL at the one place the text
- * meets the wire. Exported for direct testing — a live request can't smuggle
- * CR/LF through header parsing, so the guard is only observable as a unit.
- *
- * It also strips everything ABOVE ASCII, which the control-char version did not, and that gap was
- * live: a header value is a ByteString, so `Headers.set` THROWS on any code point > 255 ("cannot
- * convert argument to a ByteString"). The throw lands in the fail-open error boundary and the
- * request a publisher was serving becomes a 503 — the exact "turns a served request into a 500"
- * outcome this function's own docstring exists to prevent, entered through a different door. Caught
- * 2026-08-04 by an em-dash in a new verdict string, which 503'd every response on that branch;
- * `d.frag` (a publisher-written crawler-policy fragment) reaches here the same way and is not
- * control-char-rejected on a self-hosted config.
- *
- * 128–255 are stripped rather than passed: they are legal in a ByteString but their meaning is
- * charset-dependent on the wire, and a verdict header is diagnostic text nobody should be decoding.
- * ASCII-or-space keeps it unambiguous.
- */
-export function headerSafe(text: string): string {
-  let out = "";
-  for (const ch of text) {
-    const c = ch.codePointAt(0) ?? 0;
-    out += c < 32 || c >= 127 ? " " : ch;
-  }
-  return out;
-}
+// `headerSafe` lives in `@naulon/enforce` now: the in-app middleware sets the same verdict
+// header and cannot import tollgate (the dependency runs enforce ← tollgate, never back).
+// Re-exported here because it is part of this module's published surface.
+export { headerSafe };
 
 /**
  * Cache discipline for gateable-route decisions. Every response on a gateable
@@ -817,9 +793,13 @@ export function createApp(
           askMicro,
         );
         return stampGateCacheHeaders(
-          c.body(null, 402, {
+          // The body is the ADVERTISEMENT — price, terms, where the real obligation is —
+          // in the vendor-neutral shape a non-x402 crawler can read. It used to be zero
+          // bytes, which told a buyer that does not decode PAYMENT-REQUIRED nothing at all.
+          c.body(paymentRequiredBodyText({ askMicro, publisher: host, endpoint: new URL(c.req.url).pathname, tollKind: d.tollKind }), 402, {
             [PAYMENT_REQUIRED_HEADER]: d.header,
             [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
+            "content-type": PAYMENT_BODY_CONTENT_TYPE,
             Link: PAYMENT_LINK_HEADER,
             "X-Naulon-Verdict": headerSafe(
               `agent (${d.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,

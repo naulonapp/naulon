@@ -23,6 +23,7 @@ import {
   toAtomicUsdc,
 } from "@naulon/shared";
 import { issueNonce, type NonceBinding } from "./nonce.ts";
+import { bazaarExtension, serviceMetadata } from "./bazaar.ts";
 import type { Quote } from "./pricing.ts";
 
 const cfg = getConfig();
@@ -99,7 +100,7 @@ export interface SettlementLegReq {
   requirements: PaymentRequirements;
 }
 
-export function build402(quote: Quote, resourceUrl: string, now: number): {
+export function build402(quote: Quote, resourceUrl: string, now: number, routeTemplate?: string): {
   requirements: PaymentRequirements;
   legs: SettlementLegReq[];
   header: string;
@@ -152,6 +153,7 @@ export function build402(quote: Quote, resourceUrl: string, now: number): {
     }
   }
 
+  const mimeType = "text/html";
   const paymentRequired: Record<string, unknown> = {
     x402Version: 2,
     resource: {
@@ -161,12 +163,20 @@ export function build402(quote: Quote, resourceUrl: string, now: number): {
       // and leak the reference publisher). `naulon` names the toll PROTOCOL, not a
       // tenant; the article itself is identified by `resourceUrl` + the title.
       description: `naulon ${quote.kind} toll: ${quote.title}`,
-      mimeType: "text/html",
+      mimeType,
+      // Service-level metadata the `bazaar` extension reads to enrich a catalog entry.
+      // Additive and optional; a client that does not know these fields ignores them.
+      ...serviceMetadata(resourceUrl, quote.kind),
     },
     // Stock x402: `accepts[]` is a list of ALTERNATIVES ("pick one"), not
     // simultaneous legs. The primary author leg stays here unchanged so a non-naulon
     // x402 client sees a valid single-option 402 and degrades to single-leg.
     accepts: [requirements],
+    // Discovery. A Bazaar catalog lists what a resource server DECLARES on its own 402
+    // — there is no directory to submit to — so without this block no x402 discovery
+    // layer can list a naulon resource even in principle. Unaffiliated with any one
+    // facilitator: the extension is part of the open scheme.
+    extensions: { bazaar: bazaarExtension(mimeType, routeTemplate) },
   };
   // Simultaneous extra legs (co-author splits and/or `extraLegs`) are a naulon
   // extension. A plain single-author quote has only the author leg → omit it ENTIRELY
@@ -174,6 +184,7 @@ export function build402(quote: Quote, resourceUrl: string, now: number): {
   // ASSEMBLED legs, not `quote.extraLegs`: co-author legs are built here, not on the quote.
   if (legs.length > 1) {
     paymentRequired.extensions = {
+      ...(paymentRequired.extensions as Record<string, unknown>),
       naulonLegs: {
         version: 1,
         settlement: "author-sync-rest-deferred",
