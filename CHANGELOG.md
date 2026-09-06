@@ -16,6 +16,28 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
+Unpublished — the packages below are unbumped on npm until the next tag.
+
+`@naulon/enforce` — the 402 now carries a body, not just headers. A naulon 402 was zero
+bytes on the gate and header-only in the in-app middleware, so everything a buyer needed
+rode in `PAYMENT-REQUIRED`: correct for an x402 client, blank for every other crawler. One
+builder (`paymentBody.ts`) now feeds both emitters, in `@crawlertoll/core`'s
+`{error, message, offer}` shape, so a buyer written against the vendor-neutral middleware
+can price a naulon origin with no naulon code. The body advertises; `PAYMENT-REQUIRED`
+still obligates. The in-app 402 also gained `crawler-price` (it emitted none, so a
+publisher on the SDK was silent to exactly the Cloudflare-trained crawlers the fleet
+talks to) and `X-Naulon-Verdict`; the in-app paid 200 gained `crawler-charged`, taken
+from the control plane's settled figure rather than derived locally, because only the
+settling side knows which legs a stock x402 payer forwent. `headerSafe` moved into
+enforce — a second copy of a sanitizer is how one of them stops sanitizing.
+
+`@naulon/enforce` — x402 discovery is declared, so a catalog can list the toll. Per the
+Bazaar extension spec, a resource server declares its endpoint on its own 402 and a
+facilitator catalogs what it sees; nothing here declared anything, so no catalog could
+list a naulon read even in principle. Every 402 now carries `extensions.bazaar` and
+service metadata on `resource`, with the HOST as `serviceName` — a catalog full of
+identical `naulon` rows helps no agent.
+
 ## v0.8.4
 
 Every chain settles through Circle Gateway. The Arc memo settle path — one self-relayed
