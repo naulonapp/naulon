@@ -6,8 +6,11 @@
  * telling a publisher their site is untested when it is not.
  *
  * The mapping functions are pure by design (see the class docblock) so this suite needs no
- * WordPress. The HTTP fetch and the transient caching are covered by UpdaterCacheTest, in the
- * wp-env suite, because caching is WordPress.
+ * WordPress — which is why it is the coverage that survives. The cached half lived in
+ * UpdaterCacheTest, in the wp-env suite, and it drove core's real update path: without an
+ * `Update URI` header there is no `update_plugins_{host}` filter for core to call, so those
+ * tests stopped being runnable the moment the plugin stopped serving its own updates. They
+ * were deleted rather than left skipping; `git log` has them if the mechanism comes back.
  *
  * @package naulon
  */
@@ -188,39 +191,38 @@ class UpdaterTest extends TestCase {
 	}
 
 	/**
-	 * Core parses the `Update URI` HEADER to pick the filter name; the plugin registers that
-	 * filter from the CONSTANT. Two copies of one string, and the failure mode when they drift is
-	 * the quietest possible one — the check is routed to a hook nothing listens on, so no update
-	 * ever appears and nothing is logged. Same discipline as VersionTest.
+	 * The inverse of the guard that used to live here. While this plugin was distributed only
+	 * from GitHub it HAD to declare an `Update URI` and register a filter against it, and the
+	 * test asserted the header and the constant could not drift apart.
+	 *
+	 * Listing on wordpress.org reverses that requirement into a prohibition. Plugin Guideline 8
+	 * forbids "serving updates or otherwise installing plugins, themes, or add-ons from servers
+	 * other than WordPress.org\'s", and the directory does the job the updater existed to do —
+	 * update notice, one-click update, auto-update toggle — for every install, for free.
+	 *
+	 * So the shipped plugin must declare no `Update URI` and register no updater. The class
+	 * itself stays in the repository, unloaded and still covered by every test above, so the
+	 * mechanism can be restored in one commit if the listing is refused. It ships nowhere in the
+	 * meantime: one zip serves both channels and `.distignore` excludes it from that zip.
 	 */
-	public function test_the_update_uri_header_and_constant_cannot_drift() {
+	public function test_the_plugin_does_not_serve_its_own_updates() {
 		$php = $this->plugin_file_contents();
-
-		$this->assertSame( 1, preg_match( '/^\s*\*\s*Update URI:\s*(\S+)/m', $php, $header ) );
-		$this->assertSame( 1, preg_match( "/define\(\s*'NAULON_UPDATE_URI',\s*'([^']+)'/", $php, $constant ) );
 
 		$this->assertSame(
-			$header[1],
-			$constant[1],
-			'the Update URI header and NAULON_UPDATE_URI disagree — core would route the update check to a filter nothing is listening on'
+			0,
+			preg_match( '/^\s*\*\s*Update URI:/m', $php ),
+			'the plugin declares an Update URI — wordpress.org Guideline 8 forbids a hosted plugin serving its own updates'
 		);
-		$this->assertNotEmpty(
-			wp_parse_url( $constant[1], PHP_URL_HOST ),
-			'the Update URI has no host, so there is no filter name to register'
+		$this->assertSame(
+			0,
+			preg_match( "/define\\(\\s*'NAULON_UPDATE_URI'/", $php ),
+			'NAULON_UPDATE_URI is still defined — the update filter would be registered against it'
 		);
-	}
-
-	/**
-	 * Core treats an `Update URI` on `wordpress.org` (or the `w.org` short form) as "this plugin
-	 * is hosted there" and will not call our filter at all.
-	 */
-	public function test_the_update_uri_is_not_wordpress_org() {
-		$php = $this->plugin_file_contents();
-		preg_match( '/^\s*\*\s*Update URI:\s*(\S+)/m', $php, $header );
-		$host = wp_parse_url( $header[1], PHP_URL_HOST );
-
-		$this->assertNotSame( 'wordpress.org', $host );
-		$this->assertNotSame( 'w.org', $host );
+		$this->assertStringNotContainsString(
+			'Naulon_Updater',
+			$php,
+			'the plugin still loads or registers the self-updater'
+		);
 	}
 
 	/**

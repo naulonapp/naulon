@@ -1,10 +1,10 @@
 === naulon — citation toll ===
-Contributors: naulon
-Tags: ai, monetization, paywall, crawlers, licensing
+Contributors: ravianxreaver
+Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.5.3
+Stable tag: 0.5.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -41,7 +41,7 @@ The whole protocol is open source. The connectivity field takes either a hosted 
 
 == Installation ==
 
-1. Install and activate the plugin. Later versions arrive on the Plugins screen like any other update — you only download a zip this once.
+1. Install and activate the plugin from **Plugins → Add New**. Later versions arrive on the Plugins screen like any other update.
 2. Open **naulon → Setup** and paste your key.
 3. Click **Verify this site**. The plugin proves you own the domain by serving a challenge file and a meta tag — no DNS changes needed.
 4. Paste the credits address shown on that screen into your naulon account, so the service knows where to read your author data.
@@ -63,7 +63,8 @@ A key in `wp-config.php` stays out of your database, so it does not travel in da
 
 This plugin relies on an external service to price a read and to settle a payment, because
 settlement cannot be performed inside WordPress. Nothing is contacted until you enter a key —
-entering it is the consent, and until then the plugin makes no outbound requests at all.
+entering it is the consent, and until then the plugin makes no outbound requests at all —
+not one, to anywhere.
 
 **Service:** naulon (https://naulon.app), reached at https://gate.naulon.app.
 
@@ -83,21 +84,6 @@ about human traffic. Human requests never contact the service at all.
 
 If you point the connectivity field at your own self-hosted gate instead of a key, the plugin
 talks only to that server and never to naulon.app.
-
-**Service:** GitHub (https://github.com), for updates only.
-
-This plugin is not listed on wordpress.org, so WordPress cannot ask wordpress.org whether a new
-version exists. Instead it reads a small file describing the current release, published beside the
-download on GitHub. This is the only outbound request the plugin makes before you enter a key.
-
-* When WordPress checks for plugin updates (twice a day, and when you click "Check again"), the
-  plugin fetches https://github.com/naulonapp/naulon/releases/latest/download/naulon-update.json.
-  It is a public file. **Nothing is sent** — no key, no domain, no site information — beyond the
-  request itself, and the answer is cached for six hours.
-* When you choose to install an update, WordPress downloads the release zip from the same place.
-
-GitHub terms of service: https://docs.github.com/site-policy/github-terms/github-terms-of-service
-GitHub privacy statement: https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement
 
 Terms of service: https://naulon.app/terms
 Privacy policy: https://naulon.app/privacy
@@ -144,7 +130,7 @@ The plugin's folder is not writable by the user your web server runs as. Removin
 
 = How do I update the plugin? =
 
-The same way as any other: **Dashboard → Updates**, or the notice on the Plugins screen. Turning on "Enable auto-updates" there works too. Because the plugin is not listed on wordpress.org it checks a small public file on GitHub instead of the wordpress.org API — that is the only difference, and it needs nothing from you. Version 0.3.0 is the first release that can do this, so if you are on an earlier one, install that one by hand and it is the last time.
+The same way as any other: **Dashboard → Updates**, or the notice on the Plugins screen. Turning on "Enable auto-updates" there works too, and nothing about this plugin needs you to treat it differently.
 
 = I use a caching plugin. Does that matter? =
 
@@ -159,6 +145,10 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 5. Diagnostics — the caching check, recent decisions, and connection health.
 
 == Changelog ==
+
+= 0.5.4 =
+* Your licence document is checked before it is published. A response that is not a licence — an interstitial from whatever sits in front of your site, or an error page — is refused instead of being served as your terms, and the terms already published stay up.
+* The Diagnostics check that names an unwritable plugin folder now asks WordPress's own filesystem layer, so it answers correctly on hosts where WordPress does not write files directly.
 
 = 0.5.3 =
 * Exa's crawler is now recognised. It identifies itself as a search engine, and for its consumer site it is one — but the same crawler feeds an API that hands an application the full text of your page from Exa's cache, and a reader who gets your article that way never arrives at your site. Exa publishes one user agent for both, so there is no way to welcome the indexing and price the retrieval separately. It is charged by default.
@@ -182,17 +172,10 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 = 0.4.2 =
 * Three more agent user-agents are now charged: Meta's external fetcher, Amazon's user-triggered fetcher and Mistral's. They were reading your articles for free because the plugin only knew one of Meta's five tokens. Search indexers are still never charged.
 
-= 0.4.1 =
-* The update details window showed the plugin's name twice, once over the top of the other. Fixed.
-
 = 0.4.0 =
 * **Deleting the plugin no longer erases your data.** WordPress removes a plugin's data before it removes its files, so a delete that fails can still have wiped everything — and it did, on a real site. Your authors' wallet addresses and your earnings record now survive a delete, and full removal is a box you tick in advance, on a screen that shows what it would destroy.
 * Export your wallets and earnings to a file from **naulon → Diagnostics**, so nothing is one click from gone.
 * Diagnostics now tells you if the plugin's own folder is not writable by your web server — the reason an update reports that files could not be copied, or a delete reports that the plugin could not be fully removed. It names the folder and what to fix.
-
-= 0.3.0 =
-* Updates now arrive in WordPress. The Plugins screen tells you when a new version is out, updates in one click, and can update itself — no downloading a zip and uploading it over the top.
-* The details link on that notice opens the real changelog, so you can read what changed before you take it.
 
 = 0.2.3 =
 * A shared cache could hand a crawler the copy it made for a human, so a read that should have been paid was served free. The cache guard now varies on what the toll actually decides on.
@@ -213,8 +196,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Upgrade Notice ==
 
+= 0.5.4 =
+Your published licence is now verified before it replaces what is already there, so a bad response from the network cannot become your site's terms.
+
 = 0.5.3 =
-Exa's crawler was reading your articles free. It calls itself a search engine, and for its consumer site it is one — but the same crawler feeds an API that hands an application the full text of your page, so it is now charged. Charging it means leaving Exa's index: if you would rather keep the reach, set Exa to Allow on your Crawlers screen.
+Exa's crawler was reading your articles free. It calls itself a search engine, but the same crawler feeds an API that hands applications your full text, so it is now charged. That means leaving Exa's index: to keep the reach instead, set Exa to Allow on your Crawlers screen.
 
 = 0.5.2 =
 When an agent is turned away for payment, the response now points at your licence — so it learns what you allow and what it costs in the same request, instead of going back for your robots.txt.
@@ -228,14 +214,8 @@ Your naulon account now sees what the toll actually did — every crawler charge
 = 0.4.2 =
 Meta's external fetcher, Amazon's user-triggered fetcher and Mistral's were reading your articles free. This charges them. Nothing else changes.
 
-= 0.4.1 =
-Cosmetic only: the update details window no longer prints the plugin's name over itself.
-
 = 0.4.0 =
 Deleting the plugin used to erase your authors' wallets and your earnings record, before it removed any files — so a delete that appeared to fail had already destroyed them. It now keeps your data unless you tick a box asking otherwise, and you can export it first.
-
-= 0.3.0 =
-The last update you have to install by hand. From here WordPress offers new versions on the Plugins screen and can install them for you.
 
 = 0.2.3 =
 Stops a shared cache serving a paid read for free, and the toll test now names an edge block instead of two wrong causes.

@@ -97,14 +97,6 @@ jobs:
         with:
           node-version: 22
 
-      - name: Update manifest is well-formed
-        run: node scripts/wp-update-manifest.mjs --check
-
-      - name: The plugin accepts the manifest CI would publish
-        run: |
-          node scripts/wp-update-manifest.mjs --out=manifest.json
-          php plugins/naulon/tests/manifest-contract.php manifest.json
-
       # `Requires PHP: 7.4` is a promise to publishers on older hosting, and nothing
       # checked it. php -l needs no vendor tree, so the floor can be honoured even
       # though the test tooling cannot run there.
