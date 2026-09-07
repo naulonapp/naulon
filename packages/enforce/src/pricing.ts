@@ -93,10 +93,28 @@ export function tollPrice(
   kind: TollKind,
   path?: string,
 ): Usdc {
+  return tollPriceUnder(publisher, kind, resolvePriceRule(publisher.priceRules, path));
+}
+
+/**
+ * The same formula, for a rule the caller has ALREADY resolved (or `undefined` for the site price).
+ *
+ * `tollPrice` is this plus the path-resolution step. Both exist because one caller holds every rule
+ * and no path: the discovery manifest (`/.well-known/x402`) advertises what each priced section
+ * costs, and it has no request to resolve against. Before this existed that caller read
+ * `publisher.price` directly and published the SITE base for a section the toll charged differently
+ * — measured on a live gate 2026-09-07, `crawler-price: USD 0.10` against a manifest declaring
+ * `0.03`. The fix is not a second formula in the manifest; it is this entry point, so there stays
+ * exactly one place that knows a rule overrides either money field independently.
+ */
+export function tollPriceUnder(
+  publisher: Pick<PublisherConfig, "price" | "citationMultiplier">,
+  kind: TollKind,
+  rule: { priceUsdc?: number; citationMultiplier?: number } | undefined,
+): Usdc {
   // A rule overrides either money field INDEPENDENTLY: one that names only a citation multiplier
-  // keeps the site's read price, and vice versa. No path, no rules, or no rule matching ⇒ the two
-  // site values, byte-identical to before this field existed.
-  const rule = resolvePriceRule(publisher.priceRules, path);
+  // keeps the site's read price, and vice versa. No rule ⇒ the two site values, byte-identical to
+  // before this field existed.
   const price = rule?.priceUsdc ?? publisher.price;
   const multiplier = rule?.citationMultiplier ?? publisher.citationMultiplier;
   return usdc(kind === "citation" ? price * multiplier : price);

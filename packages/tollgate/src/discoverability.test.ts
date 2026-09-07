@@ -63,6 +63,46 @@ test("buildX402Manifest omits catalog when unset", () => {
   assert.equal(buildX402Manifest(fixturePublisher()).catalog, undefined);
 });
 
+/* ── per-path price rules in discovery (2026-09-07) ──────────────────────────────────────────────
+ * The manifest is the pre-flight budget an agent authorizes against. It read `publisher.price`
+ * directly, so a publisher who priced a section published the SITE base for it — measured on a live
+ * gate: a manifest declaring `0.03` while the 402 under that section carried
+ * `crawler-price: USD 0.10`. An agent that trusts discovery under-authorizes and its payment fails.
+ * The same class as the `maxTimeoutSeconds` drift this file's own comment records. */
+
+test("buildX402Manifest declares each price rule, at the amount the toll will charge", () => {
+  const m = buildX402Manifest({
+    ...fixturePublisher(),
+    priceRules: [{ pattern: "/essays/premium", priceUsdc: 0.1 }, { pattern: "/essays", priceUsdc: 0.02 }],
+  });
+  assert.equal(m.payment.price.read.usdc, 0.002, "the base is still the base");
+  assert.deepEqual(
+    m.payment.price.rules?.map((r) => [r.pattern, r.read.usdc, r.read.atomic, r.citation.usdc]),
+    [
+      ["/essays/premium", 0.1, "100000", 0.5],
+      ["/essays", 0.02, "20000", 0.1],
+    ],
+    "in the publisher's own resolution order, most specific first, with the citation legs priced up",
+  );
+});
+
+test("a rule naming only a multiplier keeps the base read price and says which multiplier applies", () => {
+  const m = buildX402Manifest({
+    ...fixturePublisher(),
+    priceRules: [{ pattern: "/essays", citationMultiplier: 20 }],
+  });
+  const rule = m.payment.price.rules?.[0];
+  assert.equal(rule?.read.usdc, 0.002, "the rule moved the multiplier, not the read price");
+  assert.equal(rule?.citation.usdc, 0.04);
+  assert.equal(rule?.citation.multiplier, 20);
+});
+
+test("no rules ⇒ the manifest is byte-identical to before the field existed", () => {
+  const withEmpty = buildX402Manifest({ ...fixturePublisher(), priceRules: [] });
+  assert.equal(withEmpty.payment.price.rules, undefined);
+  assert.deepEqual(withEmpty, buildX402Manifest(fixturePublisher()));
+});
+
 test("manifest never names an author wallet (payTo is a per-article policy)", () => {
   const m = buildX402Manifest(fixturePublisher());
   assert.ok(!/0x[0-9a-fA-F]{40}/.test(m.payment.payTo), "payTo describes derivation, lists no wallet");
