@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.5.3
+Stable tag: 0.5.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -146,6 +146,10 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.5.4 =
+* Your licence document is checked before it is published. A response that is not a licence — an interstitial from whatever sits in front of your site, or an error page — is refused instead of being served as your terms, and the terms already published stay up.
+* The Diagnostics check that names an unwritable plugin folder now asks WordPress's own filesystem layer, so it answers correctly on hosts where WordPress does not write files directly.
+
 = 0.5.3 =
 * Exa's crawler is now recognised. It identifies itself as a search engine, and for its consumer site it is one — but the same crawler feeds an API that hands an application the full text of your page from Exa's cache, and a reader who gets your article that way never arrives at your site. Exa publishes one user agent for both, so there is no way to welcome the indexing and price the retrieval separately. It is charged by default.
 * That default costs something, and you can change it. Charging Exa means dropping out of its index, consumer surface included. If reach matters more to you than revenue from that channel, set Exa to Allow on your Crawlers screen and it reads free, exactly like Google.
@@ -168,17 +172,10 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 = 0.4.2 =
 * Three more agent user-agents are now charged: Meta's external fetcher, Amazon's user-triggered fetcher and Mistral's. They were reading your articles for free because the plugin only knew one of Meta's five tokens. Search indexers are still never charged.
 
-= 0.4.1 =
-* The update details window showed the plugin's name twice, once over the top of the other. Fixed.
-
 = 0.4.0 =
 * **Deleting the plugin no longer erases your data.** WordPress removes a plugin's data before it removes its files, so a delete that fails can still have wiped everything — and it did, on a real site. Your authors' wallet addresses and your earnings record now survive a delete, and full removal is a box you tick in advance, on a screen that shows what it would destroy.
 * Export your wallets and earnings to a file from **naulon → Diagnostics**, so nothing is one click from gone.
 * Diagnostics now tells you if the plugin's own folder is not writable by your web server — the reason an update reports that files could not be copied, or a delete reports that the plugin could not be fully removed. It names the folder and what to fix.
-
-= 0.3.0 =
-* Updates now arrive in WordPress. The Plugins screen tells you when a new version is out, updates in one click, and can update itself — no downloading a zip and uploading it over the top.
-* The details link on that notice opens the real changelog, so you can read what changed before you take it.
 
 = 0.2.3 =
 * A shared cache could hand a crawler the copy it made for a human, so a read that should have been paid was served free. The cache guard now varies on what the toll actually decides on.
@@ -199,8 +196,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Upgrade Notice ==
 
+= 0.5.4 =
+Your published licence is now verified before it replaces what is already there, so a bad response from the network cannot become your site's terms.
+
 = 0.5.3 =
-Exa's crawler was reading your articles free. It calls itself a search engine, and for its consumer site it is one — but the same crawler feeds an API that hands an application the full text of your page, so it is now charged. Charging it means leaving Exa's index: if you would rather keep the reach, set Exa to Allow on your Crawlers screen.
+Exa's crawler was reading your articles free. It calls itself a search engine, but the same crawler feeds an API that hands applications your full text, so it is now charged. That means leaving Exa's index: to keep the reach instead, set Exa to Allow on your Crawlers screen.
 
 = 0.5.2 =
 When an agent is turned away for payment, the response now points at your licence — so it learns what you allow and what it costs in the same request, instead of going back for your robots.txt.
@@ -214,14 +214,8 @@ Your naulon account now sees what the toll actually did — every crawler charge
 = 0.4.2 =
 Meta's external fetcher, Amazon's user-triggered fetcher and Mistral's were reading your articles free. This charges them. Nothing else changes.
 
-= 0.4.1 =
-Cosmetic only: the update details window no longer prints the plugin's name over itself.
-
 = 0.4.0 =
 Deleting the plugin used to erase your authors' wallets and your earnings record, before it removed any files — so a delete that appeared to fail had already destroyed them. It now keeps your data unless you tick a box asking otherwise, and you can export it first.
-
-= 0.3.0 =
-The last update you have to install by hand. From here WordPress offers new versions on the Plugins screen and can install them for you.
 
 = 0.2.3 =
 Stops a shared cache serving a paid read for free, and the toll test now names an edge block instead of two wrong causes.
