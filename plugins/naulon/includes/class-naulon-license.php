@@ -133,7 +133,10 @@ class Naulon_License {
 			return;
 		}
 
-		$xml = $this->document( true );
+		// Re-validated on the way out, not just on the way in: the stored document may have been
+		// written by an older version of this plugin, and the bytes about to be printed are the
+		// ones that matter.
+		$xml = self::canonical_rsl( $this->document( true ) );
 		if ( '' === $xml ) {
 			// No terms to state. 404 rather than an empty `<rsl>`: an empty document is a
 			// licensing STATEMENT, and a wrong one is worse than none.
@@ -147,7 +150,11 @@ class Naulon_License {
 		// Matches the document's own `max-age="1"` (days), so a crawler caching by HTTP and one
 		// honouring the RSL attribute do not end up with different ideas of freshness.
 		header( 'Cache-Control: public, max-age=86400' );
-		echo $xml; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- XML from the control plane, served verbatim; escaping it would corrupt the document.
+		// The document is XML and is declared as XML; this stops a browser deciding otherwise on
+		// the strength of what the bytes look like.
+		header( 'X-Content-Type-Options: nosniff' );
+		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- not remote bytes: canonical_rsl() parsed them and this is DOMDocument's own serialisation of the resulting tree. An HTML escaper here would destroy the document, which is why the guarantee is made by construction instead.
+		echo $xml;
 		exit;
 	}
 
@@ -234,12 +241,20 @@ class Naulon_License {
 			set_transient( self::RETRY_TRANSIENT, 1, self::RETRY_TTL );
 			return false;
 		}
+		$xml = self::canonical_rsl( $result['xml'] );
+		if ( '' === $xml ) {
+			// Reached the wire, is not an RSL document. Same treatment as an unreachable control
+			// plane: back off, keep whatever terms are already published.
+			set_transient( self::RETRY_TRANSIENT, 1, self::RETRY_TTL );
+			return false;
+		}
+
 		delete_transient( self::RETRY_TRANSIENT );
 		$had_document = ( '' !== $this->stored()['xml'] );
 		update_option(
 			self::OPTION,
 			array(
-				'xml'        => $result['xml'],
+				'xml'        => $xml,
 				'fetched_at' => time(),
 			),
 			false // not autoloaded: read on the licence route and on wp_head, both of which read it explicitly.
@@ -254,6 +269,67 @@ class Naulon_License {
 			flush_rewrite_rules( false );
 		}
 		return true;
+	}
+
+	/**
+	 * Turn bytes that claim to be an RSL document into bytes we are willing to publish.
+	 *
+	 * The document is generated elsewhere — the control plane holds the site's price and scope —
+	 * so it arrives over HTTP, and "it came from us" is an assumption rather than a property of
+	 * the bytes. What is served is therefore never the response body itself: it is DOMDocument's
+	 * serialisation of a tree that parsed cleanly and passed every check below. Anything that
+	 * fails one is not published at all, because a licence is a statement of terms and a wrong
+	 * one is worse than none.
+	 *
+	 *   • It must parse as XML. A login page, a captcha, an error page or a truncated response
+	 *     stops here, where `strpos( $body, '<rsl' )` alone would have let a page that merely
+	 *     mentions the string through.
+	 *   • No DOCTYPE. That is where entity declarations live, so refusing one refuses the whole
+	 *     entity-expansion family rather than relying on the parser's limits. `LIBXML_NONET`
+	 *     additionally forbids the parser any network of its own.
+	 *   • The root element must be `rsl`. A well-formed document of some other vocabulary is
+	 *     somebody else's document.
+	 *   • Comments and processing instructions are dropped: neither carries licence terms, and
+	 *     both are ways to smuggle bytes past a reader who is looking at elements.
+	 *
+	 * @param string $xml Candidate document.
+	 * @return string Re-serialised XML, or '' when it is not one we can vouch for.
+	 */
+	private static function canonical_rsl( $xml ) {
+		if ( ! is_string( $xml ) || '' === trim( $xml ) || ! class_exists( 'DOMDocument' ) ) {
+			return '';
+		}
+
+		$previous = libxml_use_internal_errors( true );
+		$dom      = new DOMDocument();
+		$parsed   = $dom->loadXML( $xml, LIBXML_NONET );
+		libxml_clear_errors();
+		libxml_use_internal_errors( $previous );
+
+		if ( ! $parsed || ! $dom->documentElement ) {
+			return '';
+		}
+		if ( null !== $dom->doctype ) {
+			return '';
+		}
+		if ( 'rsl' !== strtolower( $dom->documentElement->localName ) ) {
+			return '';
+		}
+
+		$xpath = new DOMXPath( $dom );
+		$nodes = $xpath->query( '//comment() | //processing-instruction()' );
+		if ( $nodes instanceof DOMNodeList ) {
+			foreach ( $nodes as $node ) {
+				if ( $node->parentNode ) {
+					$node->parentNode->removeChild( $node );
+				}
+			}
+		}
+
+		$dom->encoding = 'UTF-8';
+		$out           = $dom->saveXML();
+
+		return is_string( $out ) ? $out : '';
 	}
 
 	/**

@@ -58,21 +58,27 @@ class Naulon_Data {
 	 * @return array {wallets:int, settlements:int, tolled_posts:int, settled_total:string}
 	 */
 	public static function inventory() {
-		global $wpdb;
+		// Both counts go through the core query APIs rather than `$wpdb`: these are core tables,
+		// so an abstraction exists, and it carries the object cache and the multisite switching
+		// a hand-written COUNT(*) would quietly bypass.
+		$wallets = count( self::wallet_users() );
 
-		$wallets = (int) $wpdb->get_var(
-			$wpdb->prepare(
-				"SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE meta_key = %s AND meta_value <> ''",
-				Naulon_Credits::USER_WALLET_META
+		// Every registered type and status, because the mark is not confined to `post`: this is
+		// an inventory of what a purge would destroy, and a number that quietly excluded a custom
+		// post type would understate exactly the thing the screen exists to state.
+		$tolled_query = new WP_Query(
+			array(
+				'post_type'              => array_values( get_post_types() ),
+				'post_status'            => array_values( get_post_stati() ),
+				'meta_key'               => Naulon_Credits::POST_TOLL_META, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- see above.
+				'fields'                 => 'ids',
+				'posts_per_page'         => 1,
+				'ignore_sticky_posts'    => true,
+				'update_post_meta_cache' => false,
+				'update_post_term_cache' => false,
 			)
 		);
-
-		$tolled = (int) $wpdb->get_var(
-			$wpdb->prepare(
-				"SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = %s",
-				Naulon_Credits::POST_TOLL_META
-			)
-		);
+		$tolled = (int) $tolled_query->found_posts;
 
 		return array(
 			'wallets'       => $wallets,
@@ -80,6 +86,40 @@ class Naulon_Data {
 			'tolled_posts'  => $tolled,
 			'settled_total' => Naulon_Ledger::format_usdc( Naulon_Ledger::site_total() ),
 		);
+	}
+
+	/**
+	 * Every user who has a wallet address, ordered by login.
+	 *
+	 * One definition, used by both the count and the export, so the number a publisher is shown
+	 * before a purge and the rows they can export are the same set by construction.
+	 *
+	 * The emptiness test is done here rather than in the query on purpose: `meta_value => ''`
+	 * with `meta_compare => '!='` does NOT mean "not empty" to `WP_Meta_Query` — an empty value
+	 * is dropped from the clause, leaving a bare EXISTS, so a user whose wallet was blanked by
+	 * something other than this plugin would be counted as having one. (Measured: a seeded empty
+	 * row made the count read 3 against the 2 the SQL this replaced returned.) Clearing a wallet
+	 * through either of our own screens deletes the row, so this is about rows we did not write.
+	 *
+	 * @return WP_User[]
+	 */
+	private static function wallet_users() {
+		$users = get_users(
+			array(
+				'meta_key' => Naulon_Credits::USER_WALLET_META, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- an admin screen rendered on demand, not a front-end query.
+				'orderby'  => 'login',
+				'order'    => 'ASC',
+			)
+		);
+
+		$with_wallet = array();
+		foreach ( $users as $user ) {
+			$wallet = get_user_meta( $user->ID, Naulon_Credits::USER_WALLET_META, true );
+			if ( is_string( $wallet ) && '' !== $wallet ) {
+				$with_wallet[] = $user;
+			}
+		}
+		return $with_wallet;
 	}
 
 	/**
@@ -92,25 +132,20 @@ class Naulon_Data {
 	 * @return array
 	 */
 	public static function export_payload() {
-		global $wpdb;
-
-		$rows = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT u.user_login, u.user_email, m.meta_value AS wallet
-				 FROM {$wpdb->usermeta} m
-				 INNER JOIN {$wpdb->users} u ON u.ID = m.user_id
-				 WHERE m.meta_key = %s AND m.meta_value <> ''
-				 ORDER BY u.user_login ASC",
-				Naulon_Credits::USER_WALLET_META
-			),
-			ARRAY_A
-		);
+		$rows = array();
+		foreach ( self::wallet_users() as $user ) {
+			$rows[] = array(
+				'user_login' => $user->user_login,
+				'user_email' => $user->user_email,
+				'wallet'     => (string) get_user_meta( $user->ID, Naulon_Credits::USER_WALLET_META, true ),
+			);
+		}
 
 		return array(
 			'exported_from' => home_url(),
 			'exported_at'   => gmdate( 'c' ),
 			'plugin_version' => NAULON_VERSION,
-			'wallets'       => is_array( $rows ) ? $rows : array(),
+			'wallets'       => $rows,
 			'earnings'      => Naulon_Ledger::recent( 10000 ),
 			'settings'      => self::exportable_settings(),
 		);
@@ -210,33 +245,65 @@ class Naulon_Data {
 	 * reports it as "Could not fully remove the plugin", or lists every file as unwritable, with
 	 * no hint about ownership. One check turns that into a sentence naming the directory.
 	 *
-	 * @return string Absolute path, or ''.
+	 * The walk goes through `WP_Filesystem` rather than PHP's own filesystem calls, so the
+	 * answer comes from the same abstraction WordPress will itself use when it tries to update
+	 * or delete the plugin — which is the failure being diagnosed. A site whose filesystem
+	 * method is not `direct` cannot be answered without asking for credentials, and a
+	 * diagnostic screen may not prompt: there we return '' and say nothing, because naming a
+	 * directory we could not test would be a guess dressed as a finding.
+	 *
+	 * @return string Absolute path, or '' when every directory is writable — or when the
+	 *                filesystem could not be read without credentials.
 	 */
 	public static function first_unwritable_dir() {
-		$root = untrailingslashit( NAULON_PLUGIN_DIR );
-		if ( ! is_writable( $root ) ) {
-			return $root;
-		}
+		global $wp_filesystem;
 
-		$dirs = glob( $root . '/*', GLOB_ONLYDIR );
-		if ( ! is_array( $dirs ) ) {
+		if ( ! function_exists( 'WP_Filesystem' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		}
+		if ( ! WP_Filesystem() || ! is_object( $wp_filesystem ) ) {
 			return '';
 		}
 
-		foreach ( $dirs as $dir ) {
-			if ( ! is_writable( $dir ) ) {
+		$root = untrailingslashit( NAULON_PLUGIN_DIR );
+		if ( ! $wp_filesystem->is_writable( $root ) ) {
+			return $root;
+		}
+
+		foreach ( self::child_dirs( $root ) as $dir ) {
+			if ( ! $wp_filesystem->is_writable( $dir ) ) {
 				return $dir;
 			}
-			$nested = glob( $dir . '/*', GLOB_ONLYDIR );
-			if ( is_array( $nested ) ) {
-				foreach ( $nested as $sub ) {
-					if ( ! is_writable( $sub ) ) {
-						return $sub;
-					}
+			foreach ( self::child_dirs( $dir ) as $sub ) {
+				if ( ! $wp_filesystem->is_writable( $sub ) ) {
+					return $sub;
 				}
 			}
 		}
 
 		return '';
+	}
+
+	/**
+	 * The directories directly inside a path, as absolute paths.
+	 *
+	 * @param string $path Absolute path to list.
+	 * @return string[]
+	 */
+	private static function child_dirs( $path ) {
+		global $wp_filesystem;
+
+		$list = $wp_filesystem->dirlist( $path, false, false );
+		if ( ! is_array( $list ) ) {
+			return array();
+		}
+
+		$dirs = array();
+		foreach ( $list as $name => $item ) {
+			if ( isset( $item['type'] ) && 'd' === $item['type'] ) {
+				$dirs[] = trailingslashit( $path ) . $name;
+			}
+		}
+		return $dirs;
 	}
 }

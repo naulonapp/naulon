@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name:       naulon
+ * Plugin Name:       naulon — citation toll
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
  * Version:           0.5.0
@@ -17,10 +17,11 @@
  * contract from real WP author data, wallet administration, ownership verification, and (from
  * S2 on) the local decision path.
  *
- * Naming note: wordpress.org generates the permalink from the Plugin Name above, and the
- * Text Domain must equal that slug or translate.wordpress.org serves nothing. So the header
- * carries the bare mark and the slug is `naulon`; the directory's display name comes from
- * readme.txt's first line, which keeps the descriptor (`naulon — citation toll`).
+ * Naming note: the display name is spelled the same here and in readme.txt's first line. It
+ * used to differ — the header carried the bare mark — on the theory that wordpress.org derives
+ * the permalink from this header. It does, but only at submission: the slug `naulon` is already
+ * allocated, the Text Domain must equal THAT and not the display name, and Plugin Check reads a
+ * header and readme that disagree as one plugin claiming two names.
  *
  * Licensing note: the rest of this monorepo is MIT. wordpress.org requires GPLv2-or-later, and
  * we hold the copyright, so this directory ships GPL-2.0-or-later. MIT is GPL-compatible, so
