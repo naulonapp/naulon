@@ -18,6 +18,19 @@ tags and the auto-generated notes on each GitHub Release.
 
 Unpublished — the packages below are unbumped on npm until the next tag.
 
+`@naulon/enforce` — `/.well-known/x402` declares per-path price rules. The discovery
+manifest read the publisher's base price directly while only the enforcement path went
+through `tollPrice`, so a publisher who priced a section published the site base for it:
+measured on a live gate, a manifest declaring `0.03` against a 402 carrying
+`crawler-price: USD 0.10` for a path under a priced rule. An agent that budgets from
+discovery under-authorized, and the payment it had already agreed to failed. `payment.price`
+now carries a `rules[]` array — pattern, read leg, citation leg and the multiplier that
+actually applies — in the publisher's own resolution order, and the base legs plus every
+rule leg are derived through a new exported `tollPriceUnder`, so the manifest holds no
+second copy of the price formula. A publisher with no rules emits a byte-identical
+manifest. Same class as the `maxTimeoutSeconds` drift this file recorded earlier, one
+field over.
+
 `@naulon/enforce` — the 402 now carries a body, not just headers. A naulon 402 was zero
 bytes on the gate and header-only in the in-app middleware, so everything a buyer needed
 rode in `PAYMENT-REQUIRED`: correct for an x402 client, blank for every other crawler. One

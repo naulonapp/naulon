@@ -19,6 +19,7 @@ import { activeNetwork, getConfig, issuerHost, toAtomicUsdc, type PublisherConfi
 // The manifest MUST advertise the same validity window the real 402 does, so import it rather than
 // re-declaring it (see the note at the old constant's site below).
 import { MAX_TIMEOUT_SECONDS } from "./build402.ts";
+import { tollPriceUnder } from "./pricing.ts";
 
 /** Well-known path for the toll manifest. */
 export const X402_MANIFEST_PATH = "/.well-known/x402";
@@ -83,7 +84,29 @@ export interface X402Manifest {
     asset: string;
     currency: "USDC";
     maxTimeoutSeconds: number;
-    price: { read: PriceLeg; citation: PriceLeg & { multiplier: number } };
+    price: {
+      read: PriceLeg;
+      citation: PriceLeg & { multiplier: number };
+      /**
+       * Per-path overrides, in the publisher's own resolution order (most specific first) — the
+       * same list and the same order the toll resolves against. `read`/`citation` above are the
+       * BASE, which applies to every path no rule claims.
+       *
+       * Present only when the publisher sets rules, so a manifest without them is byte-identical
+       * to before this field existed. Absent it, this document declared the site base for a
+       * section the gate charged differently — measured on a live gate 2026-09-07: the manifest
+       * said `0.03` while the 402 for a path under a priced rule carried
+       * `crawler-price: USD 0.10`. An agent that budgets from discovery under-authorizes, and the
+       * payment it had already agreed to fails. Same class as the `maxTimeoutSeconds` drift noted
+       * below, one field over.
+       */
+      rules?: {
+        /** RFC 9309 path pattern, exactly as the publisher stored it. */
+        pattern: string;
+        read: PriceLeg;
+        citation: PriceLeg & { multiplier: number };
+      }[];
+    };
     /** How the single on-chain recipient is chosen (wallets are never listed here). */
     payTo: string;
   };
@@ -119,8 +142,23 @@ export function buildX402Manifest(
   publisher: PublisherConfig,
   net: SettlementNetwork = activeNetwork(),
 ): X402Manifest {
-  const readUsdc = publisher.price as number;
-  const citationUsdc = readUsdc * publisher.citationMultiplier;
+  // Through `tollPriceUnder` — the ONE price formula — never `publisher.price` and a local
+  // multiply. A rule overrides the read price and the multiplier independently, and re-deriving
+  // that here is precisely the second copy of a money formula this package refuses elsewhere.
+  const readUsdc = tollPriceUnder(publisher, "read", undefined) as number;
+  const citationUsdc = tollPriceUnder(publisher, "citation", undefined) as number;
+  const leg = (usd: number): PriceLeg => ({ atomic: toAtomicUsdc(usd), usdc: usd });
+  const ruleLegs = (publisher.priceRules ?? []).map((rule) => {
+    const read = tollPriceUnder(publisher, "read", rule) as number;
+    const citation = tollPriceUnder(publisher, "citation", rule) as number;
+    return {
+      pattern: rule.pattern,
+      read: leg(read),
+      // The multiplier is the rule's own when it names one, else the site's — stated per rule so an
+      // agent never has to recompute which of the two fields the rule actually moved.
+      citation: { ...leg(citation), multiplier: rule.citationMultiplier ?? publisher.citationMultiplier },
+    };
+  });
   return {
     x402Version: 2,
     humansReadFree: true,
@@ -151,12 +189,9 @@ export function buildX402Manifest(
       currency: "USDC",
       maxTimeoutSeconds: MAX_TIMEOUT_SECONDS,
       price: {
-        read: { atomic: toAtomicUsdc(readUsdc), usdc: readUsdc },
-        citation: {
-          atomic: toAtomicUsdc(citationUsdc),
-          usdc: citationUsdc,
-          multiplier: publisher.citationMultiplier,
-        },
+        read: leg(readUsdc),
+        citation: { ...leg(citationUsdc), multiplier: publisher.citationMultiplier },
+        ...(ruleLegs.length > 0 ? { rules: ruleLegs } : {}),
       },
       payTo:
         "Resolved per article to the primary author from the publisher's credits graph; the recursive co-author split is recorded on each settled event. Custody-free: settlement is buyer → author.",
