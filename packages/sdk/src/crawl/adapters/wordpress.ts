@@ -13,6 +13,12 @@
  * parse) falls back to the BARE listing for that page — you still capture the full catalog
  * (url/title/date). A partial-but-complete catalog beats failing on the biggest sites.
  *
+ * POSTS ARE NOT THE WHOLE CATALOGUE. `/wp/v2/posts` lists posts, never the media library — so a
+ * publisher who opted `pdf` in to the toll (`gateScope.includeExtensions`) got a WordPress crawl
+ * that discovered no PDF at all, and the file served free forever with no signal anywhere. When
+ * and only when the crawl config names extensions, a second pass reads `/wp/v2/media` and emits
+ * the attachments whose extension was opted in. Empty list ⇒ not a single extra request.
+ *
  * A bare listing drops `_embedded` but STILL carries each post's numeric `author` id, so the
  * names are recoverable: fetch the origin's public user directory (`/wp-json/wp/v2/users`) ONCE,
  * lazily, memoized, and join id → name. Without that join an `_embed`-timeout site yields a
@@ -21,9 +27,26 @@
  * and then resolution falls to `defaultWallet`; money is never inferred either way.
  */
 import type { AdapterContext, ArticleCandidate, DiscoveredAuthor, SourceAdapter } from "../types.ts";
+import { isOptedInFile, mediaExtensions } from "../media.ts";
 
 const PER_PAGE = 50;
 const MAX_PAGES = 40; // ≤ 2000 posts/crawl
+const MAX_MEDIA_PAGES = 20; // ≤ 1000 attachments/crawl, and only when extensions were opted in
+
+/** WordPress's coarse `media_type` filter — a documented enum (`image|video|text|audio|application
+ *  |file`), unlike the exact `mime_type`, which varies by how a given upload was registered (an
+ *  `.xml` is `text/xml` on one install and `application/xml` on another). Filtering coarsely and
+ *  matching the EXTENSION locally is what makes this robust across installs: the query only has to
+ *  keep the image library out of the paging budget. An extension we cannot bucket asks for both. */
+const MEDIA_TYPE_BUCKETS: Readonly<Record<string, string>> = {
+  pdf: "application",
+  json: "application",
+  zip: "application",
+  csv: "text",
+  txt: "text",
+  xml: "text",
+  md: "text",
+};
 
 interface WpPost {
   link?: string;
@@ -34,6 +57,19 @@ interface WpPost {
    *  make an `_embed`-timeout crawl produce an entirely unmapped catalog. */
   author?: number;
   _embedded?: { author?: Array<{ name?: string; id?: number; slug?: string }> };
+}
+
+/** One attachment from `/wp-json/wp/v2/media`. `source_url` is the FILE — `link` is the WordPress
+ *  attachment PAGE (HTML), which is not the thing an agent fetches and not the thing the gate
+ *  tolls, so a row without `source_url` is skipped rather than falling back to it. */
+interface WpMedia {
+  source_url?: string;
+  date_gmt?: string;
+  title?: { rendered?: string };
+  /** The uploader. WordPress's own attribution for the file, and only ever a `authorWalletMap`
+   *  KEY here — money is never inferred, so an unmapped uploader falls to `defaultWallet` exactly
+   *  as an unmapped post author does. */
+  author?: number;
 }
 
 /** One row of `/wp-json/wp/v2/users` — the id → name directory joined onto bare posts. */
@@ -104,10 +140,84 @@ async function fetchPostsPage(ctx: AdapterContext, page: number, embed: boolean)
   }
 }
 
+/** One page of the media library, filtered coarsely by `media_type`. Same sentinel contract as
+ *  `fetchPostsPage`: `"stop"` = no more pages (WP 400s past the last one), `"error"` = the fetch
+ *  itself failed. */
+async function fetchMediaPage(ctx: AdapterContext, bucket: string, page: number): Promise<WpMedia[] | "stop" | "error"> {
+  const url = new URL(
+    `/wp-json/wp/v2/media?per_page=${PER_PAGE}&page=${page}&media_type=${encodeURIComponent(bucket)}`,
+    ctx.origin,
+  ).toString();
+  try {
+    const res = await ctx.fetch(url);
+    if (!res.ok) return "stop";
+    const body = await res.json();
+    if (!Array.isArray(body)) return "stop";
+    return body as WpMedia[];
+  } catch {
+    return "error";
+  }
+}
+
+/**
+ * The FILES pass — the half `/wp/v2/posts` structurally cannot see.
+ *
+ * Runs only when the publisher opted extensions in, so the default WordPress crawl is byte-for-byte
+ * what it was. Never throws and never breaks the article pass: a media library that 404s (the
+ * endpoint is disabled) or errors mid-page keeps whatever it found, because a partial catalogue
+ * beats losing the posts over an attachment.
+ */
+async function discoverMedia(
+  ctx: AdapterContext,
+  extensions: ReadonlySet<string>,
+  ensureUsers: () => Promise<Map<number, string>>,
+): Promise<ArticleCandidate[]> {
+  const buckets = new Set<string>();
+  for (const ext of extensions) {
+    const bucket = MEDIA_TYPE_BUCKETS[ext];
+    if (bucket) buckets.add(bucket);
+    else { buckets.add("application"); buckets.add("text"); } // unknown extension → ask both
+  }
+
+  const out: ArticleCandidate[] = [];
+  const seen = new Set<string>();
+  for (const bucket of buckets) {
+    for (let page = 1; page <= MAX_MEDIA_PAGES; page++) {
+      const items = await fetchMediaPage(ctx, bucket, page);
+      if (items === "stop" || items === "error" || items.length === 0) break;
+      for (const item of items) {
+        const url = (item.source_url ?? "").trim();
+        if (!url || seen.has(url)) continue;
+        if (!isOptedInFile(url, extensions)) continue; // an image in the `application` bucket, a .doc, …
+        seen.add(url);
+        const date = (item.date_gmt ?? "").trim();
+        const stated = (item.title?.rendered ?? "").trim();
+        const authors: DiscoveredAuthor[] = [];
+        if (item.author !== undefined) {
+          const name = (await ensureUsers()).get(item.author);
+          if (name) authors.push({ name, externalId: String(item.author) });
+        }
+        out.push({
+          url,
+          // WordPress titles an attachment after its filename by default, which is already the
+          // best available name for a file. A blank one falls back to the filename itself rather
+          // than staging a row a human cannot recognise in the review queue.
+          title: stated || decodeURIComponent(url.slice(url.lastIndexOf("/") + 1)),
+          authors,
+          publishedAt: date && Number.isFinite(Date.parse(`${date}Z`)) ? new Date(`${date}Z`).toISOString() : undefined,
+        });
+      }
+      if (items.length < PER_PAGE) break; // last page
+    }
+  }
+  return out;
+}
+
 export const wordpressAdapter: SourceAdapter = {
   id: "wordpress",
   rank: 100, // real author objects → outranks feeds
   curated: true, // the REST posts endpoint lists real articles, not every URL
+  files: true, // the media library, via `discoverMedia`
   async detect(ctx) {
     try {
       const res = await ctx.fetch(new URL("/wp-json/wp/v2/posts?per_page=1", ctx.origin).toString());
@@ -175,6 +285,10 @@ export const wordpressAdapter: SourceAdapter = {
       }
       if (posts.length < PER_PAGE) break; // last page
     }
+    // The files the publisher opted in to tolling. Additive by construction — every candidate here
+    // is a non-HTML URL, so it can only ever be one `/wp/v2/posts` never returned.
+    const extensions = mediaExtensions(ctx.config);
+    if (extensions.size > 0) out.push(...(await discoverMedia(ctx, extensions, ensureUsers)));
     return out;
   },
 };

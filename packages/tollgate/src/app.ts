@@ -26,12 +26,16 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { logger } from "hono/logger";
 import {
+  activeNetwork,
   botAuthDirectoryBody,
   botAuthKeyFromSeed,
   BOT_AUTH_DIRECTORY_CONTENT_TYPE,
   BOT_AUTH_DIRECTORY_PATH,
   externalSchemeOf,
   getConfig,
+  getNetwork,
+  mintCitationRecord,
+  networkForEvent,
   signBotAuth,
   signBotAuthDirectory,
   type BotAuthKey,
@@ -39,6 +43,7 @@ import {
   type ObservationVerdict,
   type PaymentFailureReason,
   classifyPaymentFailure,
+  type PublisherConfig,
   type PublisherResolver,
   type TollKind,
   type Usdc,
@@ -107,6 +112,9 @@ import {
   formatCrawlerPrice,
   settledChargedMicro,
   totalChargedMicro,
+  PAYMENT_BODY_CONTENT_TYPE,
+  paymentRequiredBodyText,
+  headerSafe,
 } from "@naulon/enforce";
 
 // Global license POLICY (online check) + settlement network coordinates are
@@ -261,37 +269,10 @@ function forwardHeaders(req: Request, clientIp: string, originHost: string): Hea
   return out;
 }
 
-/**
- * X-Naulon-Verdict values can embed config-derived text (block/charge/allow
- * fragments, classifier reasons that quote them). Fleet-written configs are
- * control-char-rejected at the write path, but a self-hosted, hand-written config
- * is not — and a CR/LF smuggled into a header value is a response-splitting
- * primitive (or, in runtimes that validate header values, an exception that turns
- * a served request into a 500). Strip C0 controls + DEL at the one place the text
- * meets the wire. Exported for direct testing — a live request can't smuggle
- * CR/LF through header parsing, so the guard is only observable as a unit.
- *
- * It also strips everything ABOVE ASCII, which the control-char version did not, and that gap was
- * live: a header value is a ByteString, so `Headers.set` THROWS on any code point > 255 ("cannot
- * convert argument to a ByteString"). The throw lands in the fail-open error boundary and the
- * request a publisher was serving becomes a 503 — the exact "turns a served request into a 500"
- * outcome this function's own docstring exists to prevent, entered through a different door. Caught
- * 2026-08-04 by an em-dash in a new verdict string, which 503'd every response on that branch;
- * `d.frag` (a publisher-written crawler-policy fragment) reaches here the same way and is not
- * control-char-rejected on a self-hosted config.
- *
- * 128–255 are stripped rather than passed: they are legal in a ByteString but their meaning is
- * charset-dependent on the wire, and a verdict header is diagnostic text nobody should be decoding.
- * ASCII-or-space keeps it unambiguous.
- */
-export function headerSafe(text: string): string {
-  let out = "";
-  for (const ch of text) {
-    const c = ch.codePointAt(0) ?? 0;
-    out += c < 32 || c >= 127 ? " " : ch;
-  }
-  return out;
-}
+// `headerSafe` lives in `@naulon/enforce` now: the in-app middleware sets the same verdict
+// header and cannot import tollgate (the dependency runs enforce ← tollgate, never back).
+// Re-exported here because it is part of this module's published surface.
+export { headerSafe };
 
 /**
  * Cache discipline for gateable-route decisions. Every response on a gateable
@@ -439,6 +420,25 @@ export interface CreateAppOptions {
    * byte-identical to before this option existed.
    */
   onUpstreamOutcome?: (publisherId: string, outcome: UpstreamOutcome) => void;
+
+  /**
+   * Optional identity seam: resolve the publisher that OWNS a host the resolver does not ROUTE.
+   *
+   * `PublisherResolver.resolve` answers "the publisher this host routes to", which is the only
+   * question the gate needs to serve a toll. But a host can be served by the publisher's own runtime
+   * (the `@naulon/enforce` SDK in front of their app) instead of being proxied here — such a host is
+   * legitimately absent from the resolver's routing set, so `resolve` returns undefined for it.
+   * A downstream control plane that knows those publishers by some other proof of ownership supplies
+   * this; the single-tenant default has no such distinction and omits it, which is byte-identical to
+   * before the option existed.
+   *
+   * Consumed ONLY by `GET /licenses/:jti`, which asks an identity question rather than a routing one
+   * and was answering "no such licence" for every self-served publisher. It must not be given a
+   * function that prices, routes or settles: a host nothing routes must not become routable by being
+   * verifiable. It does not widen what may be READ either — the route still refuses an event whose
+   * `publisherId` is not the resolved publisher's.
+   */
+  resolveInAppConfig?: (host: string) => Promise<PublisherConfig | undefined>;
 }
 
 export function createApp(
@@ -446,6 +446,7 @@ export function createApp(
   opts?: CreateAppOptions,
 ): Hono {
   const onUpstreamOutcome = opts?.onUpstreamOutcome;
+  const resolveInAppConfig = opts?.resolveInAppConfig;
   const app = new Hono();
   app.use("*", logger());
   app.use("*", rateLimit());
@@ -468,7 +469,28 @@ export function createApp(
 
   // Public key set for offline CLT verification. Registered BEFORE the catch-all
   // so it's served by the gate, never proxied. Empty when disabled.
-  app.get("/.well-known/naulon-jwks.json", (c) => c.json(licensing ? licensing.jwks : { keys: [] }));
+  /**
+   * The public key set, and it must be readable FROM A BROWSER.
+   *
+   * A Citation License is worth what it is because a stranger can check it against these
+   * keys without asking us. That story is Node-only without CORS: the same-origin policy
+   * blocks every browser-based verifier — including naulon's own public verify page — at
+   * the fetch, before any signature is checked.
+   *
+   * `*` is the correct value, not a lax one. A key set is world-readable by definition,
+   * and anything narrower would be us deciding which origins are allowed to check our
+   * signatures, which is the opposite of the property being sold. It is scoped to THIS
+   * route: no tolled path becomes cross-origin readable, which `jwks-cors.test.ts` pins.
+   */
+  const JWKS_CORS = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, OPTIONS",
+    "cache-control": "public, max-age=3600",
+  } as const;
+  app.get("/.well-known/naulon-jwks.json", (c) =>
+    c.json(licensing ? licensing.jwks : { keys: [] }, 200, { ...JWKS_CORS }),
+  );
+  app.options("/.well-known/naulon-jwks.json", (c) => c.body(null, 204, { ...JWKS_CORS }));
 
   // Edge-identity probe: a host-independent 200 that ONLY a naulon gate serves. It lets a
   // caller confirm a custom domain actually ROUTES through the gate — not merely that its
@@ -521,7 +543,12 @@ export function createApp(
     const host = c.req.header("host") ?? new URL(c.req.url).host;
     const publisher = await resolver.resolve(host);
     if (!publisher) return c.json({ error: "no toll for this host" }, 404);
-    return c.json(buildX402Manifest(publisher));
+    // Pinned to the TENANT's chain, not the fleet default. The 402 this host emits already
+    // resolves per tenant (`quote.network` → `buildRequirements`); the manifest did not, so a
+    // publisher settling on another chain published terms naming ours. An agent that reads the
+    // manifest, prepares a payment on that chain and then meets a 402 for a different one reads
+    // it as our bug — correctly.
+    return c.json(buildX402Manifest(publisher, publisher.settlementNetwork ? getNetwork(publisher.settlementNetwork) : activeNetwork()));
   });
 
   // Online verify tier: confirm a license's event is real and (optionally) not
@@ -536,7 +563,17 @@ export function createApp(
     // via publisher A's host. Unknown host → 404, leaking nothing (fail-closed,
     // matches the manifest route).
     const host = c.req.header("host") ?? new URL(c.req.url).host;
-    const publisher = await resolver.resolve(host);
+    // ROUTING first, then OWNERSHIP. `resolve` answers "the publisher this host routes to" and is
+    // the common case; `resolveOwner` (optional, and absent on the single-tenant default) answers
+    // "the publisher that owns this host", which is the only question that has an answer for a host
+    // served by the publisher's OWN runtime rather than proxied by this gate. Such a host is
+    // legitimately absent from the routing set, so verification of its licences used to 404 every
+    // time — measured against a live multi-tenant deploy on 2026-09-02, where every settlement of
+    // every self-served publisher reported "not on the ledger" while sitting in the ledger.
+    //
+    // This widens WHO CAN BE RESOLVED, never what they may read: the publisherId check below is
+    // unchanged, so an event attributed to another publisher is still the same fail-closed 404.
+    const publisher = (await resolver.resolve(host)) ?? (await resolveInAppConfig?.(host));
     if (!publisher) return c.json({ jti, found: false }, 404);
 
     const event = await getEvent(jti);
@@ -552,6 +589,91 @@ export function createApp(
     }
     const revoked = cfg.LICENSE_ONLINE_CHECK ? await revocations.isRevoked(jti) : false;
     return c.json({ jti, found: true, revoked, event });
+  });
+
+  /**
+   * The CITATION RECORD for a settled toll: permanent, third-party verifiable, and it
+   * grants nothing.
+   *
+   * The Citation License a payment mints is an ACCESS token — `LICENSE_TTL_SECONDS`
+   * defaults to 600s and is capped at 3600 because it is an unrevocable bearer credential
+   * on the offline tier, so its expiry is the only kill switch it has. That is the wrong
+   * object for a citation: a researcher cites a source and a reader checks it months
+   * later, long after any access window closed. This route mints the other object from
+   * the SAME ledger row — same `jti`, same amount, same payees, same settlementRef — with
+   * `grant: "none"` and no `exp`. It is safe to be permanent precisely because presenting
+   * one buys nothing (`licenseEntitlesRead` refuses any grant that is not "read").
+   *
+   * Host-scoped and publisher-checked exactly like `/licenses/:jti` above: minting must
+   * disclose no more than reading did.
+   *
+   * The record names the resource by `slug`, not by title — the ledger row carries no
+   * title, and inventing one here would put an unverifiable string inside a document
+   * whose entire value is that a stranger can check it.
+   */
+  // A record is opened FROM A BROWSER by whoever holds its link, so it carries the same
+  // cross-origin headers the key set does — on every status, because "not here" (a 404) and
+  // "unreachable" (a fetch the same-origin policy blocked) are different answers a verifier
+  // must be able to tell apart, and only one of them says anything about the document.
+  //
+  // `?host=` lets a browser name the publisher, which `Host` cannot do for it: a publisher
+  // serving their own site through the SDK has no record route on their origin, and the fleet
+  // edge answers a spoofed `Host` with 403 — measured 2026-09-02, so from a browser there was
+  // no way at all to ask about such a publisher's record. The hint only chooses WHO is
+  // resolved; the `publisherId` ownership check below is untouched, so it discloses nothing a
+  // `curl` with a chosen `Host` could not already ask for. A malformed hint (a scheme, a path,
+  // a query) is ignored rather than cleaned — it falls through to `Host` exactly as before.
+  const RECORD_CORS = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, OPTIONS",
+  } as const;
+  app.options("/licenses/:jti/record", (c) => c.body(null, 204, { ...RECORD_CORS }));
+  app.get("/licenses/:jti/record", async (c) => {
+    const jti = c.req.param("jti");
+    const notFound = () => c.json({ jti, found: false }, 404, { ...RECORD_CORS, "cache-control": "no-store" });
+    if (!licensing) return notFound();
+    const host = publisherHostHint(c.req.query("host")) ?? c.req.header("host") ?? new URL(c.req.url).host;
+    const publisher = (await resolver.resolve(host)) ?? (await resolveInAppConfig?.(host));
+    if (!publisher) return notFound();
+
+    const event = await getEvent(jti);
+    if (!event || (event.publisherId !== undefined && event.publisherId !== publisher.id)) {
+      return notFound();
+    }
+    // The chain the money actually moved on, recovered from the row — one owner in shared,
+    // because the control plane re-issues an access token from this same row and both
+    // projections must name the same chain.
+    const net = networkForEvent(event, publisher);
+    const record = mintCitationRecord(
+      {
+        event,
+        issuer: publisher.licenseIdentity,
+        audience: publisher.licenseIdentity,
+        // Unused by the record (it carries no exp) but required by MintInput; the value
+        // is deliberately the configured one so nothing here invents a term.
+        ttlSeconds: cfg.LICENSE_TTL_SECONDS,
+        payeesMode: cfg.LICENSE_PAYEES_MODE,
+        tieBreak: cfg.PRIMARY_PAYEE_TIEBREAK,
+        title: event.slug,
+        network: { chainId: net.chainId, usdc: net.usdc, gateway: net.gatewayWallet },
+        // What a SALE bought, replayed from the row rather than re-derived. Absent on a toll, so
+        // its record is byte-identical to what this route emitted before sales existed.
+        //
+        // Spread individually rather than as one object: `MintInput` takes these four flat, and
+        // the record is the ONLY place a buyer's scope, terms and period become permanently
+        // checkable. Passing the row's facts through unchanged is what makes the record and the
+        // access licence two projections of one row instead of two documents that agree by habit.
+        ...(event.licence?.scope ? { scope: event.licence.scope } : {}),
+        ...(event.licence?.terms ? { terms: event.licence.terms } : {}),
+        ...(event.licence?.period ? { period: event.licence.period } : {}),
+        ...(event.licence?.subject ? { subject: event.licence.subject } : {}),
+      },
+      licensing.key,
+      Date.now(),
+    );
+    // The record is permanent, so anyone may cache it; each mint carries a fresh `iat` and a
+    // fresh signature, and every one of them is valid.
+    return c.json({ jti, found: true, record }, 200, { ...RECORD_CORS, "cache-control": "public, max-age=3600" });
   });
 
   // Everything else flows through the gate.
@@ -671,9 +793,13 @@ export function createApp(
           askMicro,
         );
         return stampGateCacheHeaders(
-          c.body(null, 402, {
+          // The body is the ADVERTISEMENT — price, terms, where the real obligation is —
+          // in the vendor-neutral shape a non-x402 crawler can read. It used to be zero
+          // bytes, which told a buyer that does not decode PAYMENT-REQUIRED nothing at all.
+          c.body(paymentRequiredBodyText({ askMicro, publisher: host, endpoint: new URL(c.req.url).pathname, tollKind: d.tollKind }), 402, {
             [PAYMENT_REQUIRED_HEADER]: d.header,
             [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
+            "content-type": PAYMENT_BODY_CONTENT_TYPE,
             Link: PAYMENT_LINK_HEADER,
             "X-Naulon-Verdict": headerSafe(
               `agent (${d.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,
@@ -828,3 +954,13 @@ export function createApp(
  * Vercel function. A downstream embedder builds its own via `createApp(resolver)`.
  */
 export const app = createApp();
+
+/**
+ * A `?host=` hint on the record route is a host with an optional port, or nothing. A scheme, a
+ * path or a query is refused outright (never "cleaned" into a host), because the value becomes
+ * the `iss` of a document a stranger is told to trust.
+ */
+function publisherHostHint(raw: string | undefined): string | undefined {
+  const h = raw?.trim().toLowerCase();
+  return h && /^[a-z0-9.-]+(:\d+)?$/.test(h) ? h : undefined;
+}

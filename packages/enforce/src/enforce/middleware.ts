@@ -24,18 +24,44 @@ import {
   LICENSE_HEADER,
   type LicenseVerification,
 } from "../decide.ts";
+import {
+  CRAWLER_CHARGED_HEADER,
+  CRAWLER_EXACT_PRICE_HEADER,
+  CRAWLER_MAX_PRICE_HEADER,
+  CRAWLER_PRICE_HEADER,
+  crawlerBudgetVerdict,
+  declaredCrawlerBudget,
+  formatCrawlerPrice,
+  totalChargedMicro,
+} from "../crawlerPrice.ts";
+import { PAYMENT_BODY_CONTENT_TYPE, paymentRequiredBodyText } from "../paymentBody.ts";
+import { headerSafe } from "../headerSafe.ts";
 import { externalUrl, getConfig, type JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
+import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
 import type { DecideObs } from "../decide.ts";
 import type { ObservationReport, ObservationReporter, ReportableVerdict } from "./observation-sink.ts";
 
-export interface NaulonMiddlewareOptions {
+export interface NaulonMiddlewareOptionsBase {
   /**
    * The site's toll config in `PublisherConfig` shape — `decide()` reads
-   * `id`, `articlePrefixes` (or `gateScope`), `licenseIdentity`, `seoAllowlist`,
+   * `articlePrefixes` (or `gateScope`), `licenseIdentity`, `seoAllowlist`,
    * and `crawlerPolicy` from it.
+   *
+   * A LITERAL here is a second copy of state the control plane already owns, and it
+   * cannot track a dashboard edit. Prefer `config` (below) and pass this only for a
+   * self-hosted gate that has no control plane to ask. When both are given, the
+   * control plane wins field by field and this is the cold-start floor.
    */
-  publisher: unknown;
+  publisher?: unknown;
+  /**
+   * Where the enforcement config comes from — `httpPublisherConfigSource(...)` for a
+   * hosted tenant. Cached with stale-if-error, so this is not a per-request fetch.
+   *
+   * This is the difference between "the dashboard says charge OAI-SearchBot" and the
+   * site actually charging it.
+   */
+  config?: PublisherConfigSource;
   /** Price + payees source: `localQuoteSource` (own data) or `httpQuoteSource` (cloud). */
   quote: QuoteSource;
   /** The hosted `POST /verify` URL (settles the presented payment, custody-free). */
@@ -79,6 +105,14 @@ export interface NaulonMiddlewareOptions {
   observe?: ObservationReporter;
 }
 
+/**
+ * At least one source of publisher config is required, and the compiler enforces it:
+ * a mount with neither can only ever pass every request through untolled, which is a
+ * silently-disabled toll and exactly the class of failure this module exists to end.
+ */
+export type NaulonMiddlewareOptions = NaulonMiddlewareOptionsBase &
+  ({ config: PublisherConfigSource } | { publisher: unknown });
+
 export interface MiddlewareResult {
   /** A Response to send (short-circuit), or `null` to pass to the app. */
   response: Response | null;
@@ -94,6 +128,13 @@ interface VerifyResponse {
   payer?: string;
   responseHeader?: string;
   licenseJws?: string;
+  /** What the buyer was ACTUALLY charged, in integer micro-USDC, summed across the legs
+   *  that settled. Not the ask: a stock x402 payer signs `accepts[0]` alone, so the
+   *  operator fee and any co-author cut never left their wallet. Only the settling side
+   *  knows which legs were forgone, so only it can report this — the in-app path cannot
+   *  compute it and must not guess, because `crawler-charged` is a claim about money.
+   *  Absent from an older control plane, in which case no `crawler-charged` is emitted. */
+  chargedMicro?: string;
 }
 
 /**
@@ -103,6 +144,21 @@ interface VerifyResponse {
  * Absent fields are omitted rather than sent as `null`: the receiver treats absence as
  * "not observed", which is true, while `null` reads as "observed to be nothing".
  */
+/**
+ * The control plane's settled figure, or null. Strict on purpose: this number becomes
+ * `crawler-charged`, a public claim about money that left a buyer's wallet, and it arrives
+ * over the network from a service this runtime does not control. Anything that is not a
+ * plain non-negative integer of micro-USDC — a float, a sign, an empty string, a value big
+ * enough to lose precision — is treated as "not reported" rather than coerced, so the
+ * header is absent instead of wrong. A magnitude cap keeps the value exactly representable.
+ */
+const MAX_REPORTED_MICRO_DIGITS = 15;
+function chargedMicroOf(raw: string | undefined): bigint | null {
+  if (raw === undefined) return null;
+  if (!/^\d+$/.test(raw) || raw.length > MAX_REPORTED_MICRO_DIGITS) return null;
+  return BigInt(raw);
+}
+
 function agentOf(obs: DecideObs): NonNullable<ObservationReport["agent"]> {
   return {
     ...(obs.agentUa !== undefined ? { ua: obs.agentUa } : {}),
@@ -111,6 +167,29 @@ function agentOf(obs: DecideObs): NonNullable<ObservationReport["agent"]> {
     ...(obs.verifiedAgent !== undefined ? { verifiedAgent: obs.verifiedAgent } : {}),
     ...(obs.sigInvalid !== undefined ? { sigInvalid: obs.sigInvalid } : {}),
   };
+}
+
+/**
+ * The config actually in force: the control plane's document over the local floor,
+ * field by field.
+ *
+ * Remote wins because it is the copy a human can edit — the local object is a literal
+ * in a deployed bundle, and a bundle is not a control plane. The merge is per FIELD
+ * rather than all-or-nothing so a tenant that has set no `crawlerPolicy` still gets the
+ * local one, instead of a partial document silently blanking it. `undefined` values are
+ * stripped by the source for the same reason.
+ *
+ * Returns `undefined` when neither side supplied anything — the caller passes through.
+ */
+export function resolvePublisher(
+  local: unknown,
+  remote: PublisherEnforcementConfig | undefined,
+): unknown {
+  const hasLocal = typeof local === "object" && local !== null;
+  const hasRemote = remote !== undefined && Object.keys(remote).length > 0;
+  if (!hasLocal && !hasRemote) return undefined;
+  if (!hasRemote) return local;
+  return { ...(hasLocal ? (local as object) : {}), ...remote };
 }
 
 export function naulonMiddleware(
@@ -127,12 +206,15 @@ export function naulonMiddleware(
   const resolveVerification = (() => {
     const lv = opts.licenseVerification;
     if (!lv) return undefined;
-    const issuer = lv.issuer ?? (opts.publisher as { licenseIdentity?: string }).licenseIdentity;
     const jwksUrl = lv.jwksUrl ?? `${new URL(opts.verifyUrl).origin}/.well-known/naulon-jwks.json`;
     const ttl = lv.cacheTtlMs ?? 600_000;
     let cached: JwkSet | undefined;
     let fetchedAt = 0;
-    return async (): Promise<LicenseVerification | undefined> => {
+    // `issuer` is resolved PER REQUEST from the config actually in force, not read once
+    // from a literal at mount time. Pinning iss/aud to a hand-written constant is how a
+    // licence stops verifying the day the control plane restyles what it stamps — and the
+    // symptom is a paid reader being charged twice, which nobody reports as a bug.
+    return async (issuer: string | undefined): Promise<LicenseVerification | undefined> => {
       // Without an issuer we cannot pin iss/aud, so verification would be unsafe — skip
       // (the re-read falls through to the normal 402 path, same as an unconfigured mount).
       if (!issuer) return undefined;
@@ -191,15 +273,27 @@ export function naulonMiddleware(
     });
     // Only resolve the gate JWKS when this request actually presents a license — a
     // human read or a first-time agent 402 carries none, so the hot path never fetches.
+    // The enforcement config in force for THIS request. Cached per host with
+    // stale-if-error inside the source, so a warm hit costs a map lookup.
+    const remote = opts.config ? (await opts.config.load({ resource }))?.enforcement : undefined;
+    const publisher = resolvePublisher(opts.publisher, remote);
+    if (!publisher) {
+      // Neither a control-plane document nor a local floor: nothing is in scope, so there
+      // is nothing to decide. Pass rather than throw — a lookup failure on our side must
+      // never 500 the publisher's site. The source has already reported it, loudly.
+      return { response: null };
+    }
     const licenseVerification =
-      resolveVerification && req.headers.get(LICENSE_HEADER) ? await resolveVerification() : undefined;
+      resolveVerification && req.headers.get(LICENSE_HEADER)
+        ? await resolveVerification((publisher as { licenseIdentity?: string }).licenseIdentity)
+        : undefined;
     const d = await decide({
       raw: req,
       host: url.host,
       path: url.pathname + url.search,
-      publisher: opts.publisher as never,
+      publisher: publisher as never,
       now: clock(),
-      quote: (publisher, slug, kind) => opts.quote.quote(publisher, slug, kind, { resource }),
+      quote: (publisher, slug, kind, path) => opts.quote.quote(publisher, slug, kind, { resource, path }),
       ...(licenseVerification ? { licenseVerification } : {}),
     });
 
@@ -223,14 +317,40 @@ export function naulonMiddleware(
         report(d.obs, "blocked", resource);
         return { response: new Response("This crawler is refused by the publisher.", { status: 403 }) };
 
-      case "payment-required":
+      case "payment-required": {
         report(d.obs, "denied", resource, { kind: d.tollKind, priceUsdc: d.quote.price });
-        return {
-          response: new Response(null, {
-            status: 402,
-            headers: { [PAYMENT_REQUIRED_HEADER]: d.header, Link: PAYMENT_LINK_HEADER },
+        const askMicro = totalChargedMicro(d.legs);
+        // The SAME advertisement the hosted gate emits (`tollgate/app.ts`, the
+        // payment-required branch): the Cloudflare pay-per-crawl price vocabulary a
+        // crawler already speaks, and a body for every buyer that does not decode
+        // PAYMENT-REQUIRED. Until now this path emitted neither, so a publisher who
+        // installed the SDK instead of routing through the fleet was silent to exactly
+        // the crawlers the fleet talks to — the same toll, two different wires.
+        const budget = crawlerBudgetVerdict(
+          declaredCrawlerBudget({
+            maxPrice: req.headers.get(CRAWLER_MAX_PRICE_HEADER),
+            exactPrice: req.headers.get(CRAWLER_EXACT_PRICE_HEADER),
           }),
+          askMicro,
+        );
+        return {
+          response: new Response(
+            paymentRequiredBodyText({ askMicro, publisher: url.host, endpoint: url.pathname, tollKind: d.tollKind }),
+            {
+              status: 402,
+              headers: {
+                [PAYMENT_REQUIRED_HEADER]: d.header,
+                [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
+                "content-type": PAYMENT_BODY_CONTENT_TYPE,
+                Link: PAYMENT_LINK_HEADER,
+                "X-Naulon-Verdict": headerSafe(
+                  `agent (${d.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,
+                ),
+              },
+            },
+          ),
         };
+      }
 
       case "payment-presented": {
         // No `report(...)` on this branch, deliberately: the hosted /verify writes the
@@ -277,6 +397,12 @@ export function naulonMiddleware(
           const setHeaders: Record<string, string> = {};
           if (body.responseHeader) setHeaders[PAYMENT_RESPONSE_HEADER] = body.responseHeader;
           if (body.licenseJws) setHeaders[LICENSE_HEADER] = body.licenseJws;
+          // `crawler-charged` is a claim that money moved, so it is emitted only from the
+          // settling side's own figure and only after it said `ok`. A control plane that
+          // does not report one gets no header rather than the ask — overstating what left
+          // a buyer's wallet is the one failure this header cannot have.
+          const charged = chargedMicroOf(body.chargedMicro);
+          if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
           return { response: null, setHeaders };
         }
         return {

@@ -118,11 +118,17 @@ function mockMultiSig(wireLegs: WireLeg[], amounts?: string[]): string {
   return Buffer.from(JSON.stringify(payloads)).toString("base64");
 }
 
-test("build402 omits the naulonLegs extension for a plain single-author quote (byte-identical 402)", () => {
+test("build402 omits the naulonLegs extension for a plain single-author quote (stock-shaped 402)", () => {
   const { header } = build402(quote, "http://gate/essays/on-stillness", 1_000_000);
   const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as Record<string, unknown>;
   assert.equal((decoded.accepts as unknown[]).length, 1);
-  assert.equal("extensions" in decoded, false);
+  const ext = decoded.extensions as Record<string, unknown>;
+  assert.equal("naulonLegs" in ext, false, "the naulon-specific block is what a stock client must not need");
+  // `bazaar` IS present, on every 402 including this one: it is a spec-defined x402
+  // extension, unknown extensions are ignored by clients that do not implement them,
+  // and without the declaration no discovery layer can catalog a naulon resource at
+  // all (specs/extensions/bazaar.md — a resource server declares, a facilitator lists).
+  assert.ok(ext.bazaar, "discovery is declared");
 });
 
 test("build402 advertises naulonLegs (author + extra) but leaves accepts[0] the stock primary leg", () => {
@@ -280,7 +286,7 @@ test("coauthorSplit OFF with co-authors → stock single-recipient toll (no naul
   const offQuote: Quote = { ...coauthorQuote, coauthorSplit: false };
   const { legs, header } = build402(offQuote, "http://gate/essays/on-stillness", 1_000_000);
   const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as Record<string, unknown>;
-  assert.equal("extensions" in decoded, false); // byte-identical to the stock 402
+  assert.equal("naulonLegs" in (decoded.extensions as Record<string, unknown>), false); // stock-shaped: one recipient
   assert.equal(legs.length, 1);
   assert.equal(legs[0]!.requirements.amount, "1000"); // full price to the primary
 });

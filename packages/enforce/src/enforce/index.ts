@@ -6,6 +6,7 @@
  * Next.js adapter under `@naulon/sdk/next/middleware`.
  */
 export * from "./quote-source.ts";
+export * from "./config-source.ts";
 export * from "./observation-sink.ts";
 export * from "./middleware.ts";
 export * from "./fetch-handler.ts";

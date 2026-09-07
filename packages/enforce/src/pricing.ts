@@ -8,7 +8,9 @@
  * one gate prices many publishers correctly.
  */
 import {
+  activeNetwork,
   resolvePayees,
+  resolvePriceRule,
   usdc,
   type AuthorShare,
   type NetworkName,
@@ -44,7 +46,7 @@ export interface Quote {
   /**
    * Optional reconciliation id for the on-chain memo (Arc only). When set AND the
    * active network ships the Memo predeploy, the synchronous author leg settles via
-   * the self-relay path and emits a `Memo` event keyed by this id (keccak256'd to
+   * the self-relay path (RETIRED 2026-09-04 — carried but unconsumed) and emitted a `Memo` event keyed by this id (keccak256'd to
    * `bytes32` if not already 32-byte hex) — tying the settlement to a citation /
    * license id for offchain reconciliation. Absent, or on a memo-less network (Base),
    * the settle path is byte-identical to the stock Circle Gateway toll. Supplied by
@@ -53,10 +55,15 @@ export interface Quote {
    */
   memoId?: string;
   /**
-   * Per-tenant settlement chain, carried from `PublisherConfig.settlementNetwork`.
-   * Read by `build402`/`buildRequirements` to advertise the tenant's chain in the
-   * 402, and resolved per-request on the settle path. Absent ⇒ `activeNetwork()`
-   * (fleet default), byte-identical to the single-tenant toll.
+   * The settlement chain this price is payable on — the tenant's
+   * `PublisherConfig.settlementNetwork`, or the pricing runtime's active network when the
+   * tenant sets none. Read by `build402`/`buildRequirements` to advertise it in the 402 and
+   * resolved per-request on the settle path.
+   *
+   * Always present on a quote this function builds, so a runtime that did not do the pricing
+   * never has to fall back to its own env to learn which chain it is quoting. Optional on the
+   * TYPE only, because a quote may arrive from an older control plane that omitted it — in
+   * which case `buildRequirements` still falls back to `activeNetwork()`, as it always did.
    */
   network?: NetworkName;
 }
@@ -73,9 +80,26 @@ export interface Quote {
  * Pure and synchronous — it reads only the fields the resolver already put on the
  * config, never the credits source. `quote()` calls it for exactly the same reason a
  * verifier does, so the two can never disagree.
+ *
+ * `path` is the request PATHNAME (`/papers/x`), never a full URL, and it selects the publisher's
+ * per-path price rule. It is optional ONLY so an older control plane that predates price rules
+ * still typechecks; every caller in this repo passes it. Omitting it on a publisher that HAS
+ * rules silently prices at the site base — which on the verifying side reads as "the quote does
+ * not match the tenant record" and refuses a settle the publisher priced correctly. So the
+ * quoting and verifying calls move together, as they already had to for the formula itself.
  */
-export function tollPrice(publisher: Pick<PublisherConfig, "price" | "citationMultiplier">, kind: TollKind): Usdc {
-  return usdc(kind === "citation" ? publisher.price * publisher.citationMultiplier : publisher.price);
+export function tollPrice(
+  publisher: Pick<PublisherConfig, "price" | "citationMultiplier" | "priceRules">,
+  kind: TollKind,
+  path?: string,
+): Usdc {
+  // A rule overrides either money field INDEPENDENTLY: one that names only a citation multiplier
+  // keeps the site's read price, and vice versa. No path, no rules, or no rule matching ⇒ the two
+  // site values, byte-identical to before this field existed.
+  const rule = resolvePriceRule(publisher.priceRules, path);
+  const price = rule?.priceUsdc ?? publisher.price;
+  const multiplier = rule?.citationMultiplier ?? publisher.citationMultiplier;
+  return usdc(kind === "citation" ? price * multiplier : price);
 }
 
 /**
@@ -83,16 +107,21 @@ export function tollPrice(publisher: Pick<PublisherConfig, "price" | "citationMu
  * citation has downstream reach), but both resolve to the same author payees.
  * Returns undefined for an article the publisher's credits source doesn't know —
  * the gate treats that as "don't gate".
+ *
+ * `path` is the request pathname, carried only so `tollPrice` can select a per-path rule. It is
+ * NOT the slug and cannot be derived from it: in prefix mode a slug is one segment of the path,
+ * and in site mode the two coincide only by accident of configuration. Absent ⇒ site pricing.
  */
 export async function quote(
   publisher: PublisherConfig,
   slug: string,
   kind: TollKind,
+  path?: string,
 ): Promise<Quote | undefined> {
   const credits = await publisher.credits.resolve(slug);
   if (!credits) return undefined;
 
-  const price = tollPrice(publisher, kind);
+  const price = tollPrice(publisher, kind, path);
 
   return {
     slug: credits.slug,
@@ -114,8 +143,13 @@ export async function quote(
       const memoId = publisher.memoId?.({ slug: credits.slug, kind });
       return memoId ? { memoId } : {};
     })(),
-    // Per-tenant settlement chain. Spread so an unset field leaves the key absent
-    // entirely — build402 then reads activeNetwork(), byte-identical to the default.
-    ...(publisher.settlementNetwork ? { network: publisher.settlementNetwork } : {}),
+    // Per-tenant settlement chain — ALWAYS stamped, never conditional. A quote crosses a process boundary — the control
+    // plane prices, a publisher's own runtime builds the 402 from it — and an absent
+    // `network` there is not "the fleet default", it is "whatever THAT runtime's env says".
+    // Measured 2026-09-02: a tenant with no per-tenant chain quoted `eip155:5042002`
+    // (arcTestnet, the SDK's zod default) on a fleet running Base mainnet, so a live 402
+    // advertised testnet USDC to paying agents. The price and the chain it is payable on
+    // are one fact; they travel together or neither is trustworthy.
+    network: publisher.settlementNetwork ?? activeNetwork().chainName,
   };
 }

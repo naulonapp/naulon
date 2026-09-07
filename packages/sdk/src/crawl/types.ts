@@ -30,6 +30,19 @@ export interface FetchResult {
   status: number;
   text(): Promise<string>;
   json(): Promise<unknown>;
+  /**
+   * One response header by name, case-insensitively; multi-values joined with `, `.
+   *
+   * A METHOD rather than a `headers` record on purpose: a native `Response` already satisfies this
+   * interface structurally, and that is load-bearing — fakes across two repos hand `fetch`'s own
+   * result straight to a `Fetcher`. A property called `headers` would collide with
+   * `Response.headers: Headers` and break every one of them.
+   *
+   * Optional because a hand-written fake has no reason to carry headers, and every adapter that
+   * shipped before RSL discovery reads only the body. It exists for the one discovery channel that
+   * lives nowhere else: RSL's `Link: <…>; rel="license"; type="application/rsl+xml"`.
+   */
+  header?(name: string): string | undefined;
 }
 
 /** The ONLY way an adapter reaches the network. The crawl orchestrator injects an impl that
@@ -37,7 +50,15 @@ export interface FetchResult {
  *  Adapters never import `fetch`/`node:http` — that keeps the SSRF guard un-bypassable and the
  *  whole module network-testable with a plain fake. */
 export interface Fetcher {
-  (url: string, init?: { headers?: Record<string, string> }): Promise<FetchResult>;
+  (url: string, init?: {
+    headers?: Record<string, string>;
+    /** Defaults to GET. `POST` exists for exactly one caller: RSL's Open Licensing Protocol, whose
+     *  `/token` endpoint is a POST — and which must go through the SAME guarded path as everything
+     *  else, because its URL comes out of a publisher-controlled `server` attribute. */
+    method?: "GET" | "POST";
+    /** Request body, already encoded. Ignored on GET. */
+    body?: string;
+  }): Promise<FetchResult>;
 }
 
 /* ── what an adapter discovers ────────────────────────────────────────────────── */
@@ -96,6 +117,14 @@ export interface CrawlConfig {
   /** Fallback payTo when an author is unmapped or the source stated none. Optional —
    *  absent means an unmapped article is reported, not written. */
   defaultWallet?: string;
+  /** The file extensions the publisher opted in to tolling (`gateScope.includeExtensions` —
+   *  lowercase, dotless). Adapters that can enumerate a site's FILES as well as its posts discover
+   *  them only for these; empty or absent ⇒ articles only, which is the historical behaviour.
+   *
+   *  It is the same list the gate reads, for the same reason the slug derivation already carries
+   *  it: a file the gate tolls and the crawl never discovered has no credits, so it serves free
+   *  forever while every dashboard reports the site as configured. Nothing warns about that. */
+  includeExtensions?: readonly string[];
 }
 
 /* ── capabilities: what an adapter needs, and what a host can give ────────────── */
@@ -170,6 +199,12 @@ export interface SourceAdapter<Id extends string = SourceAdapterId> {
    *  opposed to every URL on the site (a sitemap). A host may infer article prefixes from a
    *  curated source's URLs; it must not from an uncurated one. */
   readonly curated?: boolean;
+  /** True when this source can enumerate a site's non-HTML FILES, not only its posts, given a
+   *  non-empty `config.includeExtensions`. Declared rather than inferred because a publisher who
+   *  opts `pdf` in to the toll needs to be told, on the page where they tick it, whether their
+   *  catalogue can find one — and the alternative to declaring it is a hard-coded list of adapter
+   *  ids somewhere in a UI, which is drift waiting to happen. */
+  readonly files?: boolean;
   /** What this adapter needs from the host. Absent ⇒ nothing beyond the guarded origin fetch. */
   readonly requires?: AdapterRequirements;
   /** Cheap probe: could this adapter discover THIS origin? MUST use only the granted fetchers.

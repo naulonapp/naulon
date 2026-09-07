@@ -252,3 +252,201 @@ test("without `observe` the middleware behaves exactly as before (no throw, no r
   const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0") }));
   assert.equal(out.response?.status, 402);
 });
+
+// ── The control plane owns the policy ────────────────────────────────────────────
+// Reproductions of the two failures measured on a live site on 2026-09-02, where the
+// dashboard held the policy and the deployed bundle held a literal. There was no test
+// here that could have caught either, because the config had no way to arrive at all.
+
+import { staticPublisherConfigSource, httpPublisherConfigSource } from "./config-source.ts";
+import { resolvePublisher } from "./middleware.ts";
+
+const SEARCHBOT = "Mozilla/5.0 AppleWebKit/537.36; compatible; OAI-SearchBot/1.0; +https://openai.com/searchbot";
+
+test("a search indexer reads FREE by default — tolling one deindexes the site", async () => {
+  const mw = naulonMiddleware(opts);
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": SEARCHBOT } }));
+  assert.equal(out.response, null);
+});
+
+test("crawlerPolicy.charge from the CONTROL PLANE tolls that indexer", async () => {
+  // The prod bug: this policy sat in the tenant record while the site read a literal, so an
+  // indexer the publisher had explicitly set to charge read every article free for weeks.
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({
+      enforcement: { articlePrefixes: ["essays"], crawlerPolicy: { allow: [], block: [], charge: ["oai-searchbot"] } },
+    }),
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": SEARCHBOT } }));
+  assert.equal(out.response?.status, 402);
+});
+
+test("crawlerPolicy.block from the control plane refuses BEFORE payment", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({
+      enforcement: { articlePrefixes: ["essays"], crawlerPolicy: { allow: [], block: ["badbot"], charge: [] } },
+    }),
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "BadBot/1.0" } }));
+  assert.equal(out.response?.status, 403);
+});
+
+test("gateScope:site from the control plane tolls a path no local prefix covers", async () => {
+  // Second prod symptom: the dashboard said whole-site, the bundle said ["articles"], and
+  // every other page on the site was free to agents while the operator believed otherwise.
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({
+      enforcement: { gateScope: { mode: "site", excludePrefixes: ["api"] } },
+    }),
+  });
+  const tolled = await mw(new Request("http://h/about", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(tolled.response?.status, 402, "site mode covers /about");
+  const excluded = await mw(new Request("http://h/api/credits/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(excluded.response, null, "excludePrefixes still carves out the publisher's own API");
+});
+
+test("the licence issuer is pinned to the config in force, not a literal read at mount", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    publisher: { articlePrefixes: ["essays"], licenseIdentity: "naulon:stale.example" },
+    config: staticPublisherConfigSource({
+      enforcement: { articlePrefixes: ["essays"], licenseIdentity: "naulon:h" },
+    }),
+    licenseVerification: {},
+    fetchImpl: (async () => new Response(JSON.stringify({ keys: [] }), { status: 200 })) as unknown as typeof fetch,
+  });
+  // A licence is presented; verification cannot succeed against an empty JWKS, so the read
+  // falls through to a 402 — the assertion is that this path runs at all without throwing on
+  // the mount-time issuer that is no longer true.
+  const out = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": "not-a-jws" } }),
+  );
+  assert.equal(out.response?.status, 402);
+});
+
+test("resolvePublisher: remote wins per FIELD, local survives where remote is silent", () => {
+  const merged = resolvePublisher(
+    { articlePrefixes: ["old"], licenseIdentity: "naulon:local", seoAllowlist: ["bingbot"] },
+    { articlePrefixes: ["new"], crawlerPolicy: { allow: [], block: [], charge: ["oai-searchbot"] } },
+  ) as Record<string, unknown>;
+  assert.deepEqual(merged["articlePrefixes"], ["new"]);
+  assert.deepEqual(merged["seoAllowlist"], ["bingbot"], "a field the tenant never set keeps the local floor");
+  assert.equal(merged["licenseIdentity"], "naulon:local");
+  assert.ok(merged["crawlerPolicy"]);
+});
+
+test("resolvePublisher: neither source ⇒ undefined (the caller passes through)", () => {
+  assert.equal(resolvePublisher(undefined, undefined), undefined);
+  assert.equal(resolvePublisher(undefined, {}), undefined);
+});
+
+test("a control plane that cannot be reached passes the request through — never a 500", async () => {
+  const mw = naulonMiddleware({
+    quote,
+    verifyUrl: opts.verifyUrl,
+    apiKey: opts.apiKey,
+    config: httpPublisherConfigSource("http://cloud/c", "k", {
+      fetchImpl: (async () => {
+        throw new Error("ECONNREFUSED");
+      }) as unknown as typeof fetch,
+      onFailure: () => {},
+    }),
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(out.response, null, "a lookup failure on our side must not break their site");
+});
+
+// ---------------------------------------------------------------------------
+// The in-app path speaks the same wire as the hosted gate (2026-09-06).
+// ---------------------------------------------------------------------------
+// The shared `opts` above quotes 5000 USDC — fine for "is there a 402", useless for reading
+// a price off the wire. These use a real citation-toll figure: $0.005, i.e. 5000 micro-USDC.
+const pennyQuote = localQuoteSource(async () =>
+  ({
+    slug: "essays/x",
+    kind: "read",
+    title: "X",
+    price: 0.005,
+    payees: [{ address: `0x${"a".repeat(40)}`, shareBps: 10000 }],
+    extraLegs: [],
+    coauthorSplit: false,
+  }) as never,
+);
+const pennyOpts = { ...opts, quote: pennyQuote };
+
+// Until now it emitted a header-only, zero-byte 402: no price a Cloudflare-trained
+// crawler could read, and nothing at all for a buyer that does not decode x402.
+// ---------------------------------------------------------------------------
+
+test("in-app 402 carries crawler-price, the same figure the legs sum to", async () => {
+  const mw = naulonMiddleware(pennyOpts);
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(out.response?.status, 402);
+  assert.equal(out.response?.headers.get("crawler-price"), "USD 0.005", "5000 micro on a $0.005 toll");
+});
+
+test("in-app 402 carries the advertisement body, not zero bytes", async () => {
+  const mw = naulonMiddleware(pennyOpts);
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.match(out.response?.headers.get("content-type") ?? "", /application\/json/);
+  const body = JSON.parse(await out.response!.text());
+  assert.equal(body.error, "payment_required");
+  assert.equal(body.offer.rail, "x402");
+  assert.equal(body.offer.priceMicros, 5000);
+  assert.equal(body.offer.publisher, "h", "the host the buyer actually addressed");
+  assert.equal(body.offer.endpoint, "/essays/x");
+  assert.equal(body.offer.metadata.crawlerPrice, out.response?.headers.get("crawler-price"));
+});
+
+test("a crawler's stated ceiling is REPORTED on the verdict, never gating", async () => {
+  const mw = naulonMiddleware(pennyOpts);
+  const within = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "crawler-max-price": "USD 0.01" } }),
+  );
+  const over = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "crawler-max-price": "USD 0.001" } }),
+  );
+  const silent = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.match(within.response?.headers.get("X-Naulon-Verdict") ?? "", /within crawler budget/);
+  assert.match(over.response?.headers.get("X-Naulon-Verdict") ?? "", /over crawler budget/);
+  assert.doesNotMatch(silent.response?.headers.get("X-Naulon-Verdict") ?? "", /crawler budget/);
+  assert.equal(over.response?.status, 402, "a crawler that will not pay enough still gets the same 402");
+  assert.equal(within.response?.status, 402, "and so does one that would — naulon cannot auto-charge");
+});
+
+test("the verdict header is sanitized before it reaches the wire", async () => {
+  const mw = naulonMiddleware({
+    ...pennyOpts,
+    publisher: { ...pennyOpts.publisher, crawlerPolicy: [{ match: "GPTBot", action: "charge" }] } as never,
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.doesNotThrow(() => new Headers().set("X-Naulon-Verdict", out.response!.headers.get("X-Naulon-Verdict")!));
+});
+
+test("crawler-charged comes from the control plane's settled figure, never the ask", async () => {
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ ok: true, settlementRef: "0xabc", chargedMicro: "4000" }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...pennyOpts, fetchImpl: fakeFetch });
+  const out = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
+  );
+  assert.equal(out.response, null);
+  assert.equal(out.setHeaders?.["crawler-charged"], "USD 0.004", "the settled 4000, not the 5000 ask");
+});
+
+test("no reported figure means no crawler-charged — never the ask as a stand-in", async () => {
+  for (const receipt of [{ ok: true }, { ok: true, chargedMicro: "" }, { ok: true, chargedMicro: "4.2" }, { ok: true, chargedMicro: "-1" }, { ok: true, chargedMicro: "9".repeat(16) }]) {
+    const fakeFetch = (async () => new Response(JSON.stringify(receipt), { status: 200 })) as unknown as typeof fetch;
+    const mw = naulonMiddleware({ ...pennyOpts, fetchImpl: fakeFetch });
+    const out = await mw(
+      new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
+    );
+    assert.equal(out.response, null, JSON.stringify(receipt));
+    assert.equal(out.setHeaders?.["crawler-charged"], undefined, `overstating money is worse than silence: ${JSON.stringify(receipt)}`);
+  }
+});

@@ -31,11 +31,15 @@ function escapeRe(s: string): string {
 // distinct prefix configs, not one per request, and a crawl sweep matches one config
 // against thousands of URLs. Either way the regex is compiled once.
 const articleReCache = new Map<string, RegExp>();
-function articleRe(prefixes: string[]): RegExp {
-  const key = prefixes.join("|");
+function articleRe(prefixes: string[], depth: PrefixDepth): RegExp {
+  const key = `${depth}\u0000${prefixes.join("|")}`;
   let re = articleReCache.get(key);
   if (!re) {
-    re = new RegExp(`^/(?:${prefixes.map(escapeRe).join("|")})/([^/?#]+)`);
+    // `segment` stops at the next `/`; `rest` takes the whole remainder. The two differ ONLY
+    // for a nested path, and the cache key carries the depth because a publisher that flips
+    // it must not be served the previously compiled matcher.
+    const tail = depth === "rest" ? "([^?#]+)" : "([^/?#]+)";
+    re = new RegExp(`^/(?:${prefixes.map(escapeRe).join("|")})/${tail}`);
     articleReCache.set(key, re);
   }
   return re;
@@ -43,7 +47,12 @@ function articleRe(prefixes: string[]): RegExp {
 
 /** Gate control routes are never articles, whatever prefixes a publisher configures. */
 function isControlRoute(pathname: string): boolean {
-  return pathname.startsWith("/.well-known/") || pathname.startsWith("/licenses/");
+  // Repeated leading slashes are collapsed FIRST. Hono routes `//.well-known/naulon-jwks.json`
+  // to the catch-all rather than the JWKS handler, so a raw `startsWith` let that spelling reach
+  // the toll — free before `includeExtensions`, chargeable after it, which is a regression a
+  // client joining a base URL ending in `/` produces by accident.
+  const p = pathname.replace(/^\/+/, "/");
+  return p.startsWith("/.well-known/") || p.startsWith("/licenses/");
 }
 
 /**
@@ -66,34 +75,165 @@ export function decodeSlug(raw: string): string | null {
 }
 
 /**
+ * How much of the path after a matching prefix becomes the slug.
+ *
+ * `"segment"` (the default, and what every publisher configured before this existed) takes ONE
+ * segment: `/papers/quantum-x` → `quantum-x`. `"rest"` takes the whole remainder:
+ * `/papers/2026/quantum-x.pdf` → `2026/quantum-x.pdf`.
+ *
+ * **Why this is a publisher choice and not a bug fix with one right answer.** They differ only
+ * on a nested path, and each is wrong for the other's URL shape:
+ *
+ * | path | `segment` | `rest` |
+ * |---|---|---|
+ * | `/papers/quantum-x` | `quantum-x` | `quantum-x` |
+ * | `/papers/2026/quantum-x` | **`2026`** — every article that year collides | `2026/quantum-x` |
+ * | `/papers/quantum-x/figures` | `quantum-x` — a sub-page keys to its article | **`quantum-x/figures`** — a separate key |
+ *
+ * A dated-URL publisher (`/blog/2026/09/post`) is silently broken under `segment`: every post in
+ * a month keys to the same slug, so the credits lookup answers one article's contributors for all
+ * of them, or 404s and gives the lot away free. A publisher whose articles have sub-pages is
+ * broken under `rest`. Neither default can serve both, which is why this is opt-in and why the
+ * absent value reproduces today's behaviour byte for byte.
+ */
+export type PrefixDepth = "segment" | "rest";
+
+/** Options for prefix-mode slugging. Absent reproduces today's behaviour exactly. */
+export interface PrefixSlugOpts {
+  /** See {@link PrefixDepth}. Absent ⇒ `"segment"`. */
+  depth?: PrefixDepth;
+}
+
+/**
  * Article slug from a request path like `/essays/on-stillness` (a trailing query/hash is
  * tolerated), using the publisher's article prefixes. Returns the decoded slug, or `null`
  * when the path is not a gateable article — no prefix matches, it is a gate control route,
  * there are no usable prefixes, or the key does not decode.
+ *
+ * `opts.depth` MUST be the one the publisher is configured with everywhere this is called —
+ * the gate, the crawler and the buy-side payee check all derive the key independently, and a
+ * disagreement means the crawl stages a row under a key the gate never asks for, or the buy
+ * side refuses a payment for the publisher's own wallet. That failure has happened once
+ * already for the site-mode branch (§PAYEE-SITE-MODE).
+ *
+ * A `"rest"` slug keeps a trailing slash if the path had one (`/papers/a/` → `a/`), exactly as
+ * site mode keeps it in the full pathname. That is deliberate consistency with the shipped
+ * function, not an oversight: normalising here and not there would give the two modes different
+ * answers for the same URL.
  */
-export function slugFromPath(path: string, prefixes: string[]): string | null {
+export function slugFromPath(path: string, prefixes: string[], opts?: PrefixSlugOpts): string | null {
   if (isControlRoute(path)) return null;
   // Drop empty prefixes — an empty alternative would make the regex match `//x` or any
   // leading slash and gate routes the publisher never opted in.
   const clean = prefixes.filter(Boolean);
   if (clean.length === 0) return null;
-  const m = path.match(articleRe(clean));
+  const m = path.match(articleRe(clean, opts?.depth ?? "segment"));
   return m ? decodeSlug(m[1]!) : null;
 }
 
-const STATIC_EXT_RE = /\.(css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf|eot|mp4|webm|mp3|pdf|txt|xml|json)$/i;
-const DISCOVERY_RE = /^\/(robots\.txt|sitemap[^/]*|rss[^/]*|atom[^/]*|feed[^/]*|favicon\.ico)$/i;
+/**
+ * The extensions site mode keeps FREE by default — the set `includeExtensions` claws back from.
+ *
+ * Data, not a regex literal, because it has two consumers beyond the matcher below and both of
+ * them were re-deriving it: the crawler decides which files to discover, and a publisher's RSL
+ * document declares which paths are unpriced. A hand-copied list in either would drift from the
+ * gate silently — the crawl would stage a row for a path the gate serves free, or the licence
+ * would price a file nobody is charged for. One owner, three readers.
+ */
+export const STATIC_EXTENSIONS: readonly string[] = [
+  "avif", "css", "eot", "gif", "ico", "jpeg", "jpg", "js", "json", "map", "mjs", "mp3", "mp4",
+  "otf", "pdf", "png", "svg", "ttf", "txt", "webm", "webp", "woff", "woff2", "xml",
+];
+
+const STATIC_EXT_RE = new RegExp(`\\.(${STATIC_EXTENSIONS.join("|")})$`, "i");
+
+/**
+ * The ORIGINAL root-anchored discovery matcher. Kept, so nothing that was free before
+ * can become tolled by the name-shaped rules below — the union is strictly more free.
+ */
+const DISCOVERY_ROOT_RE = /^\/(robots\.txt|sitemap[^/]*|rss[^/]*|atom[^/]*|feed[^/]*|favicon\.ico)$/i;
+
+/**
+ * Discovery by FILENAME, at any depth — because the root-anchored rule above was never
+ * enough and `includeExtensions` is what made that expensive.
+ *
+ * Measured against the shipped root-only matcher with `xml`/`txt` opted in: `/sitemap.xml`
+ * was free but `/wp-sitemap.xml` (WordPress core since 5.5), `/wp-sitemap-posts-post-1.xml`,
+ * `/post-sitemap.xml` (Yoast), `/index.xml` (Hugo's feed), `/en/sitemap.xml` and
+ * `/blog/feed.xml` all TOLLED. Paywalling a sitemap starves the catalog agents buy from —
+ * the one outcome site mode exists to refuse — and it does it to the largest CMS on the web.
+ *
+ * These match the LAST path segment, so `/papers/feedback-loops.pdf` still tolls (it is not
+ * a feed) while `/feed/` does not (WordPress's canonical feed carries a trailing slash, which
+ * the old `feed[^/]*$` never matched either).
+ */
+const DISCOVERY_FILE_RE = /^(robots\.txt|llms\.txt|ads\.txt|app-ads\.txt|security\.txt|favicon\.ico)$/i;
+/** `sitemap.xml`, `wp-sitemap.xml`, `post-sitemap.xml`, `sitemap_index.xml`, `sitemap-1.xml.gz`. */
+const SITEMAP_FILE_RE = /(^|[-_.])sitemap([-_.][^/]*)?\.xml(\.gz)?$/i;
+/** A feed only when the WHOLE segment is one — never a mere prefix. */
+const FEED_FILE_RE = /^(feed|feeds|rss|atom|index)(\.(xml|rss|atom|json))?$/i;
+
+/** The last non-empty path segment, so a trailing slash (`/feed/`) is read as `feed`. */
+function lastSegment(pathname: string): string {
+  const parts = pathname.split("/").filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1]! : "";
+}
+
+/** True when this path is a discovery surface that must never toll, whatever is opted in. */
+function isDiscovery(pathname: string): boolean {
+  if (DISCOVERY_ROOT_RE.test(pathname)) return true;
+  const seg = lastSegment(pathname);
+  return DISCOVERY_FILE_RE.test(seg) || SITEMAP_FILE_RE.test(seg) || FEED_FILE_RE.test(seg);
+}
+
+/**
+ * Options for site-mode slugging. Absent — and an empty list — reproduce today's
+ * behaviour exactly, which is what lets this field ship without re-keying a single
+ * stored slug: it can only turn a path that had NO key into one that has one, never
+ * change the key of a path that already had one.
+ */
+export interface SiteSlugOpts {
+  /**
+   * Extensions the publisher has opted INTO tolling — lowercase, no leading dot
+   * (`["pdf", "json"]`). Everything else in `STATIC_EXT_RE` stays free.
+   *
+   * ORDER IS THE SAFETY PROPERTY. Control routes and discovery surfaces are refused
+   * BEFORE this is consulted, so opting into `xml` cannot toll a sitemap and opting
+   * into `json` cannot toll the JWKS. Tolling discovery would starve the catalog the
+   * agents buy from, which is the one thing site mode has always refused to do.
+   *
+   * Normalised at the write path by `normalizeIncludeExtensions` (`@naulon/shared`);
+   * this function is pure and assumes that has already run.
+   */
+  includeExtensions?: readonly string[];
+}
+
+/** A pathname's extension, lowercase and dotless, or `null` when it has none. */
+function extensionOf(pathname: string): string | null {
+  const m = pathname.match(/\.([A-Za-z0-9]+)$/);
+  return m ? m[1]!.toLowerCase() : null;
+}
 
 /**
  * Site-mode slug: the full decoded pathname, or `null` for the surfaces that must stay
  * free — gate control routes, discovery (robots/sitemaps/feeds/favicon), static assets by
- * extension (deliberately including `.txt`/`.xml`/`.json`: machine-readable surfaces never
- * toll), and the publisher's own `excludePrefixes`.
+ * extension (`.txt`/`.xml`/`.json` included: machine-readable surfaces do not toll unless
+ * the publisher opts them in through `opts.includeExtensions`), and the publisher's own
+ * `excludePrefixes`.
  */
-export function slugFromSitePath(path: string, excludePrefixes: string[]): string | null {
+export function slugFromSitePath(path: string, excludePrefixes: string[], opts?: SiteSlugOpts): string | null {
   const pathname = path.split(/[?#]/, 1)[0]!;
   if (isControlRoute(pathname)) return null;
-  if (DISCOVERY_RE.test(pathname) || STATIC_EXT_RE.test(pathname)) return null;
+  if (isDiscovery(pathname)) return null;
+  if (STATIC_EXT_RE.test(pathname)) {
+    const ext = extensionOf(pathname);
+    // `gate_scope` is untyped jsonb with no CHECK, and both stores cast it rather than parse it.
+    // A string value would make `.includes` a SUBSTRING matcher (`"json"` tolls every `.js`), and
+    // an object or number throws a TypeError out of decide() — a 503 for every request on that
+    // tenant, humans included. Fail toward free instead.
+    const allow = Array.isArray(opts?.includeExtensions) ? opts.includeExtensions : [];
+    if (ext === null || !allow.includes(ext)) return null;
+  }
   const clean = excludePrefixes.filter(Boolean);
   if (clean.some((p) => pathname === `/${p}` || pathname.startsWith(`/${p}/`))) return null;
   return decodeSlug(pathname);
@@ -114,13 +254,15 @@ function pathnameOf(url: string): string | null {
  * spelling of `slugFromPath`, so a staged catalog row is keyed exactly as the gate will key
  * the request that comes for it.
  */
-export function deriveSlug(url: string, prefixes: string[]): string | null {
+export function deriveSlug(url: string, prefixes: string[], opts?: PrefixSlugOpts): string | null {
   const pathname = pathnameOf(url);
-  return pathname === null ? null : slugFromPath(pathname, prefixes);
+  return pathname === null ? null : slugFromPath(pathname, prefixes, opts);
 }
 
-/** Site-mode slug from a full URL — the crawler-side spelling of `slugFromSitePath`. */
-export function deriveSiteSlug(url: string, excludePrefixes: string[]): string | null {
+/** Site-mode slug from a full URL — the crawler-side spelling of `slugFromSitePath`.
+ *  `opts` MUST be the same one the gate is configured with, or the crawler stages a row
+ *  under a key the gate never asks for (or stages nothing for a path the gate tolls). */
+export function deriveSiteSlug(url: string, excludePrefixes: string[], opts?: SiteSlugOpts): string | null {
   const pathname = pathnameOf(url);
-  return pathname === null ? null : slugFromSitePath(pathname, excludePrefixes);
+  return pathname === null ? null : slugFromSitePath(pathname, excludePrefixes, opts);
 }

@@ -25,11 +25,14 @@ import { licensing } from "./license.ts";
 import { revocations } from "./revocation.ts";
 import { verifyPopProof } from "./pop.ts";
 import { slugFromPath, slugFromSitePath } from "@naulon/sdk/slug";
+import { routeTemplateFor } from "./bazaar.ts";
 import {
   externalSchemeOf,
   externalUrl,
   type ExternalSchemeOpts,
   getConfig,
+  licenseCoversPath,
+  licenseGrant,
   popBoundAddress,
   verifyLicense,
   type JwkSet,
@@ -113,7 +116,15 @@ export async function licenseEntitlesRead(
   });
   if (!r.ok) return false;
   const n = r.claims.naulon;
-  if (n.slug !== slug) return false;
+  // A CITATION RECORD grants nothing — that is why it is allowed to be permanent. Reading
+  // one as access would turn an unexpiring token into an unrevocable free-read credential,
+  // which is precisely what the CLT's TTL cap exists to prevent. Unknown grants resolve to
+  // "none" here, so a grant kind invented later cannot become access on an old deployment.
+  if (licenseGrant(n) !== "read") return false;
+  // Scope, when present, is matched against the request PATH — prefix mode's slug is a
+  // captured segment, not a path, so patterns could never match it. Unscoped licences keep
+  // exact slug equality, byte-identical to the behaviour before W6.
+  if (!licenseCoversPath(n, { slug, path: new URL(req.url).pathname })) return false;
   if (requestedKind === "citation" && n.kind !== "citation") return false; // no read→citation upgrade
   if (cfg.LICENSE_ONLINE_CHECK && (await revocations.isRevoked(r.claims.jti))) return false;
   // Holder-of-key: a cnf-bound license is NOT a bearer right — require a fresh
@@ -213,8 +224,17 @@ export interface DecideInput {
   publisher: PublisherConfig;
   /** Single timestamp for build402; the caller reuses it for settle/event/mint. */
   now: number;
-  /** Price + payees resolver — local (own data) or hosted (`/quote`). */
-  quote: (publisher: PublisherConfig, slug: string, kind: TollKind) => Promise<Quote | null | undefined>;
+  /** Price + payees resolver — local (own data) or hosted (`/quote`).
+   *  `path` is the request PATHNAME, carried so the resolver can select a per-path price rule.
+   *  Deliberately the pathname and not `input.path`, which also carries the query string: a
+   *  licence scope already matches on the pathname alone (`licenseCoversPath`), and a price that
+   *  could move with a query string is one an agent could shop for. */
+  quote: (
+    publisher: PublisherConfig,
+    slug: string,
+    kind: TollKind,
+    path?: string,
+  ) => Promise<Quote | null | undefined>;
   /** Web-Bot-Auth options (e.g. `allowInsecureHttp` on a dev/plaintext origin). */
   botAuthOpts?: BotAuthOptions;
   /** API mode — verify a re-read license against the MINTING gate's JWKS + issuer
@@ -228,8 +248,14 @@ export async function decide(input: DecideInput): Promise<Decision> {
 
   const slug =
     publisher.gateScope?.mode === "site"
-      ? slugFromSitePath(path, publisher.gateScope.excludePrefixes)
-      : slugFromPath(path, publisher.articlePrefixes);
+      ? slugFromSitePath(path, publisher.gateScope.excludePrefixes, {
+          includeExtensions: publisher.gateScope.includeExtensions,
+        })
+      : slugFromPath(path, publisher.articlePrefixes, {
+          // Absent gateScope IS prefix mode, so read the depth off the union only when it is
+          // actually the prefixes variant. Undefined ⇒ "segment", unchanged.
+          depth: publisher.gateScope?.mode === "prefixes" ? publisher.gateScope.depth : undefined,
+        });
 
   // Non-article routes: pure passthrough (assets, home, RSS...).
   if (!slug) return { kind: "passthrough", verdict: "non-article" };
@@ -297,17 +323,25 @@ export async function decide(input: DecideInput): Promise<Decision> {
     return { kind: "reread", tollKind, obs };
   }
 
-  // Price it.
-  const q = await quote(publisher, slug, tollKind);
+  // Price it. The pathname (not `path`, which carries the query string) selects the per-path
+  // price rule — the same input, in the same dialect, that a licence scope matches against.
+  const q = await quote(publisher, slug, tollKind, new URL(raw.url).pathname);
   if (!q) return { kind: "passthrough", verdict: "unknown-article" }; // unknown article — don't gate.
 
   // The resource identifier goes into a SIGNED quote, so it must be the URL the buyer
   // actually fetched — not the one this process observed. TLS terminates at the edge in
   // every real deployment, so `raw.url` reads `http:` for an `https:` read.
+  // Discovery catalog key. Prefix mode at single-segment depth only — see
+  // `routeTemplateFor`; site mode and deeper scopes deliberately get none.
+  const routeTemplate =
+    publisher.gateScope?.mode === "site" || publisher.gateScope?.depth
+      ? undefined
+      : routeTemplateFor(new URL(raw.url).pathname, publisher.articlePrefixes ?? []);
   const { legs, header } = build402(
     q,
     externalUrl(raw, { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS }),
     now,
+    routeTemplate,
   );
 
   const payment = raw.headers.get(PAYMENT_SIGNATURE_HEADER);

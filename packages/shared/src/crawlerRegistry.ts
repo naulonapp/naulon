@@ -33,6 +33,13 @@
  *     serves a REAL directory (1 key) — deliberately NOT given a row, because YouBot is
  *     still in the "known gap" list above and a signer with no crawler row is nothing for
  *     a publisher to act on. Add both together or neither.
+ *   • Probed 2026-09-02 — crawler.exa.ai serves a REAL directory (1 Ed25519 key, kid
+ *     sDCpsJpgItYcmF_KhZozOUGIGL6a49yxE3f0yQR5SIA, correct content-type). The APEX exa.ai
+ *     404s with SPA HTML, so this is the first row whose directoryHost is NOT an apex — the
+ *     operator publishes under the crawler subdomain and says so on its own page. Exa signs
+ *     EVERY request (Signature/Signature-Input/Signature-Agent), which means the gate's
+ *     verified-identity branch charges it at 0.98 whatever the UA row below does; the row
+ *     exists so a publisher can SEE the crawler and decide, not to make the toll happen.
  *   • NOT publishing (re-probed 2026-08-18): anthropic.com/claude.com, perplexity.ai,
  *     google.com, bing.com, apple.com, amazon.com, bytedance.com, duckduckgo.com,
  *     cohere.com, brave.com, huggingface.co, cloudflare.com. (openai.com 404s — OpenAI's
@@ -57,6 +64,10 @@
  *   • Verified complete against their own docs, no change needed: OpenAI (GPTBot,
  *     ChatGPT-User, OAI-SearchBot), Anthropic (ClaudeBot, Claude-User, Claude-SearchBot —
  *     and still no anthropic-ai/claude-web), Apple (Applebot, Applebot-Extended).
+ *   • Added 2026-09-02: ExaSearchBot (Exa), read off crawler.exa.ai — see the divergence
+ *     comment on its row. Exa was the second signer found publishing a real key directory
+ *     while having no row here, which is the you.com situation resolved the other way: this
+ *     one gets the row, because unlike YouBot its operator publishes a crawler page.
  *   • Known gap, deliberate: xAI (Grok-User/GrokBot), cohere-ai, YouBot, Diffbot and
  *     omgili publish NO operator documentation page. The bar above is the operator's own
  *     doc, cross-checked against Cloudflare Radar / darkvisitors — a token sourced only
@@ -119,6 +130,23 @@ export const CRAWLER_REGISTRY: RegistryCrawler[] = [
   { id: "meta-externalfetcher", name: "Meta-ExternalFetcher", operator: "Meta", fragment: "meta-externalfetcher", category: "ai-assistant", defaultCharged: true, directoryHost: "meta.com" },
   { id: "amzn-user", name: "Amzn-User", operator: "Amazon", fragment: "amzn-user", category: "ai-assistant", defaultCharged: true },
   { id: "mistralai-user", name: "MistralAI-User", operator: "Mistral", fragment: "mistralai-user", category: "ai-assistant", defaultCharged: true },
+  // ExaSearchBot is the SECOND deliberate divergence from an operator's own doc, and it
+  // diverges for a different reason than PerplexityBot above — not evasion, product shape.
+  // Exa's crawler page calls it a search engine ("Its purpose is search and retrieval:
+  // connecting people and applications to your content and sending them back to your site"),
+  // which by the search rule below would read free. Two facts decide otherwise, both from
+  // Exa's own surfaces:
+  //   - The sentence for what the index is FOR is "allows users to find, retrieve, and cite
+  //     your content". An application retrieving and citing IS the moment naulon prices.
+  //   - Exa's /contents endpoint returns the FULL page text to an API caller, served from
+  //     cache by default (maxAgeHours + livecrawlTimeout re-fetch the origin on demand). An
+  //     agent handed that text never reaches the origin, so "sending them back to your site"
+  //     describes the consumer search UI, not the API. Exa documents exactly ONE token for
+  //     both halves, so the tollable half cannot be separated from the free one.
+  // The cost is real, which is why this is a decision and not a default: charging it drops
+  // the publisher out of Exa's index, consumer surface included. Read off crawler.exa.ai
+  // ("Last Updated: July 30, 2026") on 2026-09-02.
+  { id: "exasearchbot", name: "ExaSearchBot", operator: "Exa", fragment: "exasearchbot", category: "ai-assistant", defaultCharged: true, directoryHost: "crawler.exa.ai" },
   // naulon's own buy-side citing agent (the wayfarer). Not in the gate's KNOWN_AGENT_UA
   // (defaultCharged:false) — it isn't auto-charged by UA; it answers a 402 by paying via
   // x402, custody-free. directoryHost is live + signature-valid (see the note above).

@@ -23,6 +23,10 @@
  * glob matcher should not pull the whole contract to get it.
  */
 export { matchGlob, passesGlobs } from "./glob.ts";
+// The opted-in file rule, exported for the same reason the glob matcher is: a host with its own
+// adapters must be able to answer "is this URL a file this publisher sells?" the way the shipped
+// adapters do, rather than re-deriving it and keying a different set than the gate.
+export { extensionOf, isOptedInFile, mediaExtensions } from "./media.ts";
 export { parseXml, toArray, textOf } from "./xml.ts";
 
 /* The adapter seam: the port, the registry, the adapters this package ships, and the two

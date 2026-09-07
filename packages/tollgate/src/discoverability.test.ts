@@ -92,3 +92,61 @@ test("a human request is not tolled and gets no payment Link", async () => {
   assert.notEqual(res.status, 402);
   assert.equal(res.headers.get("Link"), null);
 });
+
+// ── the manifest must describe the scope and chain actually in force ─────────────
+// Both of these advertised the DEFAULT rather than the tenant's own setting, so the one
+// document an agent reads before paying disagreed with the 402 it then received.
+
+test("a site-scoped publisher advertises site scope, not a prefix list that understates it", () => {
+  // The reference publisher's shape: gate_scope {mode:"site"} with a vestigial
+  // articlePrefixes:["articles"] left over from prefix mode. Printing that list told an
+  // agent four-fifths of the site was free to crawl, when none of it was.
+  const m = buildX402Manifest({
+    ...fixturePublisher(),
+    gateScope: { mode: "site", excludePrefixes: ["api", "auth"] },
+  });
+  assert.equal(m.resources.scope, "site");
+  assert.deepEqual(m.resources.excludePrefixes, ["api", "auth"]);
+  assert.equal(m.resources.pathPrefixes, undefined, "absent is honest; a wrong list is not");
+  assert.match(m.resources.note, /Every path/);
+});
+
+test("a prefix-scoped publisher is unchanged, and says so explicitly", () => {
+  const m = buildX402Manifest(fixturePublisher());
+  assert.equal(m.resources.scope, "prefixes");
+  assert.deepEqual(m.resources.pathPrefixes, ["essays", "articles"]);
+  assert.equal(m.resources.excludePrefixes, undefined);
+});
+
+test("the manifest's chain follows the TENANT's settlementNetwork", async () => {
+  const { getNetwork } = await import("@naulon/shared");
+  const m = buildX402Manifest({ ...fixturePublisher(), settlementNetwork: "base" }, getNetwork("base"));
+  assert.equal(m.payment.network, "eip155:8453");
+  assert.equal(m.payment.chainId, 8453);
+  assert.equal(m.payment.asset, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+});
+
+// ── The proof link, discoverable ──────────────────────────────────────────────
+// A non-SDK buyer reads the manifest to learn the gate's shape. `license.verify` told it where
+// an event could be looked up; it said nothing about the permanent record or the page a reader
+// opens, so a buyer building its own citation block had to know both from documentation.
+test("the manifest advertises the record route and the proof page, host pre-filled", () => {
+  const m = buildX402Manifest(fixturePublisher());
+  assert.equal(m.license.record, "/licenses/{jti}/record");
+  assert.equal(m.license.proof, "https://naulon.app/verify?host=test.host&jti={jti}");
+});
+
+test("the proof template follows VERIFY_PAGE_URL, and keeps a query the page already carries", async () => {
+  const { resetConfig } = await import("@naulon/shared");
+  const prev = process.env.VERIFY_PAGE_URL;
+  process.env.VERIFY_PAGE_URL = "https://self.host/check?lang=de";
+  resetConfig();
+  try {
+    const m = buildX402Manifest(fixturePublisher());
+    assert.equal(m.license.proof, "https://self.host/check?lang=de&host=test.host&jti={jti}");
+  } finally {
+    if (prev === undefined) delete process.env.VERIFY_PAGE_URL;
+    else process.env.VERIFY_PAGE_URL = prev;
+    resetConfig();
+  }
+});

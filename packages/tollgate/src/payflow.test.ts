@@ -151,6 +151,73 @@ test("GET /licenses/:jti is scoped — another publisher's host cannot read the 
   assert.equal(owned.status, 200);
 });
 
+/* ── resolveInAppConfig: the host nothing ROUTES but somebody OWNS ─────────────
+ * A host served by the publisher's own runtime (`@naulon/enforce` in front of their app) is
+ * legitimately absent from whatever routing set `resolve` consults, so `resolve` returns undefined
+ * and this route used to 404 every one of that publisher's licences. Measured against a live
+ * multi-tenant deploy on 2026-09-02: every settlement of every self-served publisher reported "not
+ * on the ledger" while sitting in the ledger — the verification tier inverted for the publishers who
+ * most needed it.
+ *
+ * It is a `createApp` OPTION, not a method on `PublisherResolver`: this is an embedder concern (a
+ * single-tenant gate has no routes-vs-owns distinction at all), and `CreateAppOptions` is already
+ * the seam documented "for a downstream host". It also keeps ONE name for this fallback — the cloud
+ * calls the identical `resolveConfig ?? resolveInAppConfig` shape in its payee authority.
+ */
+
+test("resolveInAppConfig answers when routing does not — the self-served publisher's licence verifies", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const selfServed = createApp(
+    { async resolve() { return undefined; } }, // routes nothing — the in-app shape
+    { resolveInAppConfig: (host) => envPublisherResolver().resolve(host) },
+  );
+  const res = await selfServed.request(`/licenses/${jti}`);
+  assert.equal(res.status, 200, "a host nothing routes but somebody owns must still verify");
+  assert.equal(((await res.json()) as { found: boolean }).found, true);
+});
+
+test("resolveInAppConfig does NOT widen what may be read — a foreign event is the same 404", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const otherOwner = createApp(
+    { async resolve() { return undefined; } },
+    {
+      resolveInAppConfig: async (host) => {
+        const p = await envPublisherResolver().resolve(host);
+        return p ? { ...p, id: "other-tenant" } : undefined;
+      },
+    },
+  );
+  const leaked = await otherOwner.request(`/licenses/${jti}`);
+  assert.equal(leaked.status, 404, "ownership resolves the publisher; it never unlocks another's event");
+  assert.equal(((await leaked.json()) as { found: boolean }).found, false);
+});
+
+test("routing WINS when both answer — the in-app hook is a fallback, never an override", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  let inAppCalls = 0;
+  const both = createApp(envPublisherResolver(), {
+    resolveInAppConfig: async (host) => {
+      inAppCalls++;
+      const p = await envPublisherResolver().resolve(host);
+      return p ? { ...p, id: "other-tenant" } : undefined;
+    },
+  });
+  assert.equal((await both.request(`/licenses/${jti}`)).status, 200);
+  assert.equal(inAppCalls, 0, "a routed host must never consult ownership — routing is the answer");
+});
+
+test("omitting resolveInAppConfig is byte-identical to before the option existed", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const legacy = createApp({ async resolve() { return undefined; } });
+  const res = await legacy.request(`/licenses/${jti}`);
+  assert.equal(res.status, 404);
+  assert.equal(((await res.json()) as { found: boolean }).found, false);
+});
+
 test("GET /licenses/:jti returns 404 for an unknown host (fail-closed, no leak)", async () => {
   const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
   const jti = payload(jws).jti as string;
@@ -218,4 +285,74 @@ test("N-leg: a payment missing the operator leg is rejected — content stays ga
     headers: { "x-naulon-agent": "tester", [PAYMENT_SIGNATURE_HEADER]: sig },
   });
   assert.equal(res.status, 402, "an incomplete multi-leg payment must not unlock content");
+});
+
+// ── W6: the citation record — permanent, and it entitles nothing ────────────────
+// The CLT's 10-minute window is the kill switch for an unrevocable bearer credential.
+// A citation is the opposite job: a reader checks it years later. So the record is a
+// SECOND object minted from the same ledger row, permanent precisely because presenting
+// one buys nothing.
+
+test("GET /licenses/:jti/record mints a permanent record for a paid event", async () => {
+  const jws = (await pay("on-stillness", "citation")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+
+  const res = await app.request(`/licenses/${jti}/record`);
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { jti: string; record: string };
+  assert.equal(body.jti, jti);
+
+  const claims = payload(body.record);
+  assert.equal(claims.jti, jti, "the record is the same ledger row, not a new one");
+  assert.equal("exp" in claims, false, "a record never expires");
+  assert.equal((claims.naulon as { grant: string }).grant, "none");
+  assert.equal((claims.naulon as { settlementRef: string }).settlementRef.length > 0, true);
+});
+
+test("a record verifies against the gate's published JWKS, offline", async () => {
+  const jws = (await pay("the-river-and-the-name", "citation")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const { record } = (await (await app.request(`/licenses/${jti}/record`)).json()) as { record: string };
+
+  const iss = payload(record).iss as string;
+  const r = verifyLicense(record, {
+    // A century on: the property under test is that nothing here consults a clock-bound term.
+    now: Date.now() + 100 * 365 * 24 * 3600 * 1000,
+    expectedIssuer: iss,
+    expectedAudience: iss,
+    jwks: await jwks(),
+  });
+  assert.equal(r.ok, true, "the record must verify from the JWKS alone, forever");
+});
+
+test("a citation record presented as a licence does NOT buy a free read", async () => {
+  // The bypass this split exists to prevent: a permanent token that entitles a re-read
+  // would be an unrevocable free-read credential.
+  const jws = (await pay("on-stillness", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+  const { record } = (await (await app.request(`/licenses/${jti}/record`)).json()) as { record: string };
+
+  const res = await app.request("/essays/on-stillness", {
+    headers: { "x-naulon-agent": "tester", "x-naulon-license": record },
+  });
+  assert.equal(res.status, 402, "a record grants nothing — it must not re-read");
+});
+
+test("an unknown jti has no record — 404, the same shape as the verify tier", async () => {
+  assert.equal((await app.request("/licenses/nope/record")).status, 404);
+});
+
+test("the record route is host-scoped — another tenant cannot mint one", async () => {
+  const jws = (await pay("the-river-and-the-name", "read")).headers.get("x-naulon-license")!;
+  const jti = payload(jws).jti as string;
+
+  const otherTenant = createApp({
+    async resolve(host: string) {
+      const p = await envPublisherResolver().resolve(host);
+      return p ? { ...p, id: "other-tenant" } : undefined;
+    },
+  });
+  const leaked = await otherTenant.request(`/licenses/${jti}/record`);
+  assert.equal(leaked.status, 404, "minting a record must not disclose another tenant's event");
+  assert.equal((await app.request(`/licenses/${jti}/record`)).status, 200, "the owner still can");
 });

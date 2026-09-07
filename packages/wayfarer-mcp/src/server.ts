@@ -43,6 +43,8 @@ import {
   authorizeOrigin,
   buildPopProof,
   decodeHeld,
+  findHeld,
+  heldRequestFor,
   DEFAULT_POLICY,
   discover,
   fetchJwks,
@@ -51,7 +53,7 @@ import {
   getWallet,
   isLive,
   licenseIdentityFor,
-  memoBuyer,
+  proofLinksFor,
   payHostOf,
   probe,
   probeFailure,
@@ -61,12 +63,13 @@ import {
   resolvedDiscoverySourceUrl,
   run,
   selectBuyer,
+  makeLicenceResolver,
   spendGate,
   tollgateBase,
   verifyAgainst,
 } from "@naulon/wayfarer";
 import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners } from "@naulon/wayfarer";
-import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, supportsMemo, usdc } from "@naulon/shared";
+import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, usdc } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
@@ -243,7 +246,7 @@ export interface BuildServerOptions {
    * This session's custody-free cloud signer (else `cloudSignerFromEnv()`). A `MemoSigner`
    * (memo/Arc rail) or a `GatewaySigner` (memo-less Circle rails — Base + every Gateway
    * chain); the cloud injects the one matching the active settlement network's rail, and
-   * `buildServer` routes it to the matching buyer (`supportsMemo(activeNetwork())`).
+   * `buildServer` routes it to `gatewayBuyer` — every chain settles through Circle since 2026-09-04.
    */
   signer?: MemoSigner | GatewaySigner;
   /**
@@ -333,6 +336,29 @@ export interface BuildServerOptions {
    * this owns payee identity. Absent (every stdio/self-host caller) ⇒ no payee check, unchanged.
    */
   authorizePayee?: (input: { url: string; payTo: string }) => boolean | Promise<boolean>;
+  /**
+   * Restrict which tools and prompts this server registers. An **allowlist**, deliberately: a
+   * denylist silently exposes every tool added after it was written, and the tools most worth
+   * withholding are the ones that spend money.
+   *
+   * Absent (every stdio/self-host caller, unchanged) ⇒ the full surface.
+   *
+   * This differs from {@link BuildServerOptions.hostedInertSteer}, which leaves a tool REGISTERED
+   * and makes it refuse. That is right when the caller should be told "not on this mount"; it is
+   * wrong when the tool must not appear in the listing at all — a read-only public mount whose
+   * `tools/list` still advertises `naulon_pay_and_read` is not read-only to anything reading the
+   * listing, including a plugin reviewer.
+   *
+   * A name that matches nothing is a no-op, so an allowlist naming a tool this version does not
+   * have narrows the surface rather than widening it.
+   */
+  surface?: {
+    /** Tool names to register. Absent ⇒ all. */
+    tools?: readonly string[];
+    /** Prompt names to register. Absent ⇒ all. Prompts steer toward tools, so a prompt naming a
+     *  tool outside `tools` should be left out too — nothing enforces that, it is the caller's. */
+    prompts?: readonly string[];
+  };
 }
 
 /**
@@ -344,6 +370,31 @@ export interface BuildServerOptions {
  */
 export function buildServer(opts: BuildServerOptions = {}): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+
+  // ── Surface allowlist (opts.surface) ────────────────────────────────────────
+  // Every registration below goes through `reg` / `regPrompt`. An excluded name is registered
+  // on `discarded` — a second server that is never connected and never returned — instead of
+  // being skipped, so these keep the SDK's exact generic signature and the handlers below keep
+  // inferring their argument types from `inputSchema`. What the caller receives is a server whose
+  // `tools/list` genuinely does not contain the excluded tools, which is the property that
+  // matters: a read-only public mount still advertising `naulon_pay_and_read` is not read-only to
+  // anything that reads the listing, a plugin reviewer included.
+  const allowTool = opts.surface?.tools ? new Set(opts.surface.tools) : null;
+  const allowPrompt = opts.surface?.prompts ? new Set(opts.surface.prompts) : null;
+  const discarded = allowTool || allowPrompt ? new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }) : server;
+  // `registerTool`/`registerPrompt` are overloaded generics, so `Parameters<…>` collapses to
+  // `never`. The variadic body is therefore typed loosely and the WHOLE function is cast back to
+  // the SDK's own signature — which is what the call sites read, so every handler below still
+  // infers its arguments from `inputSchema`. The looseness is contained to these two lines.
+  type AnyRegister = (...args: unknown[]) => unknown;
+  const reg = ((...args: unknown[]) =>
+    ((allowTool && !allowTool.has(args[0] as string) ? discarded : server).registerTool as unknown as AnyRegister)(
+      ...args,
+    )) as unknown as McpServer["registerTool"];
+  const regPrompt = ((...args: unknown[]) =>
+    ((allowPrompt && !allowPrompt.has(args[0] as string) ? discarded : server).registerPrompt as unknown as AnyRegister)(
+      ...args,
+    )) as unknown as McpServer["registerPrompt"];
 
   // ── Session spend envelope ──────────────────────────────────────────────────
   // The budget is server-config, not a tool arg: the ceiling is read fresh from env
@@ -359,6 +410,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // from that run's `pay` decisions afterward (B3) — so a cap hit through either tool carries to
   // the other, for the life of this session. Never a second, run-scoped counter.
   const paidByHost = new Map<string, number>();
+  /**
+   * Publishers' PUBLISHED terms (RSL), cached for the life of this MCP session.
+   *
+   * The granular pay tool is the path the tool descriptions tell agents to PREFER, so a licence
+   * gate that existed only inside `naulon_research` would be bypassable by using the tool we
+   * recommend. That is the same hole `spendGate` was extracted to close for domain policy, reopened
+   * one layer up — so this resolver feeds the identical evaluator.
+   */
+  const licences = makeLicenceResolver({ userAgent: "naulon-wayfarer" });
   // WP-2 T2: the distinct hostnames THIS session's most recent naulon_discover call
   // actually returned. Fleet-default auto-trust for the GRANULAR pay path (naulon_quote /
   // naulon_pay_and_read) is keyed off this — unlike naulon_research, which discovers
@@ -542,7 +602,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   };
 
   // ── naulon_discover (free) ──────────────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_discover",
     {
       title: "Discover tollable sources",
@@ -594,6 +654,29 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               // shape as a source that never searched at all. The tool description above carries the
               // rule that separates them (look at whether any sibling candidate carries a flag);
               // each field repeats it, because an agent may read one describe() and not the other.
+              // The fleet directory returns these three BESIDE the six above. They were never
+              // declared, so the SDK — which validates structuredContent with
+              // additionalProperties:false — rejected the ENTIRE naulon_discover response against
+              // a live fleet gate with "must NOT have additional properties". Discovery was dead
+              // on any fleet-directory source, while every test using a local catalog passed.
+              // Two of them are already first-class on `Candidate`, and the `discover` prompt
+              // tells the model to present "teaser price and citation price" — so the product
+              // always meant to surface them; only the schema was behind.
+              site: z
+                .string()
+                .optional()
+                .describe("Publisher host serving this source. Set by the fleet directory; absent for a single-origin source."),
+              priceUsdc: z
+                .number()
+                .optional()
+                .describe(
+                  "Indicative read price in USDC from the catalog. ADVISORY ONLY — naulon_quote's live 402 is the " +
+                    "truth, and the buyer's total may be higher once extra settlement legs are added. Never pay against this.",
+                ),
+              citationPriceUsdc: z
+                .number()
+                .optional()
+                .describe("Indicative citation price in USDC from the catalog. Advisory, same caveat as priceUsdc."),
               matchedInBody: z
                 .boolean()
                 .optional()
@@ -641,7 +724,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_status (free — the "run first" tool) ─────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_status",
     {
       title: "Check wallet, discovery, and gate status",
@@ -739,7 +822,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_appraise (free) ──────────────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_appraise",
     {
       title: "Appraise candidates for a topic",
@@ -805,7 +888,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_quote (free — the killer tool) ────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_quote",
     {
       title: "Quote the toll (free price probe)",
@@ -813,10 +896,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "Probe the real x402 toll for a source WITHOUT paying — the free 402 price check. Returns " +
         "the author price, the buyer's true total (when the publisher adds extra settlement legs such " +
         "as an operator fee, the total is higher than the author price), and the settlement terms. " +
-        "If the source is not gated, returns gated:false (it is a free read — just fetch it). If the " +
-        "server refuses to reach the url (off-gate identity, or operator policy such as a kill-switch " +
-        "or deny-list), returns refused:true with the reason in note — do NOT fetch it; it is neither " +
-        "payable nor free. Quote before paying so you can plan spend against real prices.",
+        "gated:false means one thing only — the origin answered 2xx, so it is a genuinely free read you " +
+        "may just fetch. Anything else returns refused:true with the reason in note: a refusal to reach " +
+        "the url (off-gate identity, or operator policy such as a kill-switch or deny-list), a 404, an " +
+        "unreachable origin, or a malformed 402. A refused url is NEITHER payable nor free — do not fetch " +
+        "it and do not report it as free; retry or fix the url. Quote before paying so you can plan spend " +
+        "against real prices.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug from naulon_discover."),
         url: z
@@ -836,8 +921,21 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .boolean()
           .optional()
           .describe(
-            "True if the server refused to reach this url — off-gate identity or operator policy (kill-switch / deny). " +
-              "The reason is in note; do NOT fetch it. Mutually exclusive with a gated/free result.",
+            "True when this url is NEITHER payable NOR free, so there is nothing to act on: the server refused to " +
+              "reach it (off-gate identity, or operator policy such as a kill-switch / deny-list), the path was not " +
+              "found (404), the origin was unreachable, or the gate answered a malformed 402. The reason is in note; " +
+              "do NOT fetch it, and do NOT treat it as free. Mutually exclusive with a gated/free result.",
+          ),
+        refusedReason: z
+          .enum(["policy", "not_found", "unreachable", "malformed"])
+          .optional()
+          .describe(
+            "WHY it was refused, always present when refused is true. `policy` — we would not even probe it " +
+              "(off-gate identity, kill-switch, deny-list): the url is out of bounds, so do not retry it. " +
+              "`not_found` — the path is wrong; re-quote with the canonical url from naulon_discover. " +
+              "`unreachable` — the origin or gate is down; the url may be fine, so retry later. " +
+              "`malformed` — the gate answered a 402 we cannot read; it is misconfigured, and retrying will not help. " +
+              "Two of these are the caller's to fix and two are not, which is why this is a field and not prose.",
           ),
         priceUsdc: z.number().optional().describe("The author leg price in USDC."),
         totalUsdc: z.number().optional().describe("The buyer's true total across all settlement legs — what the budget is debited."),
@@ -875,12 +973,20 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       if (refusal) {
         // A refusal is neither payable nor free: signal refused (not gated:false, which the tool
         // contract defines as "free read — just fetch it" and a buyer would act on).
-        return structured({ refused: true, note: refusal, ...envelope() });
+        return structured({ refused: true, refusedReason: "policy" as const, note: refusal, ...envelope() });
       }
       const outcome = await probe(target, KIND, payerAddress());
       if (outcome.status !== "gated") {
+        // Only a genuine 2xx is `gated:false`, because this tool DEFINES that as "a free read —
+        // just fetch it" and an agent acts on the field, not on the prose beside it. A 404, an
+        // unreachable origin and a malformed 402 are none of payable, free, or fetchable, which is
+        // exactly what `refused` already means everywhere else in this tool. Returning gated:false
+        // for them told a buyer an outage was a free read; `quoteNote` was written to soften that
+        // in prose, but a model that branches on `gated` never reads the note.
         return structured({
-          gated: false,
+          ...(outcome.status === "free"
+            ? { gated: false }
+            : { refused: true, refusedReason: outcome.status }),
           note: quoteNote(outcome, target),
           ...envelope(),
         });
@@ -906,7 +1012,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_pay_and_read ($ — spends) ─────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_pay_and_read",
     {
       title: "Pay the toll and read the source",
@@ -935,7 +1041,19 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         explorerTxUrl: z.string().optional().describe("A clickable block-explorer link for settlementRef (<explorer>/tx/<ref>), when the chain has a known explorer. Cite this so a human can verify the on-chain settlement."),
         paidUsdc: z.number().optional().describe("The author leg paid, in USDC."),
         costUsdc: z.number().optional().describe("The true total debited from the session budget (author + any fee legs)."),
-        licenseId: z.string().optional().describe("Citation License jti — cite this as proof of a paid read."),
+        licenseId: z.string().optional().describe("Citation License jti — the settlement's id. Prefer citing proofUrl, which a reader can open."),
+        proofUrl: z
+          .string()
+          .optional()
+          .describe(
+            "CITE THIS beside the source. The page a reader opens to see this read's citation record checked against the " +
+              "publisher's published keys, in their own browser — it shows the author who was paid, the amount and the " +
+              "on-chain settlement, and naulon is never asked whether it is valid.",
+          ),
+        recordUrl: z
+          .string()
+          .optional()
+          .describe("The gate's permanent citation record for this settlement (a signed JWS), for auditors and tools."),
         licenseVerified: z
           .boolean()
           .optional()
@@ -1035,12 +1153,20 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // loop, not a session-wide cap on this granular tool; passing it would newly enforce a 5-pay
       // ceiling across the whole MCP session, which nothing here asked for.
       const payHost = hostnameOf(target);
+      // The publisher's own terms for THIS url. A refusal here is the publisher saying no in
+      // public — no budget makes it payable — and it is evaluated by the same `spendGate` the
+      // composite run uses, in the same order.
+      const lookup = await licences.forUrl(target);
+      const licence = lookup.terms
+        ? { terms: lookup.terms, tokenHeld: lookup.tokenHeld, ...(lookup.tokenFailure ? { tokenFailure: lookup.tokenFailure } : {}) }
+        : null;
       const verdict = spendGate({
         host: payHost ?? undefined,
         priceUsdc: cost,
         policy,
         paidForHost: payHost ? (paidByHost.get(payHost) ?? 0) : 0,
         remainingUsdc: remainingUsdc(),
+        licence,
       });
       if (!verdict.ok) {
         const reason =
@@ -1060,14 +1186,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // fleet) railBuyer picks the rail from the TENANT's advertised 402 — a gateway 402 signs the
       // Circle envelope even under a memo-default fleet, and vice-versa. With a single injected signer
       // (one-network host / stdio) keep the activeNetwork() branch: a memo-LESS network (Base + every
-      // Gateway chain) settles via gatewayBuyer, else memoBuyer. Neither reads BUYER_PRIVATE_KEY.
+      // Gateway chain, which is all of them) settles via gatewayBuyer. Neither reads BUYER_PRIVATE_KEY.
       // Default: the BYO-key buyer selectBuyer() picks (which branches the same way for the env path).
       const buyer = opts.railSigners
         ? railBuyer(opts.railSigners)
         : cloudSigner
-          ? supportsMemo(activeNetwork())
-            ? memoBuyer(cloudSigner as MemoSigner)
-            : gatewayBuyer(cloudSigner as GatewaySigner)
+          ? gatewayBuyer(cloudSigner as GatewaySigner)
           : await selectBuyer();
       await buyer.init();
       // Re-quote at pay time and abort if the toll moved past the quote we gated the
@@ -1111,10 +1235,14 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
 
       let licenseId: string | undefined;
       let licenseVerified: boolean | undefined;
+      let proofLinks: { proofUrl?: string; recordUrl?: string } = {};
       if (result.license) {
         const decoded = decodeHeld(result.license);
         if (decoded) {
           licenseId = decoded.jti;
+          // The page a reader opens, named by the licence's own `aud`, never by the url the
+          // model passed (A4 again: the token's claims are the gate's word, the url is the model's).
+          proofLinks = proofLinksFor({ jti: decoded.jti, aud: decoded.aud, paidUrl: target });
           // BEST-EFFORT, exactly like emitAudit: the money has ALREADY moved by here. A hosted
           // store (DB/KV) that throws on a transient failure must never turn a successful paid
           // read into an error — that would lose the content + receipt the buyer just paid for
@@ -1161,6 +1289,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         // Report the total ACTUALLY authorized (what the budget was debited), not the pre-pay quote.
         costUsdc: result.costUsdc ?? cost,
         ...(licenseId ? { licenseId } : {}),
+        ...proofLinks,
         ...(licenseVerified === undefined ? {} : { licenseVerified }),
         ...envelope(),
       });
@@ -1169,40 +1298,58 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   // ── naulon_read_held (free) ──────────────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_read_held",
     {
       title: "Re-read a source you already licensed (free)",
       description:
         "Re-read a source you previously paid for, FREE, using the held Citation License — no second " +
-        "payment. If the license is holder-of-key bound, a fresh wallet proof-of-possession is signed " +
-        "automatically. Returns ok:false (telling you to pay) if no live license is held for the slug. " +
+        "payment. This also covers a source inside a SCOPE licence you bought up front: pass the url " +
+        "and any live licence whose scope covers that path is used. If the license is holder-of-key " +
+        "bound, a fresh wallet proof-of-possession is signed automatically. Returns ok:false (telling " +
+        "you to pay) if no live license covers it. " +
         "A citation must always carry a LIVE license (jti): when the held one has expired this returns " +
         "ok:false — re-read here to re-verify, or pay again. Any locally-cached copy of earlier content " +
         "is your own continuity only; it carries no live license and must never be cited as a paid read.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug you previously paid for with naulon_pay_and_read."),
+        url: z
+          .string()
+          .url()
+          .optional()
+          .describe(
+            "The exact url to re-read. Required to use a SCOPE licence, whose coverage is decided by " +
+              "path and which is therefore filed under no single slug. Ignored unless it is on this gate.",
+          ),
       },
       outputSchema: {
         ok: z.boolean(),
         content: z.string().optional(),
         licenseId: z.string().optional(),
+        proofUrl: z.string().optional().describe("CITE THIS beside the source — the same proof page the original pay returned."),
+        recordUrl: z.string().optional().describe("The gate's permanent citation record for the settlement behind this licence."),
         paidUsdc: z.number().optional().describe("Always 0 on a held re-read."),
         error: z.string().optional(),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ slug }) => {
+    async ({ slug, url }) => {
       const held = await heldStore.load();
-      const license = held.get(slug);
+      const req = heldRequestFor(gateBase(), slug, url);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const license = findHeld([...held.values()], req, nowSec);
       if (!license) {
+        // The two misses are different problems and deserve different next moves: an EXPIRED
+        // licence means pay again, a missing one means you never bought this. Distinguished by
+        // asking the same matcher without the liveness cut-off, so the two answers cannot drift.
+        const expired = findHeld([...held.values()], req, 0) !== null;
         return structured({
           ok: false,
-          error: "No held license for this slug — pay for it first with naulon_pay_and_read.",
+          error: expired
+            ? "Held license has expired — pay again with naulon_pay_and_read."
+            : "No live license covers this — pay for it with naulon_pay_and_read. " +
+              "If you hold a scope licence, pass the exact url so its scope can be matched.",
         });
-      }
-      if (!isLive(license, Math.floor(Date.now() / 1000))) {
-        return structured({ ok: false, error: "Held license has expired — pay again with naulon_pay_and_read." });
       }
 
       let proof: string | undefined;
@@ -1217,18 +1364,26 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       }
 
       // Re-read the exact url the license was paid at; fall back to the template only
-      // for a legacy license captured before the url was stored.
-      const target = license.url ?? slugUrl(slug);
+      // for a legacy license captured before the url was stored. A SCOPED licence was bought
+      // before any read and has no paid url, so it re-reads at the path its scope matched —
+      // already pinned to this gate by `heldRequestFor`.
+      const target = license.scope ? req.url : (license.url ?? slugUrl(slug));
       const reread = await rereadWithLicense(target, KIND, license.jws, popWallet().address, proof);
       if (!reread.ok) {
         return structured({ ok: false, error: reread.error ?? "re-read failed" });
       }
-      return structured({ ok: true, content: reread.content, licenseId: license.jti, paidUsdc: 0 });
+      return structured({
+        ok: true,
+        content: reread.content,
+        licenseId: license.jti,
+        ...proofLinksFor({ jti: license.jti, aud: license.aud, paidUrl: target }),
+        paidUsdc: 0,
+      });
     },
   );
 
   // ── naulon_research ($ — composite) ──────────────────────────────────────────
-  server.registerTool(
+  reg(
     "naulon_research",
     {
       title: "Research a topic end-to-end (composite)",
@@ -1275,6 +1430,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             paidUsdc: z.number(),
             settlementRef: z.string().optional(),
             licenseId: z.string().optional(),
+            proofUrl: z.string().optional().describe("CITE THIS beside the source — the page a reader opens to see the author was paid."),
+            recordUrl: z.string().optional().describe("The gate's permanent citation record for this settlement."),
           }),
         ),
         log: z.array(z.string()).describe("The auditable, human-readable decision log for the run."),
@@ -1409,6 +1566,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           paidUsdc: s.paidUsdc,
           ...(s.settlementRef ? { settlementRef: s.settlementRef } : {}),
           ...(s.licenseId ? { licenseId: s.licenseId } : {}),
+          ...(s.proofUrl ? { proofUrl: s.proofUrl } : {}),
+          ...(s.recordUrl ? { recordUrl: s.recordUrl } : {}),
         })),
         log,
       });
@@ -1437,7 +1596,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     `connect a token) — never print a raw environment-variable name to the user. Then offer to retry. ` +
     `If you fall back to your own general knowledge instead of a naulon-tolled source, say so ` +
     `explicitly and label it clearly as NOT naulon-cited.`;
-  server.registerPrompt(
+  regPrompt(
     "research",
     {
       title: "Research a topic (naulon)",
@@ -1456,14 +1615,14 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               `1. Call naulon_discover("${topic}") — free — to list candidate essays.\n` +
               `2. Use naulon_appraise and naulon_quote to judge relevance and see exact prices. Nothing is spent until a paying tool runs.\n` +
               `3. Pay only the most relevant sources with naulon_pay_and_read, or call naulon_research to run the whole discover→quote→pay→ground loop within the session budget.\n\n` +
-              `Return a grounded answer with numbered citations and report exactly what was spent. Distinguish naulon-cited evidence from your own general knowledge.` +
+              `Return a grounded answer with numbered citations and report exactly what was spent. Put each source's proofUrl beside its citation — it is the link a reader opens to see the author was paid. Distinguish naulon-cited evidence from your own general knowledge.` +
               SELF_HEAL_PROMPT_TAIL,
           },
         },
       ],
     }),
   );
-  server.registerPrompt(
+  regPrompt(
     "discover",
     {
       title: "Discover sources (naulon, free)",
@@ -1485,7 +1644,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       ],
     }),
   );
-  server.registerPrompt(
+  regPrompt(
     "verify",
     {
       title: "Fact-check a claim (naulon)",
@@ -1502,7 +1661,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               `Fact-check the claim: "${claim}".\n\n` +
               `Use naulon_discover to find relevant tolled sources, then naulon_appraise / naulon_quote (free) to see relevance and price. ` +
               `Only if grounding needs it, pay the most relevant sources with naulon_pay_and_read (or run naulon_research) within budget.\n\n` +
-              `State whether the claim is SUPPORTED, REFUTED, or UNVERIFIABLE, cite the paid sources by title, and report the spend. Keep naulon-cited evidence separate from your own general knowledge.` +
+              `State whether the claim is SUPPORTED, REFUTED, or UNVERIFIABLE, cite the paid sources by title with each one's proofUrl beside it, and report the spend. Keep naulon-cited evidence separate from your own general knowledge.` +
               SELF_HEAL_PROMPT_TAIL,
           },
         },

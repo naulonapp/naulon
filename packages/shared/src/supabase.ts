@@ -28,6 +28,34 @@ function creds(): { url: string; key: string } {
  * write. `path` is everything after the project URL, e.g.
  * `/rest/v1/naulon_events?select=data&order=at.asc`.
  */
+/**
+ * A failed PostgREST call, carrying the HTTP status and PostgREST's own `code`.
+ *
+ * The fields exist so a caller can tell one class of failure from another WITHOUT string-matching
+ * an error message. The case that forced it: a malformed row id is `400 22P02`, which is a MISS,
+ * while a `503` is an outage — and treating those alike is how a lookup either lies about a row
+ * existing or reports an incident as "not found".
+ */
+export class SupabaseRestError extends Error {
+  readonly status: number;
+  readonly body: string;
+  /** PostgREST's error code (e.g. `22P02` — invalid text representation), when it sent one. */
+  readonly code: string | undefined;
+  constructor(message: string, status: number, body: string) {
+    super(message);
+    this.name = "SupabaseRestError";
+    this.status = status;
+    this.body = body;
+    let code: unknown;
+    try {
+      code = (JSON.parse(body) as { code?: unknown }).code;
+    } catch {
+      code = undefined;
+    }
+    this.code = typeof code === "string" ? code : undefined;
+  }
+}
+
 export async function supabaseRest(path: string, init: RequestInit = {}): Promise<unknown> {
   const { url, key } = creds();
   const res = await fetch(`${url}${path}`, {
@@ -41,7 +69,7 @@ export async function supabaseRest(path: string, init: RequestInit = {}): Promis
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Supabase ${init.method ?? "GET"} ${path} failed: ${res.status} ${body}`);
+    throw new SupabaseRestError(`Supabase ${init.method ?? "GET"} ${path} failed: ${res.status} ${body}`, res.status, body);
   }
   if (res.status === 204) return [];
   const text = await res.text();

@@ -1,5 +1,15 @@
 /**
- * Arc self-relay settlement — the memo-bearing settle path.
+ * Arc self-relay settlement — the memo-bearing settle path, UNUSED BY THE GATE SINCE 2026-09-04.
+ *
+ * `verifyAndSettle` no longer routes here: every chain settles through Circle Gateway's batching
+ * facilitator, because a per-toll on-chain transaction at our own gas cost more than the toll it
+ * carried (see `networks.ts`'s `memo` docblock for the measured numbers). Nothing in the settle or
+ * drain path imports this module today.
+ *
+ * It is retained deliberately. The Memo predeploy is still the right tool for tagging a transaction
+ * that has to happen anyway — a buyer's Gateway deposit, a withdrawal — where the gas is already
+ * being paid and the memo is nearly free. Reviving it for THAT is the intended use; routing tolls
+ * back through it is not.
  *
  * WHY THIS EXISTS. Circle Gateway settles via a bare EIP-3009
  * `transferWithAuthorization` (the SDK's `BatchFacilitatorClient.settle`): there is

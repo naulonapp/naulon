@@ -6,17 +6,30 @@
  * tollgate over the real x402 contract; the Buyer is mock (offline) or Circle
  * Gateway (PAYMENT_MODE=gateway), chosen at startup.
  */
-import { activeNetwork, getConfig, supportsMemo, usdc, verifyLicense, type JwkSet } from "@naulon/shared";
+import {
+  activeNetwork,
+  FLEET_ORIGIN,
+  getConfig,
+  isFleetDefaultDiscovery,
+  issuerHost,
+  proofPageUrl,
+  recordUrl,
+  usdc,
+  verifyLicense,
+  type JwkSet,
+} from "@naulon/shared";
 import { appraise } from "./appraise.ts";
 import { quotedTotalAtomic, rereadWithLicense, selectBuyer } from "./buyer.ts";
 import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
-import { memoBuyer, type MemoSigner } from "./memo.ts";
+import { type MemoSigner } from "./memo.ts";
 import { railBuyer, type RailSigners } from "./rail.ts";
-import { decide, DEFAULT_POLICY, payHostOf, payUrlOf, spendGate } from "./decide.ts";
+import { decide, DEFAULT_POLICY, payHostOf, payUrlOf, spendGate, type LicenceVerdict } from "./decide.ts";
+import { makeLicenceResolver, type LicenceResolver } from "./licence.ts";
+
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
 import { authorizeOrigin } from "./origin-policy.ts";
-import { decodeHeld, fileHeldStore, isLive } from "./licenseStore.ts";
+import { decodeHeld, fileHeldStore, findHeld } from "./licenseStore.ts";
 import type { HeldStore } from "./licenseStore.ts";
 import { buildPopProof } from "./pop.ts";
 import { agentFetch } from "./sign.ts";
@@ -91,6 +104,74 @@ export function licenseIdentityFor(url: string): string | undefined {
   }
 }
 
+/**
+ * The two links a cited source carries: the page a reader opens, and the record a machine
+ * fetches. Both name the publisher by the licence's own `aud` (= the issuer identity), never by
+ * the discovery URL, so a candidate found at B and licensed by B's gate links to B.
+ *
+ * Where the record lives depends on who minted it. Under fleet-default discovery every
+ * publisher — routed through the fleet gate or serving their own site through the SDK — has
+ * their record minted by the FLEET gate, which a browser can only point at the right publisher
+ * with the `host` hint (a self-served publisher's origin has no record route at all). A
+ * self-hosted gate mints its own, at the origin the toll was paid to, and needs no hint.
+ *
+ * No usable identity ⇒ no links. A guessed host would put a wrong publisher in a document a
+ * reader is told to trust.
+ */
+export function proofLinksFor(input: { jti: string; aud: string | undefined; paidUrl: string }): {
+  proofUrl?: string;
+  recordUrl?: string;
+} {
+  const host = issuerHost(input.aud);
+  if (!host) return {};
+  const cfg = getConfig();
+  let gateOrigin: string;
+  try {
+    gateOrigin = isFleetDefaultDiscovery(cfg) ? FLEET_ORIGIN : new URL(input.paidUrl).origin;
+  } catch {
+    return {};
+  }
+  return {
+    proofUrl: proofPageUrl({ verifyUrl: cfg.VERIFY_PAGE_URL, host, jti: input.jti }),
+    recordUrl: recordUrl({ gateOrigin, host, jti: input.jti }),
+  };
+}
+
+/**
+ * The lookup a held licence is matched against — against the url this candidate would ACTUALLY
+ * be read at, which is the same one the pay step uses (`d.url ?? articleUrl(base, d.slug)`).
+ *
+ * It used to pin the url to the configured gate whenever the candidate named another origin, on
+ * the theory that `discover()` is untrusted. That made the two steps disagree: a candidate found
+ * at publisher B was PRICED at B and then matched against a licence held for A, because the match
+ * had quietly been rewritten to A's own `/essays/<slug>`. The re-read then fetched A's article and
+ * the run cited it under B's title — free, and with nothing raised anywhere.
+ *
+ * The credential never leaked to B, and that was the guarantee the old pinning was written for.
+ * But it bought that guarantee by reading the wrong publisher instead, which for a product whose
+ * whole claim is a verifiable citation is the worse of the two. Binding the match to `aud` gives
+ * the same guarantee directly: a licence minted by A cannot be selected for a candidate at B at
+ * all, so B is priced and paid like any other source.
+ *
+ * The template fallback remains for a candidate that names no url of its own — `/essays/<slug>` on
+ * the configured gate is then the only thing it can mean, and it is also why a scope licence
+ * usually works from a slug alone.
+ */
+export function heldRequestFor(
+  base: string,
+  slug: string,
+  candidateUrl?: string,
+): { slug: string; path: string; aud: string | undefined; url: string } {
+  const url = candidateUrl ?? articleUrl(base, slug);
+  let path = `/${slug}`;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    // An unparseable candidate url yields no identity below, so nothing will match it.
+  }
+  return { slug, path, aud: licenseIdentityFor(url), url };
+}
+
 /** Optional overrides for a single run. `budgetUsdc` lets a caller spend LESS than
  *  the configured ceiling for this run (e.g. the MCP clamping the model's requested
  *  budget to what remains in the session envelope) — it can only narrow, never widen,
@@ -114,6 +195,16 @@ export interface RunOptions {
   /** Window state for per-domain rate caps across runs (prior pays per host). */
   decideContext?: DecideContext;
   /**
+   * Resolver for publishers' PUBLISHED terms (RSL). Omitted ⇒ one is built with the SDK's guarded
+   * fetcher; `null` turns the lookup off entirely.
+   *
+   * On by default, because the alternative is an agent that can read a publisher's "do not use this
+   * for AI input" and pay anyway. The cost is one `robots.txt` per origin per run (cached, and
+   * deduplicated across concurrent candidates), and every failure mode — no robots, no licence,
+   * unreachable — degrades to exactly the pre-RSL behaviour rather than to a refusal.
+   */
+  licences?: LicenceResolver | null;
+  /**
    * Gate this run settles into (base URL). Server/config-supplied, never
    * LLM-controlled — same principle as `budgetUsdc`/`policy`. Lets a hosted caller
    * point one run at a specific fleet tenant's gate. Omitted ⇒ `tollgateBase()`
@@ -128,13 +219,13 @@ export interface RunOptions {
    * `naulon_pay_and_read`. Omitted ⇒ `selectBuyer()` picks the env buyer (the OSS
    * self-host path). Server/config-supplied, never LLM-controlled. A `MemoSigner`
    * (memo/Arc rail) or a `GatewaySigner` (memo-less Circle rails); `run` routes it to
-   * the matching buyer via `supportsMemo(activeNetwork())`, like `selectBuyer()`.
+   * the Gateway buyer, like `selectBuyer()` — every chain settles through Circle since 2026-09-04.
    */
   signer?: MemoSigner | GatewaySigner;
   /**
    * BOTH rail signers over the same sealed session key (RAS-B mixed fleet). When present, the run
    * pays through `railBuyer`, which picks memo vs gateway PER-402 from each tenant's advertised
-   * network — exactly like `naulon_pay_and_read` — instead of the fleet-global `supportsMemo`
+   * network — exactly like `naulon_pay_and_read` — instead of a fleet-global default
    * routing a single `signer` gets. Wins over `signer`. Server/config-supplied, never LLM-controlled.
    */
   railSigners?: RailSigners;
@@ -239,9 +330,7 @@ export async function run(
   const buyer = opts.railSigners
     ? railBuyer(opts.railSigners)
     : opts.signer
-      ? supportsMemo(activeNetwork())
-        ? memoBuyer(opts.signer as MemoSigner)
-        : gatewayBuyer(opts.signer as GatewaySigner)
+      ? gatewayBuyer(opts.signer as GatewaySigner)
       : await selectBuyer();
   // Per-session held store + PoP signer (BUY-4): the injected pair keeps the composite loop's
   // free re-reads isolated per buyer and signed by the paying session EOA. Omitted ⇒ OSS defaults.
@@ -305,14 +394,43 @@ export async function run(
   // zero-cost "cache" — pay once, re-read free.
   const held = await heldStore.load();
   const nowSec = Math.floor(Date.now() / 1000);
-  const licensed = new Set([...held.values()].filter((h) => isLive(h, nowSec)).map((h) => h.slug));
-  if (licensed.size) log(`\nholding ${licensed.size} live license(s) — those re-read free`);
+  // Which CANDIDATES a live licence covers — not which licences are live. The two differ the
+  // moment a scope exists: one licence over `/articles/*` covers many candidates and is filed
+  // under none of their slugs, so counting licences both under-reports the free reads and hands
+  // decide() a set of keys it will never look up.
+  const licensed = new Set(
+    appraised
+      .filter((c) => findHeld([...held.values()], heldRequestFor(base, c.slug, c.url), nowSec) !== null)
+      .map((c) => c.slug),
+  );
+  if (licensed.size) log(`\n${licensed.size} candidate(s) already licensed — those re-read free`);
+
+  // 4a. published terms. Only the PRICED candidates are looked up — an ungated or refused one is
+  // never going to be paid for, and asking a stranger's server about it is a request we owe no one.
+  // Resolved here rather than inside decide() because decide() is pure and this is the network.
+  const licenceResolver = opts.licences === null ? null : (opts.licences ?? makeLicenceResolver({ userAgent: "naulon-wayfarer" }));
+  const licences: Record<string, LicenceVerdict | null> = {};
+  if (licenceResolver) {
+    const payUrls = [
+      ...new Set(
+        appraised
+          .map((c) => payUrlOf(c.url, opts.decideContext?.gateBase ?? base, c.slug))
+          .filter((u): u is string => u !== undefined),
+      ),
+    ];
+    const looked = await Promise.all(payUrls.map(async (u) => [u, await licenceResolver.forUrl(u)] as const));
+    for (const [u, l] of looked) {
+      licences[u] = l.terms ? { terms: l.terms, tokenHeld: l.tokenHeld, ...(l.tokenFailure ? { tokenFailure: l.tokenFailure } : {}) } : null;
+      if (l.terms) log(`  § ${u} — terms via ${l.source}${l.terms.read?.amount ? ` @ ${l.terms.read.amount.value} ${l.terms.read.amount.currency}` : ""}`);
+    }
+  }
 
   // gateBase lets decide() resolve a slug-only candidate to the SAME url the pay step below uses,
   // so domain policy is evaluated against the host that actually gets paid (never Candidate.host).
   const decisions = decide(appraised, budget, licensed, effectivePolicy, {
     ...opts.decideContext,
     gateBase: opts.decideContext?.gateBase ?? base,
+    licences: { ...opts.decideContext?.licences, ...licences },
   });
   log(`\ndecisions:`);
   for (const d of decisions) log(`  [${d.action.toUpperCase()}] ${d.slug} — ${d.reason}`);
@@ -326,14 +444,19 @@ export async function run(
     const url = d.url ?? articleUrl(base, d.slug);
 
     if (d.action === "cache") {
-      const h = held.get(d.slug);
+      const req = heldRequestFor(base, d.slug, d.url);
+      const h = findHeld([...held.values()], req, Math.floor(Date.now() / 1000));
       if (!h) continue;
       // Re-read at the license's OWN paid url — NEVER the untrusted candidate `d.url`
       // (discover() can hand back anything). Mirrors naulon_read_held's
       // `license.url ?? slugUrl(slug)` (wayfarer-mcp/server.ts) — the held store is
       // keyed by slug alone, so a same-slug candidate from a DIFFERENT (still
       // allow-listed) publisher must never receive this license/PoP proof (B1).
-      const target = h.url ?? articleUrl(base, d.slug);
+      //
+      // The url the licence was actually paid at, when there is one. A SCOPED licence has none —
+      // it was bought before any read — so it re-reads at the url its scope was matched against,
+      // which is the same url this candidate was priced at and is bound to the licence's own gate.
+      const target = h.url ?? req.url;
       // Holder-of-key license: sign a fresh proof-of-possession so the gate knows
       // we still hold the payer wallet, not just a captured token.
       let proof: string | undefined;
@@ -346,7 +469,14 @@ export async function run(
       }
       const reread = await rereadWithLicense(target, "citation", h.jws, buyer.address, proof);
       if (reread.ok) {
-        sources.push({ slug: d.slug, title: d.title, content: reread.content ?? "", paidUsdc: 0, licenseId: h.jti });
+        sources.push({
+          slug: d.slug,
+          title: d.title,
+          content: reread.content ?? "",
+          paidUsdc: 0,
+          licenseId: h.jti,
+          ...proofLinksFor({ jti: h.jti, aud: h.aud, paidUrl: target }),
+        });
         log(`  🎫 re-read ${d.slug} FREE with held license (${h.jti.slice(0, 8)})${h.pop ? " 🔑 proof-of-possession" : ""}`);
       } else {
         log(`  ✗ re-read failed for ${d.slug}: ${reread.error}`);
@@ -382,6 +512,7 @@ export async function run(
     spent += result.costUsdc ?? result.paidUsdc ?? d.price;
 
     let licenseId: string | undefined;
+    let links: { proofUrl?: string; recordUrl?: string } = {};
     if (result.license) {
       const decoded = decodeHeld(result.license);
       // The canonical identity of the gate this read just settled into — derived from
@@ -394,6 +525,7 @@ export async function run(
         // held record (a slug-only re-read can then target the real link, not a template).
         held.set(d.slug, { ...decoded, jws: result.license, url });
         licenseId = decoded.jti;
+        links = proofLinksFor({ jti: decoded.jti, aud: decoded.aud, paidUrl: url });
         // Save NOW, not only once after the loop (A1): a later candidate's re-read
         // throwing (or any other mid-loop failure) must never discard a license this
         // run already paid for. Idempotent — the final save below is a safety net.
@@ -401,7 +533,8 @@ export async function run(
       }
       const mark =
         verified === true ? " → 🎫 license verified" : verified === false ? " → ⚠ license UNVERIFIED" : " → 🎫 license";
-      log(`  ✓ paid $${(result.paidUsdc ?? d.price).toFixed(6)} for ${d.slug} (ref ${result.settlementRef})${mark} ${licenseId?.slice(0, 8) ?? ""}`);
+      // The proof page, not a truncated id: the log is what a human reads back.
+      log(`  ✓ paid $${(result.paidUsdc ?? d.price).toFixed(6)} for ${d.slug} (ref ${result.settlementRef})${mark} ${links.proofUrl ?? licenseId ?? ""}`);
     } else {
       log(`  ✓ paid $${(result.paidUsdc ?? d.price).toFixed(6)} for ${d.slug} (ref ${result.settlementRef})`);
     }
@@ -413,6 +546,7 @@ export async function run(
       paidUsdc: result.paidUsdc ?? d.price,
       settlementRef: result.settlementRef,
       licenseId,
+      ...links,
     });
   }
   await heldStore.save(held);
@@ -429,7 +563,9 @@ async function ground(topic: string, sources: Source[]): Promise<string> {
     return `No sources were worth paying for under budget for "${topic}".`;
   }
   const citations = sources
-    .map((s, i) => `[${i + 1}] ${s.title} (${s.slug})${s.licenseId ? ` · licensed 🎫 ${s.licenseId.slice(0, 8)}` : ""}`)
+    // The link a reader can open — never eight hex characters and an emoji, which resolved to
+    // nothing. A licence with no derivable proof page (no usable issuer) still names its id in full.
+    .map((s, i) => `[${i + 1}] ${s.title} (${s.slug})${s.proofUrl ? ` · licensed · ${s.proofUrl}` : s.licenseId ? ` · licensed (${s.licenseId})` : ""}`)
     .join("\n");
 
   if (getConfig().OPENAI_API_KEY) {

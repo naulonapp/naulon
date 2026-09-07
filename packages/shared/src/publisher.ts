@@ -14,6 +14,7 @@
  * nothing about how the config is sourced.
  */
 import type { NetworkName } from "./networks.ts";
+import type { PriceRule } from "./price-rules.ts";
 import type { CreditsResolver, TollKind, Usdc, WalletAddress } from "./types.ts";
 
 /**
@@ -88,6 +89,19 @@ export interface PublisherConfig {
    */
   citationMultiplier: number;
   /**
+   * Per-path overrides of the two fields above — "everything under /papers costs more".
+   *
+   * Absent or empty is byte-identical to before this field existed: `tollPrice` resolves no
+   * rule and reads `price`/`citationMultiplier` exactly as it always did. Ordered
+   * most-specific-first by `normalizePriceRules` on the write path, and the FIRST match wins
+   * (RFC 9309 §2.2.2, the same precedence RSL declares) — so the stored order IS the
+   * resolution order, and a resolver must not reorder it.
+   *
+   * A rule prices a PATH, while `credits` still keys on the slug: the two answer different
+   * questions (what it costs vs. who is paid) and neither derives the other.
+   */
+  priceRules?: PriceRule[];
+  /**
    * Slug → credits graph: who gets paid for this article, and in what shares.
    * THE publisher-agnostic seam (see `CreditsResolver`). An HTTP API, a static
    * fixture, or a database — the gate doesn't care.
@@ -133,7 +147,34 @@ export interface PublisherConfig {
    * discovery would starve the catalog agents buy from. excludePrefixes adds
    * publisher-chosen free sections on top (no leading slash, like articlePrefixes).
    */
-  gateScope?: { mode: "prefixes" } | { mode: "site"; excludePrefixes: string[] };
+  gateScope?:
+    | {
+        mode: "prefixes";
+        /**
+         * How much of the path after a matching prefix becomes the slug — `@naulon/sdk`'s
+         * `PrefixDepth`. Absent ⇒ `"segment"`, today's behaviour byte for byte.
+         *
+         * `"rest"` exists for dated and nested URLs (`/blog/2026/09/post`), which `"segment"`
+         * keys to the DATE — so every post in that month collides on one slug and the credits
+         * lookup answers one article's contributors for all of them, or 404s and gives the lot
+         * away free. It is opt-in because the inverse shape (an article with sub-pages) is
+         * broken by `"rest"`, and no single default serves both.
+         */
+        depth?: "segment" | "rest";
+      }
+    | {
+        mode: "site";
+        excludePrefixes: string[];
+        /**
+         * File extensions this publisher opts INTO tolling (lowercase, dotless —
+         * normalise with `normalizeIncludeExtensions` before storing). Site mode drops
+         * every static extension by default, `.pdf` and `.json` included, so a whole-site
+         * toll gives away exactly the files most worth charging for. Absent or empty is
+         * byte-identical to before this field. Discovery surfaces and control routes are
+         * refused ahead of it regardless, so opting into `xml` cannot toll a sitemap.
+         */
+        includeExtensions?: string[];
+      };
   /**
    * Optional hook: additional settlement legs for a priced toll, beyond the author
    * payment. Given the resolved `price` (whole USDC) and `kind`, return any extra

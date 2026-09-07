@@ -83,6 +83,11 @@ export interface Source {
   settlementRef?: string;
   /** Citation License `jti` proving this read was paid for (verifiable at the gate). */
   licenseId?: string;
+  /** The page a reader opens to see this record checked against the issuer's published keys, in
+   *  their own browser. THIS is what a citation carries beside the source. */
+  proofUrl?: string;
+  /** The gate's record route for the same settlement — the machine document behind `proofUrl`. */
+  recordUrl?: string;
 }
 
 export interface RunResult {

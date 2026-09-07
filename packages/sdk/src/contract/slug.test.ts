@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeSlug, deriveSiteSlug, deriveSlug, slugFromPath, slugFromSitePath } from "./slug.ts";
+import { STATIC_EXTENSIONS, decodeSlug, deriveSiteSlug, deriveSlug, slugFromPath, slugFromSitePath } from "./slug.ts";
 
 test("deriveSlug pulls the segment after a configured prefix", () => {
   assert.equal(deriveSlug("https://site.com/essays/on-stillness", ["essays"]), "on-stillness");
@@ -94,4 +94,237 @@ test("site-mode: control routes, discovery and static assets never toll", () => 
   assert.equal(slugFromSitePath("/licenses/abc", []), null);
   assert.equal(slugFromSitePath("/private/x", ["private"]), null);
   assert.equal(slugFromSitePath("/private", ["private"]), null);
+});
+
+// ── site-mode extension allowlist (gateScope.includeExtensions) ────────────────
+// The publisher opts a file type INTO the toll. Everything below the allowlist —
+// discovery surfaces, control routes, the publisher's own excludePrefixes — is
+// refused BEFORE it is consulted, so opting into `xml` can never toll a sitemap.
+
+test("site-mode: an allowlisted extension becomes gateable", () => {
+  assert.equal(slugFromSitePath("/papers/quantum.pdf", [], { includeExtensions: ["pdf"] }), "/papers/quantum.pdf");
+  assert.equal(
+    slugFromSitePath("/papers/2026/quantum.pdf", [], { includeExtensions: ["pdf"] }),
+    "/papers/2026/quantum.pdf",
+  );
+});
+
+test("site-mode: a NON-allowlisted extension stays free", () => {
+  assert.equal(slugFromSitePath("/app.css", [], { includeExtensions: ["pdf"] }), null);
+  assert.equal(slugFromSitePath("/logo.png", [], { includeExtensions: ["pdf"] }), null);
+  assert.equal(slugFromSitePath("/bundle.js", [], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: discovery ALWAYS wins over the allowlist", () => {
+  const opts = { includeExtensions: ["xml", "txt", "json"] };
+  for (const p of ["/robots.txt", "/sitemap.xml", "/sitemap-index.xml", "/rss.xml", "/atom.xml", "/feed.xml", "/favicon.ico"]) {
+    assert.equal(slugFromSitePath(p, [], opts), null, `${p} must stay free`);
+  }
+});
+
+test("site-mode: control routes ALWAYS win over the allowlist", () => {
+  const opts = { includeExtensions: ["json"] };
+  assert.equal(slugFromSitePath("/.well-known/x402", [], opts), null);
+  assert.equal(slugFromSitePath("/.well-known/naulon-jwks.json", [], opts), null);
+  assert.equal(slugFromSitePath("/licenses/abc.json", [], opts), null);
+});
+
+test("site-mode: excludePrefixes still win over the allowlist", () => {
+  assert.equal(slugFromSitePath("/free/paper.pdf", ["free"], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: absent opts is byte-identical to today (regression)", () => {
+  assert.equal(slugFromSitePath("/papers/quantum.pdf", []), null);
+  assert.equal(slugFromSitePath("/2026/08/a-post", []), "/2026/08/a-post");
+  assert.equal(slugFromSitePath("/app.css", []), null);
+});
+
+test("site-mode: an empty allowlist is the same as absent", () => {
+  assert.equal(slugFromSitePath("/papers/quantum.pdf", [], { includeExtensions: [] }), null);
+});
+
+test("site-mode: the allowlist is case-insensitive on the PATH (.PDF is a pdf)", () => {
+  assert.equal(slugFromSitePath("/papers/Q.PDF", [], { includeExtensions: ["pdf"] }), "/papers/Q.PDF");
+});
+
+test("deriveSiteSlug carries the allowlist (the crawler/gate join)", () => {
+  const opts = { includeExtensions: ["pdf"] };
+  assert.equal(deriveSiteSlug("https://s.test/papers/q.pdf", [], opts), slugFromSitePath("/papers/q.pdf", [], opts));
+  assert.equal(deriveSiteSlug("https://s.test/papers/q.pdf", [], opts), "/papers/q.pdf");
+});
+
+test("site-mode: a malformed escape stays free even when allowlisted", () => {
+  assert.equal(slugFromSitePath("/papers/100%.pdf", [], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: a dotless path is unaffected by the allowlist", () => {
+  assert.equal(slugFromSitePath("/papers/quantum", [], { includeExtensions: ["pdf"] }), "/papers/quantum");
+});
+
+// ── discovery is matched by FILENAME, at any depth ────────────────────────────
+// The root-anchored matcher was never enough, and opting an extension in is what
+// made that expensive: with `xml` ticked, /sitemap.xml was free while WordPress's
+// own /wp-sitemap.xml tolled. Paywalling a sitemap starves the catalog agents buy
+// from — the one thing site mode exists to refuse.
+
+test("site-mode: real-world sitemaps stay free even with xml opted in", () => {
+  const opts = { includeExtensions: ["xml", "txt", "json"] };
+  for (const p of [
+    "/sitemap.xml",
+    "/sitemap_index.xml",
+    "/wp-sitemap.xml",
+    "/wp-sitemap-posts-post-1.xml",
+    "/post-sitemap.xml",
+    "/page-sitemap.xml",
+    "/sitemap-1.xml.gz",
+    "/en/sitemap.xml",
+    "/blog/sitemap.xml",
+  ]) {
+    assert.equal(slugFromSitePath(p, [], opts), null, `${p} must stay free`);
+  }
+});
+
+test("site-mode: feeds stay free at any depth, and with a trailing slash", () => {
+  const opts = { includeExtensions: ["xml", "json"] };
+  for (const p of ["/index.xml", "/blog/feed.xml", "/news/rss.xml", "/blog/atom.xml", "/feed/", "/feeds/", "/blog/feed/"]) {
+    assert.equal(slugFromSitePath(p, [], opts), null, `${p} must stay free`);
+  }
+});
+
+test("site-mode: the agent-discovery text files stay free with txt opted in", () => {
+  const opts = { includeExtensions: ["txt"] };
+  for (const p of ["/llms.txt", "/ads.txt", "/app-ads.txt", "/security.txt", "/.well-known/security.txt", "/robots.txt"]) {
+    assert.equal(slugFromSitePath(p, [], opts), null, `${p} must stay free`);
+  }
+});
+
+test("site-mode: a 'feed'-PREFIXED article still tolls — the rule is the whole segment", () => {
+  const opts = { includeExtensions: ["pdf"] };
+  assert.equal(slugFromSitePath("/papers/feedback-loops.pdf", [], opts), "/papers/feedback-loops.pdf");
+  assert.equal(slugFromSitePath("/essays/atomic-habits", [], opts), "/essays/atomic-habits");
+  assert.equal(slugFromSitePath("/blog/rss-explained.pdf", [], opts), "/blog/rss-explained.pdf");
+});
+
+test("site-mode: the LEGACY root matcher still over-refuses, deliberately", () => {
+  // `DISCOVERY_ROOT_RE` matches `/rss*`, `/feed*`, `/atom*`, `/sitemap*` at the root, so a
+  // root-level `/rssistan-report.pdf` has always been free. The name-shaped rules are a UNION
+  // with it rather than a replacement: narrowing it would make paths that were free start
+  // charging, which is the one direction this codebase does not change silently. Nested paths
+  // are unaffected (the case above), which is where real articles live.
+  assert.equal(slugFromSitePath("/rssistan-report.pdf", [], { includeExtensions: ["pdf"] }), null);
+});
+
+test("site-mode: a doubled leading slash cannot smuggle a control route into the toll", () => {
+  const opts = { includeExtensions: ["json"] };
+  assert.equal(slugFromSitePath("//.well-known/naulon-jwks.json", [], opts), null);
+  assert.equal(slugFromSitePath("///licenses/abc.json", [], opts), null);
+});
+
+test("site-mode: a non-array includeExtensions fails toward FREE, never a substring match or a throw", () => {
+  // gate_scope is untyped jsonb: a string would make `.includes` a substring matcher
+  // ("json" tolls every .js), an object or number would throw out of decide() and 503
+  // the whole tenant — humans included.
+  for (const bad of ["json", {}, 5, true, null, undefined]) {
+    assert.equal(slugFromSitePath("/x.js", [], { includeExtensions: bad as never }), null);
+    assert.equal(slugFromSitePath("/x.json", [], { includeExtensions: bad as never }), null);
+  }
+});
+
+// ── STATIC_EXTENSIONS is the matcher's own source, not a copy of it ──────────────────────────
+// The list has three readers — this matcher, the crawler's media pass, and a publisher's RSL
+// document — and the two outside this file used to re-derive it. A copy that drifts makes the
+// crawl stage a row for a path the gate serves free, or a licence price a file nobody is charged
+// for. So the regex is BUILT from the constant, and this proves the two cannot disagree.
+
+test("every listed extension is free by default, and opting it in tolls it", () => {
+  for (const ext of STATIC_EXTENSIONS) {
+    const path = `/papers/file.${ext}`;
+    assert.equal(slugFromSitePath(path, [], {}), null, `.${ext} must be free by default`);
+    if (ext === "ico") continue; // refused as a discovery surface before the allowlist is read
+    assert.equal(slugFromSitePath(path, [], { includeExtensions: [ext] }), path, `.${ext} must be opt-in-able`);
+  }
+});
+
+test("an extension NOT on the list was never free, so opting it in changes nothing", () => {
+  // The list is the free set, not the tollable set: `.docx` has always tolled in site mode.
+  assert.equal(STATIC_EXTENSIONS.includes("docx"), false);
+  assert.equal(slugFromSitePath("/papers/minutes.docx", [], {}), "/papers/minutes.docx");
+});
+
+test("the list is sorted and unique — it is read by humans and diffed by reviewers", () => {
+  assert.deepEqual([...STATIC_EXTENSIONS], [...new Set(STATIC_EXTENSIONS)].sort());
+});
+
+/**
+ * Prefix depth (`PrefixDepth`) — the nested-path bug.
+ *
+ * `slugFromPath` captured ONE segment, so a dated or nested URL keyed to its first segment.
+ * That is not a missed toll, it is a COLLISION: every article under `/papers/2026/` keyed to
+ * `2026`, so one credits lookup answered for all of them — paying one article's contributors
+ * for another's read, or 404ing and giving the whole year away free.
+ */
+test("segment depth is the default, and is byte-identical to the pre-option behaviour", () => {
+  const p = ["papers"];
+  for (const path of ["/papers/quantum-x", "/papers/2026/quantum-x.pdf", "/papers/a/b/c"]) {
+    assert.equal(slugFromPath(path, p), slugFromPath(path, p, {}), path);
+    assert.equal(slugFromPath(path, p), slugFromPath(path, p, { depth: "segment" }), path);
+  }
+  assert.equal(slugFromPath("/papers/quantum-x", p), "quantum-x");
+  assert.equal(slugFromPath("/papers/2026/quantum-x.pdf", p), "2026");
+});
+
+test("segment depth COLLIDES every article under one nested parent — the bug this option exists for", () => {
+  const p = ["blog"];
+  const a = slugFromPath("/blog/2026/09/first-post", p);
+  const b = slugFromPath("/blog/2026/09/second-post", p);
+  assert.equal(a, "2026");
+  assert.equal(a, b, "two different articles keyed the same — this is the defect, pinned");
+});
+
+test("rest depth keys the whole remainder, so nested articles stop colliding", () => {
+  const p = ["blog"];
+  const o = { depth: "rest" } as const;
+  assert.equal(slugFromPath("/blog/2026/09/first-post", p, o), "2026/09/first-post");
+  assert.equal(slugFromPath("/blog/2026/09/second-post", p, o), "2026/09/second-post");
+  assert.notEqual(slugFromPath("/blog/2026/09/first-post", p, o), slugFromPath("/blog/2026/09/second-post", p, o));
+});
+
+test("rest depth is unchanged from segment for a flat path — the common case does not move", () => {
+  const p = ["essays"];
+  assert.equal(slugFromPath("/essays/on-stillness", p, { depth: "rest" }), "on-stillness");
+  assert.equal(slugFromPath("/essays/on-stillness", p, { depth: "rest" }), slugFromPath("/essays/on-stillness", p));
+});
+
+test("rest depth still stops at a query or hash, and still decodes", () => {
+  const p = ["papers"];
+  const o = { depth: "rest" } as const;
+  assert.equal(slugFromPath("/papers/2026/a-b?utm=x", p, o), "2026/a-b");
+  assert.equal(slugFromPath("/papers/2026/a-b#s", p, o), "2026/a-b");
+  assert.equal(slugFromPath("/papers/2026/caf%C3%A9", p, o), "2026/café");
+  assert.equal(slugFromPath("/papers/2026/100%", p, o), null, "undecodable stays unkeyed under rest too");
+});
+
+test("rest depth never turns a control route or an unprefixed path into an article", () => {
+  const p = ["papers"];
+  const o = { depth: "rest" } as const;
+  assert.equal(slugFromPath("/_naulon/health", p, o), null);
+  assert.equal(slugFromPath("/other/2026/x", p, o), null);
+  assert.equal(slugFromPath("/papers", p, o), null, "the prefix alone is not an article");
+  assert.equal(slugFromPath("/papers/x", [], o), null, "no prefixes, no article");
+});
+
+test("the matcher cache is keyed by depth, so flipping it is not served a stale regex", () => {
+  const p = ["papers"];
+  // Same prefix set, both depths, in both orders — a cache keyed on prefixes alone returns the
+  // first-compiled matcher for the second call and the option silently does nothing.
+  assert.equal(slugFromPath("/papers/2026/x", p, { depth: "segment" }), "2026");
+  assert.equal(slugFromPath("/papers/2026/x", p, { depth: "rest" }), "2026/x");
+  assert.equal(slugFromPath("/papers/2026/x", p, { depth: "segment" }), "2026");
+});
+
+test("deriveSlug carries the depth, so the crawler keys what the gate will ask for", () => {
+  const url = "https://site.test/blog/2026/09/post";
+  assert.equal(deriveSlug(url, ["blog"]), "2026");
+  assert.equal(deriveSlug(url, ["blog"], { depth: "rest" }), "2026/09/post");
+  assert.equal(deriveSlug(url, ["blog"], { depth: "rest" }), slugFromPath("/blog/2026/09/post", ["blog"], { depth: "rest" }));
 });

@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
-import { FLEET_DIRECTORY_URL } from "./fleet.ts";
+import { FLEET_DIRECTORY_URL, FLEET_VERIFY_URL } from "./fleet.ts";
 
 // Find the repo root by walking UP from the cwd until we hit the workspace root
 // (marked by package-lock.json). We anchor on cwd, not import.meta.url, because
@@ -80,7 +80,9 @@ export const configSchema = z.object({
   // requires this. Fail-loud at settle time (not boot), so testnet deploys never need it.
   ARC_RPC_URL: z.string().url().optional(),
 
-  // Relayer key for the Arc self-relay (memo) settlement path. Required ONLY when
+  // Relayer key for the Arc self-relay (memo) path. The SETTLE path no longer uses it (2026-09-04:
+  // every chain batches through Circle Gateway); kept for the deposit/withdrawal tagging the Memo
+  // predeploy is still the right tool for. Required ONLY when
   // PAYMENT_MODE=gateway AND the active network ships the Memo predeploy (Arc) —
   // on Base/Base Sepolia the rail is Circle Gateway and this is unused. The relayer
   // is an EOA (the Memo precompile is EOA-only) that signs the OUTER tx and pays gas
@@ -264,6 +266,11 @@ export const configSchema = z.object({
   // to the live naulon fleet directory — @naulon/wayfarer-mcp is naulon's branded client, so
   // zero-config discovery resolves here out of the box (turnkey), overridable for self-host.
   CATALOG_URL: z.string().url().default(FLEET_DIRECTORY_URL),
+  // The page a citation's proof link opens. It fetches the record from the ISSUER and checks
+  // the signature in the visitor's browser against the issuer's published keys, so the fleet
+  // page verifies a self-hosted gate's records too — which is why it is the default here rather
+  // than something a self-hoster must stand up before their citations carry a link.
+  VERIFY_PAGE_URL: z.string().url().default(FLEET_VERIFY_URL),
   // RSS/sitemap discovery. If set, the agent discovers from the publisher's live
   // feed instead of a CATALOG_URL. Precedence: RSS_URL > PUBLISHER_URL > CATALOG_URL,
   // then selectSource() throws — there is no bundled-demo fallback. rssSource reads

@@ -160,6 +160,23 @@ class LicenseTest extends WP_UnitTestCase {
 		$this->assertSame( '', $served, 'serving a login page as our licensing terms is worse than serving none' );
 	}
 
+	public function test_the_link_header_is_the_pointer_a_402_can_carry() {
+		// The channel that matters most on a payment challenge: an agent meeting a 402 already holds
+		// the response, and without this it must fetch robots.txt before it can learn the terms that
+		// decide whether paying is even permitted. Production carried no such header on 2026-09-02.
+		$this->assertSame(
+			'',
+			Naulon_License::instance()->link_header(),
+			'nothing is advertised that is not served'
+		);
+
+		$this->store_document();
+		$header = Naulon_License::instance()->link_header();
+		$this->assertStringContainsString( '<' . home_url( '/license.xml' ) . '>', $header );
+		$this->assertStringContainsString( 'rel="license"', $header );
+		$this->assertStringContainsString( 'type="application/rsl+xml"', $header, 'the media type is what tells an RSL reader this is not a human licence page' );
+	}
+
 	public function test_a_site_with_no_key_publishes_nothing_and_calls_nothing() {
 		Naulon_Settings::update( array( 'api_key' => '' ) );
 		$http = 0;

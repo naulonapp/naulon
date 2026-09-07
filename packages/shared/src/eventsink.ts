@@ -7,7 +7,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { getConfig } from "./config.ts";
-import { readAllPaged, supabaseRest } from "./supabase.ts";
+import { readAllPaged, supabaseRest, SupabaseRestError } from "./supabase.ts";
 import type { AttributedEvent, EventSink } from "./types.ts";
 
 export function jsonlSink(path?: string): EventSink {
@@ -119,9 +119,24 @@ export function supabaseSink(opts: SupabaseSinkOptions = {}): EventSink {
 
     async get(id) {
       // Primary-key lookup — never reads the whole table.
-      const rows = (await supabaseRest(
-        `/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&select=data&limit=1`,
-      )) as Array<{ data: AttributedEvent }>;
+      let rows: Array<{ data: AttributedEvent }>;
+      try {
+        rows = (await supabaseRest(
+          `/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&select=data&limit=1`,
+        )) as Array<{ data: AttributedEvent }>;
+      } catch (err) {
+        // An id Postgres cannot even cast is an id no row can have — a MISS, not a failure.
+        // PostgREST answers `400 22P02` (invalid text representation) for it. Without this the
+        // throw reached the gate's error handler and `GET /licenses/<garbage>` served 503
+        // "temporarily unavailable — please retry shortly", which is untrue twice: nothing is
+        // down, and retrying can never help. Measured on the prod gate 2026-09-02.
+        //
+        // ONLY that code. Every other failure still throws, because an outage reporting as
+        // "no such settlement" would deny real licences during an incident — strictly worse
+        // than a 503.
+        if (err instanceof SupabaseRestError && err.code === "22P02") return undefined;
+        throw err;
+      }
       return rows[0]?.data;
     },
   };

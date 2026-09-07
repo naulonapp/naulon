@@ -13,6 +13,7 @@
 import { walletAddress } from "@naulon/sdk";
 import type { WalletAddress, ArticleCredits, Contributor, CreditsResolver } from "@naulon/sdk";
 import type { PaymentFailureReason } from "./paymentfailure.ts";
+import type { LicenceFacts } from "./licence-facts.ts";
 export { walletAddress };
 export type { WalletAddress, ArticleCredits, Contributor, CreditsResolver };
 
@@ -158,6 +159,19 @@ export interface AttributedEvent {
    * the settlement body falls back to `activeNetwork().chainId`, unchanged.
    */
   chainId?: number;
+  /**
+   * What a SALE bought, when this event settled one: the scope, the RSL terms, the purchased
+   * period and the buying subject. Absent on a toll — which is every event before W8 — so the
+   * row stays byte-identical and nothing historical needs rewriting.
+   *
+   * It is on the EVENT and not only in the minted token because the access licence and the
+   * citation record are two projections of ONE ledger row (`mintLicense` / `mintCitationRecord`).
+   * `GET /licenses/:jti/record` mints the permanent projection from the stored row long after the
+   * settle tail's in-memory `SettleArgs` is gone, so a fact the row does not carry cannot reach
+   * it. Without this the permanent record of a scope purchase — the object a stranger checks, and
+   * the whole product — could name the payment but not what was bought.
+   */
+  licence?: LicenceFacts;
   /** epoch ms — passed in by the caller (no ambient clock in shared code). */
   at: number;
 }

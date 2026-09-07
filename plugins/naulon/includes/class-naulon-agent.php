@@ -63,6 +63,11 @@ class Naulon_Agent {
 		'meta-externalfetcher',
 		'amzn-user',
 		'mistralai-user',
+		// Exa. Documented by its operator as a search engine, and deliberately NOT treated as
+		// one: a single token does both the indexing and the on-demand /contents fetch an agent
+		// pays Exa for, so the tollable half cannot be separated from the indexing half. See the
+		// divergence note on its CRAWLER_REGISTRY row upstream before moving it.
+		'exasearchbot',
 		'python-requests',
 		'node-fetch',
 		'axios',

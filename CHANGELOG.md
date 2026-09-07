@@ -16,7 +16,168 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
+Unpublished — the packages below are unbumped on npm until the next tag.
+
+`@naulon/enforce` — the 402 now carries a body, not just headers. A naulon 402 was zero
+bytes on the gate and header-only in the in-app middleware, so everything a buyer needed
+rode in `PAYMENT-REQUIRED`: correct for an x402 client, blank for every other crawler. One
+builder (`paymentBody.ts`) now feeds both emitters, in `@crawlertoll/core`'s
+`{error, message, offer}` shape, so a buyer written against the vendor-neutral middleware
+can price a naulon origin with no naulon code. The body advertises; `PAYMENT-REQUIRED`
+still obligates. The in-app 402 also gained `crawler-price` (it emitted none, so a
+publisher on the SDK was silent to exactly the Cloudflare-trained crawlers the fleet
+talks to) and `X-Naulon-Verdict`; the in-app paid 200 gained `crawler-charged`, taken
+from the control plane's settled figure rather than derived locally, because only the
+settling side knows which legs a stock x402 payer forwent. `headerSafe` moved into
+enforce — a second copy of a sanitizer is how one of them stops sanitizing.
+
+`@naulon/enforce` — x402 discovery is declared, so a catalog can list the toll. Per the
+Bazaar extension spec, a resource server declares its endpoint on its own 402 and a
+facilitator catalogs what it sees; nothing here declared anything, so no catalog could
+list a naulon read even in principle. Every 402 now carries `extensions.bazaar` and
+service metadata on `resource`, with the HOST as `serviceName` — a catalog full of
+identical `naulon` rows helps no agent.
+
+## v0.8.4
+
+Every chain settles through Circle Gateway. The Arc memo settle path — one self-relayed
+on-chain transaction per read, with our relayer paying the gas — is retired. It cost
+$0.0023–$0.0034 in gas against a $0.003 toll across the 30 real production settles, and what
+it bought was an on-chain reconciliation id that the event record, the licence `jti` and the
+settlement reference already carry. The Memo predeploy itself is kept: tagging a transaction
+that has to happen anyway, such as a deposit or a withdrawal, is still what it is good at.
+
+**If you inject a signer, you now inject a `GatewaySigner` on every network, Arc included.**
+A buyer that kept signing the memo envelope against Arc would have its payment rejected as
+malformed by a gate on this version, because the two sides must agree on the envelope. The
+`RailSigners` path is unaffected — it already picked per-402.
+
+`@naulon/wayfarer` 0.4.1 → **0.4.2**
+* `selectBuyer()` and `run()` route to `gatewayBuyer` on every network. Both previously
+  branched on whether the active chain ships the Memo predeploy.
+* `assembleRailPayment` signs **one Circle envelope per leg** of a multi-leg toll, in leg
+  order. Multi-leg tolls were previously memo-rail-only, which is what confined the operator
+  fee leg to a single chain; the rail always carried N legs, the buyer just had to sign them
+  individually rather than asking the SDK for one payload covering all of them.
+
+`@naulon/wayfarer-mcp` 0.5.1 → **0.5.2** — the hosted MCP's single-signer path routes to
+`gatewayBuyer` too. This is the path an agent reaches you on, so it is the one that mattered.
+
+`@naulon/shared` 0.4.3 → **0.4.4** — `supportsMemo` still answers whether a chain ships the
+Memo predeploy, and no longer selects a settlement rail. Documented on the field, along with
+the measurement.
+
+`@naulon/enforce` 0.4.3 → **0.4.4** — a quote's `memoId` is still carried and is now
+unconsumed by the settle path.
+
+`@naulon/sdk` is unchanged and is not republished.
+
+## v0.8.3
+
+Ships the WordPress plugin 0.5.3, and the four npm packages that had changed since v0.8.1
+without their versions moving.
+
+**v0.8.2 published nothing.** It was tagged with those four versions standing still, and the
+release workflow refused it — correctly, and for exactly the reason this repo added that
+guard: the publish is idempotent, so an unchanged version is skipped, and a skip is
+indistinguishable from a successful release in the log. The tag is left in place as the record
+of a release that did not happen.
+
+`@naulon/enforce` 0.4.2 → **0.4.3**
+* `httpPublisherConfigSource` — an in-app enforcer now reads its scope, licence identity, SEO
+  allowlist and crawler policy from the control plane instead of a literal in the publisher's
+  own bundle. Cached per host with stale-if-error; every failure resolves rather than throws.
+* `serveX402Manifest` answers `/.well-known/x402`, the path every 402's `Link: rel="payment"`
+  header advertises and which an in-app host previously 404'd.
+* A quote now always carries the settlement chain it is payable on. An absent network was
+  being resolved against whichever runtime received the quote, so a fleet on Base emitted 402s
+  advertising testnet USDC.
+* The discovery manifest states its scope. A site-scoped publisher was printing a prefix list
+  that understated what it tolls.
+* `ExaSearchBot` is recognised and charged by default.
+
+`@naulon/shared` 0.4.2 → **0.4.3**
+* The crawler registry gains Exa, with the reasoning for treating a self-described search
+  engine as an assistant recorded on the row.
+* Citation licences, network constants and the Supabase paging helper moved with #89/#95/#96.
+
+`@naulon/wayfarer` 0.4.0 → **0.4.1** — licence store follows the citation-scope change.
+
+`@naulon/wayfarer-mcp` 0.5.0 → **0.5.1** — a mount can restrict which tools it registers, which
+is what stands up an unauthenticated read-only surface safely.
+
+`@naulon/sdk` is unchanged and is not republished.
+
+## v0.8.1
+
+Ships the WordPress plugin 0.5.2. **No npm package changed** — every one of them shipped in
+v0.8.0 and is on the registry.
+
+This tag exists because v0.8.0 published to npm and then failed while packaging: the plugin's
+readme carried a Changelog entry for the shipping version and no matching Upgrade Notice, and the
+guard that catches that ran *after* the publish. The GitHub Release step was skipped, so the plugin
+zip and the update manifest were never built and no site was offered the update. The plugin version
+folds 0.5.1 into 0.5.2 rather than advertising a version that no site could ever have installed, and
+the guard now runs with the other three, before anything irreversible.
+
+### Changed
+
+- **The plugin's payment challenge points at the licence.** A 402 carries
+  `Link: <…/license.xml>; rel="license"; type="application/rsl+xml"`, so an agent learns the terms
+  from the response it already holds instead of going back for `robots.txt`. Silent when no licence
+  has been published — nothing is advertised that is not served.
+
+## v0.8.0
+
+Ships `@naulon/sdk` 0.4.0 · `@naulon/shared` 0.4.2 · `@naulon/enforce` 0.4.2 ·
+`@naulon/wayfarer` 0.4.0 · `@naulon/wayfarer-mcp` 0.5.0.
+
+The plugin was meant to ship here too and did not — packaging failed after the npm publish, so no
+zip and no update manifest were built. It ships in v0.8.1, as 0.5.2. The plugin entry below is
+listed under that tag instead.
+
+The headline: an agent built on `@naulon/wayfarer` now reads what a publisher **publishes**, not
+only what their 402 charges — and it will refuse a page whose publisher forbids AI use, however
+much budget it has.
+
 ### Added
+
+- **`@naulon/sdk/rsl`** — a reader for RSL 1.0, the open content-licensing standard. Three layers,
+  each usable alone:
+
+  - `locateLicence(url)` finds the document through every HTTP association mechanism the spec
+    defines: the `robots.txt` `License:` directive, the `Link` response header, an HTML
+    `<link rel="license">`, and an inline `<script type="application/rsl+xml">`.
+  - `parseRsl(xml)` / `parseRslOrNull(xml)` read it. `parseRslOrNull` is the one most callers want:
+    a licence that will not parse is a licence you do not have.
+  - `termsForUrl(doc, url)` answers the question an agent actually asks — what is permitted here,
+    at what price, from whom.
+
+  Three readings are deliberate, and each is the one that would otherwise take a publisher's work
+  without paying for it: a payment `type` outside the spec's vocabulary is **not** free; an
+  `<amount>` that will not parse is **not** zero; and precedence is resolved per QUESTION rather
+  than per document, so a narrow priced scope cannot erase a site-wide free `search` grant.
+
+- **The Open Licensing Protocol.** `acquireLicenseToken()` speaks the spec's `/token` endpoint —
+  Basic auth, `grant_type=client_credentials`, the `<license>` element **verbatim** and the resource
+  pattern it sat under. Every error code stays distinct (`invalid_client` is your secret;
+  `invalid_resource` is that publisher not being managed by the server they named), and
+  `olpRetryable()` says which two are worth trying again.
+
+  This matters because RSL's `content@server` is not a hint: the spec requires a client to obtain a
+  licence from that server *before access, even when the licence is free*. Paying the price printed
+  on such a page moves money and licenses nothing.
+
+- **`@naulon/wayfarer` honours all of it.** `spendGate` — the one evaluator both the research run
+  and the MCP pay tool call — refuses a read the publisher prohibits, refuses an **undischarged**
+  licence-server obligation (naming which of the two reasons it is: no credentials configured, or
+  the server refused these), and turns a quote far above the published price into a human approval
+  rather than a payment. `licenceOverchargeTolerance` defaults to 25%, generous enough that a fee
+  leg is not an overcharge.
+
+  Terms are cached per origin with in-flight de-duplication, so ten candidates on one host ask
+  `robots.txt` once. A licence token reaches the wire in exactly one place — `agentFetch` presents
+  `Authorization: License <token>` for any URL the token's resource pattern admits.
 
 - **`gateScope.includeExtensions`** — a whole-site publisher can opt a file extension
   back into the toll. Site mode drops every static extension by default (`.pdf`,
@@ -31,6 +192,14 @@ tags and the auto-generated notes on each GitHub Release.
   `normalizeIncludeExtensions` (`@naulon/shared`) is the write-path validator.
   A consumer deriving slugs for a stored catalog MUST pass the same options the gate
   is configured with, or the two planes key the same URL differently.
+
+### Changed
+
+- **`FetchResult` gains `header(name)`** (`@naulon/sdk/crawl`) and `Fetcher`'s init accepts
+  `method` / `body`. Both are optional and additive. `header` is a METHOD rather than a `headers`
+  record on purpose: a native `Response` already satisfies `Fetcher` structurally, and a property
+  named `headers` would collide with `Response.headers` and break every fake that hands `fetch`'s
+  own result straight to an adapter.
 
 ## v0.7.4
 

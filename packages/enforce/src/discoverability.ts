@@ -15,7 +15,7 @@
  * Everything here derives from the resolved `PublisherConfig` + the Arc network
  * constants — no new per-publisher seam.
  */
-import { activeNetwork, toAtomicUsdc, type PublisherConfig, type SettlementNetwork } from "@naulon/shared";
+import { activeNetwork, getConfig, issuerHost, toAtomicUsdc, type PublisherConfig, type SettlementNetwork } from "@naulon/shared";
 // The manifest MUST advertise the same validity window the real 402 does, so import it rather than
 // re-declaring it (see the note at the old constant's site below).
 import { MAX_TIMEOUT_SECONDS } from "./build402.ts";
@@ -26,6 +26,19 @@ export const X402_MANIFEST_PATH = "/.well-known/x402";
 const JWKS_PATH = "/.well-known/naulon-jwks.json";
 /** Online license verification path template. */
 const LICENSE_VERIFY_PATH = "/licenses/{jti}";
+/** The permanent citation record, minted from the same ledger row. */
+const LICENSE_RECORD_PATH = "/licenses/{jti}/record";
+
+/**
+ * The proof-page template, `host` filled in from the publisher's identity and `{jti}` left for
+ * the buyer. Built by hand rather than through `proofPageUrl` because that helper would encode
+ * the braces; the query joiner still respects a page URL that already carries a query.
+ */
+function proofTemplate(licenseIdentity: string): string {
+  const base = getConfig().VERIFY_PAGE_URL;
+  const host = issuerHost(licenseIdentity) ?? "";
+  return `${base}${base.includes("?") ? "&" : "?"}host=${encodeURIComponent(host)}&jti={jti}`;
+}
 
 /** `Link` header value pointing an agent at the manifest (RFC 8288). */
 export const PAYMENT_LINK_HEADER = `<${X402_MANIFEST_PATH}>; rel="payment"; type="application/json"`;
@@ -42,8 +55,21 @@ export interface X402Manifest {
   /** The product's contract, machine-readable: humans read free, machines pay. */
   humansReadFree: true;
   resources: {
-    /** Path prefixes (no leading slash) whose articles are tolled. */
-    pathPrefixes: string[];
+    /**
+     * What the toll covers — the manifest's spelling of `PublisherConfig.gateScope`.
+     * `"prefixes"` (the default) tolls only paths under `pathPrefixes`; `"site"` tolls
+     * every path except `excludePrefixes` and the always-free discovery surfaces.
+     */
+    scope: "prefixes" | "site";
+    /**
+     * Path prefixes (no leading slash) whose articles are tolled. Present in `"prefixes"`
+     * scope only — a site-scoped publisher has no prefix list, and printing its (usually
+     * vestigial) `articlePrefixes` here told an agent that a handful of paths were tolled
+     * when in fact the whole site was. Absent is honest; a wrong list is not.
+     */
+    pathPrefixes?: string[];
+    /** Publisher-chosen free sections. Present in `"site"` scope only. */
+    excludePrefixes?: string[];
     /** Toll kinds; a citation is priced up from a read. */
     kinds: ["read", "citation"];
     /** Header an agent sets to request the citation toll instead of a read. */
@@ -64,6 +90,14 @@ export interface X402Manifest {
   license: {
     jwks: string;
     verify: string;
+    /** The permanent citation record for a settlement — `{jti}` is the licence's `jti`. */
+    record: string;
+    /**
+     * The page a reader opens to see the record checked against this gate's published keys, in
+     * their own browser. `host` is pre-filled with this publisher; `{jti}` is the licence's.
+     * This is the link a citation should carry beside the source.
+     */
+    proof: string;
     /** issuer === audience for this publisher's Citation License Tokens. */
     identity: string;
   };
@@ -90,12 +124,25 @@ export function buildX402Manifest(
   return {
     x402Version: 2,
     humansReadFree: true,
-    resources: {
-      pathPrefixes: publisher.articlePrefixes,
-      kinds: ["read", "citation"],
-      selectKindHeader: "X-Naulon-Kind",
-      note: "GET any article URL under a prefix to receive a 402 with concrete PaymentRequirements.",
-    },
+    resources:
+      publisher.gateScope?.mode === "site"
+        ? {
+            scope: "site",
+            excludePrefixes: publisher.gateScope.excludePrefixes,
+            kinds: ["read", "citation"],
+            selectKindHeader: "X-Naulon-Kind",
+            note:
+              "Every path on this site is tolled except the listed exclusions and the always-free"
+              + " discovery surfaces (robots, sitemaps, feeds, favicon). GET any URL to receive a 402"
+              + " with concrete PaymentRequirements.",
+          }
+        : {
+            scope: "prefixes",
+            pathPrefixes: publisher.articlePrefixes,
+            kinds: ["read", "citation"],
+            selectKindHeader: "X-Naulon-Kind",
+            note: "GET any article URL under a prefix to receive a 402 with concrete PaymentRequirements.",
+          },
     payment: {
       scheme: "exact",
       network: net.network,
@@ -114,7 +161,13 @@ export function buildX402Manifest(
       payTo:
         "Resolved per article to the primary author from the publisher's credits graph; the recursive co-author split is recorded on each settled event. Custody-free: settlement is buyer → author.",
     },
-    license: { jwks: JWKS_PATH, verify: LICENSE_VERIFY_PATH, identity: publisher.licenseIdentity },
+    license: {
+      jwks: JWKS_PATH,
+      verify: LICENSE_VERIFY_PATH,
+      record: LICENSE_RECORD_PATH,
+      proof: proofTemplate(publisher.licenseIdentity),
+      identity: publisher.licenseIdentity,
+    },
     ...(publisher.catalogUrl ? { catalog: { url: publisher.catalogUrl } } : {}),
   };
 }

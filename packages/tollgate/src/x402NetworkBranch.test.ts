@@ -36,14 +36,19 @@ function arcLeg(): PaymentRequirements {
   };
 }
 
-test("an Arc leg routes to the MEMO settle path even when the fleet default is baseSepolia (gateway)", async () => {
-  // Payload is irrelevant: the memo path's relayer-key guard fires first. If the
-  // branch wrongly keyed off the baseSepolia fleet default it would take the GATEWAY
-  // path (a facilitator network call) and never emit this error.
+test("an Arc leg routes to the FACILITATOR, not the memo relayer, whatever the fleet default is", async () => {
+  // The inverse of what this asserted until 2026-09-04, and still a per-402 routing test: the leg
+  // names Arc while the fleet default is baseSepolia, so a branch that keyed off the fleet default
+  // would be indistinguishable from one that keyed off the leg. What changed is the destination —
+  // every chain settles through Circle now, so the memo relayer-key guard can no longer fire.
   const sig = Buffer.from(JSON.stringify([{ authorization: {}, signature: "0x00" }])).toString("base64");
   const res = await verifyAndSettle(sig, [{ role: "author", requirements: arcLeg() }], Date.now());
-  assert.equal(res.ok, false);
-  assert.match(res.error ?? "", /RELAYER_PRIVATE_KEY required for memo-network settlement/);
+  assert.equal(res.ok, false, "the payload is junk either way — only the ROUTE is under test");
+  assert.doesNotMatch(
+    res.error ?? "",
+    /RELAYER_PRIVATE_KEY required for memo-network settlement/,
+    "an Arc leg must never reach the memo self-relay",
+  );
 });
 
 test("facilitatorBearer picks test key on testnet, live key on mainnet", () => {

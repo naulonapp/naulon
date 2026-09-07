@@ -39,7 +39,7 @@ sequenceDiagram
     Note over V: pin EdDSA, verify signature, THEN read claims
 ```
 
-## Two CRITICAL invariants (a build that violates either is a free-read bypass)
+## Three CRITICAL invariants (a build that violates any one is a free-read bypass)
 
 1. **Stable signing key off the mock path.** Ephemeral Ed25519 keys break a
    reusable, externally-verified token across serverless instances. A stable
@@ -51,6 +51,37 @@ sequenceDiagram
    enables `alg:none` and HMAC-with-public-key forgery. Pin the algorithm, verify
    over the literal received bytes, and parse claims only **after** the signature
    passes.
+3. **Only a citation record may omit `exp`.** A licence that entitles a read MUST
+   expire — its TTL is the only kill switch an unrevocable bearer credential has on
+   the offline tier. `verifyLicense` therefore refuses an absent `exp` on anything
+   whose `naulon.grant` is not `"none"`, and `licenseEntitlesRead` refuses any grant
+   that is not `"read"`. Both directions are needed: the first stops a permanent token
+   being minted with access attached, the second stops one being presented for access.
+
+## The citation record (a SECOND object, added 2026-09-02)
+
+The CLT is an **access** token, and its short TTL is a security property, not a
+limitation to be relaxed. A **citation** is the opposite job: someone cites a source
+in a paper and a reader checks it months later, long after any re-read window closed.
+Stretching the CLT to cover that would mean issuing long-lived unrevocable free-read
+credentials, so the two jobs are two objects.
+
+| | Access licence (CLT) | Citation record |
+|---|---|---|
+| Grants | a free re-read of the bytes | nothing |
+| Term | `LICENSE_TTL_SECONDS`, capped at 3600 | permanent — no `exp` |
+| Proves | you may fetch this now | account X licensed Y from Z at T for $P |
+| Revocation | none on the offline tier → the TTL is the kill switch | irrelevant; it grants nothing |
+
+A record is a second projection of the **same ledger row** — same `jti`, `amount`,
+`payees`, `settlementRef` — minted by `mintCitationRecord()` with `grant: "none"` and
+no `exp`. It is safe to be permanent *because* presenting one buys nothing.
+
+`GET /licenses/:jti/record` mints it on demand, host-scoped and publisher-checked
+exactly like `GET /licenses/:jti` — minting discloses no more than reading did. It
+names the resource by **`slug`, never a title**: the ledger row carries no title, and
+an unverifiable string inside a document whose whole value is that a stranger can
+check it is worse than none.
 
 ## Resolved design decisions
 
@@ -97,9 +128,26 @@ No `crit`/`jku`/`x5u`/`jwk` — verifier MUST reject if present.
     "settlementRef": "<event.settlementRef>",
     "payees": [ { "authorId", "wallet", "share" }, ... ]   // full mode
     // hashed mode: "payeesHash": "<base64url(SHA-256(canonical payees JSON))>", "payTo": "0x..(primary)"
+
+    // --- all four OPTIONAL and absent on today's licence (byte-identical when unused) ---
+    "grant": "read" | "none",        // absent => "read". "none" is a citation record.
+    "scope": { "patterns": ["/essays/*"] },   // RFC 9309 paths, matched against the REQUEST PATH
+    "terms": ["ai-input", "ai-index"],        // RSL 1.0 usage vocabulary; "ai-train" is never sold
+    "period": { "from": <epoch s>, "until": <epoch s> | null }   // null = permanent
   }
 }
 ```
+
+`exp` is **required on a read grant and absent on a record** — see invariant 3.
+`sub` defaults to the payer wallet and may be set to a stable buyer identity
+(`MintInput.subject`); it must be an account handle or a key, never an email or a
+name, because the record is meant to be publicly verifiable.
+
+**`scope` is matched against the request PATH, not the slug.** Prefix mode's slug is
+the captured segment (`on-stillness`), not a path, so a path pattern could never match
+it. An unscoped licence keeps exact slug equality. A scoped one does **not** fall back
+to slug equality — a scope that fails to match must not silently widen back to
+whatever slug was current at mint time.
 
 **Signing** — `crypto.sign(null, msg, ed25519PrivateKey)` over
 `b64url(header)+'.'+b64url(payload)` (node:crypto, no new dep). Key never logged;

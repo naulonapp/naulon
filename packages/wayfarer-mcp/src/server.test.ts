@@ -22,7 +22,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
-import { DEFAULT_POLICY, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
+import { DEFAULT_POLICY, licenseIdentityFor, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
 import { buildServer, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
 
@@ -208,17 +208,27 @@ function failingPayGate(amountAtomic: string) {
   };
 }
 
-/** A base64 x402 PAYMENT-REQUIRED header advertising a single author leg. */
+/** A base64 x402 PAYMENT-REQUIRED header advertising a single author leg.
+ *
+ *  Carries the `GatewayWalletBatched` descriptor `build402` stamps on every gateway-mode 402 — the
+ *  real gate shape. It did not until 2026-09-04, because a memo-capable fleet default routed the
+ *  buyer to the memo signer and the descriptor was ignored on that rail. Every chain settles through
+ *  Circle now, so a 402 without it is one no gate here would ever emit. */
 function paymentRequired(amountAtomic: string): string {
   const body = {
     accepts: [
       {
-        network: "arc-testnet",
-        asset: "USDC",
+        network: "eip155:5042002",
+        asset: "0x3600000000000000000000000000000000000000",
         payTo: "0x000000000000000000000000000000000000dEaD",
         amount: amountAtomic,
         maxTimeoutSeconds: 120,
-        extra: { nonce: "nonce-1" },
+        extra: {
+          nonce: "nonce-1",
+          name: "GatewayWalletBatched",
+          version: "1",
+          verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+        },
       },
     ],
   };
@@ -515,7 +525,7 @@ test("naulon_quote reads real price + terms from a 402, and reports gated:false 
     assert.equal(gated.gated, true, "the gated slug is quoted");
     assert.equal(gated.priceUsdc, 0.005, "author price decoded from the 402 (5000 micro)");
     assert.equal(gated.totalUsdc, 0.005, "no extra legs → total equals the author price");
-    assert.equal(gated.network, "arc-testnet");
+    assert.equal(gated.network, "eip155:5042002");
     assert.equal(typeof gated.payTo, "string");
 
     const freeRes = await client.callTool({ name: "naulon_quote", arguments: { slug: "free" } });
@@ -575,9 +585,13 @@ test("naulon_quote does not pass off a 404 path as a plain free read", async () 
   await withStubGate(handler, async () => {
     const client = await connectedClient();
     const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
-    const q = res.structuredContent as { gated: boolean; note?: string };
-    assert.equal(q.gated, false, "still not gated (nothing was paid)");
-    assert.match(q.note ?? "", /404|not found|canonical url/i, "the note distinguishes a 404 from a genuine free read");
+    const q = res.structuredContent as { gated?: boolean; refused?: boolean; note?: string };
+    // The FIELD must carry this, not only the note. `gated:false` is defined by the tool as "a free
+    // read — just fetch it", and a model branching on it never reads the prose beside it. A 404 is
+    // neither payable nor free, which is what `refused` means.
+    assert.equal(q.refused, true, "a 404 is refused — neither payable nor free");
+    assert.equal(q.gated, undefined, "a refusal must not also claim gated:false, which means 'free, just fetch it'");
+    assert.match(q.note ?? "", /404|not found|canonical url/i, "the note still says which kind of refusal this was");
   });
 });
 
@@ -1154,8 +1168,28 @@ const mockSigner: MemoSigner = {
   },
 };
 
-function heldLicense(slug: string, exp: number): HeldLicense {
-  return { slug, title: slug, jti: `jti-${slug}`, exp, aud: "gate://naulon", pop: false, jws: "h.p.s" };
+/**
+ * A held licence as the CONFIGURED gate would have minted it.
+ *
+ * `aud` is derived, not a placeholder: a held licence is only usable at the gate that issued it,
+ * and `naulon:${host}` is what a gate stamps. A fixture carrying `gate://naulon` describes a
+ * token no deployment produces, and a test built on one proves nothing about the real path.
+ */
+function heldLicense(slug: string, exp: number, gate?: string): HeldLicense {
+  // Derived through `licenseIdentityFor`, the same function the tool computes the request's
+  // identity with, against the same gate `gateBase()` will resolve — `TOLLGATE_URL` when it is
+  // set, otherwise the fleet origin. A fixture with a hand-written `aud` describes a token no
+  // deployment mints, and a held licence is only usable at the gate that issued it.
+  const base = gate ?? process.env.TOLLGATE_URL ?? FLEET_ORIGIN;
+  return {
+    slug,
+    title: slug,
+    jti: `jti-${slug}`,
+    exp,
+    aud: licenseIdentityFor(base) ?? "naulon:unknown",
+    pop: false,
+    jws: "h.p.s",
+  };
 }
 
 test("C1 — read_held consults the INJECTED per-session store, not the process file", async () => {
@@ -1179,7 +1213,86 @@ test("C1 — two sessions with separate stores do not cross-read (the hosted lea
   const rb = (await b.callTool({ name: "naulon_read_held", arguments: { slug: "secret" } }))
     .structuredContent as { ok: boolean; error?: string };
   assert.match(ra.error ?? "", /expired/i, "A sees its own held license");
-  assert.match(rb.error ?? "", /No held license/i, "B never sees A's license — isolation holds");
+  // The isolation signal is that B gets the NOTHING-HELD answer while A gets the EXPIRED one:
+  // "expired" can only be said about a licence the store actually holds. Asserted as the
+  // absence of A's answer rather than as B's exact prose, which is copy and will be reworded.
+  assert.equal(rb.ok, false);
+  assert.doesNotMatch(rb.error ?? "", /expired/i, "B never sees A's license — isolation holds");
+  assert.match(rb.error ?? "", /no live license covers this/i);
+});
+
+test("W8 — read_held serves a SCOPE licence when given the url, and refuses without one", async () => {
+  // A scope licence is filed under a synthetic slug (`scope:/articles/*`) that no caller will
+  // ever ask for, so before this the whole purchase was unreachable from the buyer's own tools.
+  // The url is what makes it findable: coverage is decided by path, never by slug.
+  let served = 0;
+  await withStubGate(
+    (req, res) => {
+      if (req.headers["x-naulon-license"]) {
+        served += 1;
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("the licensed content");
+        return;
+      }
+      res.writeHead(402).end();
+    },
+    async () => {
+      const gate = process.env.TOLLGATE_URL!;
+      const aud = `naulon:${new URL(gate).host}`;
+      // Deliberately OFF-template: this publisher serves at /articles/, while the slug template
+      // is /essays/. That is the case the url argument exists for — a same-shape scope would be
+      // covered by the template alone and would prove nothing about it.
+      const scope = { patterns: ["/articles/*"] };
+      const store = memoryHeldStore([
+        [
+          "scope:/articles/*",
+          {
+            slug: "scope:/articles/*",
+            title: "Licence over /articles/*",
+            jti: "jti-scope",
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            aud,
+            pop: false,
+            jws: "h.p.s",
+            scope,
+          },
+        ],
+      ]);
+      const client = await connectedClientWith({ heldStore: store });
+
+      const withUrl = (
+        await client.callTool({
+          name: "naulon_read_held",
+          arguments: { slug: "on-stillness", url: `${gate}/articles/on-stillness` },
+        })
+      ).structuredContent as { ok: boolean; content?: string; licenseId?: string; paidUsdc?: number };
+      assert.equal(withUrl.ok, true, "a scope licence covers a path inside it");
+      assert.equal(withUrl.content, "the licensed content");
+      assert.equal(withUrl.licenseId, "jti-scope");
+      assert.equal(withUrl.paidUsdc, 0, "a held re-read is free");
+      assert.equal(served, 1);
+
+      // Slug alone resolves to the gate's CANONICAL path (`/essays/<slug>`), which this
+      // publisher does not serve — so the scope does not cover it and the refusal names the way
+      // out rather than silently guessing which of the scope's paths was meant.
+      const slugOnly = (
+        await client.callTool({ name: "naulon_read_held", arguments: { slug: "on-stillness" } })
+      ).structuredContent as { ok: boolean; error?: string };
+      assert.equal(slugOnly.ok, false);
+      assert.match(slugOnly.error ?? "", /pass the exact url/i, "the refusal names the way out");
+      assert.equal(served, 1, "a path the scope does not cover must not reach the gate");
+
+      // Outside the scope: no licence, and the gate is never asked.
+      const outside = (
+        await client.callTool({
+          name: "naulon_read_held",
+          arguments: { slug: "x", url: `${gate}/notes/x` },
+        })
+      ).structuredContent as { ok: boolean };
+      assert.equal(outside.ok, false);
+      assert.equal(served, 1, "an uncovered path must not reach the gate carrying the licence");
+    },
+  );
 });
 
 test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /essays/ path", async () => {
@@ -1199,7 +1312,9 @@ test("A′4 — read_held re-reads at the STORED paid url, not a reconstructed /
   try {
     const exp = Math.floor(Date.now() / 1000) + 3600; // live
     const store = memoryHeldStore([
-      ["custom", { ...heldLicense("custom", exp), url: `${urlGate.url}/articles/the-real-path` }],
+      // `baseGate` is the identity: ONE publisher has one gate, and the second stub exists only
+      // to prove which url was fetched, not to model a second issuer.
+      ["custom", { ...heldLicense("custom", exp, baseGate.url), url: `${urlGate.url}/articles/the-real-path` }],
     ]);
     const client = await connectedClientWith({ heldStore: store, tollgateUrl: baseGate.url });
     const res = await client.callTool({ name: "naulon_read_held", arguments: { slug: "custom" } });
@@ -1257,7 +1372,7 @@ test("FU-A1b: naulon_read_held's PoP-proof signing THROWING returns a typed erro
 // was actually PAID at, a same-slug candidate served from pubB gets pubA's
 // license/PoP-proof headers on the wire — a credential leak across publisher
 // origins, independent of whether pubB's response ultimately honors them.
-test("B1: a held license (issued by pubA) never leaks to a same-slug candidate discovered at pubB, even though both are allow-listed", async () => {
+test("B1: a same-slug candidate at pubB is PAID FOR — pubA's licence is neither leaked to it nor silently read in its place", async () => {
   const PUB_A = "http://pub-a.test";
   const PUB_B = "http://pub-b.test";
   const CATALOG = "http://catalog.test/b1";
@@ -1313,7 +1428,7 @@ test("B1: a held license (issued by pubA) never leaks to a same-slug candidate d
           title: "Shared Slug",
           jti: `jti-${slug}`,
           exp,
-          aud: "gate://pub-a",
+          aud: "naulon:pub-a.test", // what pubA's gate actually mints
           pop: true,
           jws: "held.jws.sig",
           url: `${PUB_A}/essays/${slug}`,
@@ -1330,18 +1445,30 @@ test("B1: a held license (issued by pubA) never leaks to a same-slug candidate d
 
         const r = (await client.callTool({ name: "naulon_research", arguments: { topic: "payment and passage" } }))
           .structuredContent as { decisions: Array<{ slug: string; action: string }> };
-        assert.ok(
-          r.decisions.some((d) => d.slug === slug && d.action === "cache"),
-          `expected a "cache" decision for the shared slug, got ${JSON.stringify(r.decisions)}`,
-        );
 
+        // The original subject, unchanged: the credential never reaches the other publisher.
         assert.ok(
           !hitsB.some((h) => h["x-naulon-license"] || h["x-naulon-proof"]),
           "pubB (the untrusted same-slug candidate) must NEVER receive pubA's license/PoP proof",
         );
+
+        // And the other half, which this test used to ASSERT the wrong way round. It required a
+        // "cache" decision and a free re-read of pubA — meaning a candidate discovered at pubB,
+        // carrying pubB's title, was answered with pubA's article body. Nothing leaked and nothing
+        // errored; the run simply cited the wrong publisher. Two independently-run sites sharing a
+        // generic slug (`faq`, `about`) is all it takes.
+        //
+        // A licence is now bound to the gate that minted it, so pubA's cannot be selected for a
+        // pubB candidate at all. pubB is priced and paid like any other source — which costs a
+        // toll, and is the correct outcome.
         assert.ok(
-          hitsA.some((h) => h["x-naulon-license"]),
-          "pubA (the url the license was actually paid at) receives the free re-read WITH its own license",
+          r.decisions.some((d) => d.slug === slug && d.action === "pay"),
+          `expected a "pay" decision for pubB's candidate, got ${JSON.stringify(r.decisions)}`,
+        );
+        assert.equal(
+          hitsA.length,
+          0,
+          "pubA is never read for a candidate that belongs to pubB — its bytes must not be cited under pubB's title",
         );
       },
     );
@@ -2008,10 +2135,19 @@ test("WP-2 T2 granular + L-OSS-3: naulon_pay_and_read's fleet-default allow is s
         // silently off-gate-skipped by spendGate's allowlist, having lost the identity-pin match
         // that covered it before any allowlist was stated. Proves it still doesn't.
         const gateHostQuote = await client.callTool({ name: "naulon_quote", arguments: { slug: "some-other-essay" } });
-        const gateHostStructured = gateHostQuote.structuredContent as { refused?: boolean; note?: string };
-        assert.ok(
-          !gateHostStructured.refused,
-          `L-OSS-3: a slug-only target on the gate host must not be off-gate refused even once an allowlist is stated — got ${JSON.stringify(gateHostStructured)}`,
+        const gateHostStructured = gateHostQuote.structuredContent as {
+          refused?: boolean;
+          refusedReason?: string;
+          note?: string;
+        };
+        // The old form asserted `refused !== true`, which stopped saying what this test means once
+        // a 404 became a refusal too. What it is about is the ORIGIN POLICY: a slug-only target on
+        // the gate host must never be refused as out-of-bounds. A 404 from the stub is expected and
+        // fine — it means we were allowed to probe and the path simply was not there.
+        assert.notEqual(
+          gateHostStructured.refusedReason,
+          "policy",
+          `L-OSS-3: a slug-only target on the gate host must not be POLICY-refused once an allowlist is stated — got ${JSON.stringify(gateHostStructured)}`,
         );
       } finally {
         stub.restore();
@@ -2364,4 +2500,206 @@ test("naulon_appraise accepts the match-evidence flags and scores WITH them", as
     "identical teasers, different evidence → different scores, or the flags never arrived",
   );
   assert.match(by("body").rationale, /full text/);
+});
+
+// ── surface allowlist ─────────────────────────────────────────────────────────
+// A restricted mount must not merely refuse the tools it withholds — it must not LIST them.
+// `hostedInertSteer` already covers "registered but refuses"; this covers "not there at all",
+// which is what a public read-only mount needs, because anything reading `tools/list` (a plugin
+// reviewer, or a model deciding what it may do) sees the listing, not the handler.
+
+test("surface.tools narrows what the server lists, and the excluded tools are gone", async () => {
+  const client = await connectedClientWith({ surface: { tools: ["naulon_discover", "naulon_quote"] } });
+  const names = (await client.listTools()).tools.map((t) => t.name).sort();
+  assert.deepEqual(names, ["naulon_discover", "naulon_quote"]);
+  for (const withheld of ["naulon_pay_and_read", "naulon_research", "naulon_read_held", "naulon_status", "naulon_appraise"]) {
+    assert.ok(!names.includes(withheld), `${withheld} is still listed on a restricted mount`);
+  }
+});
+
+test("a withheld tool is not callable, not merely unlisted", async () => {
+  const client = await connectedClientWith({ surface: { tools: ["naulon_discover"] } });
+  // The SDK surfaces a tool-level failure as a RESULT with `isError`, not a rejection — so
+  // asserting a throw here would pass for the wrong reason on any future SDK that stops throwing.
+  // Assert the contract that matters: the server does not know this tool.
+  const res = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+  assert.equal(res.isError, true, "a tool excluded from the surface must not execute");
+  assert.match(
+    JSON.stringify(res.content),
+    /not found/i,
+    "the refusal must be 'no such tool', not a handler that ran and declined — an unlisted but reachable spend tool is the worst of both",
+  );
+});
+
+test("surface.prompts narrows prompts independently of tools", async () => {
+  const client = await connectedClientWith({ surface: { prompts: ["discover"] } });
+  const prompts = (await client.listPrompts()).prompts.map((p) => p.name).sort();
+  assert.deepEqual(prompts, ["discover"]);
+  // Tools were not restricted, so the full tool surface must survive a prompt-only allowlist.
+  assert.ok((await client.listTools()).tools.length > 1, "restricting prompts must not narrow tools");
+});
+
+test("no surface option leaves the full surface registered (every existing caller)", async () => {
+  const client = await connectedClient();
+  const names = (await client.listTools()).tools.map((t) => t.name);
+  for (const expected of ["naulon_discover", "naulon_appraise", "naulon_quote", "naulon_status", "naulon_pay_and_read", "naulon_read_held", "naulon_research"]) {
+    assert.ok(names.includes(expected), `${expected} vanished from the default surface`);
+  }
+  assert.equal((await client.listPrompts()).prompts.length, 3);
+});
+
+test("an allowlist naming an unknown tool narrows rather than widens", async () => {
+  const client = await connectedClientWith({ surface: { tools: ["naulon_discover", "naulon_not_a_tool"] } });
+  const names = (await client.listTools()).tools.map((t) => t.name);
+  assert.deepEqual(names, ["naulon_discover"]);
+});
+
+// ── regression: the fleet directory's row shape ───────────────────────────────
+// naulon_discover's outputSchema declared six candidate fields; the FLEET directory returns
+// three more (site, priceUsdc, citationPriceUsdc). The SDK validates structuredContent with
+// additionalProperties:false, so against a live fleet gate the ENTIRE discover response was
+// rejected — "data/candidates/0 must NOT have additional properties" — while every test here
+// passed, because `withCatalog` serves only the six. Discovery was dead on the one source the
+// hosted mounts actually use, and no test could see it.
+//
+// This asserts the schema accepts the real shape. It is a SCHEMA test, not a transport test:
+// it drives the declared zod object directly, so it stays true whether or not a catalog is up.
+test("the discover output schema accepts a fleet-directory row verbatim", async () => {
+  const client = await connectedClient();
+  const discover = (await client.listTools()).tools.find((t) => t.name === "naulon_discover");
+  assert.ok(discover?.outputSchema, "naulon_discover lost its output schema");
+  // The SDK types `outputSchema.properties` as `Record<string, object> | undefined`, which a single
+  // cast to the nested shape cannot reach. Narrow one hop at a time instead of casting past all
+  // three: a schema that loses `candidates` or `items` then fails with the hop named, rather than
+  // throwing on `undefined.properties` and reading as a broken test.
+  const properties = discover.outputSchema.properties;
+  assert.ok(properties, "naulon_discover's output schema declares no properties");
+  const candidates = properties["candidates"] as { items?: { properties?: Record<string, unknown> } } | undefined;
+  const item = candidates?.items?.properties;
+  assert.ok(item, "naulon_discover's output schema declares no candidates[].items.properties");
+  for (const field of ["slug", "title", "summary", "url", "matchedInBody", "matchedSemantic", "site", "priceUsdc", "citationPriceUsdc"]) {
+    assert.ok(field in item, `the fleet directory returns \`${field}\` and the schema does not declare it — every discover response against a fleet gate will be rejected whole`);
+  }
+});
+
+// ── quote: a refusal must be machine-readable, and never wear `gated:false` ────
+// `gated:false` is DEFINED by this tool as "a free read — just fetch it". A 404, an unreachable
+// origin and a malformed 402 are none of payable, free, or fetchable, and used to return
+// gated:false with the difference explained only in `note`. A model branches on the field and
+// never reads the prose beside it, so an outage read as a free read.
+test("quote maps every non-free probe outcome to a typed refusal", async () => {
+  const cases: { status: number; body: string; reason: string; label: string }[] = [
+    { status: 404, body: "nope", reason: "not_found", label: "a wrong path" },
+    { status: 502, body: "bad gateway", reason: "unreachable", label: "an origin that is down" },
+  ];
+  for (const kase of cases) {
+    await withStubGate(
+      (_req: IncomingMessage, res: ServerResponse): void => {
+        res.writeHead(kase.status, { "content-type": "text/plain" });
+        res.end(kase.body);
+      },
+      async () => {
+        const client = await connectedClient();
+        const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
+        const q = res.structuredContent as { gated?: boolean; refused?: boolean; refusedReason?: string; note?: string };
+        assert.equal(q.refused, true, `${kase.label} must be a refusal`);
+        assert.equal(q.refusedReason, kase.reason, `${kase.label} must say WHY in a field, not only in the note`);
+        assert.equal(q.gated, undefined, `${kase.label} must never also claim gated:false — that means "free, just fetch it"`);
+      },
+    );
+  }
+});
+
+test("quote still reports a genuine 2xx as a free read", async () => {
+  // The other half of the same contract: tightening the refusal must not turn a real free read
+  // into one. This is the only outcome that may say gated:false.
+  await withStubGate(
+    (_req: IncomingMessage, res: ServerResponse): void => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("the whole essay, free");
+    },
+    async () => {
+      const client = await connectedClient();
+      const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "zeybek" } });
+      const q = res.structuredContent as { gated?: boolean; refused?: boolean };
+      assert.equal(q.gated, false, "a 2xx IS a free read");
+      assert.equal(q.refused, undefined, "a free read is not a refusal");
+    },
+  );
+});
+
+// ── PROOF-1 — every tool output that carries a licenseId carries a proof link ───────────
+// `naulon_pay_and_read` returned a `jti` and an explorer link. A transaction hash proves a
+// transfer; it does not prove THIS content was licensed to THIS buyer. The record does, and the
+// page that checks it in a reader's browser is what a citation should carry — so the tool says so.
+function fakeLicenceJws(jti: string, aud: string, slug: string): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const exp = Math.floor(Date.now() / 1000) + 600;
+  return `${b64({ alg: "EdDSA", kid: "k" })}.${b64({ jti, exp, aud, iss: aud, naulon: { slug, title: slug } })}.sig`;
+}
+
+/** A pay gate that hands back a DECODABLE licence, so the held store keeps it. */
+function licensingPayGate(amountAtomic: string, licence: string) {
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    if (req.url?.includes("/.well-known/")) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    if (req.headers["payment-signature"] || req.headers["x-naulon-license"]) {
+      res.writeHead(200, { "content-type": "text/plain", "x-naulon-license": licence });
+      res.end("paid content");
+    } else {
+      res.writeHead(402, { "payment-required": paymentRequired(amountAtomic), "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "payment required" }));
+    }
+  };
+}
+
+test("PROOF-1: naulon_pay_and_read and naulon_read_held return proofUrl + recordUrl beside licenseId", async () => {
+  await withEnv({ WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-proof-${process.pid}.json`), VERIFY_PAGE_URL: undefined, CATALOG_URL: "http://catalog.test/c.json" }, async () => {
+    // The stub gate's aud must match its own host for the links to derive; read it off the env.
+    const gate = await standGate((req, res) => {
+      const host = req.headers.host ?? "";
+      licensingPayGate("5000", fakeLicenceJws("j-mcp-1", `naulon:${host}`, "zeybek"))(req, res);
+    });
+    try {
+      await withEnv({ TOLLGATE_URL: gate.url }, async () => {
+        const client = await connectedClient();
+        const paid = await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } });
+        const p = paid.structuredContent as { ok: boolean; licenseId?: string; proofUrl?: string; recordUrl?: string };
+        assert.equal(p.ok, true);
+        assert.equal(p.licenseId, "j-mcp-1");
+        const host = new URL(gate.url).host;
+        assert.equal(p.proofUrl, `https://naulon.app/verify?host=${encodeURIComponent(host)}&jti=j-mcp-1`);
+        assert.equal(p.recordUrl, `${gate.url}/licenses/j-mcp-1/record`, "self-host: the record is on the gate paid, no hint");
+
+        const held = await client.callTool({ name: "naulon_read_held", arguments: { slug: "zeybek" } });
+        const h = held.structuredContent as { ok: boolean; licenseId?: string; proofUrl?: string; recordUrl?: string };
+        assert.equal(h.ok, true, "the licence was held and is live");
+        assert.equal(h.licenseId, "j-mcp-1");
+        assert.equal(h.proofUrl, p.proofUrl, "a re-read carries the same page as the pay that minted it");
+        assert.equal(h.recordUrl, p.recordUrl);
+      });
+    } finally {
+      await gate.close();
+    }
+  });
+});
+
+test("PROOF-1: the tool descriptions tell the model to CITE the proof page, and the research prompt asks for it", async () => {
+  const client = await connectedClient();
+  const { tools } = await client.listTools();
+  for (const name of ["naulon_pay_and_read", "naulon_read_held", "naulon_research"]) {
+    const tool = tools.find((t) => t.name === name);
+    assert.ok(tool, `${name} is registered`);
+    const schema = JSON.stringify(tool.outputSchema ?? {});
+    assert.match(schema, /proofUrl/, `${name} declares proofUrl in its output`);
+    assert.match(schema, /recordUrl/, `${name} declares recordUrl in its output`);
+  }
+  const pay = tools.find((t) => t.name === "naulon_pay_and_read")!;
+  assert.match(JSON.stringify(pay.outputSchema), /cite/i, "the field says what to do with it");
+  const p = await client.getPrompt({ name: "research", arguments: { topic: "x" } });
+  const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
+  assert.match(text, /proofUrl/, "the research prompt asks for the proof page beside each citation");
 });

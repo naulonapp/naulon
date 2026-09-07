@@ -9,3 +9,8 @@ export const FLEET_DIRECTORY_URL = `${FLEET_ORIGIN}/directory`;
 export function isFleetDefaultDiscovery(cfg: { RSS_URL?: string; PUBLISHER_URL?: string; CATALOG_URL?: string }): boolean {
   return !cfg.RSS_URL && !cfg.PUBLISHER_URL && cfg.CATALOG_URL === FLEET_DIRECTORY_URL;
 }
+
+/** The public verifier: a page that checks a citation record against the ISSUER's published keys,
+ *  in the visitor's browser — any issuer, not only the fleet, so it is the honest default for a
+ *  self-hosted gate too. Overridable via `VERIFY_PAGE_URL`. */
+export const FLEET_VERIFY_URL = "https://naulon.app/verify";

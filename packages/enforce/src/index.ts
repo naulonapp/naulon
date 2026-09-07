@@ -38,6 +38,22 @@ export {
   totalChargedMicro,
 } from "./crawlerPrice.ts";
 
+// The 402's BODY — the advertisement half, in the vendor-neutral shape `@crawlertoll/core`
+// established, so a buyer written against that library can price a naulon origin with no
+// naulon code. The signed obligation stays in the PAYMENT-REQUIRED header.
+export {
+  PAYMENT_BODY_CONTENT_TYPE,
+  paymentRequiredBody,
+  paymentRequiredBodyText,
+  type PaymentBodyInput,
+  type PaymentOffer,
+  type PaymentOfferMetadata,
+  type PaymentRequiredBody,
+} from "./paymentBody.ts";
+
+// Header hygiene for the verdict header both emitters set.
+export { headerSafe } from "./headerSafe.ts";
+
 // Pricing (the `quote` value; the `Quote` type comes through `./decide.ts`).
 export { quote, tollPrice } from "./pricing.ts";
 
@@ -54,6 +70,7 @@ export { X402_MANIFEST_PATH, buildX402Manifest, type X402Manifest } from "./disc
 // "@naulon/enforce"`, threw at module load; and `NaulonMiddlewareOptions.observe` was a
 // slot whose type (`ObservationReporter`) no consumer could name.
 export * from "./enforce/quote-source.ts";
+export * from "./enforce/config-source.ts";
 export * from "./enforce/observation-sink.ts";
 export * from "./enforce/middleware.ts";
 export * from "./enforce/fetch-handler.ts";

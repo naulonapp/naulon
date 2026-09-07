@@ -182,6 +182,17 @@ test("their operators' SEARCH siblings still read free", () => {
   }
 });
 
+test("ExaSearchBot is charged in the exact UA Exa publishes", () => {
+  // Verbatim from crawler.exa.ai on 2026-09-02, the operator's own page. Browser-prefixed
+  // like Amzn-User, so it is only reachable because step 3 (known-bot) runs before step 4
+  // (browser-shaped). Note what it does NOT contain: "crawler" is not "curl", and a fragment
+  // list matched by substring is exactly where that kind of near-miss decides a toll.
+  const ua = "Mozilla/5.0 (compatible; ExaSearchBot/1.0; +https://crawler.exa.ai/)";
+  const v = classify(signals({ userAgent: ua, accept: "text/html" }));
+  assert.equal(v.kind, "agent", ua);
+  assert.match(v.reason, /exasearchbot/);
+});
+
 test("every registry row's defaultCharged matches this list — the mirror is enforced now", () => {
   // CRAWLER_REGISTRY.defaultCharged has always been a hand-kept copy of KNOWN_AGENT_UA
   // ("keep in sync when the gate list changes"), with nothing to notice when it wasn't.
