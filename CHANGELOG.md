@@ -18,19 +18,26 @@ tags and the auto-generated notes on each GitHub Release.
 
 Unpublished — the packages below are unbumped on npm until the next tag.
 
-`@naulon/enforce` — `serveRslDocument`, so an in-app publisher's `/license.xml` is a
-route rather than homework. Every publisher is told to add
+`@naulon/enforce` — **the middleware now answers `/license.xml` itself**, so an in-app
+publisher's licence needs no wiring at all. Every publisher is told to add
 `License: https://<their host>/license.xml` to robots.txt — RSL's primary discovery
 mechanism — and a fleet-proxied host has always answered there. An in-app host had
 nothing to answer with: the WordPress plugin registers the route for its users, and
 the JS SDK left it as a hand-rolled rewrite to a control-plane URL with the site id
 baked in. Measured on a live site 2026-09-08: robots.txt carried the `License:` line
 and `/license.xml` returned 404, while the WordPress site beside it served its own
-correctly. The licence now rides in the same config document the manifest does, so
-the handler needs no second fetch and no hardcoded id, and it is the exact
-counterpart of `serveX402Manifest` — whose own docblock had already described this
-failure one document over: "an agent following the one pointer we give it, at the
-one moment it is trying to pay us, found nothing there."
+correctly. The licence now rides in the same config document the manifest does, and
+the middleware — which is already in the request path for that URL, and already
+holds the document — short-circuits `GET /license.xml` before any toll decision. A
+licence gated behind paying the price it states would be circular.
+
+`serveRslDocument` is exported for the cases the middleware cannot reach: a Next.js
+`matcher` that excludes the path, or a publisher who prefers an explicit route.
+`serveLicense: false` hands the path back to a publisher who serves their own, and
+a config with no licence passes through untouched, so an existing rewrite is never
+shadowed. `serveX402Manifest`'s own docblock had already described this failure one
+document over: "an agent following the one pointer we give it, at the one moment it
+is trying to pay us, found nothing there."
 
 `@naulon/enforce` — `/.well-known/x402` declares per-path price rules. The discovery
 manifest read the publisher's base price directly while only the enforcement path went

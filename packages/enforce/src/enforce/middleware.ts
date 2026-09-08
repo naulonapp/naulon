@@ -62,6 +62,20 @@ export interface NaulonMiddlewareOptionsBase {
    * site actually charging it.
    */
   config?: PublisherConfigSource;
+  /**
+   * Answer `GET /license.xml` from the config this middleware already holds. Default **on**.
+   *
+   * The publisher is told to advertise that path in their robots.txt, and the middleware is already
+   * in the request path for it — so making them mount a route (or hand-roll a rewrite to a
+   * control-plane URL with their site id in it) was asking for wiring we can simply do. Measured on
+   * a live site 2026-09-08: robots.txt carried the `License:` line and `/license.xml` returned 404,
+   * because that wiring is easy to skip and nothing complains when you do.
+   *
+   * Set `false` if you serve your own document at that path and want yours to win. With no licence
+   * in the config the request passes through untouched either way, so a publisher who already has a
+   * rewrite keeps it.
+   */
+  serveLicense?: boolean;
   /** Price + payees source: `localQuoteSource` (own data) or `httpQuoteSource` (cloud). */
   quote: QuoteSource;
   /** The hosted `POST /verify` URL (settles the presented payment, custody-free). */
@@ -112,6 +126,15 @@ export interface NaulonMiddlewareOptionsBase {
  */
 export type NaulonMiddlewareOptions = NaulonMiddlewareOptionsBase &
   ({ config: PublisherConfigSource } | { publisher: unknown });
+
+/** Is this the licence document being fetched? GET/HEAD only — a POST to that path is the
+ *  publisher's own business, and a licence is never written. */
+function isLicenseRequest(req: Request, url: URL): boolean {
+  return (req.method === "GET" || req.method === "HEAD") && url.pathname === RSL_DOCUMENT_PATH;
+}
+
+/** The path RSL examples use and every naulon pointer names. */
+const RSL_DOCUMENT_PATH = "/license.xml";
 
 export interface MiddlewareResult {
   /** A Response to send (short-circuit), or `null` to pass to the app. */
@@ -261,6 +284,36 @@ export function naulonMiddleware(
 
   return async (req: Request): Promise<MiddlewareResult> => {
     const url = new URL(req.url);
+    // `/license.xml`, answered here rather than asked of the publisher.
+    //
+    // This runs BEFORE any toll decision because a licence is not a tolled read — it is the document
+    // that says what a tolled read costs, and gating it behind a payment would be circular. It is
+    // also why this is worth doing at all: we tell every publisher to put
+    // `License: https://<host>/license.xml` in robots.txt, RSL's primary discovery mechanism, and an
+    // in-app host had nothing to answer with unless they wired a route by hand.
+    //
+    // Passes through when the config carries no licence, so a publisher who already serves their own
+    // (a rewrite, or the WordPress plugin's route) is never shadowed by a 404 of ours.
+    if (opts.serveLicense !== false && isLicenseRequest(req, url)) {
+      const doc = await opts.config?.load({
+        resource: externalUrl(req, { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS }),
+      });
+      if (doc?.license) {
+        return {
+          response: new Response(req.method === "HEAD" ? null : doc.license, {
+            status: 200,
+            headers: {
+              "content-type": "application/rsl+xml; charset=utf-8",
+              // Matches the document's own `max-age="1"` (days), so a crawler caching by HTTP and one
+              // honouring the RSL attribute do not end up with different ideas of freshness.
+              "cache-control": "public, max-age=86400",
+              // A licence is a public statement; a crawler may read it from any origin.
+              "access-control-allow-origin": "*",
+            },
+          }),
+        };
+      }
+    }
     // ONE resource identifier per request, computed once. It reaches four different
     // consumers — the price lookup, every observation, the settle call to the cloud,
     // and (via decide → build402) the signed 402 — and they must agree byte for byte:

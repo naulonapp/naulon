@@ -450,3 +450,64 @@ test("no reported figure means no crawler-charged — never the ask as a stand-i
     assert.equal(out.setHeaders?.["crawler-charged"], undefined, `overstating money is worse than silence: ${JSON.stringify(receipt)}`);
   }
 });
+
+/* ── the middleware answers /license.xml itself (2026-09-08) ─────────────────────────────────────
+ * We tell every publisher to advertise `License: https://<host>/license.xml` in robots.txt, and the
+ * middleware is already in the request path for it. Making them mount a route — or hand-roll a
+ * rewrite to a control-plane URL with their site id in it — was asking for wiring we can just do,
+ * and it is wiring that is easy to skip: measured on a live site, robots.txt carried the line and
+ * `/license.xml` returned 404. */
+
+test("GET /license.xml is answered from the config the middleware already holds", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({ enforcement: {}, license: "<rsl/>" }),
+  });
+  const r = await mw(new Request("http://h/license.xml"));
+  assert.ok(r.response, "it short-circuits rather than passing to the app");
+  assert.equal(r.response.status, 200);
+  assert.equal(r.response.headers.get("content-type"), "application/rsl+xml; charset=utf-8");
+  assert.equal(await r.response.text(), "<rsl/>");
+});
+
+test("it is served BEFORE any toll decision — a licence is never itself tolled", async () => {
+  // Gating the document that states the price behind paying the price is circular. The request
+  // carries an agent user-agent that would otherwise be charged.
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({ enforcement: {}, license: "<rsl/>" }),
+  });
+  const r = await mw(
+    new Request("http://h/license.xml", { headers: { "user-agent": "ClaudeBot/1.0" } }),
+  );
+  assert.equal(r.response?.status, 200, "not 402");
+});
+
+test("no licence in the config ⇒ pass through, so a publisher's own route is never shadowed", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({ enforcement: {} }),
+  });
+  assert.equal((await mw(new Request("http://h/license.xml"))).response, null);
+});
+
+test("serveLicense:false hands the path back, for a publisher who serves their own", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    serveLicense: false,
+    config: staticPublisherConfigSource({ enforcement: {}, license: "<rsl/>" }),
+  });
+  assert.equal((await mw(new Request("http://h/license.xml"))).response, null);
+});
+
+test("a HEAD carries the headers and no body; a POST to that path is not ours", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({ enforcement: {}, license: "<rsl/>" }),
+  });
+  const head = await mw(new Request("http://h/license.xml", { method: "HEAD" }));
+  assert.equal(head.response?.status, 200);
+  assert.equal(await head.response?.text(), "");
+  const post = await mw(new Request("http://h/license.xml", { method: "POST" }));
+  assert.notEqual(post.response?.status, 200);
+});
