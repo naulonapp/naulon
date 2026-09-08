@@ -86,19 +86,35 @@ class CreditsRouteTest extends WP_UnitTestCase {
 		$this->assertSame( 'blog/tolled-post', $response->get_data()['slug'] );
 	}
 
-	public function test_a_post_whose_author_has_no_wallet_reads_free() {
+	/**
+	 * Named, with no wallet — a delegated payee. A gate that cannot fill the leg drops it and the
+	 * post reads free, the old 404's outcome. What the named leg buys is a platform routing that
+	 * author's share to a wallet they registered there.
+	 */
+	public function test_a_post_whose_author_has_no_wallet_names_them_without_one() {
 		$this->publish( $this->walletless_author, 'no-wallet-post' );
-		$this->assertSame( 404, $this->get_credits( 'blog/no-wallet-post' )->get_status() );
+		$response = $this->get_credits( 'blog/no-wallet-post' );
+		$this->assertSame( 200, $response->get_status() );
+		$data = $response->get_data();
+		$this->assertCount( 1, $data['contributors'] );
+		$this->assertSame( 'wp-user-' . $this->walletless_author, $data['contributors'][0]['authorId'] );
+		$this->assertArrayNotHasKey( 'wallet', $data['contributors'][0] );
 	}
 
-	public function test_an_invalid_or_zero_wallet_is_not_a_payee() {
+	/**
+	 * An unusable address is not a destination, so the contributor is emitted delegated — never
+	 * substituted with somebody else's.
+	 */
+	public function test_an_invalid_or_zero_wallet_is_never_emitted_as_a_payee() {
 		$author = self::factory()->user->create( array( 'role' => 'author' ) );
 		update_user_meta( $author, Naulon_Credits::USER_WALLET_META, '0x0000000000000000000000000000000000000000' );
 		$this->publish( $author, 'burn-wallet-post' );
-		$this->assertSame( 404, $this->get_credits( 'blog/burn-wallet-post' )->get_status() );
+		$data = $this->get_credits( 'blog/burn-wallet-post' )->get_data();
+		$this->assertArrayNotHasKey( 'wallet', $data['contributors'][0] );
 
 		update_user_meta( $author, Naulon_Credits::USER_WALLET_META, 'not-an-address' );
-		$this->assertSame( 404, $this->get_credits( 'blog/burn-wallet-post' )->get_status() );
+		$data = $this->get_credits( 'blog/burn-wallet-post' )->get_data();
+		$this->assertArrayNotHasKey( 'wallet', $data['contributors'][0] );
 	}
 
 	public function test_unpublished_work_is_never_described() {
@@ -140,7 +156,7 @@ class CreditsRouteTest extends WP_UnitTestCase {
 		$this->assertSame( 404, $this->get_credits( 'nonsense' )->get_status() );
 	}
 
-	public function test_co_authors_carry_relative_weights_and_walletless_ones_are_dropped() {
+	public function test_co_authors_carry_relative_weights_and_walletless_ones_are_delegated() {
 		$post   = $this->publish( $this->paid_author, 'co-authored' );
 		$second = self::factory()->user->create( array( 'role' => 'author' ) );
 		update_user_meta( $second, Naulon_Credits::USER_WALLET_META, self::WALLET_B );
@@ -154,7 +170,7 @@ class CreditsRouteTest extends WP_UnitTestCase {
 				return array(
 					array( 'user_id' => $primary, 'weight' => 0.6 ),
 					array( 'user_id' => $second, 'weight' => 0.4 ),
-					// No wallet: dropped, never substituted with someone else's address.
+					// No wallet: named without one, never substituted with someone else's address.
 					array( 'user_id' => $walletless, 'weight' => 0.9 ),
 				);
 			}
@@ -163,9 +179,14 @@ class CreditsRouteTest extends WP_UnitTestCase {
 		$data = $this->get_credits( 'blog/co-authored' )->get_data();
 		remove_all_filters( 'naulon_post_contributors' );
 
-		$this->assertCount( 2, $data['contributors'] );
+		$this->assertCount( 3, $data['contributors'] );
 		$this->assertSame( 0.6, $data['contributors'][0]['weight'] );
 		$this->assertSame( self::WALLET_B, $data['contributors'][1]['wallet'] );
+		// Named, weighted, no destination. Downstream fills it or drops it; dropping redistributes
+		// the weight (asserted in @naulon/shared's attribution tests).
+		$this->assertSame( 'wp-user-' . $walletless, $data['contributors'][2]['authorId'] );
+		$this->assertArrayNotHasKey( 'wallet', $data['contributors'][2] );
+		$this->assertSame( 0.9, $data['contributors'][2]['weight'] );
 	}
 
 	public function test_a_shared_token_gates_the_endpoint_without_revealing_which_slugs_exist() {

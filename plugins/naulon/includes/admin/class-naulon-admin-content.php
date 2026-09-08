@@ -67,7 +67,7 @@ class Naulon_Admin_Content {
 		);
 		printf(
 			'<tr><th>%s</th><td class="naulon-num">%s</td></tr>',
-			esc_html__( 'Free: no author wallet', 'naulon' ),
+			esc_html__( 'No author wallet here', 'naulon' ),
 			esc_html( number_format_i18n( $counts['no_wallet'] ) )
 		);
 		printf(
@@ -83,9 +83,11 @@ class Naulon_Admin_Content {
 				esc_html(
 					sprintf(
 						/* translators: %d: number of posts. */
+						// Not "reads free": an author with a naulon payout account is paid to their
+						// own wallet even with none set here, and this site cannot see that.
 						_n(
-							'%d published post reads free because its author has no wallet.',
-							'%d published posts read free because their authors have no wallet.',
+							'%d published post has no author wallet on this site.',
+							'%d published posts have no author wallet on this site.',
 							$counts['no_wallet'],
 							'naulon'
 						),

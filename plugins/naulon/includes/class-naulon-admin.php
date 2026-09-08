@@ -239,6 +239,14 @@ class Naulon_Admin {
 				// may edit anyone's, an author only their own. Naulon_Roles owns that rule.
 				Naulon_Admin_People::save_wallet();
 				break;
+			case 'approve_access':
+				// MANAGE_WALLETS, not per-target: approving is deciding that someone else's share
+				// leaves this site. Checked inside, beside the state check it belongs with.
+				Naulon_Admin_People::approve_access();
+				break;
+			case 'decline_access':
+				Naulon_Admin_People::decline_access();
+				break;
 			case 'install_dropin':
 			case 'remove_dropin':
 			case 'run_probe':

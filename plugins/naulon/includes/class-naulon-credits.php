@@ -192,9 +192,10 @@ class Naulon_Credits {
 	}
 
 	/**
-	 * The contributors with payable wallets, in the strict upstream shape. A contributor
-	 * without a usable wallet is DROPPED rather than substituted: silently paying the site
-	 * wallet for another author's work is exactly the failure this contract exists to prevent.
+	 * The contributors, in the strict upstream shape. Without a usable wallet here a contributor is
+	 * emitted WITHOUT one — a delegated payee — never substituted with somebody else's address. A
+	 * platform holding that author's own wallet can then route their share; where nothing does, the
+	 * leg is dropped downstream and the post reads free.
 	 *
 	 * @param WP_Post $post The post.
 	 * @return array[] Zero or more {authorId, weight?, wallet}.
@@ -223,13 +224,13 @@ class Naulon_Credits {
 			}
 			$user_id = (int) $entry['user_id'];
 			$wallet  = get_user_meta( $user_id, self::USER_WALLET_META, true );
-			if ( ! Naulon_Wallet::is_valid( $wallet ) ) {
-				continue;
+			$contributor = array( 'authorId' => 'wp-user-' . $user_id );
+			// No wallet here ⇒ named without one (delegated). Dropping them was indistinguishable
+			// from a solo-authored post, so an author who set a wallet on the platform and none here
+			// was never paid and never told.
+			if ( Naulon_Wallet::is_valid( $wallet ) ) {
+				$contributor['wallet'] = Naulon_Wallet::normalize( $wallet );
 			}
-			$contributor = array(
-				'authorId' => 'wp-user-' . $user_id,
-				'wallet'   => Naulon_Wallet::normalize( $wallet ),
-			);
 			$weight = isset( $entry['weight'] ) ? (float) $entry['weight'] : 1.0;
 			if ( $weight > 0 && 1.0 !== $weight ) {
 				$contributor['weight'] = $weight;

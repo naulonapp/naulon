@@ -23,6 +23,9 @@ class Naulon_Profile {
 
 	const NONCE = 'naulon_profile_wallet';
 
+	/** Separate from the wallet nonce: they are two actions on one form. */
+	const ACCESS_NONCE = 'naulon_profile_access';
+
 	/** @var Naulon_Profile|null */
 	private static $instance = null;
 
@@ -78,12 +81,14 @@ class Naulon_Profile {
 			echo esc_html__( 'Where agents pay you when they read your articles. Payment goes straight from the buyer to this address — this site never holds it, so there is nothing to withdraw and nobody to trust with it.', 'naulon' );
 			echo '</p>';
 			if ( ! $valid ) {
-				echo '<p class="description naulon-warn">' . esc_html__( 'You have no wallet set, so your articles read free. Nothing is charged for them and nothing is owed to you.', 'naulon' ) . '</p>';
+				echo '<p class="description naulon-warn">' . esc_html__( 'You have no wallet set here. Your posts still credit you, so if the service this site connects to holds a payout wallet for you, your share goes there. If it does not, your articles read free — nothing is charged for them and nothing is owed to you.', 'naulon' ) . '</p>';
 			}
 		} else {
 			printf( '<code>%s</code>', esc_html( $wallet ) );
 		}
 		echo '</td></tr>';
+
+		$this->render_access_row( $user, $editable );
 
 		if ( $valid && $this->may_see_earnings( $user ) ) {
 			echo '<tr><th>' . esc_html__( 'Earned so far', 'naulon' ) . '</th><td>';
@@ -125,6 +130,41 @@ class Naulon_Profile {
 	}
 
 	/**
+	 * The naulon payout account row: this user's payee id, and a way to ask to be set up with one.
+	 *
+	 * The id is shown because it is the join key. naulon pays a contributor by `authorId`, this site
+	 * emits `wp-user-<ID>`, and until now nobody outside this file could see that — so an owner
+	 * invited a guess and the author's wallet routed nothing, silently. Printing it costs nothing
+	 * and makes the mismatch visible to the one person who can spot it.
+	 *
+	 * @param WP_User $user     The profile being viewed.
+	 * @param bool    $editable Whether the viewer may act on this user's payout settings.
+	 * @return void
+	 */
+	private function render_access_row( $user, $editable ) {
+		$state = Naulon_Access::state( $user->ID );
+
+		echo '<tr><th>' . esc_html__( 'naulon payee id', 'naulon' ) . '</th><td>';
+		printf( '<code>%s</code>', esc_html( Naulon_Access::author_id( $user->ID ) ) );
+		echo '<p class="description">' . esc_html__( 'How naulon identifies you in this site\'s credits. An account there pays your share to your own wallet, on any site that credits you.', 'naulon' ) . '</p>';
+
+		if ( Naulon_Access::STATE_INVITED === $state ) {
+			echo '<p class="description">' . esc_html__( 'Requested and sent — check your email for the invitation from naulon.', 'naulon' ) . '</p>';
+		} elseif ( Naulon_Access::STATE_REQUESTED === $state ) {
+			echo '<p class="description">' . esc_html__( 'Requested. An administrator of this site approves it, and naulon emails you.', 'naulon' ) . '</p>';
+		} elseif ( $editable && get_current_user_id() === (int) $user->ID ) {
+			// Own profile only. An administrator can already approve on People; a request button on
+			// somebody else's profile would be them asking on that person's behalf.
+			wp_nonce_field( self::ACCESS_NONCE, 'naulon_access_nonce' );
+			printf(
+				'<p><button type="submit" name="naulon_request_access" value="1" class="button">%s</button></p>',
+				esc_html__( 'Request a naulon payout account', 'naulon' )
+			);
+		}
+		echo '</td></tr>';
+	}
+
+	/**
 	 * Save the wallet.
 	 *
 	 * A rejected address is reported through the standard profile error surface and the old value
@@ -135,6 +175,7 @@ class Naulon_Profile {
 	 * @return void
 	 */
 	public function save( $user_id ) {
+		$this->maybe_request_access( $user_id );
 		if ( ! isset( $_POST['naulon_wallet_nonce'] ) ) {
 			return;
 		}
@@ -160,5 +201,25 @@ class Naulon_Profile {
 		}
 
 		update_user_meta( $user_id, Naulon_Credits::USER_WALLET_META, Naulon_Wallet::normalize( $raw ) );
+	}
+
+	/**
+	 * Record an access request. Own profile only — the button is not rendered elsewhere, and this
+	 * refuses it anyway, because a nonce proves the form was ours and never who it was about.
+	 *
+	 * @param int $user_id The user being saved.
+	 * @return void
+	 */
+	private function maybe_request_access( $user_id ) {
+		if ( ! isset( $_POST['naulon_request_access'], $_POST['naulon_access_nonce'] ) ) {
+			return;
+		}
+		if ( ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['naulon_access_nonce'] ) ), self::ACCESS_NONCE ) ) {
+			return;
+		}
+		if ( get_current_user_id() !== (int) $user_id || ! current_user_can( Naulon_Roles::EDIT_OWN_WALLET ) ) {
+			return;
+		}
+		Naulon_Access::request( $user_id );
 	}
 }
