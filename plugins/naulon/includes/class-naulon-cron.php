@@ -276,7 +276,7 @@ class Naulon_Cron {
 			)
 		);
 		foreach ( $posts as $post ) {
-			if ( $credits->is_tollable( $post ) && ! empty( $credits->contributors_for( $post ) ) ) {
+			if ( $credits->is_tollable( $post ) && ! empty( $credits->payable_contributors_for( $post ) ) ) {
 				return $post;
 			}
 		}

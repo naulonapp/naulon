@@ -134,7 +134,7 @@ class Naulon_Admin_Content {
 				++$counts['opted_out'];
 				continue;
 			}
-			if ( empty( $credits->contributors_for( $post ) ) ) {
+			if ( empty( $credits->payable_contributors_for( $post ) ) ) {
 				++$counts['no_wallet'];
 				continue;
 			}
@@ -304,7 +304,7 @@ class Naulon_Admin_Content {
 			esc_html__( 'Let everyone read this one free', 'naulon' )
 		);
 
-		$contributors = Naulon_Credits::instance()->contributors_for( $post );
+		$contributors = Naulon_Credits::instance()->payable_contributors_for( $post );
 		if ( empty( $contributors ) ) {
 			echo '<p class="naulon-muted">' . esc_html__( 'This post reads free anyway: nobody credited on it has a wallet.', 'naulon' ) . '</p>';
 			return;

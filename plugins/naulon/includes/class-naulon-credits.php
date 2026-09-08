@@ -242,6 +242,31 @@ class Naulon_Credits {
 	}
 
 	/**
+	 * The contributors this site can actually PAY, right here, with no platform in front of it.
+	 *
+	 * `contributors_for` emits delegated payees — named, wallet-less — because the credits document
+	 * is read by a control plane that may hold that author's own wallet and fill the leg. Nothing
+	 * fills it inside WordPress, so every decision about whether to TOLL must ask this instead:
+	 * a wallet-less contributor is somebody we cannot pay, and charging an agent when there is
+	 * nobody to pay is the failure the credits contract exists to prevent.
+	 *
+	 * Mirrors `resolvePayees` upstream, which filters unpayable leaves before pricing and returns
+	 * an empty set — no quote, a free read — when none remain.
+	 *
+	 * @param WP_Post $post The post.
+	 * @return array[] Zero or more {authorId, weight?, wallet} — every entry carrying a wallet.
+	 */
+	public function payable_contributors_for( $post ) {
+		$payable = array();
+		foreach ( $this->contributors_for( $post ) as $contributor ) {
+			if ( isset( $contributor['wallet'] ) && '' !== $contributor['wallet'] ) {
+				$payable[] = $contributor;
+			}
+		}
+		return $payable;
+	}
+
+	/**
 	 * The canonical slug for a post: its permalink path, leading slash stripped — the same
 	 * derivation the gate performs, so both sides agree without anyone hand-entering prefixes.
 	 *

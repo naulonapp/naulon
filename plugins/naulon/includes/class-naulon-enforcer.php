@@ -297,7 +297,7 @@ class Naulon_Enforcer {
 		// Only a tollable article is ever gated — the same predicate the credits contract uses,
 		// so what is priced and what is payable can never disagree.
 		$credits = Naulon_Credits::instance();
-		if ( ! $credits->is_tollable( $post ) || empty( $credits->contributors_for( $post ) ) ) {
+		if ( ! $credits->is_tollable( $post ) || empty( $credits->payable_contributors_for( $post ) ) ) {
 			return $this->logged(
 				$this->free( 'not tollable (no wallet, unpublished, or opted out)' ),
 				$post,
