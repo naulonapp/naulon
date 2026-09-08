@@ -101,6 +101,19 @@ class Naulon_Access {
 			return __( 'Your own account has no email address, so the invitation could not say who sent it.', 'naulon' );
 		}
 		if ( '' === Naulon_Settings::api_key() ) {
+			// Two different situations, and sending both to Setup is wrong for one of them.
+			// `is_connected()` is true for an API key OR a gate URL, and connecting a gate URL
+			// deliberately clears the key — so a self-hosted publisher saw Setup report
+			// "Connected · your own gate" and this screen tell them to go and finish Setup. A
+			// remedy pointing at a screen that already says it is done is a dead end.
+			//
+			// An invitation is a control-plane account: it POSTs /_naulon/members, a hosted BFF a
+			// self-hosted gate does not serve, keyed by the API key that names the tenant. So this
+			// genuinely cannot work over a gate URL, and the honest answer is to say what is
+			// missing and what the author can do instead.
+			if ( Naulon_Settings::is_connected() ) {
+				return __( 'Approving invites this author into naulon, which needs this site\'s naulon API key. This site is connected to your own gate, which holds no author accounts — the author can set a wallet on their profile here instead.', 'naulon' );
+			}
 			return __( 'This site is not connected to naulon yet. Finish Setup first, then approve.', 'naulon' );
 		}
 
