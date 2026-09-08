@@ -18,6 +18,20 @@ tags and the auto-generated notes on each GitHub Release.
 
 Unpublished — the packages below are unbumped on npm until the next tag.
 
+`@naulon/enforce` — `serveRslDocument`, so an in-app publisher's `/license.xml` is a
+route rather than homework. Every publisher is told to add
+`License: https://<their host>/license.xml` to robots.txt — RSL's primary discovery
+mechanism — and a fleet-proxied host has always answered there. An in-app host had
+nothing to answer with: the WordPress plugin registers the route for its users, and
+the JS SDK left it as a hand-rolled rewrite to a control-plane URL with the site id
+baked in. Measured on a live site 2026-09-08: robots.txt carried the `License:` line
+and `/license.xml` returned 404, while the WordPress site beside it served its own
+correctly. The licence now rides in the same config document the manifest does, so
+the handler needs no second fetch and no hardcoded id, and it is the exact
+counterpart of `serveX402Manifest` — whose own docblock had already described this
+failure one document over: "an agent following the one pointer we give it, at the
+one moment it is trying to pay us, found nothing there."
+
 `@naulon/enforce` — `/.well-known/x402` declares per-path price rules. The discovery
 manifest read the publisher's base price directly while only the enforcement path went
 through `tollPrice`, so a publisher who priced a section published the site base for it:

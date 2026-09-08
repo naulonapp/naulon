@@ -56,6 +56,23 @@ export interface PublisherConfigDocument {
    * agent the toll is misconfigured at the exact moment it was trying to pay.
    */
   manifest?: X402Manifest;
+  /**
+   * The publisher's RSL licence document (`/license.xml`), built by the control plane from the same
+   * tenant record.
+   *
+   * Carried for exactly the reason `manifest` is, one document over. The portal tells every
+   * publisher to add `License: https://<their host>/license.xml` to their robots.txt — RSL's primary
+   * discovery mechanism — and a fleet-proxied host answers there. An IN-APP host did not: nothing in
+   * the publisher's app knew the document existed, so the one pointer we told them to publish led to
+   * a 404. Measured on the live reference publisher 2026-09-08: `inneraxiom.com/robots.txt` carried
+   * the `License:` line and `inneraxiom.com/license.xml` returned 404, while the WordPress site next
+   * to it served its licence correctly because the plugin registers the route for them.
+   *
+   * XML rather than a structure: this is a published document, and the control plane is the only
+   * side that can render it (it holds the price, the chain and the fee). An in-app runtime that
+   * assembled its own would be inventing terms.
+   */
+  license?: string;
 }
 
 /** Extra request context the source needs — the same shape `QuoteSource` takes. */
@@ -279,6 +296,43 @@ export function staticPublisherConfigSource(doc: PublisherConfigDocument): Publi
  * `Cache-Control` is short and public: the manifest is the same for every caller and
  * changes when a human edits a dashboard, so an edge may hold it, briefly.
  */
+/**
+ * A request handler for the publisher's `/license.xml`, served from the same cached document the
+ * toll decides on.
+ *
+ * The licence half of `serveX402Manifest`, and it exists for the identical reason: we tell the
+ * publisher to advertise a URL, and until now only a fleet-proxied host could answer it. An in-app
+ * publisher was asked to hand-roll a rewrite to a control-plane URL — the WordPress plugin does that
+ * for its users, and the JS SDK left it as homework, so the reference publisher ended up advertising
+ * a `License:` line that 404'd.
+ *
+ * `Cache-Control` is a day, matching the document's own `max-age="1"`: a crawler caching by HTTP and
+ * one honouring the RSL attribute should not end up with different ideas of freshness.
+ */
+export function serveRslDocument(
+  source: PublisherConfigSource,
+): (req: Request) => Promise<Response> {
+  return async (req) => {
+    const cfg = getConfig();
+    const resource = externalUrl(req, { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS });
+    const doc = await source.load({ resource });
+    if (!doc?.license) {
+      // 404 rather than an empty `<rsl>`: an empty document is a licensing STATEMENT, and a wrong
+      // one is worse than none. The same call the WordPress plugin makes.
+      return new Response("not found", { status: 404, headers: { "content-type": "text/plain" } });
+    }
+    return new Response(doc.license, {
+      status: 200,
+      headers: {
+        "content-type": "application/rsl+xml; charset=utf-8",
+        "cache-control": "public, max-age=86400",
+        // A licence is a public statement; a crawler may read it from any origin.
+        "access-control-allow-origin": "*",
+      },
+    });
+  };
+}
+
 export function serveX402Manifest(
   source: PublisherConfigSource,
 ): (req: Request) => Promise<Response> {
