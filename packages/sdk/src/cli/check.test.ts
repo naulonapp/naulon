@@ -97,3 +97,80 @@ test("--secret produces a signed webhook fixture for offline receiver testing", 
   assert.match(out.fixture!.headers["naulon-signature"], /^t=\d+,v1=[0-9a-f]{64}$/);
   assert.equal(JSON.parse(out.fixture!.rawBody).type, "settlement.completed");
 });
+
+/**
+ * The check that reports what nothing else can: an address that is well-formed, spendable by
+ * someone, and possibly not the one the publisher meant. It is deliberately an ADVISORY — a
+ * lower-case address is a legal way to publish, and a check that fails a green pipeline over a
+ * legal choice gets switched off.
+ */
+const CHECKSUMMED = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"; // the EIP-55 spec's own example
+
+test("a payee address with no checksum is reported, and does NOT fail the run", async () => {
+  const out = await runCheck({
+    baseUrl: "https://site.test/api",
+    slug: "on-stillness",
+    absentSlug: "__missing__",
+    fetchImpl: fetchFor({
+      "/api/credits/on-stillness": {
+        status: 200,
+        body: { ...VALID_CREDITS, contributors: [{ authorId: "ava", wallet: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd" }] },
+      },
+    }),
+  });
+  const c = get(out, "wallet-checksum");
+  assert.equal(c.ok, false);
+  assert.equal(c.level, "advisory");
+  assert.match(c.detail, /1 of 1/);
+  assert.equal(out.allPassed, true, "an advisory must never redden the run");
+});
+
+test("a checksummed payee passes it outright", async () => {
+  const out = await runCheck({
+    baseUrl: "https://site.test/api",
+    slug: "on-stillness",
+    absentSlug: "__missing__",
+    fetchImpl: fetchFor({
+      "/api/credits/on-stillness": {
+        status: 200,
+        body: { ...VALID_CREDITS, contributors: [{ authorId: "ava", wallet: CHECKSUMMED }] },
+      },
+    }),
+  });
+  assert.equal(get(out, "wallet-checksum").ok, true);
+});
+
+test("it looks inside composites — a group's members are payees too", async () => {
+  const out = await runCheck({
+    baseUrl: "https://site.test/api",
+    slug: "on-stillness",
+    absentSlug: "__missing__",
+    fetchImpl: fetchFor({
+      "/api/credits/on-stillness": {
+        status: 200,
+        body: {
+          ...VALID_CREDITS,
+          contributors: [
+            { authorId: "ava", wallet: CHECKSUMMED },
+            { authorId: "studio", members: [{ authorId: "bo", wallet: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd" }] },
+          ],
+        },
+      },
+    }),
+  });
+  assert.match(get(out, "wallet-checksum").detail, /1 of 2/);
+});
+
+test("nothing is claimed about wallets when the endpoint never produced a valid body", async () => {
+  const out = await runCheck({
+    baseUrl: "https://site.test/api",
+    slug: "on-stillness",
+    absentSlug: "__missing__",
+    fetchImpl: fetchFor({ "/api/credits/on-stillness": { status: 500, body: "" } }),
+  });
+  assert.equal(
+    out.checks.find((c) => c.name === "wallet-checksum"),
+    undefined,
+    "a check that passes when it could not read its input is worse than no check",
+  );
+});

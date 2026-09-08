@@ -64,9 +64,9 @@ export interface PublisherConfigDocument {
    * publisher to add `License: https://<their host>/license.xml` to their robots.txt — RSL's primary
    * discovery mechanism — and a fleet-proxied host answers there. An IN-APP host did not: nothing in
    * the publisher's app knew the document existed, so the one pointer we told them to publish led to
-   * a 404. Measured on the live reference publisher 2026-09-08: `inneraxiom.com/robots.txt` carried
-   * the `License:` line and `inneraxiom.com/license.xml` returned 404, while the WordPress site next
-   * to it served its licence correctly because the plugin registers the route for them.
+   * a 404. Measured against a live in-app publisher on 2026-09-08: its `robots.txt` carried the
+   * `License:` line and its `/license.xml` returned 404, while a WordPress site on the same fleet
+   * served its licence correctly because the plugin registers the route for them.
    *
    * XML rather than a structure: this is a published document, and the control plane is the only
    * side that can render it (it holds the price, the chain and the fee). An in-app runtime that

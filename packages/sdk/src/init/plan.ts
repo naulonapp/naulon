@@ -12,11 +12,22 @@
  * is returned, so `init` can never emit a file the gate would reject at boot.
  */
 import { z } from "zod";
-import { walletSchema, walletAddress } from "../contract/wallet.ts";
+import { payeeWalletSchema } from "../contract/wallet.ts";
 import { parseCredits, type ArticleCredits } from "../contract/credits.ts";
 
-/** A clearly-fake but structurally-valid address, so a wallet-less starter still boots. */
-export const PLACEHOLDER_WALLET = "0x0000000000000000000000000000000000000000";
+/**
+ * There is no placeholder wallet any more, and that is the point.
+ *
+ * `init` used to write the burn address into the starter `credits.json` so a wallet-less setup
+ * would still parse, on the theory that a loud warning covered it. It did not: the warning
+ * scrolled past once, the file stayed valid forever, and a publisher who later switched
+ * `PAYMENT_MODE=gateway` tolled real readers into an address nobody can spend from.
+ *
+ * With no wallet, the starter credits map is now EMPTY — which the contract already has a
+ * meaning for. No credits entry is a 404 from the credits source, and a 404 is the deliberate
+ * "this reads free" signal. So the gate boots, the loop runs, and nothing is charged for an
+ * article whose money has nowhere to go. Adding the wallet is what turns the toll on.
+ */
 
 /**
  * The answers the wizard resolves (from flags, prompts, or defaults) before planning.
@@ -38,7 +49,7 @@ export const initAnswersSchema = z
     starterSlug: z.string().min(1),
     starterTitle: z.string().min(1),
     starterAuthorId: z.string().min(1),
-    defaultWallet: walletSchema.optional(),
+    defaultWallet: payeeWalletSchema.optional(),
   })
   .strict();
 
@@ -118,16 +129,18 @@ function renderEnv(a: InitAnswers): string {
   return lines.join("\n") + "\n";
 }
 
-function buildStarterCredits(a: InitAnswers): { map: Record<string, ArticleCredits>; usedPlaceholder: boolean } {
-  const usedPlaceholder = a.defaultWallet === undefined;
+function buildStarterCredits(a: InitAnswers): { map: Record<string, ArticleCredits>; walletless: boolean } {
+  if (a.defaultWallet === undefined) return { map: {}, walletless: true };
   const entry: ArticleCredits = {
     slug: a.starterSlug,
     title: a.starterTitle,
-    contributors: [{ authorId: a.starterAuthorId, wallet: walletAddress(a.defaultWallet ?? PLACEHOLDER_WALLET) }],
+    // `payeeWalletSchema`, not the bare format rule: a wallet typed into the setup prompt is an
+    // address money will land in, and the burn address must not survive that prompt.
+    contributors: [{ authorId: a.starterAuthorId, wallet: payeeWalletSchema.parse(a.defaultWallet) as ArticleCredits["contributors"][number]["wallet"] }],
   };
   // Never emit a file the gate would reject — validate through the real contract.
   parseCredits(entry, `starter credits for "${a.starterSlug}"`);
-  return { map: { [a.starterSlug]: entry }, usedPlaceholder };
+  return { map: { [a.starterSlug]: entry }, walletless: false };
 }
 
 /**
@@ -136,7 +149,7 @@ function buildStarterCredits(a: InitAnswers): { map: Record<string, ArticleCredi
  */
 export function buildInitPlan(answers: InitAnswers): InitPlan {
   const a = initAnswersSchema.parse(answers);
-  const { map, usedPlaceholder } = buildStarterCredits(a);
+  const { map, walletless } = buildStarterCredits(a);
 
   const warnings: string[] = [];
   if (a.paymentMode === "mock") {
@@ -146,9 +159,9 @@ export function buildInitPlan(answers: InitAnswers): InitPlan {
       `PAYMENT_MODE=gateway on ${a.settlementNetwork} — set RELAYER_PRIVATE_KEY / CIRCLE_API_KEY in .env before a real settle.`,
     );
   }
-  if (usedPlaceholder) {
+  if (walletless) {
     warnings.push(
-      `${a.creditsPath} uses a placeholder wallet (0x00…00). Replace it with a real address, or agents pay into the void.`,
+      `No wallet given, so ${a.creditsPath} is empty and every article reads FREE. Nothing is charged until you add an entry with a real address — see the next steps.`,
     );
   }
 
@@ -158,6 +171,14 @@ export function buildInitPlan(answers: InitAnswers): InitPlan {
     warnings,
     nextSteps: [
       "Review .env and " + a.creditsPath + " — add your real article slugs + author wallets.",
+      ...(walletless
+        ? [
+            `Nothing tolls yet. Add one entry to ${a.creditsPath} to turn it on:  ` +
+              `{"${a.starterSlug}":{"slug":"${a.starterSlug}","title":"${a.starterTitle}",` +
+              `"contributors":[{"authorId":"${a.starterAuthorId}","wallet":"0x<your 40-hex address>"}]}}`,
+            `That address is where readers pay you, directly, on ${a.settlementNetwork} — it must be one you control that can receive USDC there. An exchange deposit address issued for another network loses the funds.`,
+          ]
+        : []),
       `Draft entries from your live site:  npx naulon crawl ${a.originUrl} --prefixes ${a.articlePrefixes}`,
       "Start the gate:  make dev",
       `Watch the toll:  curl -A python-requests localhost:${a.tollgatePort}/${a.articlePrefixes.split(",")[0]}/${a.starterSlug}`,

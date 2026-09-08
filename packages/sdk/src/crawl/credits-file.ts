@@ -17,7 +17,7 @@
  * crawler can never emit a file the gate would reject at boot.
  */
 import { parseCredits, type ArticleCredits } from "../contract/credits.ts";
-import { walletAddress } from "../contract/wallet.ts";
+import { isBurnAddress, walletAddress } from "../contract/wallet.ts";
 import { resolveAuthorWallet } from "./authors.ts";
 import type { CrawlConfig, DiscoveredArticle } from "./types.ts";
 
@@ -56,9 +56,13 @@ export function mergeCredits(
       keptExisting.push(article.slug);
       continue;
     }
-    // (2) money never inferred — no valid wallet ⇒ report, don't write.
+    // (2) money never inferred — no valid wallet ⇒ report, don't write. The burn address counts
+    // as no wallet here rather than as a parse error: a crawl drafts many articles at once, and
+    // one unspendable mapping must leave the other rows written and itself listed, not abort the
+    // run. `parseCredits` below would throw on it, which is the right answer for a served body
+    // and the wrong one for a drafting pass.
     const resolved = resolveAuthorWallet(article, config);
-    if (resolved.unmapped || resolved.wallet === null) {
+    if (resolved.unmapped || resolved.wallet === null || isBurnAddress(resolved.wallet)) {
       unmapped.push({ slug: article.slug, author: resolved.author });
       continue;
     }
