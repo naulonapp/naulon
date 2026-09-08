@@ -1,11 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  httpPublisherConfigSource,
-  serveX402Manifest,
-  staticPublisherConfigSource,
-  type ConfigLookupFailure,
-} from "./config-source.ts";
+import { httpPublisherConfigSource, serveRslDocument, serveX402Manifest, staticPublisherConfigSource, type ConfigLookupFailure } from "./config-source.ts";
 
 const RESOURCE = "https://site.test/articles/x";
 
@@ -189,4 +184,43 @@ test("no manifest → 404, never a locally-invented one", async () => {
   // a guess published as terms.
   const h = serveX402Manifest(staticPublisherConfigSource({ enforcement: {} }));
   assert.equal((await h(new Request("https://site.test/.well-known/x402"))).status, 404);
+});
+
+/* ── serveRslDocument (2026-09-08) ───────────────────────────────────────────────────────────────
+ * The licence half of `serveX402Manifest`, and it exists for the reason that one's docblock already
+ * gives: we tell the publisher to advertise a URL, and until now only a fleet-proxied host could
+ * answer it. Measured on a live site — robots.txt carried `License: …/license.xml` and that URL
+ * returned 404, while the WordPress site beside it served its own, because the plugin registers the
+ * route and the JS SDK left it as homework. */
+
+test("serveRslDocument serves the document the control plane built, as RSL", async () => {
+  const handler = serveRslDocument(
+    staticPublisherConfigSource({ enforcement: {}, license: '<?xml version="1.0"?><rsl/>' }),
+  );
+  const res = await handler(new Request("https://pub.test/license.xml"));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "application/rsl+xml; charset=utf-8");
+  // A day, matching the document's own max-age="1" — a crawler caching by HTTP and one honouring
+  // the RSL attribute must not end up with different ideas of freshness.
+  assert.match(res.headers.get("cache-control") ?? "", /max-age=86400/);
+  assert.match(await res.text(), /<rsl\/>/);
+});
+
+test("no licence in the document ⇒ 404, never an empty <rsl>", async () => {
+  // An empty document is a licensing STATEMENT, and a wrong one is worse than none — the same call
+  // the WordPress plugin makes when it has no terms to state.
+  for (const doc of [{ enforcement: {} }, { enforcement: {}, license: "" }]) {
+    const res = await serveRslDocument(staticPublisherConfigSource(doc))(
+      new Request("https://pub.test/license.xml"),
+    );
+    assert.equal(res.status, 404, JSON.stringify(doc));
+    assert.ok(!(await res.text()).includes("<rsl"), "and it never emits a shell document");
+  }
+});
+
+test("a licence is public — any origin may read it", async () => {
+  const res = await serveRslDocument(
+    staticPublisherConfigSource({ enforcement: {}, license: "<rsl/>" }),
+  )(new Request("https://pub.test/license.xml"));
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
 });
