@@ -98,12 +98,8 @@ test("--secret produces a signed webhook fixture for offline receiver testing", 
   assert.equal(JSON.parse(out.fixture!.rawBody).type, "settlement.completed");
 });
 
-/**
- * The check that reports what nothing else can: an address that is well-formed, spendable by
- * someone, and possibly not the one the publisher meant. It is deliberately an ADVISORY — a
- * lower-case address is a legal way to publish, and a check that fails a green pipeline over a
- * legal choice gets switched off.
- */
+/* Reports what nothing else can: a well-formed address that may not be the one meant. Advisory —
+ * lower-case is legal, and a check that reddens a pipeline over a legal choice gets switched off. */
 const CHECKSUMMED = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"; // the EIP-55 spec's own example
 
 test("a payee address with no checksum is reported, and does NOT fail the run", async () => {

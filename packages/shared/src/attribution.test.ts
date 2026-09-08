@@ -164,3 +164,91 @@ test("splitAuthorLegs: on-chain leg amounts match the ledger split (splitAmount)
   for (const leg of split.coauthorLegs) assert.equal(Number(leg.amountMicro), ledger[leg.payTo]);
   assert.equal(legSum(split), atomic);
 });
+
+/* DELEGATED PAYEES — named without a wallet, unfilled by the time credits reach here. Filtered
+ * before the weight sum, or everyone else's shares sum to under 1 and the split pays out less than
+ * the toll. These assert the total, not just the routing. */
+const credits = (contributors: ArticleCredits["contributors"]): ArticleCredits => ({
+  slug: "s",
+  title: "t",
+  contributors,
+});
+
+test("a delegated co-author's weight goes to the payable authors, not to nobody", () => {
+  const payees = resolvePayees(
+    credits([
+      { authorId: "paid", wallet: walletAddress(W1), weight: 3 },
+      { authorId: "delegated", weight: 1 }, // no wallet, nothing filled it
+    ]),
+  );
+  assert.equal(payees.length, 1);
+  assert.equal(payees[0]?.authorId, "paid");
+  assert.equal(payees[0]?.share, 1, "the whole toll, not three quarters of it");
+
+  const split = splitAmount(0.01, payees);
+  assert.equal(
+    split.reduce((s, a) => s + a.amountUsdc, 0).toFixed(6),
+    (0.01).toFixed(6),
+    "Σlegs must still equal the price",
+  );
+});
+
+test("two payable authors keep their RELATIVE weights when a third is delegated", () => {
+  const payees = resolvePayees(
+    credits([
+      { authorId: "a", wallet: walletAddress(W1), weight: 3 },
+      { authorId: "b", wallet: walletAddress(W2), weight: 1 },
+      { authorId: "c", weight: 4 },
+    ]),
+  );
+  assert.equal(payees.length, 2);
+  assert.equal(payees.find((p) => p.authorId === "a")?.share, 0.75);
+  assert.equal(payees.find((p) => p.authorId === "b")?.share, 0.25);
+});
+
+test("a composite whose members are all delegated drops whole, and its siblings absorb it", () => {
+  const payees = resolvePayees(
+    credits([
+      { authorId: "solo", wallet: walletAddress(W1), weight: 1 },
+      { authorId: "studio", weight: 1, members: [{ authorId: "x" }, { authorId: "y" }] },
+    ]),
+  );
+  assert.equal(payees.length, 1);
+  assert.equal(payees[0]?.share, 1);
+});
+
+test("a composite with ONE payable member keeps only that member — and the composite's full slice", () => {
+  const payees = resolvePayees(
+    credits([
+      { authorId: "solo", wallet: walletAddress(W1), weight: 1 },
+      {
+        authorId: "studio",
+        weight: 1,
+        members: [{ authorId: "x", wallet: walletAddress(W2), weight: 1 }, { authorId: "y", weight: 3 }],
+      },
+    ]),
+  );
+  assert.equal(payees.length, 2);
+  assert.equal(payees.find((p) => p.authorId === "solo")?.share, 0.5);
+  assert.equal(payees.find((p) => p.authorId === "x")?.share, 0.5, "y's weight goes to x, not out of the split");
+});
+
+test("credits where NOTHING is payable resolve to no payees at all — never a throw", () => {
+  assert.deepEqual(resolvePayees(credits([{ authorId: "x" }, { authorId: "y", weight: 9 }])), []);
+  assert.deepEqual(
+    resolvePayees(credits([{ authorId: "group", members: [{ authorId: "x" }] }])),
+    [],
+    "…including through a composite",
+  );
+});
+
+test("a delegated leaf that HAS been filled is an ordinary payee", () => {
+  const payees = resolvePayees(
+    credits([
+      { authorId: "filled", wallet: walletAddress(W3), weight: 1 },
+      { authorId: "paid", wallet: walletAddress(W1), weight: 1 },
+    ]),
+  );
+  assert.equal(payees.length, 2);
+  assert.equal(payees[0]?.share, 0.5);
+});

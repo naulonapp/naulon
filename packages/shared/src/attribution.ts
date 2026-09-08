@@ -17,14 +17,26 @@ const EPSILON = 1e-9;
  * @param parentShare the fraction of the whole toll flowing into this subtree
  *                    (1 at the root).
  */
+/** A leaf is payable if it carries a wallet; a composite if any member is. An unfilled DELEGATED
+ *  leaf (named, no wallet) is not — by here it has been filled or it never will be. */
+function isPayable(c: Contributor): boolean {
+  if (c.members && c.members.length > 0) return c.members.some(isPayable);
+  return c.wallet !== undefined;
+}
+
 function resolveContributors(contributors: Contributor[], parentShare: number): AuthorShare[] {
-  const totalWeight = contributors.reduce((sum, c) => sum + (c.weight ?? 1), 0);
+  // BEFORE the weight sum: counting an unpayable contributor's weight makes the rest sum to under
+  // 1 and the split loses the difference. Dropping first redistributes it.
+  const payable = contributors.filter(isPayable);
+  if (payable.length === 0) return [];
+
+  const totalWeight = payable.reduce((sum, c) => sum + (c.weight ?? 1), 0);
   if (totalWeight <= 0) {
     throw new Error("contributor weights sum to zero — cannot split");
   }
 
   const out: AuthorShare[] = [];
-  for (const c of contributors) {
+  for (const c of payable) {
     const localShare = ((c.weight ?? 1) / totalWeight) * parentShare;
 
     if (c.members && c.members.length > 0) {
@@ -32,8 +44,6 @@ function resolveContributors(contributors: Contributor[], parentShare: number): 
       out.push(...resolveContributors(c.members, localShare));
     } else if (c.wallet) {
       out.push({ authorId: c.authorId, wallet: c.wallet, share: localShare });
-    } else {
-      throw new Error(`contributor ${c.authorId} has neither wallet nor members`);
     }
   }
   return out;
@@ -58,6 +68,9 @@ export function resolvePayees(credits: ArticleCredits): AuthorShare[] {
   }
 
   const merged = [...byWallet.values()];
+  // Nobody payable is legitimate — every leaf was delegated and unfilled. Callers read [] as free.
+  // Only a NON-empty split that misses 1 is a bug: money lost between the graph and the legs.
+  if (merged.length === 0) return merged;
   const sum = merged.reduce((s, p) => s + p.share, 0);
   if (Math.abs(sum - 1) > EPSILON) {
     throw new Error(`shares sum to ${sum}, expected 1 — credits graph is malformed`);
