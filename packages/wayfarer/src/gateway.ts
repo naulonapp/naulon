@@ -53,12 +53,37 @@ import { runPaidFetch } from "./paidFetch.ts";
  */
 export interface GatewaySigner {
   address: `0x${string}`;
-  signTypedData(args: {
-    domain: TypedDataDomain;
-    types: Record<string, Array<{ name: string; type: string }>>;
-    primaryType: string;
-    message: Record<string, unknown>;
-  }): Promise<`0x${string}`>;
+  signTypedData(args: GatewayTypedDataArgs): Promise<`0x${string}`>;
+  /**
+   * Sign EVERY leg of one multi-leg toll in a single call — the gateway twin of `MemoSigner`'s
+   * `signTypedDataBatch`, and the reason it exists is the same.
+   *
+   * A hosted signer does not merely sign: it debits a spending grant, and it enforces the buyer's
+   * per-read ceilings. Asked one leg at a time it can only ever reason about one leg. So a two-leg
+   * toll (author + operator fee) was debited twice, independently — and the moment a sibling leg
+   * tripped a ceiling, the author leg was ALREADY debited and signed while no payment went out at
+   * all. The buyer's own "never pay more than $X for one read" also degraded to a per-leg bound,
+   * which an author leg at $X plus a fee leg above it walks straight through.
+   *
+   * OPTIONAL, and every caller must fall back to `signTypedData` per leg when it is absent: a viem
+   * `PrivateKeyAccount` satisfies this interface and has no such method, and the self-host/CLI path
+   * has no grant to protect. Adding it must never make a plain account unusable.
+   *
+   * Contract: one signature per element, index-aligned to `argsList`, or a THROW that signs
+   * nothing. A partial result is what the whole method exists to prevent, so returning fewer
+   * signatures than legs is a bug in the implementation, not a state a caller handles.
+   */
+  signTypedDataBatch?(argsList: GatewayTypedDataArgs[]): Promise<`0x${string}`[]>;
+}
+
+/** The typed data a Gateway leg is signed over — `TransferWithAuthorization` against the
+ *  GatewayWallet EIP-712 domain, as `BatchEvmScheme` builds it. Named so the batch method above and
+ *  the single one cannot drift apart. */
+export interface GatewayTypedDataArgs {
+  domain: TypedDataDomain;
+  types: Record<string, Array<{ name: string; type: string }>>;
+  primaryType: string;
+  message: Record<string, unknown>;
 }
 
 /** The 402's author accept, with the Gateway batching `extra` the envelope needs. `probe`
@@ -114,6 +139,92 @@ export async function gatewayLegPayload(
   const scheme = new BatchEvmScheme(signer);
   const signed = await scheme.createPaymentPayload(x402Version, requirements as never);
   return { ...signed, resource: quoted.resource, accepted: requirements };
+}
+
+/**
+ * A signature-shaped placeholder, swapped out before anything sees it.
+ *
+ * 65 bytes of `0x11…` with a v of 27 — structurally a signature, recoverable to nobody. It exists
+ * only inside {@link buildLegPayloadsForBatch}, between the SDK building a leg's authorization and
+ * the real signer signing all of them together. Deliberately not zeroes: a run of zeroes is what a
+ * missing value looks like, and if a bug ever let one of these escape, `0x1111…` in a payment
+ * payload is unmistakably a placeholder while `0x0000…` reads as an empty field.
+ */
+const PLACEHOLDER_SIGNATURE =
+  `0x${"11".repeat(64)}1b` as `0x${string}`;
+
+/**
+ * Build every leg's payload WITHOUT signing, and hand back the typed data each one needs.
+ *
+ * ## Why this shape
+ *
+ * `BatchEvmScheme.createPaymentPayload` builds the authorization (nonce, the validity clamp, the
+ * GatewayWallet domain) and signs it in one step — there is no "give me the typed data" entry
+ * point. Reconstructing the authorization ourselves to get at it would fork the shape away from the
+ * rail, which is the exact drift `gatewayLegPayload` wraps the SDK to prevent.
+ *
+ * So the SDK keeps building, and a COLLECTING signer stands in for the real one: it records the
+ * typed data it is asked to sign and returns {@link PLACEHOLDER_SIGNATURE}. The caller then signs
+ * all of the collected typed data in one call and substitutes the results back, index-aligned. The
+ * SDK still owns every byte of the authorization; only the moment of signing moves.
+ *
+ * Returns the payloads with placeholder signatures and the typed data in the SAME order, so the
+ * substitution is positional and cannot mis-pair a signature with another leg's authorization.
+ */
+async function buildLegPayloadsForBatch(
+  signerAddress: `0x${string}`,
+  legQuotes: Quoted[],
+  x402Version: number,
+): Promise<{ payloads: Record<string, unknown>[]; typedData: GatewayTypedDataArgs[] }> {
+  const typedData: GatewayTypedDataArgs[] = [];
+  const collector: GatewaySigner = {
+    address: signerAddress,
+    async signTypedData(args) {
+      typedData.push(args);
+      return PLACEHOLDER_SIGNATURE;
+    },
+  };
+  const payloads: Record<string, unknown>[] = [];
+  for (const legQuote of legQuotes) {
+    // Through `gatewayLegPayload`, not around it: its two pre-sign guards (single-leg shape, and
+    // "this really is a GatewayWalletBatched option") must run on every leg here exactly as they do
+    // on the single-leg path. Each leg is already narrowed to its own one-leg quote by the caller.
+    payloads.push(await gatewayLegPayload(collector, legQuote, x402Version));
+  }
+  if (typedData.length !== legQuotes.length) {
+    // One authorization per leg, or we do not know which signature belongs to which leg. An SDK
+    // that signed twice for one leg, or not at all, must fail loudly here rather than produce a
+    // payment whose legs are mis-paired.
+    throw new Error(
+      `gateway batch: expected ${legQuotes.length} authorization(s) to sign, the SDK produced ${typedData.length}`,
+    );
+  }
+  return { payloads, typedData };
+}
+
+/**
+ * Sign every leg of a multi-leg Gateway toll through ONE call to a batch-capable signer.
+ *
+ * Exported for `rail.ts`, which is the only caller — kept here beside `gatewayLegPayload` so the
+ * single-leg and multi-leg paths share the SDK wrapper, the guards and the placeholder machinery
+ * rather than growing a second copy in another file.
+ */
+export async function gatewayLegPayloadsBatched(
+  signer: GatewaySigner & { signTypedDataBatch: NonNullable<GatewaySigner["signTypedDataBatch"]> },
+  legQuotes: Quoted[],
+  x402Version: number,
+): Promise<Record<string, unknown>[]> {
+  const { payloads, typedData } = await buildLegPayloadsForBatch(signer.address, legQuotes, x402Version);
+  const signatures = await signer.signTypedDataBatch(typedData);
+  if (signatures.length !== typedData.length) {
+    throw new Error(
+      `gateway batch: signer returned ${signatures.length} signature(s) for ${typedData.length} leg(s)`,
+    );
+  }
+  return payloads.map((p, i) => {
+    const inner = p.payload as { authorization: unknown; signature: string };
+    return { ...p, payload: { ...inner, signature: signatures[i]! } };
+  });
 }
 
 export function gatewayBuyer(signer?: GatewaySigner): Buyer {
