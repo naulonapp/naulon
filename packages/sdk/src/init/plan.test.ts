@@ -4,7 +4,6 @@ import {
   buildInitPlan,
   initAnswersSchema,
   INIT_DEFAULTS,
-  PLACEHOLDER_WALLET,
   type InitAnswers,
 } from "./plan.ts";
 import { parseCredits } from "../contract/credits.ts";
@@ -65,12 +64,28 @@ test("credits.json is a valid contract file keyed by slug, using the real wallet
   assert.equal(article.contributors[0]?.wallet, WALLET);
 });
 
-test("wallet-less answers still produce a valid (placeholder) file + a loud warning", () => {
-  const { credits, warnings } = buildInitPlan(answers({ defaultWallet: undefined }));
-  const map = JSON.parse(credits.contents);
-  const article = parseCredits(map["welcome"], "test"); // still valid → gate boots
-  assert.equal(article.contributors[0]?.wallet, PLACEHOLDER_WALLET);
-  assert.ok(warnings.some((w) => /placeholder/i.test(w)));
+test("wallet-less answers scaffold NO credits at all — free beats paying the burn address", () => {
+  const { credits, warnings, nextSteps } = buildInitPlan(answers({ defaultWallet: undefined }));
+  assert.deepEqual(JSON.parse(credits.contents), {}, "an empty map is a 404 per slug, which is the free-read signal");
+  assert.ok(
+    warnings.some((w) => /free/i.test(w)),
+    "the publisher must be told nothing is charged yet",
+  );
+  assert.ok(
+    nextSteps.some((s) => /"wallet":"0x<your 40-hex address>"/.test(s)),
+    "…and shown the entry that turns it on",
+  );
+  assert.ok(
+    nextSteps.some((s) => /exchange deposit address/i.test(s)),
+    "…including which network the address has to work on",
+  );
+});
+
+test("the burn address is refused as a starter wallet, not written into the file", () => {
+  assert.throws(
+    () => buildInitPlan(answers({ defaultWallet: "0x0000000000000000000000000000000000000000" })),
+    /burn address/,
+  );
 });
 
 test("next steps reference the real port + first prefix + starter slug", () => {

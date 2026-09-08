@@ -12,7 +12,7 @@
  * `members` that re-split recursively) — never both, never neither.
  */
 import { z } from "zod";
-import { walletSchema, type WalletAddress } from "./wallet.ts";
+import { payeeWalletSchema, type WalletAddress } from "./wallet.ts";
 
 /**
  * The credits graph node for one article. Co-authors may themselves be composites
@@ -42,7 +42,7 @@ const contributorSchema: z.ZodType<unknown> = z.lazy(() =>
     .object({
       authorId: z.string().min(1),
       weight: z.number().positive().optional(),
-      wallet: walletSchema.optional(),
+      wallet: payeeWalletSchema.optional(),
       members: z.array(contributorSchema).min(1).optional(),
     })
     .strict()

@@ -37,7 +37,7 @@ function tmp(): string {
   return mkdtempSync(join(tmpdir(), "naulon-init-"));
 }
 
-test("interactive: all defaults (Enter through) → mock .env + placeholder credits", async () => {
+test("interactive: all defaults (Enter through) → mock .env + an EMPTY credits file", async () => {
   const dir = tmp();
   // origin, price, citation, prefixes, port, mode, wallet, slug, title — all blank = accept default
   const { code, out } = await runInteractive(dir, ["", "", "", "", "", "", "", "", ""]);
@@ -45,9 +45,12 @@ test("interactive: all defaults (Enter through) → mock .env + placeholder cred
   const env = readFileSync(join(dir, ".env"), "utf8");
   assert.match(env, /^PAYMENT_MODE=mock$/m);
   assert.match(env, /^ORIGIN_URL=http:\/\/localhost:3000$/m);
+  // Skipping the wallet prompt used to scaffold the burn address here, so the file stayed valid
+  // forever and a later PAYMENT_MODE=gateway tolled readers into it. No wallet now means no
+  // entries, which the contract already reads as "free".
   const credits = JSON.parse(readFileSync(join(dir, "credits.json"), "utf8"));
-  assert.equal(credits["welcome"].contributors[0].wallet, "0x0000000000000000000000000000000000000000");
-  assert.match(out, /placeholder/i);
+  assert.deepEqual(credits, {});
+  assert.match(out, /read(s)? FREE/i);
 });
 
 test("interactive: validation re-prompts, gateway branch asks network, real wallet lands", async () => {
