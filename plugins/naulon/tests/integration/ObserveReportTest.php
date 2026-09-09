@@ -214,6 +214,9 @@ class ObserveReportTest extends WP_UnitTestCase {
 	}
 
 	public function test_a_crawler_served_free_is_reported_so_the_gap_is_visible_not_silent() {
+		// No wallet here is not the verdict — the gate's 204 is. Stubbing a gate that prices
+		// everything would assert the opposite of what a real one does for an unfillable author.
+		$this->responses['/_naulon/quote'] = array( 'code' => 204, 'body' => null );
 		delete_user_meta( get_post( $this->post_id )->post_author, Naulon_Credits::USER_WALLET_META );
 		$this->crawl();
 

@@ -21,7 +21,7 @@ A human visitor is never affected. They see exactly what they always saw, at the
 * Human traffic reads free. This is not a setting and there is no switch to change it.
 * Titles, excerpts, your sitemap and your feeds stay free — agents need to find you.
 * Full article text is what carries a price.
-* An article with no wallet behind it reads free. Nothing is ever charged with nowhere to send it.
+* Nothing is ever charged with nowhere to send it. An article whose authors have no wallet anywhere — not on this site and not on the service it connects to — reads free.
 
 **What you configure**
 

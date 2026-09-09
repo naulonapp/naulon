@@ -359,7 +359,18 @@ class EnforcerTest extends WP_UnitTestCase {
 		$this->assertSame( 'free', $this->decide()['action'] );
 	}
 
-	public function test_a_wallet_less_article_is_never_tolled() {
+	/**
+	 * The product's central promise, restated for delegated payees: an article NOBODY can be paid
+	 * for is never tolled.
+	 *
+	 * "Nobody" is a question only the control plane can answer. A contributor with no wallet in
+	 * WordPress is a delegated payee — naulon may hold that author's own address — so the plugin
+	 * asks, and a gate that can fill nothing answers 204. Deciding it locally instead looks like a
+	 * stricter test and is actually a broken feature: measured against a live gate, it served a
+	 * crawler free on an article the gate had already priced at 0.03 to the author's own wallet.
+	 */
+	public function test_an_article_nobody_can_be_paid_for_is_never_tolled() {
+		$this->responses['/_naulon/quote'] = array( 'code' => 204, 'body' => null );
 		$orphan = self::factory()->post->create(
 			array(
 				'post_author' => self::factory()->user->create( array( 'role' => 'author' ) ),
@@ -372,7 +383,31 @@ class EnforcerTest extends WP_UnitTestCase {
 
 		$decision = Naulon_Enforcer::instance()->decide( get_post( $orphan ) );
 		$this->assertSame( 'free', $decision['action'] );
-		$this->assertSame( array(), $this->urls(), 'nothing to price when there is nobody to pay' );
+		$this->assertSame( 'no quote available', $decision['reason'] );
+	}
+
+	/**
+	 * And the other half, which is the whole reason a wallet-less contributor is emitted at all:
+	 * when the control plane CAN fill the leg, the article tolls. Before this the plugin decided
+	 * locally and the author was never paid.
+	 */
+	public function test_a_delegated_author_the_control_plane_can_pay_is_tolled() {
+		$orphan = self::factory()->post->create(
+			array(
+				'post_author' => self::factory()->user->create( array( 'role' => 'author' ) ),
+				'post_name'   => 'delegated',
+				'post_status' => 'publish',
+			)
+		);
+		$this->as_agent();
+		Naulon_Enforcer::instance()->reset();
+
+		$decision = Naulon_Enforcer::instance()->decide( get_post( $orphan ) );
+		$this->assertSame( 'pay', $decision['action'], 'the gate priced it, so the toll stands' );
+		$this->assertNotEmpty(
+			array_filter( $this->urls(), static function ( $u ) { return false !== strpos( $u, '/_naulon/quote' ); } ),
+			'the plugin must ASK — payability is not a local decision'
+		);
 	}
 
 	public function test_a_citation_is_priced_as_a_citation_not_a_read() {

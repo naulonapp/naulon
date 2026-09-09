@@ -60,14 +60,20 @@ class Naulon_Admin_Content {
 			esc_html__( 'Published', 'naulon' ),
 			esc_html( number_format_i18n( $counts['published'] ) )
 		);
+		// NOT "chargeable now": this site cannot know that. It knows who is CREDITED; whether a
+		// given read is priced is naulon's answer at read time — it fills a delegated author's leg
+		// from their own account, and answers "free" for one it cannot fill. Counting local wallets
+		// under-reported (an author paid through naulon looked unpaid); counting credited authors
+		// over-reported (an unfillable one looked chargeable). Both were a promise about revenue
+		// this screen has no way to keep, so it states what it measures instead.
 		printf(
 			'<tr><th>%s</th><td class="naulon-num"><strong>%s</strong></td></tr>',
-			esc_html__( 'Chargeable now', 'naulon' ),
+			esc_html__( 'Credited to an author', 'naulon' ),
 			esc_html( number_format_i18n( $counts['tollable'] ) )
 		);
 		printf(
 			'<tr><th>%s</th><td class="naulon-num">%s</td></tr>',
-			esc_html__( 'No author wallet here', 'naulon' ),
+			esc_html__( '…of those, no author wallet on this site', 'naulon' ),
 			esc_html( number_format_i18n( $counts['no_wallet'] ) )
 		);
 		printf(
@@ -86,8 +92,8 @@ class Naulon_Admin_Content {
 						// Not "reads free": an author with a naulon payout account is paid to their
 						// own wallet even with none set here, and this site cannot see that.
 						_n(
-							'%d published post has no author wallet on this site.',
-							'%d published posts have no author wallet on this site.',
+							'%d published post has no author wallet on this site. If that author has a naulon account, their share is paid there; if not, the post reads free.',
+							'%d published posts have no author wallet on this site. If those authors have a naulon account, their share is paid there; if not, those posts read free.',
 							$counts['no_wallet'],
 							'naulon'
 						),
@@ -108,6 +114,7 @@ class Naulon_Admin_Content {
 	 * screen into a table scan, so the count is over a recent window and says so.
 	 *
 	 * @param Naulon_Credits $credits The credits service.
+	 * `tollable` and `no_wallet` OVERLAP: a chargeable post may still hold no wallet on this site.
 	 * @return array{published:int, tollable:int, no_wallet:int, opted_out:int, window:int}
 	 */
 	public static function scope_counts( $credits ) {
@@ -129,16 +136,26 @@ class Naulon_Admin_Content {
 			'window'     => $window,
 		);
 
+		// "Chargeable now" must ask the SAME question the enforcer asks — is anyone credited — or
+		// the number contradicts what the site actually does: a delegated author paid through a
+		// naulon account is charged for, and counting only locally-walleted posts reported that
+		// article as not chargeable while the gate was pricing it.
+		//
+		// "No author wallet here" is therefore an OVERLAPPING local fact, not a third exclusive
+		// bucket: a post can be chargeable and still have no wallet stored on this site. That is
+		// exactly the case the People screen exists to resolve, so it stays visible.
 		foreach ( $posts as $post ) {
 			if ( ! $credits->is_tollable( $post ) ) {
 				++$counts['opted_out'];
 				continue;
 			}
-			if ( empty( $credits->payable_contributors_for( $post ) ) ) {
-				++$counts['no_wallet'];
-				continue;
+			if ( empty( $credits->contributors_for( $post ) ) ) {
+				continue; // nobody credited at all — the credits endpoint answers 404 and it reads free.
 			}
 			++$counts['tollable'];
+			if ( empty( $credits->payable_contributors_for( $post ) ) ) {
+				++$counts['no_wallet'];
+			}
 		}
 
 		return $counts;
@@ -306,7 +323,9 @@ class Naulon_Admin_Content {
 
 		$contributors = Naulon_Credits::instance()->payable_contributors_for( $post );
 		if ( empty( $contributors ) ) {
-			echo '<p class="naulon-muted">' . esc_html__( 'This post reads free anyway: nobody credited on it has a wallet.', 'naulon' ) . '</p>';
+			// Not "reads free": a delegated payee may be payable through naulon even with no wallet
+			// stored here, and the gate is what decides. State the local fact only.
+			echo '<p class="naulon-muted">' . esc_html__( 'Nobody credited on this post has a wallet on this site. If naulon holds one for them, their share is paid there; otherwise this post reads free.', 'naulon' ) . '</p>';
 			return;
 		}
 		echo '<p class="naulon-muted">' . esc_html__( 'Paid to:', 'naulon' ) . '</p><ul class="naulon-payees">';

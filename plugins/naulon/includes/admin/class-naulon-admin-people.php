@@ -2,10 +2,12 @@
 /**
  * People — who can be paid, and who cannot be yet.
  *
- * The number that matters on this screen is the second one. An author without a wallet is not a
- * cosmetic gap: every post they wrote answers 404 on the credits route, which the gate reads as
- * "read this free". A site can be fully connected, verified and switched on and still earn
- * nothing, and this is the screen that says why.
+ * The number that matters on this screen is the second one. An author without a wallet HERE is
+ * still credited on the credits route — named with no address — because the service this site
+ * connects to may hold a payout address for them and fill the leg. What it costs is certainty:
+ * only that service can say whether those posts earn, and if nothing holds an address for them
+ * the post reads free. A site can be fully connected, verified and switched on and still earn
+ * nothing, and this is the screen that says who that depends on.
  *
  * The rule underneath every wallet field here is the one from the credits contract: a
  * contributor with no usable wallet is dropped, never substituted. Nobody's article is ever paid
