@@ -291,7 +291,7 @@ class Naulon_Cache {
 				'tested'  => false,
 				'status'  => 0,
 				'verdict' => 'no_post',
-				'message' => __( 'No article on this site is currently tollable, so there is nothing to test with. Give an author a wallet and publish a post.', 'naulon' ),
+				'message' => __( 'No published article on this site credits an author, so there is nothing to test with. Assign an author to a post and publish it.', 'naulon' ),
 				'headers' => array(),
 				'url'     => '',
 			);

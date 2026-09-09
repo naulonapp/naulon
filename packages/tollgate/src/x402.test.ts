@@ -282,6 +282,27 @@ test("a co-author split settles the primary synchronously and DEFERS the co-auth
   assert.deepEqual(await drainPendingLegs({ publisherId: "pub-co" }, now), { settled: 1, failed: 0 });
 });
 
+test("two co-authors behind ONE wallet stay one leg at the full price — two credits, one transfer", () => {
+  // `resolvePayees` returns one entry per credited AUTHOR (identity is the join key for every
+  // earnings plane), so `payees.length > 1` no longer implies more than one recipient. Splitting
+  // on the payee count would emit two transfers to the same address for one toll; the wire must
+  // stay byte-identical to the stock single-recipient shape.
+  const shared = "0x1111111111111111111111111111111111111111";
+  const oneWallet: Quote = {
+    ...coauthorQuote,
+    payees: [
+      { authorId: "wp-user-3", wallet: walletAddress(shared), share: 0.5 },
+      { authorId: "wp-user-9", wallet: walletAddress(shared), share: 0.5 },
+    ],
+  };
+  const { legs, header } = build402(oneWallet, "http://gate/essays/on-stillness", 1_000_000);
+  const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as Record<string, unknown>;
+  assert.equal("naulonLegs" in (decoded.extensions as Record<string, unknown>), false);
+  assert.equal(legs.length, 1);
+  assert.equal(legs[0]!.requirements.amount, "1000");
+  assert.equal(legs[0]!.requirements.payTo.toLowerCase(), shared);
+});
+
 test("coauthorSplit OFF with co-authors → stock single-recipient toll (no naulonLegs, primary gets full price)", () => {
   const offQuote: Quote = { ...coauthorQuote, coauthorSplit: false };
   const { legs, header } = build402(offQuote, "http://gate/essays/on-stillness", 1_000_000);

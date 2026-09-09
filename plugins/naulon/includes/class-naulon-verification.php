@@ -25,11 +25,63 @@ class Naulon_Verification {
 	/**
 	 * The host this site actually serves on, per its own configured home URL.
 	 *
+	 * PORTLESS by design — this is what a challenge is OPENED with, and a publisher on :443 has no
+	 * port to state. Do NOT use it to look this site up in an answer from the control plane; use
+	 * `registered_host()`, which is the spelling that side actually keyed on.
+	 *
 	 * @return string
 	 */
 	public static function host() {
 		$host = wp_parse_url( home_url(), PHP_URL_HOST );
 		return is_string( $host ) ? strtolower( $host ) : '';
+	}
+
+	/**
+	 * The host string the CONTROL PLANE knows this site by — the one to match its answers against.
+	 *
+	 * Two derivations of "this host" existed and they disagree whenever a port is in play:
+	 * `host()` drops it (`wp_parse_url(..., PHP_URL_HOST)` on `http://localhost:8888` is
+	 * `localhost`), while the control plane stores, returns and keys on the full authority
+	 * (`localhost:8888`) — which is also what lands in `challenge_host` when the challenge is
+	 * opened from the portal rather than from here.
+	 *
+	 * Both places that looked this site up in a control-plane response compared against `host()`,
+	 * so on any site served on a non-default port they matched NOTHING:
+	 *
+	 *   • `refresh_status()` found no row and stored `status_mode: ''` — indistinguishable from
+	 *     "the control plane has no opinion", while it in fact said `in_app`.
+	 *   • `reconcile_ownership()` fell past its loop to the stand-down branch and CLEARED
+	 *     `verified_at` on every heartbeat, so `is_active()` went false and the site served every
+	 *     crawler free. Persistently, and against a control plane that was answering
+	 *     `verifiedAt` for that host the whole time. Watched happen on 2026-09-09.
+	 *
+	 * `challenge_host` is authoritative because it is echoed from the row the control plane
+	 * created; `host()` is the fallback for a site verified before that field existed.
+	 *
+	 * @return string
+	 */
+	public static function registered_host() {
+		$settings = Naulon_Settings::all();
+		$stored   = isset( $settings['challenge_host'] ) ? strtolower( trim( (string) $settings['challenge_host'] ) ) : '';
+		return '' !== $stored ? $stored : self::host();
+	}
+
+	/**
+	 * Does a host from the control plane name THIS site?
+	 *
+	 * Exact match on the registered spelling first. The portless form is accepted as well, because
+	 * a site may hold a challenge opened before `challenge_host` was stored — but never the other
+	 * way round: `example.com` must not match `example.com:8443`, which is a different origin.
+	 *
+	 * @param string $candidate Host as the control plane spells it.
+	 * @return bool
+	 */
+	public static function names_this_site( $candidate ) {
+		$candidate = strtolower( trim( (string) $candidate ) );
+		if ( '' === $candidate ) {
+			return false;
+		}
+		return $candidate === self::registered_host() || $candidate === self::host();
 	}
 
 	/**

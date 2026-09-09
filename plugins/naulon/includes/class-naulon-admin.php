@@ -239,6 +239,14 @@ class Naulon_Admin {
 				// may edit anyone's, an author only their own. Naulon_Roles owns that rule.
 				Naulon_Admin_People::save_wallet();
 				break;
+			case 'approve_access':
+				// MANAGE_WALLETS, not per-target: approving is deciding that someone else's share
+				// leaves this site. Checked inside, beside the state check it belongs with.
+				Naulon_Admin_People::approve_access();
+				break;
+			case 'decline_access':
+				Naulon_Admin_People::decline_access();
+				break;
 			case 'install_dropin':
 			case 'remove_dropin':
 			case 'run_probe':
@@ -441,11 +449,19 @@ class Naulon_Admin {
 			__( 'Toll', 'naulon' ),
 			$enforcing ? __( 'charging agents', 'naulon' ) : ( $switch_on ? __( 'blocked', 'naulon' ) : __( 'off', 'naulon' ) )
 		);
-		self::state_item(
-			'idle',
-			__( 'Paid out', 'naulon' ),
-			Naulon_Ledger::format_usdc( Naulon_Ledger::site_total() ) . ' USDC'
-		);
+		// The SITE's lifetime payout, so it is gated on the capability that means "may see everyone's
+		// earnings" — not printed on every naulon screen. `Naulon_Admin_Earnings::render()` already
+		// routes an author to their own card instead of the site totals; this strip sat two inches
+		// above that card and printed the whole site's revenue to them anyway, on the one naulon
+		// screen an author can reach. The People screen promises the opposite in so many words:
+		// "Nobody can see anyone else's earnings unless their role allows it."
+		if ( current_user_can( Naulon_Roles::VIEW_EARNINGS_ALL ) ) {
+			self::state_item(
+				'idle',
+				__( 'Paid out', 'naulon' ),
+				Naulon_Ledger::format_usdc( Naulon_Ledger::site_total() ) . ' USDC'
+			);
+		}
 		echo '</div>';
 		echo '</div>';
 	}

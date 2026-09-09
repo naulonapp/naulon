@@ -47,12 +47,12 @@ test("rejects a contributor that is both leaf and composite", () => {
       },
     ],
   };
-  assert.throws(() => parseCredits(bad), /exactly one/);
+  assert.throws(() => parseCredits(bad), /never both/);
 });
 
-test("rejects a contributor that is neither leaf nor composite", () => {
-  const bad = { ...valid, contributors: [{ authorId: "x" }] };
-  assert.throws(() => parseCredits(bad), /exactly one/);
+test("accepts a contributor with neither wallet nor members — a delegated payee", () => {
+  const parsed = parseCredits({ ...valid, contributors: [{ authorId: "x" }] });
+  assert.equal(parsed.contributors[0]?.wallet, undefined);
 });
 
 test("rejects empty contributors", () => {

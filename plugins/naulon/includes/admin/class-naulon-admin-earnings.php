@@ -120,6 +120,14 @@ class Naulon_Admin_Earnings {
 	/**
 	 * The author's own view. Queried by their wallet, so there is nothing to leak.
 	 *
+	 * That query is also this screen's limit, and it has to be said on the screen. The ledger is
+	 * keyed by the address a leg PAID; the address this site knows is the one in your profile.
+	 * Those are two different things the moment a delegated payee is filled — you are credited
+	 * here with no wallet, your naulon account holds one, and the leg settles to an address this
+	 * site never sees. Until 2026-09-09 the wallet-less branch asserted the opposite outright
+	 * ("your posts read free and nothing is paid for them"), which was the one sentence the one
+	 * author this feature exists for would read, while their work was being sold.
+	 *
 	 * @return void
 	 */
 	private static function render_own() {
@@ -128,10 +136,11 @@ class Naulon_Admin_Earnings {
 		Naulon_Admin::card_open( __( 'Your earnings', 'naulon' ) );
 		if ( ! Naulon_Wallet::is_valid( $wallet ) ) {
 			printf(
-				'<p>%s <a href="%s">%s</a></p>',
-				esc_html__( 'You have not set a wallet, so your posts read free and nothing is paid for them.', 'naulon' ),
+				'<p>%s</p><p class="naulon-muted">%s</p><p><a href="%s">%s</a></p>',
+				esc_html__( 'This site has no wallet for you, so it cannot pay you directly and has nothing to show here.', 'naulon' ),
+				esc_html__( 'Your posts are not necessarily free. You are still credited on them, and if your naulon account holds a payout address for you, your share is paid there — this site never sees that address, so those payments cannot appear on this screen. Sign in to naulon to see them.', 'naulon' ),
 				esc_url( admin_url( 'profile.php#naulon-payouts' ) ),
-				esc_html__( 'Set one on your profile.', 'naulon' )
+				esc_html__( 'Set a wallet on your profile to be paid through this site instead.', 'naulon' )
 			);
 			Naulon_Admin::card_close();
 			return;
@@ -150,6 +159,10 @@ class Naulon_Admin_Earnings {
 		);
 		echo '</div>';
 		printf( '<p class="naulon-muted">%s <code>%s</code></p>', esc_html__( 'Paid to', 'naulon' ), esc_html( $wallet ) );
+		printf(
+			'<p class="naulon-muted">%s</p>',
+			esc_html__( 'These are the payments made to that address. If your naulon account holds a different payout address, anything settled there is shown in naulon, not here.', 'naulon' )
+		);
 		Naulon_Admin::card_close();
 
 		self::render_recent( Naulon_Ledger::recent( 25, $wallet ) );

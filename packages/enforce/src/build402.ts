@@ -20,6 +20,7 @@ import {
   getNetwork,
   primaryPayee,
   splitAuthorLegs,
+  walletTotals,
   toAtomicUsdc,
 } from "@naulon/shared";
 import { issueNonce, type NonceBinding } from "./nonce.ts";
@@ -117,7 +118,11 @@ export function build402(quote: Quote, resourceUrl: string, now: number, routeTe
   // unchanged (price is divided, not added to). Off / single-author → `requirements`
   // keeps the full price and no co-author legs exist, byte-identical to the stock toll.
   const coauthorLegs: SettlementLegReq[] = [];
-  if (quote.coauthorSplit && quote.payees.length > 1) {
+  // More than one WALLET, not more than one payee. `resolvePayees` returns one entry per credited
+  // AUTHOR (identity is the join key for every earnings plane), so two co-authors behind one
+  // address are two payees and zero extra legs — and the documented invariant here is about the
+  // wire: "single-author → byte-identical to the stock toll" must stay true for them too.
+  if (quote.coauthorSplit && walletTotals(quote.payees).length > 1) {
     // toAtomicUsdc returns the atomic micro-USDC as a string; splitMicro works in
     // integer micro units, exact for any realistic toll (well within Number range).
     const atomicPrice = Number(toAtomicUsdc(quote.price as number));

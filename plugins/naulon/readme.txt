@@ -21,7 +21,7 @@ A human visitor is never affected. They see exactly what they always saw, at the
 * Human traffic reads free. This is not a setting and there is no switch to change it.
 * Titles, excerpts, your sitemap and your feeds stay free — agents need to find you.
 * Full article text is what carries a price.
-* An article with no wallet behind it reads free. Nothing is ever charged with nowhere to send it.
+* Nothing is ever charged with nowhere to send it. An article whose authors have no wallet anywhere — not on this site and not on the service it connects to — reads free.
 
 **What you configure**
 
@@ -47,7 +47,7 @@ The whole protocol is open source. The connectivity field takes either a hosted 
 4. Paste the credits address shown on that screen into your naulon account, so the service knows where to read your author data.
 5. Switch the toll on, and press **Test toll** to watch a crawler get charged.
 6. Choose what is tolled under **naulon → Content**.
-7. Ask your authors to add a wallet address to their profile. Posts by authors without one read free.
+7. Ask your authors to add a wallet address to their profile. A post by an author without one reads free, unless the service this site connects to holds a wallet for them.
 
 Permalinks must not be set to Plain — with plain permalinks an article has no address to identify it by, and nothing can be tolled. The Setup screen says so if that is the case.
 
@@ -100,7 +100,7 @@ You need a wallet address to receive payments — the same way you would need a 
 
 = What if my authors do not have wallets? =
 
-Their posts read free. That is the deliberate behaviour: nothing is charged when there is nobody to pay.
+Their posts still credit them, with no destination attached. If the service this site connects to holds a payout wallet for that author, their share goes there. If nothing does, the post reads free — nothing is charged when there is nobody to pay.
 
 = Does this block search engines? =
 
@@ -140,7 +140,7 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 1. Setup — connect, verify, switch on, and test the toll against your own site.
 2. Content — choose what is tolled and which machines are charged.
-3. People — which authors have wallets, and how many posts read free without one.
+3. People — which authors have wallets here, and who has asked for a naulon payout account.
 4. Earnings — what has been paid, per author, settled and authorized shown separately.
 5. Diagnostics — the caching check, recent decisions, and connection health.
 

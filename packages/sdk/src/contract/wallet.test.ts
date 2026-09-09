@@ -6,12 +6,8 @@ import { parseCredits } from "./credits.ts";
 
 const REAL = "0x1111111111111111111111111111111111111111";
 
-/**
- * Two rules, deliberately not one. The burn address has to stay VALID as a plain address, because
- * x402 uses it as the "payer unknown" sentinel and `tollgate/src/settle.ts` brands it on every
- * settle it cannot attribute. It has to be INVALID as a payee, because a transfer to it succeeds
- * and destroys the money.
- */
+/* Two rules, not one: the burn address stays valid as a plain address (x402's "payer unknown"
+ * sentinel, branded on every unattributed settle) and invalid as a payee. */
 test("the format rule still accepts the burn address — the x402 payer sentinel depends on it", () => {
   assert.equal(walletSchema.safeParse(BURN_ADDRESS).success, true);
   assert.equal(walletAddress(BURN_ADDRESS), BURN_ADDRESS);

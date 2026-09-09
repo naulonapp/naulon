@@ -294,12 +294,19 @@ class Naulon_Enforcer {
 			return $this->free( 'human (' . $verdict['reason'] . ')' );
 		}
 
-		// Only a tollable article is ever gated — the same predicate the credits contract uses,
-		// so what is priced and what is payable can never disagree.
+		// Only a tollable article is ever gated, and "is anyone NAMED" is the question — not "can
+		// this site pay them". A contributor with no wallet here is a DELEGATED payee: the control
+		// plane may hold that author's own address and fill the leg, which is the whole point of
+		// naming them. Asking `payable_contributors_for` here would decide payability locally and
+		// serve free to a crawler the gate had already priced — measured against a live gate, which
+		// quoted 0.03 to an author whose wallet exists only on naulon.
+		//
+		// The gate remains the authority on whether anyone can be paid: a slug nothing can fill
+		// answers 204, and `built_402` returning null falls through to a free read below.
 		$credits = Naulon_Credits::instance();
 		if ( ! $credits->is_tollable( $post ) || empty( $credits->contributors_for( $post ) ) ) {
 			return $this->logged(
-				$this->free( 'not tollable (no wallet, unpublished, or opted out)' ),
+				$this->free( 'not tollable (nobody credited, unpublished, or opted out)' ),
 				$post,
 				$credits->canonical_slug_for( $post )
 			);

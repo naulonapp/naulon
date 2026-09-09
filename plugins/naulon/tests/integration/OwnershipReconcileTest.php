@@ -48,6 +48,7 @@ class OwnershipReconcileTest extends WP_UnitTestCase {
 			array(
 				'verified_at'       => '',
 				'ownership_lost_at' => '',
+				'challenge_host'    => '',
 			)
 		);
 		parent::tear_down();
@@ -83,6 +84,53 @@ class OwnershipReconcileTest extends WP_UnitTestCase {
 				),
 			),
 		);
+	}
+
+	public function test_a_ported_host_is_recognised_and_KEEPS_its_verification() {
+		// The control plane stores and returns the full authority (`localhost:8888`);
+		// `Naulon_Verification::host()` drops the port (`wp_parse_url(..., PHP_URL_HOST)`), so the
+		// two spellings never matched on a site served on a non-default port. This loop then fell
+		// through to the stand-down branch and cleared `verified_at` on EVERY heartbeat, against a
+		// control plane that was answering `verifiedAt` for that host the whole time. The site
+		// served every crawler free and the only trace was `ownership_lost_at`.
+		$ported = Naulon_Verification::host() . ':8888';
+		Naulon_Settings::update( array( 'challenge_host' => $ported ) );
+		$this->body = array(
+			'challenges' => array(
+				array( 'host' => $ported, 'verifiedAt' => '2026-09-08T00:00:00Z', 'method' => 'meta-tag' ),
+			),
+		);
+
+		$this->assertFalse( Naulon_Cron::instance()->reconcile_ownership(), 'nothing to withdraw' );
+		$this->assertNotSame( '', Naulon_Settings::all()['verified_at'], 'the verification survives' );
+		$this->assertSame( '', Naulon_Settings::all()['ownership_lost_at'] );
+	}
+
+	public function test_a_ported_host_whose_proof_IS_withdrawn_still_stands_down() {
+		// The matcher must not become a way to ignore an authoritative no.
+		$ported = Naulon_Verification::host() . ':8888';
+		Naulon_Settings::update( array( 'challenge_host' => $ported ) );
+		$this->body = array(
+			'challenges' => array(
+				array( 'host' => $ported, 'verifiedAt' => null, 'method' => 'meta-tag' ),
+			),
+		);
+
+		$this->assertTrue( Naulon_Cron::instance()->reconcile_ownership() );
+		$this->assertSame( '', Naulon_Settings::all()['verified_at'] );
+	}
+
+	public function test_a_DIFFERENT_ported_host_is_not_this_site() {
+		// `example.com` and `example.com:8443` are different origins; matching loosely in that
+		// direction would let a neighbour's verdict keep this site's toll alive.
+		Naulon_Settings::update( array( 'challenge_host' => Naulon_Verification::host() . ':8888' ) );
+		$this->body = array(
+			'challenges' => array(
+				array( 'host' => Naulon_Verification::host() . ':9999', 'verifiedAt' => '2026-09-08T00:00:00Z' ),
+			),
+		);
+
+		$this->assertTrue( Naulon_Cron::instance()->reconcile_ownership(), 'absent from the list ⇒ stand down' );
 	}
 
 	public function test_a_withdrawn_proof_clears_the_local_verification() {

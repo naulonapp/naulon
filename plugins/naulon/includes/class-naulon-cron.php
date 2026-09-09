@@ -144,12 +144,15 @@ class Naulon_Cron {
 			return false; // unreadable ⇒ no evidence ⇒ never touch a working verification.
 		}
 
-		$host = Naulon_Verification::host();
 		foreach ( $response['body']['challenges'] as $challenge ) {
 			if ( ! is_array( $challenge ) || ! isset( $challenge['host'] ) ) {
 				continue;
 			}
-			if ( strtolower( (string) $challenge['host'] ) !== $host ) {
+			// The REGISTERED spelling, not the portless one. Comparing against `host()` matched
+			// nothing on a site served on a non-default port, so this loop always fell through to
+			// the stand-down below and cleared a verification the control plane was still
+			// confirming — turning the toll off on every tick.
+			if ( ! Naulon_Verification::names_this_site( $challenge['host'] ) ) {
 				continue;
 			}
 			$verified = isset( $challenge['verifiedAt'] ) && '' !== (string) $challenge['verifiedAt'];
@@ -179,7 +182,6 @@ class Naulon_Cron {
 	 */
 	public function refresh_status() {
 		$response = Naulon_Client::instance()->enforce_status();
-		$host     = Naulon_Verification::host();
 
 		if ( ! $response['ok'] || ! isset( $response['body']['hosts'] ) || ! is_array( $response['body']['hosts'] ) ) {
 			$result = array(
@@ -202,7 +204,7 @@ class Naulon_Cron {
 
 		$row = null;
 		foreach ( $response['body']['hosts'] as $candidate ) {
-			if ( isset( $candidate['host'] ) && strtolower( (string) $candidate['host'] ) === $host ) {
+			if ( isset( $candidate['host'] ) && Naulon_Verification::names_this_site( $candidate['host'] ) ) {
 				$row = $candidate;
 				break;
 			}
@@ -234,34 +236,62 @@ class Naulon_Cron {
 	}
 
 	/**
-	 * Price one real tolled resource so the control plane sees this integration is alive.
+	 * Price one real credited resource so the control plane sees this integration is alive.
 	 *
-	 * Deliberately a `/quote` for an article that would actually be tolled: a made-up resource
-	 * would answer 204 (don't gate) and prove nothing about the path that matters.
+	 * Deliberately a `/quote` for a real article: a made-up resource would answer 204 (don't
+	 * gate) and prove nothing about the path that matters.
 	 *
-	 * @return bool Whether a resource was found and quoted.
+	 * The VERDICT comes from the gate, never from picking a post we think is payable. Whether
+	 * anyone credited on an article can actually be paid is a fact only the control plane holds
+	 * — a wallet-less author here may have registered one there — so `heartbeat_post` selects on
+	 * "is anyone credited" and this method reports what the answer was. Reading a 204 as health
+	 * (it is `ok`, so the note stayed empty) is how a site whose every article priced free showed
+	 * a clean heartbeat: the one screen that exists to say "nothing is being tolled" said nothing.
+	 *
+	 * @return bool Whether the control plane answered at all.
 	 */
 	public function stamp_liveness() {
 		$post = $this->heartbeat_post();
 		if ( ! $post instanceof WP_Post ) {
-			Naulon_Settings::update( array( 'heartbeat_at' => gmdate( 'c' ), 'heartbeat_note' => 'no tollable post' ) );
+			Naulon_Settings::update(
+				array(
+					'heartbeat_at'   => gmdate( 'c' ),
+					'heartbeat_note' => __( 'No published article on this site credits an author, so there is nothing to price. Assign an author to a post and publish it.', 'naulon' ),
+				)
+			);
 			return false;
 		}
 
 		$credits  = Naulon_Credits::instance();
 		$response = Naulon_Client::instance()->quote( get_permalink( $post ), $credits->canonical_slug_for( $post ), 'read' );
 
+		if ( ! $response['ok'] ) {
+			$note = $this->status_error( $response );
+		} elseif ( 204 === (int) $response['status'] ) {
+			$note = sprintf(
+				/* translators: %s: article title. */
+				__( 'Your account priced “%s” free, so nothing is being tolled on it. That is the right answer when the article is marked free, or when nobody credited on it has a payout wallet — including on your naulon account. Check Content, and ask those authors to connect a wallet.', 'naulon' ),
+				wp_strip_all_tags( get_the_title( $post ) )
+			);
+		} else {
+			$note = '';
+		}
+
 		Naulon_Settings::update(
 			array(
 				'heartbeat_at'   => gmdate( 'c' ),
-				'heartbeat_note' => $response['ok'] ? '' : $this->status_error( $response ),
+				'heartbeat_note' => $note,
 			)
 		);
 		return $response['ok'];
 	}
 
 	/**
-	 * The most recently published post that would actually be tolled.
+	 * The most recently published post that CREDITS someone — the best candidate to price.
+	 *
+	 * Not "that would be tolled": this site cannot know that. A contributor with no wallet here
+	 * may be a delegated payee the control plane can fill, so payability is the gate's verdict
+	 * and `stamp_liveness` records it rather than pre-judging it.
 	 *
 	 * @return WP_Post|null
 	 */

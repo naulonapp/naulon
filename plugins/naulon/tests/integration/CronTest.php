@@ -23,6 +23,9 @@ class CronTest extends WP_UnitTestCase {
 	/** @var int */
 	private $status_code = 200;
 
+	/** @var int Status the stubbed /quote answers with. 204 is the gate's "don't gate" signal. */
+	private $quote_code = 200;
+
 	public function set_up() {
 		parent::set_up();
 
@@ -50,6 +53,7 @@ class CronTest extends WP_UnitTestCase {
 
 		$this->requests    = array();
 		$this->status_code = 200;
+		$this->quote_code  = 200;
 		$this->status_body = array(
 			'hosts'     => array(
 				array( 'host' => wp_parse_url( home_url(), PHP_URL_HOST ), 'mode' => 'in_app', 'nextAction' => 'none', 'attention' => false ),
@@ -81,6 +85,13 @@ class CronTest extends WP_UnitTestCase {
 				'headers'  => array(),
 				'body'     => wp_json_encode( $this->status_body ),
 				'response' => array( 'code' => $this->status_code, 'message' => '' ),
+			);
+		}
+		if ( 204 === $this->quote_code ) {
+			return array(
+				'headers'  => array(),
+				'body'     => '',
+				'response' => array( 'code' => 204, 'message' => '' ),
 			);
 		}
 		return array(
@@ -168,7 +179,30 @@ class CronTest extends WP_UnitTestCase {
 		}
 
 		$this->assertFalse( Naulon_Cron::instance()->stamp_liveness() );
-		$this->assertSame( 'no tollable post', Naulon_Settings::all()['heartbeat_note'] );
+		$this->assertStringContainsString(
+			'credits an author',
+			Naulon_Settings::all()['heartbeat_note'],
+			'the note names what is actually missing, in a sentence a publisher can act on'
+		);
+	}
+
+	public function test_a_priced_article_leaves_the_heartbeat_note_empty() {
+		$this->assertTrue( Naulon_Cron::instance()->stamp_liveness() );
+		$this->assertSame( '', Naulon_Settings::all()['heartbeat_note'] );
+	}
+
+	public function test_a_204_is_reported_rather_than_read_as_health() {
+		// The gate answering "read this one free" is a successful call, so `ok` stays true and the
+		// old code left the note empty — a site whose every article priced free showed a clean
+		// heartbeat on the one screen that exists to say nothing is being tolled. Whether anyone
+		// credited here can be paid is the gate's fact to state, never this plugin's to assume,
+		// so the plugin reports the verdict instead of pre-filtering the post it sends.
+		$this->quote_code = 204;
+
+		$this->assertTrue( Naulon_Cron::instance()->stamp_liveness(), 'the control plane did answer' );
+		$note = Naulon_Settings::all()['heartbeat_note'];
+		$this->assertNotSame( '', $note, 'a free verdict is not health' );
+		$this->assertStringContainsString( 'free', $note );
 	}
 
 	// ── Scheduling ───────────────────────────────────────────────────────────────────────────

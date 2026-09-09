@@ -49,6 +49,34 @@ class AdminAccessTest extends WP_UnitTestCase {
 		};
 	}
 
+	// ── The earnings rule ────────────────────────────────────────────────────────────────────
+
+	/**
+	 * Render the shared header strip and return its markup.
+	 *
+	 * @return string
+	 */
+	private function header_markup() {
+		ob_start();
+		Naulon_Admin::header( 'Earnings' );
+		return (string) ob_get_clean();
+	}
+
+	public function test_an_author_is_never_shown_the_sites_lifetime_payout() {
+		// Earnings::render() already routes an author to their own card instead of the site
+		// totals — and the header strip printed the whole site's revenue two inches above it, on
+		// the one naulon screen an author can reach. Capability, not screen, is the boundary.
+		wp_set_current_user( $this->author );
+
+		$this->assertStringNotContainsString( 'Paid out', $this->header_markup() );
+	}
+
+	public function test_an_editor_still_sees_the_sites_lifetime_payout() {
+		wp_set_current_user( $this->editor );
+
+		$this->assertStringContainsString( 'Paid out', $this->header_markup() );
+	}
+
 	// ── The wallet rule ──────────────────────────────────────────────────────────────────────
 
 	public function test_an_author_may_edit_their_own_wallet() {
