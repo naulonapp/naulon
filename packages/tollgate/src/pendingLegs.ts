@@ -87,6 +87,24 @@ export interface PendingLegSink {
    * an out-of-tree sink keeps working.
    */
   claim?(id: string, claimUntil: number, now: number): Promise<boolean>;
+  /**
+   * Every unsettled leg still inside its validity window — INCLUDING ones a drain currently holds a
+   * claim on. The question "what is still owed", as distinct from `pending`'s "what may I broadcast
+   * right now".
+   *
+   * The distinction is not academic, and getting it wrong silently re-opens the hole
+   * {@link outstandingLegMicro} exists to close. `pending` excludes a claimed leg because another
+   * drain is mid-attempt and re-broadcasting a live authorization is the thing that design avoids.
+   * But a claim moves no money: `drainPendingLegs` claims BEFORE it broadcasts, and on a failed or
+   * unknown-outcome attempt it deliberately does NOT release, so a leg stays claimed — and
+   * therefore invisible to `pending` — for a full lease while its money is still entirely present
+   * in the buyer's balance. A funding guard reading `pending` would let the buyer spend it.
+   *
+   * OPTIONAL only so an out-of-tree sink keeps compiling. `outstandingLegMicro` REFUSES rather than
+   * falling back to `pending` when it is absent: a silent under-count here is money, and the
+   * fallback would be the defect wearing the shape of a graceful degradation.
+   */
+  outstanding?(now: number): Promise<PendingLeg[]>;
   /** Release a claim after an attempt that provably did NOT move money, so the leg retries on
    *  the next pass instead of waiting out its lease. Never called when the outcome is unknown. */
   release?(id: string): Promise<void>;
@@ -107,7 +125,19 @@ export function memoryPendingLegSink(seed: PendingLeg[] = []): PendingLegSink {
     async pending(now, publisherId) {
       return [...legs.values()]
         .filter((e) => !e.settled && e.leg.validBefore > now)
+        // Claimed-and-still-leased legs are excluded, matching the production sink's SQL filter.
+        // They diverged: this one ignored `claimedUntil`, so a test could pass against a state the
+        // supabase sink answers differently — which is how a guard built on `pending` looked correct
+        // in every test and would have been wrong in prod (see `outstanding`).
+        .filter((e) => e.claimedUntil === undefined || e.claimedUntil < now)
         .filter((e) => publisherId === undefined || e.leg.publisherId === publisherId)
+        .map((e) => e.leg)
+        .sort((a, b) => a.at - b.at);
+    },
+    async outstanding(now) {
+      // No claim filter — see the interface note. A claim is an attempt, not a settlement.
+      return [...legs.values()]
+        .filter((e) => !e.settled && e.leg.validBefore > now)
         .map((e) => e.leg)
         .sort((a, b) => a.at - b.at);
     },
@@ -178,6 +208,21 @@ export function supabasePendingLegSink(): PendingLegSink {
       });
       return rows.map((r) => r.data);
     },
+    async outstanding(now) {
+      // Deliberately WITHOUT the `claimable` filter `pending` applies — a claim is a drain holding
+      // a broadcast lease, not money that has moved. See the interface note.
+      const rows = await readAllPaged<{ data: PendingLeg }>({
+        page: (limit, offset) =>
+          supabaseRest(
+            `/rest/v1/${table}?select=data&settled=is.false&valid_before=gt.${now}` +
+              `&order=valid_before.asc,id.asc&limit=${limit}&offset=${offset}`,
+          ) as Promise<Array<{ data: PendingLeg }>>,
+        maxRows: MAX_PENDING_LEGS,
+        what: "pendingLegs.outstanding",
+        because: "A funding guard rides this read; a silent prefix would under-report what a buyer owes and let them spend it.",
+      });
+      return rows.map((r) => r.data);
+    },
     async markSettled(id, settlementRef) {
       // Conditional PATCH: only an unsettled row flips. return=representation → a non-empty
       // response means THIS call made the transition (won); [] means already settled.
@@ -235,4 +280,102 @@ export function getPendingLegSink(): PendingLegSink {
  *  isolating pending-leg state between tests. Mirrors `resetOutboxCache`. */
 export function resetPendingLegSink(): void {
   sink = undefined;
+}
+
+/**
+ * The buyer whose balance a pending leg will be burned from — `authorization.from` inside the
+ * signed payload.
+ *
+ * Read out of the payload rather than stored beside it, because the payload is the thing that is
+ * actually settled: a separate column could disagree with it, and the column would be the one that
+ * is wrong. Returns null for a shape this does not recognise, and every caller must treat null as
+ * "cannot attribute" rather than as "nobody" — see {@link outstandingLegMicro}.
+ */
+export function legPayer(leg: PendingLeg): string | null {
+  const p = leg.payload as { payload?: { authorization?: { from?: unknown } } } | undefined;
+  const from = p?.payload?.authorization?.from;
+  return typeof from === "string" && from.length > 0 ? from.toLowerCase() : null;
+}
+
+/**
+ * HOW MUCH OF A BUYER'S BALANCE IS ALREADY SPOKEN FOR — the total of every leg they have
+ * authorized that is verified, unsettled, and still inside its validity window.
+ *
+ * ## Why this exists
+ *
+ * The author leg of a toll settles synchronously and its money leaves the buyer's Gateway balance
+ * immediately. Every OTHER leg — the operator fee, a co-author cut — is verified and DEFERRED to
+ * `drainPendingLegs`, so its money is still sitting in `available` while already being owed.
+ *
+ * A funding guard that reads `available` and compares it against the payment in front of it
+ * therefore lets a buyer spend money the drain needs. Per toll the balance falls by the author leg
+ * alone while the buyer's allowance falls by the whole toll, so a buyer whose allowance outlasts
+ * their balance empties it — and the drain then has nothing to burn. The legs retry until
+ * `validBefore` and are then gone: the payee is never paid, and the buyer keeps the USDC they
+ * authorized away.
+ *
+ * So the guard has to be able to ask this question, and the answer has to come from the sink the
+ * drain itself reads — not from a second tally that could drift out of step with it. A leg the
+ * drain settles disappears from here on the next read, with no bookkeeping to reconcile.
+ *
+ * UNATTRIBUTABLE LEGS COUNT. A pending leg whose payer cannot be read ({@link legPayer} → null) is
+ * added to every buyer's total rather than dropped. It is money owed by SOMEBODY, and the failure
+ * this guards is spending a balance that is already promised — so an unreadable leg must make the
+ * guard stricter, never looser. There is no shape today that produces one; this is what happens if
+ * one ever appears.
+ *
+ * Scans every publisher's legs, because a buyer spends across the whole fleet from one balance.
+ */
+export async function outstandingLegMicro(
+  payer: string,
+  now: number = Date.now(),
+  opts: {
+    /** The sink to read. Defaults to the process's own — a parameter so this is testable against a
+     *  memory sink without a test-only setter on the memoized singleton. */
+    sink?: Pick<PendingLegSink, "outstanding">;
+    /**
+     * Count only legs settling on THIS network (`requirements.network`, CAIP-2).
+     *
+     * A Gateway balance is per (depositor, domain): the figure a guard subtracts this from is one
+     * chain's `available`. Summing every chain's legs against it refuses a buyer whose money is on
+     * the chain being paid because of a leg owed on a different one — fail-closed, but a permanent
+     * dead end, and a refusal naming a pot that is not the one in question. Omit to count all.
+     */
+    network?: string;
+    /**
+     * Legs to EXCLUDE by id (the EIP-3009 nonce) — the ones the caller is itself about to sign.
+     *
+     * A buyer re-presenting an identical authorization is a replay the reserve is built to absorb
+     * (`reserveSpend` → `replayed`, re-signing reproduces bytes they already hold), and that path
+     * needs no new money. Without this exclusion the guard counts the retry's own already-recorded
+     * legs against it and refuses a payment that has already happened, telling the buyer to add
+     * funds for nothing. A genuine re-sign mints new nonces, does not match, and is still counted —
+     * correctly, because it really is a second payment.
+     */
+    exclude?: Iterable<string>;
+  } = {},
+): Promise<number> {
+  const sink = opts.sink ?? getPendingLegSink();
+  if (typeof sink.outstanding !== "function") {
+    // REFUSE rather than fall back to `pending`. That fallback would silently hide every claimed
+    // leg and re-open the exact hole this function closes — a graceful degradation that loses money
+    // is not graceful. The caller's guard turns this throw into a retryable refusal.
+    throw new Error("pendingLegSink cannot answer what is outstanding — it implements no outstanding()");
+  }
+  const want = payer.toLowerCase();
+  const skip = new Set(opts.exclude ?? []);
+  const legs = await sink.outstanding(now);
+  let total = 0;
+  for (const leg of legs) {
+    if (skip.has(leg.id)) continue;
+    const who = legPayer(leg);
+    if (who !== null && who !== want) continue;
+    if (opts.network !== undefined && leg.requirements?.network !== undefined && leg.requirements.network !== opts.network) continue;
+    const amount = Number(leg.amount);
+    // A leg whose amount will not parse is the same class as an unattributable one: it is owed, and
+    // the safe direction is to refuse rather than to under-count. `MAX_SAFE_INTEGER` is not a
+    // number anyone can spend past, which is the intended effect.
+    total += Number.isSafeInteger(amount) && amount >= 0 ? amount : Number.MAX_SAFE_INTEGER;
+  }
+  return total;
 }
