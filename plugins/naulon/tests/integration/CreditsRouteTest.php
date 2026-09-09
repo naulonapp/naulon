@@ -189,6 +189,51 @@ class CreditsRouteTest extends WP_UnitTestCase {
 		$this->assertSame( 0.9, $data['contributors'][2]['weight'] );
 	}
 
+	public function test_a_zero_weight_contributor_is_omitted_rather_than_paid_a_full_share() {
+		// The upstream schema is `weight: z.number().positive()`, so a literal 0 would be rejected
+		// and take the whole document down with it — every contributor on the article. Omitting
+		// just the KEY was worse: a missing weight reads as 1 upstream, so a contributor a filter
+		// had explicitly zeroed was paid the LARGEST share on the article.
+		$post   = $this->publish( $this->paid_author, 'zero-weighted' );
+		$second = self::factory()->user->create( array( 'role' => 'author' ) );
+		update_user_meta( $second, Naulon_Credits::USER_WALLET_META, self::WALLET_B );
+
+		$primary = $this->paid_author;
+		add_filter(
+			'naulon_post_contributors',
+			function () use ( $primary, $second ) {
+				return array(
+					array( 'user_id' => $primary, 'weight' => 1.0 ),
+					array( 'user_id' => $second, 'weight' => 0 ),
+				);
+			}
+		);
+
+		$data = $this->get_credits( 'blog/zero-weighted' )->get_data();
+		remove_all_filters( 'naulon_post_contributors' );
+
+		$this->assertCount( 1, $data['contributors'], 'a contributor who takes nothing is not a payee' );
+		$this->assertSame( 'wp-user-' . $primary, $data['contributors'][0]['authorId'] );
+	}
+
+	public function test_an_unreadable_weight_is_treated_as_zero_not_as_one() {
+		$post = $this->publish( $this->paid_author, 'junk-weighted' );
+
+		$primary = $this->paid_author;
+		add_filter(
+			'naulon_post_contributors',
+			function () use ( $primary ) {
+				return array( array( 'user_id' => $primary, 'weight' => 'a lot' ) );
+			}
+		);
+
+		$response = $this->get_credits( 'blog/junk-weighted' );
+		remove_all_filters( 'naulon_post_contributors' );
+
+		// Nobody left to credit ⇒ the free-read signal, never a full share invented from a cast.
+		$this->assertSame( 404, $response->get_status() );
+	}
+
 	public function test_a_shared_token_gates_the_endpoint_without_revealing_which_slugs_exist() {
 		$this->publish( $this->paid_author, 'tolled-post' );
 		Naulon_Settings::update( array( 'credits_token' => 'shhh' ) );

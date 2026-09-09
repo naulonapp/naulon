@@ -223,7 +223,19 @@ class Naulon_Credits {
 				continue;
 			}
 			$user_id = (int) $entry['user_id'];
-			$wallet  = get_user_meta( $user_id, self::USER_WALLET_META, true );
+			$weight  = isset( $entry['weight'] ) ? (float) $entry['weight'] : 1.0;
+			// A non-positive weight means "takes nothing", and the only truthful way to say that
+			// in this contract is to omit the contributor: the upstream schema is
+			// `weight: z.number().positive()`, so a literal 0 would be REJECTED and take the whole
+			// document — every contributor on the article — down with it. Omitting the key instead
+			// was worse still: upstream reads a missing weight as 1, so a contributor a filter had
+			// explicitly zeroed was paid a FULL share. (`(float)` also maps a non-numeric weight to
+			// 0.0, which lands here rather than silently becoming 1.) Their weight redistributes
+			// among the rest, exactly as an unpayable leaf's does.
+			if ( ! ( $weight > 0 ) ) {
+				continue;
+			}
+			$wallet      = get_user_meta( $user_id, self::USER_WALLET_META, true );
 			$contributor = array( 'authorId' => 'wp-user-' . $user_id );
 			// No wallet here ⇒ named without one (delegated). Dropping them was indistinguishable
 			// from a solo-authored post, so an author who set a wallet on the platform and none here
@@ -231,8 +243,7 @@ class Naulon_Credits {
 			if ( Naulon_Wallet::is_valid( $wallet ) ) {
 				$contributor['wallet'] = Naulon_Wallet::normalize( $wallet );
 			}
-			$weight = isset( $entry['weight'] ) ? (float) $entry['weight'] : 1.0;
-			if ( $weight > 0 && 1.0 !== $weight ) {
+			if ( 1.0 !== $weight ) {
 				$contributor['weight'] = $weight;
 			}
 			$out[] = $contributor;
