@@ -190,6 +190,14 @@ async function buildLegPayloadsForBatch(
     // "this really is a GatewayWalletBatched option") must run on every leg here exactly as they do
     // on the single-leg path. Each leg is already narrowed to its own one-leg quote by the caller.
     payloads.push(await gatewayLegPayload(collector, legQuote, x402Version));
+    // ONE authorization per leg, checked AS EACH LEG IS BUILT rather than only in total. A total-only
+    // check passes an SDK that signed twice for one leg and not at all for another — the counts
+    // match and every payload is paired with the wrong signature, which no later check can see.
+    if (typedData.length !== payloads.length) {
+      throw new Error(
+        `gateway batch: leg ${payloads.length - 1} produced ${typedData.length - (payloads.length - 1)} authorization(s), expected exactly 1`,
+      );
+    }
   }
   if (typedData.length !== legQuotes.length) {
     // One authorization per leg, or we do not know which signature belongs to which leg. An SDK

@@ -74,6 +74,12 @@ import { envPublisherResolver } from "./publisher.ts";
 // settle the buyer-authorized extra legs the gate verified-but-deferred on the request
 // path. Scoped by `publisherId` for multi-tenant isolation. See pendingLegs / x402.
 export { drainPendingLegs, type DrainLegScope, type DrainLegResult } from "./x402.ts";
+// What a buyer has already authorized but the drain has NOT yet burned. A funding guard that reads
+// only the on-chain/Gateway balance lets a buyer spend money these legs are owed — the author leg
+// settles synchronously and leaves the balance, every other leg does not. Exported so a control
+// plane's guard can subtract it from what it thinks is spendable, reading the SAME sink the drain
+// settles from rather than keeping a second tally that could drift out of step with it.
+export { outstandingLegMicro, legPayer } from "./pendingLegs.ts";
 // The runtime-agnostic decision surface (app.ts is the package's public entry).
 // `@naulon/enforce`'s in-app middleware (re-exported as `@naulon/sdk/enforce`)
 // reaches the SAME verdict from a web Request; the private control plane consumes
