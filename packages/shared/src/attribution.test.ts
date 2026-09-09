@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { author, primaryPayee, resolvePayees, splitAmount, splitAuthorLegs } from "./attribution.ts";
+import {
+  author,
+  primaryPayee,
+  resolvePayees,
+  splitAmount,
+  splitAuthorLegs,
+  walletTotals,
+} from "./attribution.ts";
 import type { ArticleCredits, AuthorShare } from "./types.ts";
 import { walletAddress } from "./types.ts";
 
@@ -57,18 +64,63 @@ test("recursive composite re-splits its slice", () => {
   assert.equal(byId["carol"], 0.25);
 });
 
-test("duplicate wallet across subtrees merges into one payee", () => {
+test("the SAME author across subtrees merges into one payee", () => {
   const credits: ArticleCredits = {
     slug: "a",
     title: "A",
     contributors: [
       author("alice", W1),
-      { authorId: "grp", members: [author("alice-again", W1)] },
+      { authorId: "grp", members: [author("alice", W1)] },
     ],
   };
   const payees = resolvePayees(credits);
   assert.equal(payees.length, 1);
   assert.equal(payees[0]!.share, 1);
+});
+
+test("two DIFFERENT authors on one wallet stay two payees — one transfer, two credits", () => {
+  // The shape this repo actually produces: `wp-user-3` on one site and `wp-user-9` on
+  // another are one writer with one address, and a couple sharing a wallet is the same
+  // shape. Merging them by wallet kept the first id and dropped the second, so the
+  // second author's earnings card, receipts, webhook line and "articles that credit me"
+  // list were all empty while their money was being paid.
+  const credits: ArticleCredits = {
+    slug: "a",
+    title: "A",
+    contributors: [author("wp-user-3", W1), author("wp-user-9", W1), author("carol", W2)],
+  };
+  const payees = resolvePayees(credits);
+  assert.equal(payees.length, 3, "identity is preserved");
+  assert.equal(payees.find((p) => p.authorId === "wp-user-9")?.share, 1 / 3);
+
+  // …but the RAIL still sees one transfer per address, and the shared wallet outranks
+  // carol because its two authors hold 2/3 jointly.
+  assert.deepEqual(walletTotals(payees), [
+    { wallet: walletAddress(W1), share: 2 / 3 },
+    { wallet: walletAddress(W2), share: 1 / 3 },
+  ]);
+  assert.equal(primaryPayee(payees), walletAddress(W1));
+
+  const split = splitAuthorLegs(payees, 900);
+  assert.equal(split.primaryPayTo, walletAddress(W1));
+  assert.equal(split.primaryAmountMicro, "600", "both of W1's authors, in ONE leg");
+  assert.deepEqual(split.coauthorLegs, [{ payTo: walletAddress(W2), amountMicro: "300" }]);
+  assert.equal(
+    Number(split.primaryAmountMicro) +
+      split.coauthorLegs.reduce((s, l) => s + Number(l.amountMicro), 0),
+    900,
+    "no micro created or lost across the fold",
+  );
+});
+
+test("the shared wallet wins the gating leg even when no single author leads", () => {
+  // Without the wallet fold, primaryPayee compared 0.3 / 0.3 / 0.4 and handed the
+  // synchronous, content-gating leg to the SMALLER real stake.
+  const payees = [share("a", W1, 0.3), share("b", W1, 0.3), share("c", W2, 0.4)];
+  assert.equal(primaryPayee(payees), walletAddress(W1));
+  const split = splitAuthorLegs(payees, 1000);
+  assert.equal(split.primaryAmountMicro, "600");
+  assert.deepEqual(split.coauthorLegs, [{ payTo: walletAddress(W2), amountMicro: "400" }]);
 });
 
 test("splitAmount conserves the toll exactly (no dust)", () => {

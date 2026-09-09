@@ -50,24 +50,41 @@ function resolveContributors(contributors: Contributor[], parentShare: number): 
 }
 
 /**
- * Flatten an article's credits into payees. The same author appearing in
- * multiple subtrees is merged into a single payee (shares added) so settlement
- * is one transfer per wallet, not one per graph edge.
+ * Flatten an article's credits into payees — one entry per (author, wallet), with
+ * an author appearing in several subtrees merged into one (shares added).
+ *
+ * It does NOT merge two DIFFERENT authors who share one wallet, and that is the
+ * whole point of the key. Merging by wallet alone kept the first `authorId` and
+ * dropped the second, which is not a display detail: `authorId` is the join key
+ * for every attribution plane downstream — the earnings card
+ * (`author-earnings.ts`, which filters `mine.has(a.authorId)`), the receipts
+ * lines, the webhook payload and the author's own "articles that credit me" list
+ * (`articleShareFor`, which returns null when it cannot find the id). A couple
+ * sharing a wallet, or one writer whose two site-local ids (`wp-user-3` on one
+ * site, `wp-user-9` on another) resolve to the same address, made the second
+ * author invisible in all four while their money was being paid.
+ *
+ * One transfer per wallet is still the settlement rule — it is just enforced
+ * where a transfer is actually built (`primaryPayee`, `splitAuthorLegs`), not by
+ * destroying identity here. See `walletTotals`.
  */
 export function resolvePayees(credits: ArticleCredits): AuthorShare[] {
   const raw = resolveContributors(credits.contributors, 1);
 
-  const byWallet = new Map<WalletAddress, AuthorShare>();
+  const byAuthorWallet = new Map<string, AuthorShare>();
   for (const r of raw) {
-    const existing = byWallet.get(r.wallet);
+    // NUL as the separator: it cannot occur in an authorId that survived the strict
+    // credits schema, so no pair of distinct (author, wallet) keys can collide.
+    const key = `${r.authorId}\u0000${r.wallet}`;
+    const existing = byAuthorWallet.get(key);
     if (existing) {
       existing.share += r.share;
     } else {
-      byWallet.set(r.wallet, { ...r });
+      byAuthorWallet.set(key, { ...r });
     }
   }
 
-  const merged = [...byWallet.values()];
+  const merged = [...byAuthorWallet.values()];
   // Nobody payable is legitimate — every leaf was delegated and unfilled. Callers read [] as free.
   // Only a NON-empty split that misses 1 is a bug: money lost between the graph and the legs.
   if (merged.length === 0) return merged;
@@ -100,12 +117,29 @@ export function primaryPayee(payees: AuthorShare[], tieBreak: TieBreak = "wallet
   if (payees.length === 0) {
     throw new Error("no payees — cannot resolve a primary on-chain recipient");
   }
-  const sorted = [...payees].sort((a, b) => {
+  // By WALLET, because the choice is about an on-chain transfer: two co-authors behind
+  // one address hold that address's share jointly, and comparing their halves separately
+  // would hand the gating leg to a third author with a smaller real stake.
+  const sorted = walletTotals(payees).sort((a, b) => {
     if (b.share !== a.share) return b.share - a.share;
     if (tieBreak === "wallet") return a.wallet < b.wallet ? -1 : a.wallet > b.wallet ? 1 : 0;
     return 0; // "input": stable sort preserves the credits-graph order
   });
   return sorted[0]!.wallet;
+}
+
+/** Aggregate author shares onto the addresses money is actually sent to, preserving the
+ *  first-seen order so a stable input gives a stable leg order. The settlement rule "one
+ *  transfer per wallet" lives HERE — `resolvePayees` keeps one entry per author because
+ *  every attribution plane joins on `authorId`. */
+export function walletTotals(payees: AuthorShare[]): { wallet: WalletAddress; share: number }[] {
+  const byWallet = new Map<WalletAddress, { wallet: WalletAddress; share: number }>();
+  for (const p of payees) {
+    const existing = byWallet.get(p.wallet);
+    if (existing) existing.share += p.share;
+    else byWallet.set(p.wallet, { wallet: p.wallet, share: p.share });
+  }
+  return [...byWallet.values()];
 }
 
 const MICRO = 1_000_000; // USDC has 6 decimals
@@ -144,6 +178,24 @@ export function splitMicro(totalMicro: number, payees: AuthorShare[]): MicroAllo
     i++;
   }
   return allocations;
+}
+
+/**
+ * Fold per-author allocations onto the addresses money is sent to, preserving first-seen order.
+ *
+ * The counterpart of `walletTotals` for INTEGER micro, and the one every consumer of
+ * `splitMicro` needs since `resolvePayees` started returning one entry per credited author:
+ * an event's payees may now name the same wallet twice, so anything that counts or transfers
+ * PER ADDRESS must fold first. Summing money without folding is harmless (addition is
+ * addition); counting is not — a per-address statement that increments an event counter once
+ * per payee reports two reads for one toll.
+ */
+export function foldMicroByWallet(
+  allocations: readonly MicroAllocation[],
+): Map<WalletAddress, number> {
+  const out = new Map<WalletAddress, number>();
+  for (const a of allocations) out.set(a.wallet, (out.get(a.wallet) ?? 0) + a.micro);
+  return out;
 }
 
 /**
@@ -196,14 +248,19 @@ export function splitAuthorLegs(
   tieBreak: TieBreak = "wallet",
 ): AuthorLegSplit {
   const primary = primaryPayee(payees, tieBreak);
-  const allocations = splitMicro(atomicPrice, payees);
+  // Allocate per AUTHOR (so the ledger's per-author rows and these legs are the same
+  // arithmetic), then fold onto addresses — one transfer per wallet, never one per
+  // credited author. Before the fold, two co-authors sharing an address produced either
+  // two transfers to it or, for the primary, a leg holding only the LAST author's cut
+  // while the rest of that address's money silently vanished from the split.
+  const perWallet = foldMicroByWallet(splitMicro(atomicPrice, payees));
   let primaryAmountMicro = "0";
   const coauthorLegs: { payTo: WalletAddress; amountMicro: string }[] = [];
-  for (const a of allocations) {
-    if (a.wallet === primary) {
-      primaryAmountMicro = String(a.micro);
-    } else if (a.micro > 0) {
-      coauthorLegs.push({ payTo: a.wallet, amountMicro: String(a.micro) });
+  for (const [wallet, micro] of perWallet) {
+    if (wallet === primary) {
+      primaryAmountMicro = String(micro);
+    } else if (micro > 0) {
+      coauthorLegs.push({ payTo: wallet, amountMicro: String(micro) });
     }
   }
   return { primaryPayTo: primary, primaryAmountMicro, coauthorLegs };
