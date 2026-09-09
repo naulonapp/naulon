@@ -8,7 +8,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { httpResolver } from "./http.ts";
+import { httpResolver, encodeSlugPath } from "./http.ts";
 
 const CREDITS = {
   slug: "2026/09/08/paid-article",
@@ -50,10 +50,32 @@ test("characters inside a segment are still escaped", async () => {
   assert.equal(seen[0], "https://site.example/api/credits/2026/a%20b%3Fc%23d");
 });
 
-test("a slug cannot climb out of the credits path", async () => {
-  const r = httpResolver("https://site.example/api");
-  for (const bad of ["../../etc/passwd", "2026/../../secret", "a//b", "/leading", "trailing/"]) {
-    await assert.rejects(() => r.resolve(bad), /unusable path segment/, `refused: ${bad}`);
+test("a slug cannot climb out of the credits path", () => {
+  for (const bad of ["../../etc/passwd", "2026/../../secret", "a//b", ".", "..", "/", ""]) {
+    assert.throws(() => encodeSlugPath(bad), /unusable path segment/, `refused: ${bad}`);
+  }
+});
+
+/* The two slug shapes the gate itself produces carry an OUTER slash — `slugFromSitePath` returns
+ * the full pathname, and `slugFromPath` under depth:"rest" keeps a trailing one. Refusing those
+ * turned every site-mode tenant with a credits API into a 503 for agents, because `resolve()` is
+ * reached from `quote()` with no try/catch above it. */
+test("the gate's own slug shapes are addressable, not refused", () => {
+  assert.equal(encodeSlugPath("/blog/post"), "blog/post");
+  assert.equal(encodeSlugPath("/2026/09/08/on-stillness/"), "2026/09/08/on-stillness");
+  assert.equal(encodeSlugPath("/about"), "about");
+});
+
+test("an unusable slug is a FREE READ, never a 503", async () => {
+  let called = false;
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => { called = true; return new Response("", { status: 200 }); }) as typeof fetch;
+  try {
+    const r = httpResolver("https://site.example/api");
+    assert.equal(await r.resolve("../../etc/passwd"), undefined);
+    assert.equal(called, false, "nothing was fetched for a slug this contract cannot address");
+  } finally {
+    globalThis.fetch = original;
   }
 });
 

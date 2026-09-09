@@ -22,6 +22,7 @@
  */
 import { z } from "zod";
 import { parseCredits } from "../contract/credits.ts";
+import { encodeSlugPath } from "../resolver/http.ts";
 import { parseEnvFile } from "../doctor/doctor.ts";
 
 export type Level = "pass" | "warn" | "fail";
@@ -226,7 +227,15 @@ export async function runSelftest(inp: SelftestInputs): Promise<SelftestOutcome>
       return done(false);
     }
   }
-  const url = `${base}/${prefix}/${encodeURIComponent(slug)}`;
+  // Per-SEGMENT: a credits map may legitimately key a hierarchical slug, and the whole-slug encode
+  // built a URL the gate never serves — so this step reported a broken article on a working site.
+  let url: string;
+  try {
+    url = `${base}/${prefix}/${encodeSlugPath(slug)}`;
+  } catch (e) {
+    steps.push({ name: "article", level: "fail", detail: `unusable slug "${slug}": ${e instanceof Error ? e.message : String(e)}` });
+    return done(false);
+  }
   steps.push({ name: "article", level: "pass", detail: url });
 
   // 4. A human reads free. Checked FIRST and treated as fatal: every other property here is

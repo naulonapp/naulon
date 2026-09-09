@@ -15,6 +15,7 @@
  * written row.
  */
 import { parseCredits, type ArticleCredits, type Contributor } from "../contract/credits.ts";
+import { encodeSlugPath } from "../resolver/http.ts";
 import { makeSignedWebhookFixture } from "../crypto/fixture.ts";
 
 export interface CheckResult {
@@ -59,7 +60,11 @@ export async function runCheck(opts: {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const base = opts.baseUrl.replace(/\/$/, "");
   const auth: Record<string, string> = opts.token ? { authorization: `Bearer ${opts.token}` } : {};
-  const creditsUrl = (slug: string) => `${base}/credits/${encodeURIComponent(slug)}`;
+  // Per-SEGMENT, via the resolver's own encoder — the gate fetches this exact URL, and a check
+  // that asks a different one reports on a request the product never makes. Encoding the whole
+  // slug turned `2026/09/08/post` into `2026%2F09%2F08%2Fpost`, which the origin 404s, so this
+  // command told a publisher with a working endpoint that it "expected 200, got 404".
+  const creditsUrl = (slug: string) => `${base}/credits/${encodeSlugPath(slug)}`;
   const checks: CheckResult[] = [];
   /** Set only when the endpoint answered with a contract-valid body — check 1b needs the payees. */
   let credits: ArticleCredits | undefined;

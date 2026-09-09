@@ -10,6 +10,7 @@
  * `runCheck` / `check` split.
  */
 import { z } from "zod";
+import { encodeSlugPath } from "../resolver/http.ts";
 import { parseCredits } from "../contract/credits.ts";
 
 /**
@@ -152,8 +153,16 @@ export async function runDoctor(inp: DoctorInputs): Promise<DoctorOutcome> {
     const base = (inp.gateUrl ?? `http://localhost:${cfg.TOLLGATE_PORT}`).replace(/\/$/, "");
     const prefix = cfg.ARTICLE_PATH_PREFIXES.split(",")[0]?.trim() || "essays";
     const slug = firstSlug ?? "example";
-    const url = `${base}/${prefix}/${encodeURIComponent(slug)}`;
+    // Per-SEGMENT — same reason as selftest: a hierarchical slug encoded whole names a URL the
+    // gate does not serve, and the probe then blames the gate.
+    let url: string | undefined;
     try {
+      url = `${base}/${prefix}/${encodeSlugPath(slug)}`;
+    } catch (e) {
+      // Report and skip the live probes — a doctor that throws tells the publisher nothing.
+      checks.push({ name: "gate:slug", level: "fail", detail: `unusable slug "${slug}": ${e instanceof Error ? e.message : String(e)}` });
+    }
+    if (url) try {
       const human = await inp.fetchImpl(url, { headers: { "user-agent": "Mozilla/5.0", accept: "text/html" }, redirect: "manual" });
       checks.push(
         human.status === 402

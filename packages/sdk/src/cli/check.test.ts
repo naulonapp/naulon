@@ -170,3 +170,32 @@ test("nothing is claimed about wallets when the endpoint never produced a valid 
     "a check that passes when it could not read its input is worse than no check",
   );
 });
+
+/* A WordPress publisher's slug is a PATH — `/%year%/%monthnum%/%day%/%postname%/` is the default
+ * permalink. Encoding it whole asked for `2026%2F09%2F08%2F…`, which an origin 404s before the app
+ * runs, so this command reported "expected 200, got 404" about an endpoint that was serving
+ * correctly — and it is the command a publisher runs precisely when nothing is being tolled. */
+test("a hierarchical slug is requested as a path, so `naulon check` asks what the gate asks", async () => {
+  const asked: string[] = [];
+  const impl = (async (input: string | URL | Request) => {
+    const url = new URL(typeof input === "string" ? input : input.toString());
+    asked.push(url.pathname);
+    if (url.pathname === "/api/credits/2026/09/08/on-stillness") {
+      return new Response(JSON.stringify({ ...VALID_CREDITS, slug: "2026/09/08/on-stillness" }), { status: 200 });
+    }
+    return new Response("", { status: 404 });
+  }) as typeof fetch;
+
+  const out = await runCheck({
+    baseUrl: "https://site.test/api",
+    slug: "2026/09/08/on-stillness",
+    absentSlug: "__missing__",
+    fetchImpl: impl,
+  });
+
+  assert.equal(get(out, "credits-endpoint").ok, true, get(out, "credits-endpoint").detail);
+  assert.ok(
+    asked.includes("/api/credits/2026/09/08/on-stillness"),
+    `asked for the %2F form instead: ${asked.join(", ")}`,
+  );
+});

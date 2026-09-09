@@ -18,9 +18,18 @@ import type { CreditsResolver } from "./types.ts";
  * Encoding per SEGMENT keeps the separator meaningful and still escapes everything inside a
  * segment. The traversal refusal is why the whole-slug encode existed: `.`/`..`/empty segments are
  * rejected outright rather than encoded, so a slug can never climb out of `${base}/credits/`.
+ *
+ * EXPORTED because it is the one implementation. The whole-slug encode existed in four places —
+ * this resolver, the `naulon check` CLI, and both credits probes in the control plane — and fixing
+ * only the resolver made the probe's own comment ("exactly how the gate builds the leaf it will
+ * fetch") false. Anything composing `${base}/credits/${slug}` must call this, not re-spell it.
  */
-function encodeSlugPath(slug: string): string {
-  const segments = slug.split("/");
+export function encodeSlugPath(slug: string): string {
+  // OUTER slashes are the slug's own shape, not traversal, and refusing them broke the two modes
+  // that produce them: `slugFromSitePath` returns the full pathname (`/blog/post`) and
+  // `slugFromPath` under `depth:"rest"` keeps a trailing one. Strip one of each, then refuse the
+  // segments that could climb: `.`, `..`, and an INTERIOR empty one (`a//b`).
+  const segments = slug.replace(/^\//, "").replace(/\/$/, "").split("/");
   for (const segment of segments) {
     if (segment === "" || segment === "." || segment === "..") {
       throw new Error(`credits slug has an unusable path segment: "${slug}"`);
@@ -33,7 +42,17 @@ export function httpResolver(apiUrl: string, token?: string): CreditsResolver {
   const base = apiUrl.replace(/\/$/, "");
   return {
     async resolve(slug) {
-      const res = await fetch(`${base}/credits/${encodeSlugPath(slug)}`, {
+      // A slug SHAPE must never become a 503. Everything else on this path fails toward a free
+      // read (404 ⇒ undefined), and `resolve()` is called from `quote()` with no try/catch above
+      // it — so a throw here would surface as "naulon is temporarily unavailable" to every agent
+      // on that tenant. An unusable slug is one this contract cannot address: treat it as absent.
+      let leaf: string;
+      try {
+        leaf = encodeSlugPath(slug);
+      } catch {
+        return undefined;
+      }
+      const res = await fetch(`${base}/credits/${leaf}`, {
         headers: token ? { authorization: `Bearer ${token}` } : {},
       });
       if (res.status === 404) return undefined;
