@@ -291,6 +291,185 @@ function batchRecorder() {
   };
 }
 
+/** A batch-capable GATEWAY signer — the cloud's hosted shape, which debits a grant when it signs and
+ *  therefore must be handed the whole toll at once. Records which method ran and how many legs it
+ *  saw, because "one call carrying every leg" is the entire property under test. */
+function gatewayBatchRecorder() {
+  const acct = privateKeyToAccount(generatePrivateKey());
+  const counts = { single: 0, batch: 0 };
+  const batches: number[] = [];
+  return {
+    counts,
+    batches,
+    address: acct.address,
+    signer: {
+      address: acct.address,
+      async signTypedData(a: Parameters<typeof acct.signTypedData>[0]) {
+        counts.single++;
+        return acct.signTypedData(a);
+      },
+      async signTypedDataBatch(list: Parameters<typeof acct.signTypedData>[0][]) {
+        counts.batch++;
+        batches.push(list.length);
+        return Promise.all(list.map((a) => acct.signTypedData(a)));
+      },
+    },
+  };
+}
+
+test("assembleRailPayment: a BATCH-capable gateway signer sees the whole toll in ONE call", async () => {
+  // The reason the seam exists. A hosted signer does not merely sign — it debits a spending grant
+  // and enforces the buyer's per-read ceilings, and asked one leg at a time it can only reason about
+  // one leg. Two independent debits for one toll, and a sibling leg tripping a ceiling leaves the
+  // author leg debited and signed while no payment goes out at all.
+  const gw = gatewayBatchRecorder();
+  const payment = await assembleRailPayment(
+    gatewayQuoted([{ payTo: AUTHOR, amount: "600000" }, { payTo: FEE, amount: "300000" }]),
+    Date.now(),
+    { gateway: gw.signer },
+  );
+  assert.equal(gw.counts.batch, 1, "ONE call, not one per leg");
+  assert.equal(gw.counts.single, 0, "and never the single method alongside it");
+  assert.deepEqual(gw.batches, [2], "carrying every leg of the toll");
+
+  // The wire shape is unchanged — the batch path must be invisible to the gate.
+  const envelopes = JSON.parse(Buffer.from(payment, "base64").toString("utf8")) as Array<{
+    accepted?: { payTo?: string; amount?: string };
+    payload?: { authorization?: { to?: string; value?: string }; signature?: string };
+  }>;
+  assert.equal(envelopes.length, 2);
+  assert.equal(envelopes[0]!.accepted?.payTo, AUTHOR, "leg order is still the contract");
+  assert.equal(envelopes[1]!.accepted?.payTo, FEE);
+  // Every placeholder was substituted, and each signature sits on ITS OWN leg's authorization.
+  for (const [i, e] of envelopes.entries()) {
+    assert.match(e.payload?.signature ?? "", /^0x[0-9a-f]{130}$/i, `leg ${i} carries a real signature`);
+    assert.ok(
+      !/^0x(11)+1b$/i.test(e.payload?.signature ?? ""),
+      `leg ${i} must not ship the placeholder`,
+    );
+  }
+  assert.notEqual(
+    envelopes[0]!.payload?.signature,
+    envelopes[1]!.payload?.signature,
+    "two legs with different payees and amounts cannot share one signature",
+  );
+  assert.equal(envelopes[0]!.payload?.authorization?.value, "600000");
+  assert.equal(envelopes[1]!.payload?.authorization?.value, "300000");
+});
+
+test("assembleRailPayment: a signature the batch signer returns is VERIFIABLE against its own leg", async () => {
+  // Substitution is positional, so the failure it could hide is a signature paired with the wrong
+  // leg's authorization — which no shape check catches. Recover each one and check the signer.
+  const acct = privateKeyToAccount(generatePrivateKey());
+  const seen: Parameters<typeof acct.signTypedData>[0][] = [];
+  const payment = await assembleRailPayment(
+    gatewayQuoted([{ payTo: AUTHOR, amount: "600000" }, { payTo: FEE, amount: "300000" }]),
+    Date.now(),
+    {
+      gateway: {
+        address: acct.address,
+        async signTypedData(a: Parameters<typeof acct.signTypedData>[0]) {
+          return acct.signTypedData(a);
+        },
+        async signTypedDataBatch(list: Parameters<typeof acct.signTypedData>[0][]) {
+          seen.push(...list);
+          return Promise.all(list.map((a) => acct.signTypedData(a)));
+        },
+      },
+    },
+  );
+  const envelopes = JSON.parse(Buffer.from(payment, "base64").toString("utf8")) as Array<{
+    payload?: { authorization?: Record<string, string>; signature?: `0x${string}` };
+  }>;
+  const { verifyTypedData } = await import("viem");
+  for (const [i, e] of envelopes.entries()) {
+    const typed = seen[i]!;
+    assert.equal(
+      String((typed.message as Record<string, unknown>).value),
+      e.payload?.authorization?.value,
+      `leg ${i}'s signed message must be the authorization it shipped with`,
+    );
+    const ok = await (verifyTypedData as (a: Record<string, unknown>) => Promise<boolean>)({
+      address: acct.address,
+      domain: typed.domain,
+      types: typed.types,
+      primaryType: typed.primaryType,
+      message: typed.message,
+      signature: e.payload!.signature!,
+    });
+    assert.ok(ok, `leg ${i}'s signature must recover to the signer over ITS OWN typed data`);
+  }
+});
+
+test("assembleRailPayment: a signer with NO batch method still works — a plain viem account must not break", async () => {
+  // The method is optional for exactly this reason: the self-host / CLI path passes a
+  // `PrivateKeyAccount`, which has no such method and no grant to protect. Requiring it would make
+  // an ordinary key unusable on a multi-leg toll.
+  const gw = recorder();
+  const payment = await assembleRailPayment(
+    gatewayQuoted([{ payTo: AUTHOR, amount: "600000" }, { payTo: FEE, amount: "300000" }]),
+    Date.now(),
+    { gateway: gw.signer },
+  );
+  assert.equal(gw.calls.length, 2, "falls back to one call per leg");
+  const envelopes = JSON.parse(Buffer.from(payment, "base64").toString("utf8")) as unknown[];
+  assert.equal(envelopes.length, 2, "and produces the identical wire shape");
+});
+
+test("assembleRailPayment: a batch signer returning the WRONG COUNT is refused, never mis-paired", async () => {
+  // The one failure a positional substitution cannot survive. Dropping a signature would ship a leg
+  // still carrying the placeholder; returning extra would silently discard one. Both must throw.
+  const acct = privateKeyToAccount(generatePrivateKey());
+  for (const [label, drop] of [["too few", 1], ["too many", -1]] as const) {
+    await assert.rejects(
+      () =>
+        assembleRailPayment(
+          gatewayQuoted([{ payTo: AUTHOR, amount: "600000" }, { payTo: FEE, amount: "300000" }]),
+          Date.now(),
+          {
+            gateway: {
+              address: acct.address,
+              async signTypedData(a: Parameters<typeof acct.signTypedData>[0]) {
+                return acct.signTypedData(a);
+              },
+              async signTypedDataBatch(list: Parameters<typeof acct.signTypedData>[0][]) {
+                const sigs = await Promise.all(list.map((a) => acct.signTypedData(a)));
+                return drop > 0 ? sigs.slice(0, -1) : [...sigs, sigs[0]!];
+              },
+            },
+          },
+        ),
+      /signature\(s\) for 2 leg\(s\)/,
+      `${label} must refuse the whole payment`,
+    );
+  }
+});
+
+test("assembleRailPayment: a batch signer that REFUSES signs nothing at all", async () => {
+  // The atomicity property from the buyer's side: a hosted signer that refuses the toll (a ceiling,
+  // an exhausted grant) must leave no leg signed and no payment on the wire.
+  const acct = privateKeyToAccount(generatePrivateKey());
+  await assert.rejects(
+    () =>
+      assembleRailPayment(
+        gatewayQuoted([{ payTo: AUTHOR, amount: "600000" }, { payTo: FEE, amount: "300000" }]),
+        Date.now(),
+        {
+          gateway: {
+            address: acct.address,
+            async signTypedData() {
+              throw new Error("the single method must not be reached on a batch-capable signer");
+            },
+            async signTypedDataBatch() {
+              throw new Error("leg_too_large: 900000 over the per-citation maximum");
+            },
+          },
+        },
+      ),
+    /leg_too_large/,
+  );
+});
+
 test("assembleRailPayment: a multi-leg Gateway 402 signs ONE ENVELOPE PER LEG, in leg order", async () => {
   // The operator fee is a second buyer→operator leg, and custody-free requires it to stay that way
   // rather than becoming a skim from the author's cut. Circle's SDK signs one leg per call, so a

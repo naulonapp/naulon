@@ -18,7 +18,7 @@ import {
 } from "./buyer.ts";
 import { runPaidFetch } from "./paidFetch.ts";
 import { assembleMemoPayment, type MemoSigner } from "./memo.ts";
-import { gatewayLegPayload, type BatchingRequirements, type GatewaySigner } from "./gateway.ts";
+import { gatewayLegPayload, gatewayLegPayloadsBatched, type BatchingRequirements, type GatewaySigner } from "./gateway.ts";
 import { networkByCaip2, supportsMemo } from "@naulon/shared";
 
 export interface RailSigners {
@@ -94,20 +94,45 @@ export async function assembleRailPayment(quoted: Quoted, nowMs: number, signers
  * A single-leg quote returns the bare envelope, not a one-element array: that is the shape stock
  * x402 clients send and the gate still accepts either, so there is no reason to change what the
  * common case puts on the wire.
+ *
+ * ## Why a batch-capable signer takes a different path
+ *
+ * The loop above signs each leg through a SEPARATE call, and for a plain key that is nothing — the
+ * same account signs N times. For a HOSTED signer it is not nothing: signing there also debits a
+ * spending grant and enforces the buyer's per-read ceilings, and a signer asked one leg at a time
+ * can only reason about one leg. Two independent debits for one toll, and the moment a sibling leg
+ * trips a ceiling the author leg is already debited and signed while this function throws and NO
+ * payment goes out at all. The buyer's "never pay more than $X for one read" degrades to a per-leg
+ * bound in the same move.
+ *
+ * So when the signer offers `signTypedDataBatch`, every leg's authorization is built first and the
+ * whole set is signed in ONE call — which is the only shape in which a hosted signer can reserve a
+ * toll atomically and bound it as a citation. The SDK still builds every authorization; only the
+ * moment of signing moves (`gatewayLegPayloadsBatched`).
  */
 async function gatewayEnvelopes(signer: GatewaySigner, quoted: Quoted): Promise<unknown> {
   const legs = quoted.legs;
   if (!legs || legs.length <= 1) return gatewayLegPayload(signer, quoted, 2);
+  // Leg order is the contract: the gate pairs payloads[i] with its own legs[i] and refuses on a
+  // count mismatch, so this must stay a sequential map over `quoted.legs` and never a filter.
+  const legQuotes: Quoted[] = legs.map((leg) => ({
+    ...quoted,
+    amountAtomic: leg.amount,
+    requirements: { ...quoted.requirements, payTo: leg.payTo, amount: leg.amount },
+    legs: undefined,
+  }));
+  // A batch-capable signer gets the whole toll in one call. A plain one (a viem account, the
+  // self-host path) keeps the per-leg loop unchanged — it has no grant to protect, and requiring
+  // the method would make an ordinary key unusable.
+  if (signer.signTypedDataBatch) {
+    return gatewayLegPayloadsBatched(
+      signer as GatewaySigner & { signTypedDataBatch: NonNullable<GatewaySigner["signTypedDataBatch"]> },
+      legQuotes,
+      2,
+    );
+  }
   const out: unknown[] = [];
-  for (const leg of legs) {
-    // Leg order is the contract: the gate pairs payloads[i] with its own legs[i] and refuses on a
-    // count mismatch, so this must stay a sequential map over `quoted.legs` and never a filter.
-    const legQuote: Quoted = {
-      ...quoted,
-      amountAtomic: leg.amount,
-      requirements: { ...quoted.requirements, payTo: leg.payTo, amount: leg.amount },
-      legs: undefined,
-    };
+  for (const legQuote of legQuotes) {
     out.push(await gatewayLegPayload(signer, legQuote, 2));
   }
   return out;
