@@ -55,6 +55,26 @@ export interface SettlementNetwork {
    *  the per-network memo/usdcName verification). Absent ⇒ callers omit the link and
    *  fall back to citing the raw reference. Populated as chains are enrolled. */
   explorer?: string;
+  /** Circle's published GAS fee for a SAME-CHAIN Gateway withdrawal, in integer micro-USDC.
+   *
+   *  A withdrawal burns on the source chain and mints on the destination, and the depositor is
+   *  debited `value + fee` — `GatewayBurned` carries the two as separate fields. So a caller
+   *  returning a WHOLE balance must ask for `available - fee`: asking for `available` leaves
+   *  nothing to pay the fee out of, and the transfer is short by exactly this much.
+   *
+   *  Same-chain is the only shape naulon withdraws in (`gatewayWithdraw` passes `chain:
+   *  opts.chain`), and Circle charges NO percentage transfer fee on that shape — gas only. That
+   *  is why this is a flat per-chain number and not a rate.
+   *
+   *  PRESENT ONLY WHERE CIRCLE PUBLISHES IT — the same KNOWN-GOOD rule as `explorer` above.
+   *  Absent on `arc`, `arcTestnet` and `baseSepolia`, which are not in Circle's table. A caller
+   *  MUST read `undefined` as "unknown", never as zero: zero is the one value that silently
+   *  reintroduces the over-ask this field exists to prevent.
+   *
+   *  Source: https://developers.circle.com/gateway/references/fees (read live 2026-09-09; the
+   *  Circle MCP index was stale on Ethereum, returning $2.00 against the page's $1.00).
+   *  Hand-copied from a doc we do not own, so it is a `/rail-review` surface. */
+  gatewayWithdrawFeeMicro?: number;
   /** Arc-only transaction-extension CAPABILITY: does this chain ship the Memo predeploy?
    *  Present on Arc; absent on Base / Base Sepolia, which have no equivalent.
    *
@@ -139,6 +159,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://mainnet.base.org",
     testnet: false, explorer: "https://basescan.org", modularChainName: "base",
+    gatewayWithdrawFeeMicro: 10000,
   },
   ethereum: {
     chainName: "ethereum", network: "eip155:1", chainId: 1,
@@ -146,6 +167,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://ethereum-rpc.publicnode.com",
     testnet: false, explorer: "https://etherscan.io", modularChainName: "ethereum",
+    gatewayWithdrawFeeMicro: 1000000,
   },
   arbitrum: {
     chainName: "arbitrum", network: "eip155:42161", chainId: 42161,
@@ -153,6 +175,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://arb1.arbitrum.io/rpc",
     testnet: false, modularChainName: "arbitrum",
+    gatewayWithdrawFeeMicro: 10000,
   },
   optimism: {
     chainName: "optimism", network: "eip155:10", chainId: 10,
@@ -160,6 +183,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://mainnet.optimism.io",
     testnet: false, modularChainName: "optimism",
+    gatewayWithdrawFeeMicro: 1500,
   },
   polygon: {
     chainName: "polygon", network: "eip155:137", chainId: 137,
@@ -167,6 +191,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://poly.api.pocket.network",
     testnet: false, modularChainName: "polygon",
+    gatewayWithdrawFeeMicro: 1500,
   },
   avalanche: {
     chainName: "avalanche", network: "eip155:43114", chainId: 43114,
@@ -174,6 +199,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://api.avax.network/ext/bc/C/rpc",
     testnet: false, modularChainName: "avalanche",
+    gatewayWithdrawFeeMicro: 20000,
   },
   unichain: {
     chainName: "unichain", network: "eip155:130", chainId: 130,
@@ -181,6 +207,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://mainnet.unichain.org/",
     testnet: false, modularChainName: "unichain",
+    gatewayWithdrawFeeMicro: 1000,
   },
   sei: {
     chainName: "sei", network: "eip155:1329", chainId: 1329,
@@ -188,6 +215,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://sei.api.pocket.network",
     testnet: false,
+    gatewayWithdrawFeeMicro: 1000,
   },
   sonic: {
     chainName: "sonic", network: "eip155:146", chainId: 146,
@@ -195,6 +223,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://rpc.soniclabs.com",
     testnet: false,
+    gatewayWithdrawFeeMicro: 10000,
   },
   hyperEvm: {
     chainName: "hyperEvm", network: "eip155:999", chainId: 999,
@@ -202,6 +231,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR, rpcUrl: "https://rpc.hyperliquid.xyz/evm",
     testnet: false,
+    gatewayWithdrawFeeMicro: 50000,
   },
   worldChain: {
     chainName: "worldChain", network: "eip155:480", chainId: 480,
@@ -210,6 +240,7 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     gatewayApiUrl: MAINNET_FACILITATOR,
     rpcUrl: "https://worldchain-mainnet.g.alchemy.com/public",
     testnet: false,
+    gatewayWithdrawFeeMicro: 10000,
   },
   arc: {
     chainName: "arc", network: "eip155:5042", chainId: 5042,
@@ -348,3 +379,26 @@ export function networkForEvent(
     (publisher.settlementNetwork ? getNetwork(publisher.settlementNetwork) : activeNetwork())
   );
 }
+
+/**
+ * Circle's signed-authorization validity window, in seconds — `GATEWAY_MIN_AUTH_VALIDITY_SECONDS`
+ * (7 days) + `GATEWAY_AUTH_VALIDITY_BUFFER_SECONDS` (100) in `@circle-fin/x402-batching`.
+ *
+ * MIRRORED, NOT IMPORTED. `buildGatewaySignature` loads the SDK lazily on purpose so the mock path
+ * never pays for it; re-exporting an SDK constant from this module would make that import eager for
+ * every consumer of `@naulon/shared`. `x402-validity-window.test.ts` in `@naulon/tollgate` imports
+ * the SDK and asserts this number still equals it, so the mirror cannot drift silently — the same
+ * bargain every hand-copied rail constant here makes, and a `/rail-review` surface.
+ *
+ * IT IS A FLOOR, NOT A CEILING, INSIDE THE SDK: `BatchEvmScheme` clamps a signed authorization UP
+ * to this window, so every authorization is valid for at least 7 days no matter what the 402 asked
+ * for. That is why a caller must never bound `validBefore` by its own session expiry — a 24-hour
+ * grant would refuse every signature the rail can actually settle.
+ *
+ * It IS the right ceiling. The SDK takes `max(maxTimeoutSeconds, thisWindow)`, and
+ * `maxTimeoutSeconds` comes off the 402 — so a federated publisher can ask for a year, and nothing
+ * downstream expires it: a signed EIP-3009 authorization is spendable on-chain until `validBefore`,
+ * which no session close can revoke. Refusing to sign materially past this window costs a
+ * well-behaved caller nothing and bounds a hostile one to the rail's own maximum.
+ */
+export const GATEWAY_AUTH_VALIDITY_WINDOW_SEC = 7 * 24 * 60 * 60 + 100;
