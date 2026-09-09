@@ -178,6 +178,9 @@ class DecisionRecordTest extends WP_UnitTestCase {
 	}
 
 	public function test_a_crawler_served_free_is_recorded_too_so_a_silent_gap_is_visible() {
+		// The author has no wallet HERE, which no longer decides anything on its own: the gate is
+		// asked, answers 204, and that answer is what the record must show.
+		$this->responses['/_naulon/quote'] = array( 'code' => 204, 'body' => null );
 		delete_user_meta( get_post( $this->post_id )->post_author, Naulon_Credits::USER_WALLET_META );
 		$_SERVER['HTTP_USER_AGENT'] = 'CCBot/2.0';
 		$_SERVER['HTTP_ACCEPT']     = '*/*';
@@ -187,7 +190,7 @@ class DecisionRecordTest extends WP_UnitTestCase {
 		$entries = Naulon_Log::all();
 		$this->assertCount( 1, $entries );
 		$this->assertSame( 'free', $entries[0]['action'] );
-		$this->assertStringContainsString( 'not tollable', $entries[0]['reason'] );
+		$this->assertStringContainsString( 'no quote available', $entries[0]['reason'] );
 	}
 
 	public function test_the_window_stays_bounded() {

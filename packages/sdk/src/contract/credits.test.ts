@@ -47,12 +47,22 @@ test("rejects a contributor that is both leaf and composite", () => {
       },
     ],
   };
-  assert.throws(() => parseCredits(bad), /exactly one/);
+  assert.throws(() => parseCredits(bad), /never both/);
 });
 
-test("rejects a contributor that is neither leaf nor composite", () => {
-  const bad = { ...valid, contributors: [{ authorId: "x" }] };
-  assert.throws(() => parseCredits(bad), /exactly one/);
+/* A leaf with no wallet is a DELEGATED payee, not malformed. Refusing it is why a source with no
+ * address for a contributor had to drop them, erasing that they contributed. */
+test("accepts a contributor with neither wallet nor members — a delegated payee", () => {
+  const parsed = parseCredits({ ...valid, contributors: [{ authorId: "x" }] });
+  assert.equal(parsed.contributors[0]?.wallet, undefined);
+  assert.equal(parsed.contributors[0]?.authorId, "x");
+});
+
+test("a delegated leaf still may not carry an unusable wallet", () => {
+  assert.throws(
+    () => parseCredits({ ...valid, contributors: [{ authorId: "x", wallet: "0xnope" }] }),
+    /wallet/,
+  );
 });
 
 test("rejects empty contributors", () => {

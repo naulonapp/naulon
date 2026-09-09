@@ -192,9 +192,10 @@ class Naulon_Credits {
 	}
 
 	/**
-	 * The contributors with payable wallets, in the strict upstream shape. A contributor
-	 * without a usable wallet is DROPPED rather than substituted: silently paying the site
-	 * wallet for another author's work is exactly the failure this contract exists to prevent.
+	 * The contributors, in the strict upstream shape. Without a usable wallet here a contributor is
+	 * emitted WITHOUT one — a delegated payee — never substituted with somebody else's address. A
+	 * platform holding that author's own wallet can then route their share; where nothing does, the
+	 * leg is dropped downstream and the post reads free.
 	 *
 	 * @param WP_Post $post The post.
 	 * @return array[] Zero or more {authorId, weight?, wallet}.
@@ -222,22 +223,58 @@ class Naulon_Credits {
 				continue;
 			}
 			$user_id = (int) $entry['user_id'];
-			$wallet  = get_user_meta( $user_id, self::USER_WALLET_META, true );
-			if ( ! Naulon_Wallet::is_valid( $wallet ) ) {
+			$weight  = isset( $entry['weight'] ) ? (float) $entry['weight'] : 1.0;
+			// A non-positive weight means "takes nothing", and the only truthful way to say that
+			// in this contract is to omit the contributor: the upstream schema is
+			// `weight: z.number().positive()`, so a literal 0 would be REJECTED and take the whole
+			// document — every contributor on the article — down with it. Omitting the key instead
+			// was worse still: upstream reads a missing weight as 1, so a contributor a filter had
+			// explicitly zeroed was paid a FULL share. (`(float)` also maps a non-numeric weight to
+			// 0.0, which lands here rather than silently becoming 1.) Their weight redistributes
+			// among the rest, exactly as an unpayable leaf's does.
+			if ( ! ( $weight > 0 ) ) {
 				continue;
 			}
-			$contributor = array(
-				'authorId' => 'wp-user-' . $user_id,
-				'wallet'   => Naulon_Wallet::normalize( $wallet ),
-			);
-			$weight = isset( $entry['weight'] ) ? (float) $entry['weight'] : 1.0;
-			if ( $weight > 0 && 1.0 !== $weight ) {
+			$wallet      = get_user_meta( $user_id, self::USER_WALLET_META, true );
+			$contributor = array( 'authorId' => 'wp-user-' . $user_id );
+			// No wallet here ⇒ named without one (delegated). Dropping them was indistinguishable
+			// from a solo-authored post, so an author who set a wallet on the platform and none here
+			// was never paid and never told.
+			if ( Naulon_Wallet::is_valid( $wallet ) ) {
+				$contributor['wallet'] = Naulon_Wallet::normalize( $wallet );
+			}
+			if ( 1.0 !== $weight ) {
 				$contributor['weight'] = $weight;
 			}
 			$out[] = $contributor;
 		}
 
 		return $out;
+	}
+
+	/**
+	 * The contributors this site can actually PAY, right here, with no platform in front of it.
+	 *
+	 * `contributors_for` emits delegated payees — named, wallet-less — because the credits document
+	 * is read by a control plane that may hold that author's own wallet and fill the leg. Nothing
+	 * fills it inside WordPress, so every decision about whether to TOLL must ask this instead:
+	 * a wallet-less contributor is somebody we cannot pay, and charging an agent when there is
+	 * nobody to pay is the failure the credits contract exists to prevent.
+	 *
+	 * Mirrors `resolvePayees` upstream, which filters unpayable leaves before pricing and returns
+	 * an empty set — no quote, a free read — when none remain.
+	 *
+	 * @param WP_Post $post The post.
+	 * @return array[] Zero or more {authorId, weight?, wallet} — every entry carrying a wallet.
+	 */
+	public function payable_contributors_for( $post ) {
+		$payable = array();
+		foreach ( $this->contributors_for( $post ) as $contributor ) {
+			if ( isset( $contributor['wallet'] ) && '' !== $contributor['wallet'] ) {
+				$payable[] = $contributor;
+			}
+		}
+		return $payable;
 	}
 
 	/**

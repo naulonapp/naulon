@@ -15,19 +15,9 @@ import { z } from "zod";
 import { payeeWalletSchema } from "../contract/wallet.ts";
 import { parseCredits, type ArticleCredits } from "../contract/credits.ts";
 
-/**
- * There is no placeholder wallet any more, and that is the point.
- *
- * `init` used to write the burn address into the starter `credits.json` so a wallet-less setup
- * would still parse, on the theory that a loud warning covered it. It did not: the warning
- * scrolled past once, the file stayed valid forever, and a publisher who later switched
- * `PAYMENT_MODE=gateway` tolled real readers into an address nobody can spend from.
- *
- * With no wallet, the starter credits map is now EMPTY — which the contract already has a
- * meaning for. No credits entry is a 404 from the credits source, and a 404 is the deliberate
- * "this reads free" signal. So the gate boots, the loop runs, and nothing is charged for an
- * article whose money has nowhere to go. Adding the wallet is what turns the toll on.
- */
+/* No placeholder wallet. It used to write the burn address so a wallet-less starter would parse,
+ * which stayed valid forever and tolled into the void once PAYMENT_MODE=gateway. No wallet now
+ * means an empty map — a 404 per slug, the contract's "reads free" signal. */
 
 /**
  * The answers the wizard resolves (from flags, prompts, or defaults) before planning.
@@ -134,8 +124,7 @@ function buildStarterCredits(a: InitAnswers): { map: Record<string, ArticleCredi
   const entry: ArticleCredits = {
     slug: a.starterSlug,
     title: a.starterTitle,
-    // `payeeWalletSchema`, not the bare format rule: a wallet typed into the setup prompt is an
-    // address money will land in, and the burn address must not survive that prompt.
+    // The payee rule, not the bare format one: this address is where money lands.
     contributors: [{ authorId: a.starterAuthorId, wallet: payeeWalletSchema.parse(a.defaultWallet) as ArticleCredits["contributors"][number]["wallet"] }],
   };
   // Never emit a file the gate would reject — validate through the real contract.

@@ -139,6 +139,12 @@ export async function quote(
   const credits = await publisher.credits.resolve(slug);
   if (!credits) return undefined;
 
+  // Nobody payable ⇒ no quote ⇒ the free read a 404 already gives. Delegated legs nothing filled
+  // are dropped by resolvePayees; if that empties the list, a 402 here would take money with
+  // nowhere to send it.
+  const payees = resolvePayees(credits);
+  if (payees.length === 0) return undefined;
+
   const price = tollPrice(publisher, kind, path);
 
   return {
@@ -146,7 +152,7 @@ export async function quote(
     title: credits.title,
     kind,
     price,
-    payees: resolvePayees(credits),
+    payees,
     // Additive secondary legs (none for the single-tenant default). The hook owns
     // all amount math; pricing just carries what it returns through to the quote.
     extraLegs: publisher.extraLegs?.(price, kind) ?? [],

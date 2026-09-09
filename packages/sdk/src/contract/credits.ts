@@ -30,7 +30,12 @@ export interface Contributor {
   authorId: string;
   /** Relative weight of this contributor among siblings (default 1). */
   weight?: number;
-  /** A leaf author resolves to a wallet... */
+  /**
+   * A leaf resolves to a wallet — or to nothing, a DELEGATED payee: named, destination left to a
+   * platform in front of the gate (the author's own registered wallet). Unfilled, `resolvePayees`
+   * drops it and redistributes its weight. Without this a source with no address for a contributor
+   * had to omit them, which is indistinguishable from a solo-authored post.
+   */
   wallet?: WalletAddress;
   /** ...or a composite re-splits among its own members (recursive). */
   members?: Contributor[];
@@ -47,8 +52,9 @@ const contributorSchema: z.ZodType<unknown> = z.lazy(() =>
     })
     .strict()
     .refine(
-      (c) => (c.wallet === undefined) !== (c.members === undefined),
-      "a contributor must have exactly one of `wallet` (leaf) or `members` (composite)",
+      // Both is a contradiction (two answers for one share). Neither is the delegated leaf above.
+      (c) => c.wallet === undefined || c.members === undefined,
+      "a contributor may have `wallet` (leaf) or `members` (composite), never both",
     ),
 );
 

@@ -392,7 +392,7 @@ class Naulon_Admin_Setup {
 			esc_html__( 'That is the base, without a trailing slash and without /credits — the control plane appends the article itself, so what it fetches is:', 'naulon' ),
 			esc_html( Naulon_Credits::credits_base_url() . '/credits/your-article' )
 		);
-		echo '<p class="naulon-muted">' . esc_html__( 'An article that is not tollable — a draft, one with no author wallet, one you marked free — answers 404 here, which is the agreed signal for "read this one free". That is why nothing else needs a list of what is paid.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-muted">' . esc_html__( 'An article that is not tollable — a draft, one you marked free, one that credits nobody — answers 404 here, which is the agreed signal for "read this one free". That is why nothing else needs a list of what is paid. An author credited with no wallet on this site is still listed: your account may hold a payout address for them, and only it can decide.', 'naulon' ) . '</p>';
 
 		if ( $proven ) {
 			printf(

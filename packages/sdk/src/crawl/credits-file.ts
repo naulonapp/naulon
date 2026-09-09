@@ -56,11 +56,8 @@ export function mergeCredits(
       keptExisting.push(article.slug);
       continue;
     }
-    // (2) money never inferred — no valid wallet ⇒ report, don't write. The burn address counts
-    // as no wallet here rather than as a parse error: a crawl drafts many articles at once, and
-    // one unspendable mapping must leave the other rows written and itself listed, not abort the
-    // run. `parseCredits` below would throw on it, which is the right answer for a served body
-    // and the wrong one for a drafting pass.
+    // (2) money never inferred — no usable wallet ⇒ report, don't write. Burn counts as no wallet
+    // here rather than a parse error: one bad mapping must not abort a whole drafting pass.
     const resolved = resolveAuthorWallet(article, config);
     if (resolved.unmapped || resolved.wallet === null || isBurnAddress(resolved.wallet)) {
       unmapped.push({ slug: article.slug, author: resolved.author });

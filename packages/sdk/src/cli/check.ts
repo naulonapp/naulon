@@ -15,18 +15,15 @@
  * written row.
  */
 import { parseCredits, type ArticleCredits, type Contributor } from "../contract/credits.ts";
+import { encodeSlugPath } from "../resolver/http.ts";
 import { makeSignedWebhookFixture } from "../crypto/fixture.ts";
 
 export interface CheckResult {
   name: string;
   ok: boolean;
   detail: string;
-  /**
-   * An `ok: false` that must not fail the run. Reserved for something true and worth saying that
-   * is nevertheless a legal way to publish — a lower-case payee address is the only one today.
-   * Kept out of `allPassed` so a publisher wiring up CI is never forced to choose between a red
-   * pipeline and turning the check off.
-   */
+  /** An `ok: false` that must not fail the run — something true and worth saying that is still a
+   *  legal way to publish. Kept out of `allPassed`. */
   level?: "advisory";
 }
 
@@ -46,7 +43,7 @@ function collectPayees(contributors: Contributor[]): string[] {
   return out;
 }
 
-/** `0x1234…cdef` — enough to identify which address is meant without wrapping the terminal. */
+/** `0x1234…cdef` — identifies which address without wrapping the terminal. */
 function shortAddr(w: string): string {
   return `${w.slice(0, 6)}…${w.slice(-4)}`;
 }
@@ -63,7 +60,11 @@ export async function runCheck(opts: {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const base = opts.baseUrl.replace(/\/$/, "");
   const auth: Record<string, string> = opts.token ? { authorization: `Bearer ${opts.token}` } : {};
-  const creditsUrl = (slug: string) => `${base}/credits/${encodeURIComponent(slug)}`;
+  // Per-SEGMENT, via the resolver's own encoder — the gate fetches this exact URL, and a check
+  // that asks a different one reports on a request the product never makes. Encoding the whole
+  // slug turned `2026/09/08/post` into `2026%2F09%2F08%2Fpost`, which the origin 404s, so this
+  // command told a publisher with a working endpoint that it "expected 200, got 404".
+  const creditsUrl = (slug: string) => `${base}/credits/${encodeSlugPath(slug)}`;
   const checks: CheckResult[] = [];
   /** Set only when the endpoint answered with a contract-valid body — check 1b needs the payees. */
   let credits: ArticleCredits | undefined;
@@ -82,19 +83,12 @@ export async function runCheck(opts: {
     checks.push({ name: "credits-endpoint", ok: false, detail: e instanceof Error ? e.message : String(e) });
   }
 
-  // 1b. Wallet hygiene on whatever that body named as a payee.
-  //
-  // Not a second parse of the same rules: the contract already refused a malformed address and
-  // the burn address before this line could run. What it cannot judge is an address that is
-  // well-formed, spendable by SOMEONE, and not the one the publisher meant. EIP-55 is the defence
-  // against that, and it only works on a mixed-case address — an all-lower or all-upper address
-  // carries no checksum at all, so a transposed character in it is undetectable by anyone, at any
-  // layer, ever. That is worth saying out loud beside a money destination, and it is not a
-  // failure: lower-case is a legal way to write an address and plenty of tooling emits it.
-  //
-  // Verifying a mixed-case checksum needs keccak256, which would mean a hashing dependency in a
-  // publisher-installed SDK that has two. The portal does that check at the point of entry, where
-  // viem is already present; here we report what can be known for free.
+  // 1b. Wallet hygiene. The contract already refused malformed and burn addresses; what it cannot
+  // judge is a well-formed address that is not the one the publisher meant. EIP-55 catches that,
+  // and only on a mixed-case address — an all-lower one carries no checksum, so a transposed
+  // character in it is undetectable anywhere. Advisory, not a failure: lower-case is legal.
+  // Verifying a mixed-case checksum needs keccak, not worth a dependency here; the portal does it
+  // at the point of entry, where viem already exists.
   if (credits) {
     const payees = collectPayees(credits.contributors);
     const uncheckable = payees.filter((w) => w === w.toLowerCase() || w === w.toUpperCase());

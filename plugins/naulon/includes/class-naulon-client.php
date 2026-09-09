@@ -255,6 +255,46 @@ class Naulon_Client {
 	}
 
 	/**
+	 * Invite a WordPress author to naulon as an author of this site, paid as the id THIS site
+	 * emits into its credits (`wp-user-<ID>`). Sent with the site's own key, so the control plane
+	 * takes the tenant from the key and never from us.
+	 *
+	 * Returns null on success, a WP_Error otherwise — an administrator pressed a button and is
+	 * owed an answer, unlike the request-path calls above which degrade to serving the page.
+	 *
+	 * @param string $email     The author's address; naulon emails the invitation there.
+	 * @param string $author_id The payee id, `Naulon_Access::author_id()`.
+	 * @param string $inviter   The approving administrator's address — the invitation names them.
+	 * @return WP_Error|null
+	 */
+	public function invite_author( $email, $author_id, $inviter ) {
+		// No tenant id: the key already names it, and the control plane refuses any other. This
+		// plugin has never stored one, and inventing a place to keep it would only create a value
+		// that can go stale against the key beside it.
+		$res = $this->request(
+			'POST',
+			'/_naulon/members',
+			array(
+				'email'        => $email,
+				'authorId'     => $author_id,
+				'inviterEmail' => $inviter,
+			),
+			self::TIMEOUT_ADMIN
+		);
+		if ( ! empty( $res['ok'] ) ) {
+			return null;
+		}
+		// The two an administrator can act on, named. Everything else keeps the transport message.
+		if ( 403 === (int) $res['status'] ) {
+			return new WP_Error( 'naulon_forbidden', __( 'This site\'s naulon key may not invite authors. Reconnect it from Setup to pick up the permission.', 'naulon' ) );
+		}
+		if ( 409 === (int) $res['status'] ) {
+			return new WP_Error( 'naulon_conflict', __( 'naulon already has an author with that id or address for this site.', 'naulon' ) );
+		}
+		return new WP_Error( 'naulon_invite_failed', $res['error'] ? $res['error'] : __( 'naulon refused the invitation.', 'naulon' ) );
+	}
+
+	/**
 	 * One HTTP call. Never throws.
 	 *
 	 * @param string     $method  HTTP method.

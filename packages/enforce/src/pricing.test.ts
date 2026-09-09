@@ -225,3 +225,37 @@ test("the rule matches the PATH, never the slug", async () => {
   assert.equal((await quote(p, "on-passage", "read", "/essays/on-passage"))?.price, 0.001);
   assert.equal((await quote(p, "on-passage", "read", "/on-passage"))?.price, 9);
 });
+
+/* Every leaf delegated and nothing filled it — a self-hosted gate, or a hosted one holding no
+ * wallet for that author. No destination left, so a 402 would take money with nowhere to send it. */
+const delegatedOnly: CreditsResolver = {
+  async resolve(slug) {
+    return slug === "unrouted"
+      ? { slug: "unrouted", title: "Unrouted", contributors: [{ authorId: "anna" }] }
+      : undefined;
+  },
+};
+
+test("credits with nobody payable quote NOTHING — the same answer a 404 gives", async () => {
+  const q = await quote(publisher({ credits: delegatedOnly }), "unrouted", "read");
+  assert.equal(q, undefined);
+});
+
+test("one payable author beside a delegated one still quotes, and pays the whole toll to them", async () => {
+  const mixed: CreditsResolver = {
+    async resolve() {
+      return {
+        slug: "mixed",
+        title: "Mixed",
+        contributors: [
+          { authorId: "anna", wallet: walletAddress(WALLET), weight: 1 },
+          { authorId: "unrouted", weight: 1 },
+        ],
+      };
+    },
+  };
+  const q = await quote(publisher({ credits: mixed }), "mixed", "read");
+  assert.ok(q);
+  assert.equal(q.payees.length, 1);
+  assert.equal(q.payees[0]?.share, 1);
+});

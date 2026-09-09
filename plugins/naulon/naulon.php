@@ -57,6 +57,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-observer.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-enforcer.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cache.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cron.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-access.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-profile.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-data.php';
 
