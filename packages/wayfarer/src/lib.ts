@@ -41,6 +41,12 @@ export {
   quotedTotalAtomic,
   tollMovedOrNull,
   classifyPaymentError,
+  // Public because it is a CONTRACT, not a helper: it decides whether a signer's refusal is terminal
+  // or gets re-signed, and the codes it switches on are minted by whoever implements the signer — not
+  // by this package. A host that adds or renames a refusal code and does not add it here has its
+  // deterministic refusal silently reclassified as a retryable blip and paid for twice. Exported so a
+  // host can assert the two halves agree, instead of finding out in production.
+  classifySignerRefusal,
 } from "./buyer.ts";
 export type { Buyer, Quoted, LegRequirements, Fetched, FetchErrorCode, PayGuard, ProbeOutcome } from "./buyer.ts";
 export { mockBuyer } from "./pay.ts";

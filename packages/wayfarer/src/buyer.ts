@@ -248,6 +248,9 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     case "insufficient_gateway_balance":
       return { errorCode: "needs_topup", retryable: false };
     case "funding_unreadable":
+    // Its twin one guard along: the amount already owed to the drain could not be read. Same shape
+    // (a store/RPC fault, nothing charged, not the buyer's fault) so it gets the same answer.
+    case "outstanding_unreadable":
       // The balance could NOT be read (RPC / Gateway API fault) — not a shortfall and not the buyer's
       // fault, so it must not render as "you are out of money". Nothing was charged. Deliberately not
       // retryable despite being transient: one skipped citation is cheap, while an auto-retry loop
@@ -258,6 +261,14 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     case "bad_from":
     case "chain_mismatch":
     case "payee_not_allowed":
+    // The SECOND payee guard, and the stricter one: `payee_not_allowed` is the buyer's own allowlist,
+    // `payee_not_owned` is the publisher-owner's authorized wallet set (PA-1) — a 402 naming a payTo
+    // no owner declared. It is the refusal that stops funds being redirected, so retrying it is the
+    // last thing anyone wants; left unlisted it was classified as a retryable blip and re-signed.
+    case "payee_not_owned":
+    // The fleet has no GatewayWallet configured for the chain this 402 advertised. Fleet config, not
+    // money and not luck — the identical 402 refuses identically until someone fixes the registry.
+    case "no_gateway_wallet":
     // below_floor (the buyer's own spam floor) + nonce_reused (the nonce is committed to a DIFFERENT
     // authorization) are equally deterministic — retrying the identical authorization only re-refuses.
     // Left unrecognized they fell through to classifyPaymentError's retryable `rejected`, which is what
@@ -269,6 +280,24 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     // remedy — acting on that advice means spending real money to satisfy a test. The fix is a
     // session on the publisher's plane, which is config, exactly what this bucket is for.
     case "cross_plane":
+    // `cross_plane` was RENAMED into two codes, and for a while only the old name was listed here —
+    // so both new ones fell through to `default: null`, then to `classifyPaymentError`, which matches
+    // no regex and answers the retryable `rejected`. A plane mismatch is the most deterministic
+    // refusal there is, and the caller re-signed it once per candidate. Measured in prod on
+    // 2026-09-11: one /ask run, one article, TWO identical "wrong_plane" skips in the recorded tape.
+    // Exactly the failure the below_floor/nonce_reused note above describes, reached by a rename
+    // rather than by an omission — which is why a code added on one side of this seam has to be added
+    // on the other in the same breath.
+    //   wrong_plane        — the buyer HAS a wallet that can pay here; this one is on the other plane.
+    //   no_wallet_on_plane — the buyer has none on the publisher's plane; making one is the remedy.
+    case "wrong_plane":
+    case "no_wallet_on_plane":
+    // The wallet cannot sign at all: no signer key yet (`no_signer`), or the row went away underneath
+    // the spend — a retire racing a payment (`wallet_unavailable`). Config and lifecycle, not money,
+    // so neither is `needs_topup`; and neither is fixed by asking again inside the same run. These
+    // two replaced `no_session`, which is kept above for gates that still emit it.
+    case "no_signer":
+    case "wallet_unavailable":
       return { errorCode: "rejected", retryable: false };
     default:
       return null;
