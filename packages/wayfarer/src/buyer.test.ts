@@ -317,6 +317,46 @@ test("classifySignerRefusal does NOT report an unreadable balance as the buyer b
   assert.equal(c?.retryable, false, "transient, but a retry loop against a flapping endpoint is worse");
 });
 
+// A refusal code that this classifier has never heard of falls to `default: null`, then to
+// classifyPaymentError, which matches no regex and answers a RETRYABLE `rejected` — so the host
+// re-signs a refusal that is identical every time. That is not hypothetical: `cross_plane` was
+// renamed to `wrong_plane`/`no_wallet_on_plane` on the host side and this switch was not updated,
+// and a production run on 2026-09-11 shows the same article refused TWICE in one pass.
+test("classifySignerRefusal terminates every DETERMINISTIC signer refusal, including the renamed plane codes", () => {
+  const terminal = [
+    // The plane pair that replaced `cross_plane` — the buyer's money is on the other plane.
+    "wrong_plane — this agent spends from \"default\", which holds test USDC (no financial value)",
+    "no_wallet_on_plane — this publisher settles on base in real USDC, and you have no live wallet yet",
+    // The wallet cannot sign at all. These replaced `no_session`.
+    "no_signer — this wallet has no signer key yet",
+    "wallet_unavailable — the wallet went away underneath the spend",
+    // The owner-authorized payee set refused this payTo. Retrying a redirect attempt is the last
+    // thing anyone wants.
+    "payee_not_owned",
+    // Fleet chain config: the identical 402 refuses identically until a human fixes the registry.
+    "no_gateway_wallet — arc has no GatewayWallet configured",
+  ];
+  for (const msg of terminal) {
+    const c = classifySignerRefusal(msg);
+    assert.notEqual(c, null, `"${msg.slice(0, 24)}…" must be classified, not left to classifyPaymentError`);
+    assert.equal(c?.retryable, false, `"${msg.slice(0, 24)}…" is deterministic — a retry re-refuses it`);
+  }
+});
+
+test("classifySignerRefusal reads the CODE, not the buyer-controlled remedy that follows it", () => {
+  // The host appends a human remedy that interpolates a wallet LABEL the buyer chose. The code has to
+  // stay the leading token or the label decides the classification.
+  const c = classifySignerRefusal('wrong_plane — point the agent at "grant_expired" to buy here');
+  assert.equal(c?.errorCode, "rejected", "the label must not turn a plane refusal into an expiry");
+  assert.equal(c?.retryable, false);
+});
+
+test("an unreadable OUTSTANDING amount is infrastructure, exactly like an unreadable balance", () => {
+  const c = classifySignerRefusal("outstanding_unreadable (could not read what the drain is owed)");
+  assert.equal(c?.errorCode, "origin_error", "a store fault is not the buyer being out of money");
+  assert.equal(c?.retryable, false);
+});
+
 test("classifySignerRefusal does NOT tell a cross-plane buyer to fund anything", () => {
   // A testnet session meeting a mainnet publisher. `needs_topup` here would read as actionable and
   // would mean: spend REAL money to satisfy a session set up as a test.
