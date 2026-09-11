@@ -14,6 +14,12 @@
  * across Circle's chains, NOT across facilitators — there is deliberately one rail.
  */
 import { getConfig } from "./config.ts";
+import { isTxHash } from "./settlement-ref.ts";
+
+// The ref classification lives in a CONFIG-FREE module so a browser bundle and a stdio server can
+// reach it without dragging this registry (and `getConfig`) in. Re-exported here so every existing
+// `@naulon/shared` consumer keeps one import.
+export { isTxHash, settlementRefKind, type SettlementRefKind } from "./settlement-ref.ts";
 
 /** The chains this gate can settle on — each a SupportedChainName in the SDK. */
 export type NetworkName =
@@ -291,13 +297,13 @@ export function activeNetwork(): SettlementNetwork {
   return NETWORKS[getConfig().SETTLEMENT_NETWORK];
 }
 
-/** A clickable explorer link for a settlement reference (tx hash), or undefined when
- *  the network has no KNOWN-GOOD explorer origin (see {@link SettlementNetwork.explorer})
- *  or the ref is empty. `${explorer}/tx/<hash>` is the universal Etherscan/Blockscout
- *  path. Never guesses — an absent explorer yields undefined, and the caller cites the
- *  raw reference instead. */
+/** A clickable explorer link for a settlement reference, or undefined when we cannot honestly
+ *  build one: no KNOWN-GOOD explorer origin for the network (see {@link SettlementNetwork.explorer}),
+ *  an empty ref, or a ref that is NOT a transaction hash. `${explorer}/tx/<hash>` is the universal
+ *  Etherscan/Blockscout path. Never guesses — undefined means "cite the raw reference instead",
+ *  which is always better than a link that resolves to nothing. */
 export function explorerTxUrl(net: SettlementNetwork, ref: string | undefined): string | undefined {
-  if (!net.explorer || !ref) return undefined;
+  if (!net.explorer || !ref || !isTxHash(ref)) return undefined;
   return `${net.explorer}/tx/${ref}`;
 }
 

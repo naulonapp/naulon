@@ -902,8 +902,10 @@ test("A1: a held license whose re-read throws (network reject) is logged-and-ski
         );
 
         const held = await store.load();
+        // By VALUE, not by key: the store keys by `jti` (one entry per purchase, so two publishers
+        // sharing a slug cannot evict each other). The slug is what the licence is ABOUT.
         assert.ok(
-          held.get(PAID_SLUG),
+          [...held.values()].some((h) => h.slug === PAID_SLUG),
           "A's just-paid license was persisted to the injected store despite B's later re-read throwing",
         );
       } finally {
@@ -1023,7 +1025,7 @@ test("FU-A1b: a held license whose PoP-proof signing THROWS is logged-and-skippe
 
         const held = await store.load();
         assert.ok(
-          held.get(PAID_SLUG),
+          [...held.values()].some((h) => h.slug === PAID_SLUG),
           "the earlier pay's license was persisted to the injected store despite the later PoP-sign throwing (FU-A1a coverage)",
         );
       } finally {

@@ -82,10 +82,36 @@ export const LICENSE_HEADER = "X-Naulon-License";
 export const PROOF_HEADER = "X-Naulon-Proof";
 
 /**
+ * Why a presented licence did not entitle a free re-read.
+ *
+ * `no_verifier` is the one that is NOT about the licence. It means this deployment could not
+ * verify ANY licence — the API-mode verification seam did not resolve and there is no local
+ * signing key — so a perfectly valid licence is refused. Every other member describes the token.
+ * Keeping them apart is the whole point: collapsed into one boolean they are indistinguishable
+ * from "this buyer never paid", which is how a misconfigured site silently bills every agent
+ * twice. (Measured: four tolls for one article in a day. Design doc D0.)
+ */
+export type LicenceRefusal =
+  | "no_verifier"
+  | "unverifiable"
+  | "grant_none"
+  | "not_covered"
+  | "kind_mismatch"
+  | "revoked"
+  | "pop_missing"
+  | "pop_invalid";
+
+/** The result of {@link licenseEntitlesRead}: entitled, or refused WITH the reason. */
+export type LicenceCheck = { ok: true } | { ok: false; reason: LicenceRefusal };
+
+const refused = (reason: LicenceRefusal): LicenceCheck => ({ ok: false, reason });
+
+/**
  * A presented license entitles a free re-read iff it verifies AND is scoped to
  * this exact slug, this publisher (aud === the publisher's licenseIdentity), and
  * covers the requested kind (a citation license entitles a read, never the
- * reverse). Fails closed — any defect drops the caller to the normal 402 path.
+ * reverse). Fails closed — any defect drops the caller to the normal 402 path —
+ * but never fails SILENT: the caller receives the reason and reports it.
  * Revocation is consulted only when the online check is enabled (needs shared state).
  */
 export async function licenseEntitlesRead(
@@ -98,12 +124,15 @@ export async function licenseEntitlesRead(
    *  (API mode — the license was signed by the hosted gate, not this process). Absent
    *  ⇒ the module-global `licensing` + `identity`, unchanged (proxy mode / the gate). */
   verification?: LicenseVerification,
-): Promise<boolean> {
+): Promise<LicenceCheck> {
   // Effective verifier: the injected gate JWKS + issuer (API mode) wins; else the local
   // signing key's JWKS + the publisher identity (proxy mode). No local key AND no injected
-  // verifier ⇒ nothing can verify a license here — fail closed exactly as before.
+  // verifier ⇒ nothing can verify a license here.
+  //
+  // Still fails closed; no longer fails silent. This branch is a DEPLOYMENT fault, not a
+  // buyer fault, and it refuses valid licences wholesale — see {@link LicenceRefusal}.
   const jwks = verification?.jwks ?? licensing?.jwks;
-  if (!jwks) return false;
+  if (!jwks) return refused("no_verifier");
   // The identity that pins BOTH the license iss/aud AND the holder-of-key proof to the
   // minting deployment. In API mode this is the gate's stamped issuer, not the in-app
   // publisher default — using the wrong one is exactly the mismatch that 402s a valid license.
@@ -114,27 +143,28 @@ export async function licenseEntitlesRead(
     expectedAudience: expected,
     jwks,
   });
-  if (!r.ok) return false;
+  if (!r.ok) return refused("unverifiable");
   const n = r.claims.naulon;
   // A CITATION RECORD grants nothing — that is why it is allowed to be permanent. Reading
   // one as access would turn an unexpiring token into an unrevocable free-read credential,
   // which is precisely what the CLT's TTL cap exists to prevent. Unknown grants resolve to
   // "none" here, so a grant kind invented later cannot become access on an old deployment.
-  if (licenseGrant(n) !== "read") return false;
+  if (licenseGrant(n) !== "read") return refused("grant_none");
   // Scope, when present, is matched against the request PATH — prefix mode's slug is a
   // captured segment, not a path, so patterns could never match it. Unscoped licences keep
   // exact slug equality, byte-identical to the behaviour before W6.
-  if (!licenseCoversPath(n, { slug, path: new URL(req.url).pathname })) return false;
-  if (requestedKind === "citation" && n.kind !== "citation") return false; // no read→citation upgrade
-  if (cfg.LICENSE_ONLINE_CHECK && (await revocations.isRevoked(r.claims.jti))) return false;
+  if (!licenseCoversPath(n, { slug, path: new URL(req.url).pathname })) return refused("not_covered");
+  if (requestedKind === "citation" && n.kind !== "citation") return refused("kind_mismatch"); // no read→citation upgrade
+  if (cfg.LICENSE_ONLINE_CHECK && (await revocations.isRevoked(r.claims.jti))) return refused("revoked");
   // Holder-of-key: a cnf-bound license is NOT a bearer right — require a fresh
   // wallet proof-of-possession. Fail closed (drop to 402) if it's missing or bad.
   if (popBoundAddress(r.claims)) {
     const proof = req.headers.get(PROOF_HEADER);
-    if (!proof) return false;
-    if (!(await verifyPopProof(proof, { claims: r.claims, slug, identity: expected, now: Date.now() }))) return false;
+    if (!proof) return refused("pop_missing");
+    if (!(await verifyPopProof(proof, { claims: r.claims, slug, identity: expected, now: Date.now() })))
+      return refused("pop_invalid");
   }
-  return true;
+  return { ok: true };
 }
 
 /** Pull the classifier's inputs out of the raw request. */
@@ -199,6 +229,12 @@ export interface DecideObs {
   verified?: true;
   verifiedAgent?: string;
   sigInvalid?: true;
+  /**
+   * Set when a licence WAS presented and did not entitle the read. Absent means no licence was
+   * presented at all — the two are different events and used to look identical downstream, which
+   * is what made a misconfigured verifier invisible while it double-billed every agent.
+   */
+  licenceRefusal?: LicenceRefusal;
 }
 
 /**
@@ -316,11 +352,28 @@ export async function decide(input: DecideInput): Promise<Decision> {
   // Already paid? A valid, unexpired license scoped to this slug+kind re-reads free.
   // Fails closed: an invalid/expired/mismatched license falls through to the 402.
   const presentedLicense = raw.headers.get(LICENSE_HEADER);
-  if (
-    presentedLicense &&
-    (await licenseEntitlesRead(presentedLicense, slug, tollKind, raw, publisher.licenseIdentity, input.licenseVerification))
-  ) {
-    return { kind: "reread", tollKind, obs };
+  if (presentedLicense) {
+    const check = await licenseEntitlesRead(
+      presentedLicense,
+      slug,
+      tollKind,
+      raw,
+      publisher.licenseIdentity,
+      input.licenseVerification,
+    );
+    if (check.ok) return { kind: "reread", tollKind, obs };
+    // Refused. Record WHY on the observation before falling through to the 402, so a paid
+    // reader being charged twice is a fact someone can read rather than a silence.
+    obs.licenceRefusal = check.reason;
+    if (check.reason === "no_verifier") {
+      // Not the buyer's fault and not recoverable by paying: this deployment cannot verify any
+      // licence at all. Loud, because the alternative is a publisher learning it from an invoice.
+      console.error(
+        "[naulon] a Citation License was presented but this deployment has NO verifier — " +
+          "every valid licence will be refused and every agent charged twice. " +
+          "In API mode set `licenseVerification` and ensure the config carries `licenseIdentity`.",
+      );
+    }
   }
 
   // Price it. The pathname (not `path`, which carries the query string) selects the per-path

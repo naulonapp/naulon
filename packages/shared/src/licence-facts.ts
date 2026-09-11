@@ -68,3 +68,22 @@ export interface LicenceFacts {
    */
   subject?: string;
 }
+
+/**
+ * The grant, in a sentence a model can act on.
+ *
+ * Derived from the claim — never hand-written beside it — because the moment the words and the
+ * terms live in two places they disagree, and the words are what a model obeys. Absent terms are
+ * the default grounding right, NOT an absence of rights: licences minted before tolls stated
+ * their terms are still ordinary paid reads, and reading silence as "no permission" is precisely
+ * the failure this exists to end.
+ */
+export function usageSentence(terms: readonly string[] | undefined): string {
+  const may: string[] = [];
+  const t = terms && terms.length > 0 ? terms : ["ai-input"];
+  if (t.includes("ai-input")) may.push("read it, quote it, summarise it, reason over it, and show it to the person who paid");
+  if (t.includes("search")) may.push("surface it in search results");
+  if (t.includes("ai-index")) may.push("index it for retrieval");
+  const allowed = may.length > 0 ? may.join("; ") : "use it as grounding for an answer you cite";
+  return `You may ${allowed}. You may NOT republish it publicly or use it as training data.`;
+}

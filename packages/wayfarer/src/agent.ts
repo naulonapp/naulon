@@ -29,7 +29,7 @@ import { makeLicenceResolver, type LicenceResolver } from "./licence.ts";
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
 import { discover } from "./discover.ts";
 import { authorizeOrigin } from "./origin-policy.ts";
-import { decodeHeld, fileHeldStore, findHeld } from "./licenseStore.ts";
+import { decodeHeld, fileHeldStore, findHeld, heldKey } from "./licenseStore.ts";
 import type { HeldStore } from "./licenseStore.ts";
 import { buildPopProof } from "./pop.ts";
 import { agentFetch } from "./sign.ts";
@@ -523,7 +523,9 @@ export async function run(
       if (decoded) {
         // Persist the url actually paid alongside the license, so it travels with the
         // held record (a slug-only re-read can then target the real link, not a template).
-        held.set(d.slug, { ...decoded, jws: result.license, url });
+        // Keyed by `jti` (`heldKey`), never by slug: two publishers sharing `about`/`faq`
+        // used to evict each other here, leaving one entry for two payments.
+        held.set(heldKey(decoded), { ...decoded, jws: result.license, url });
         licenseId = decoded.jti;
         links = proofLinksFor({ jti: decoded.jti, aud: decoded.aud, paidUrl: url });
         // Save NOW, not only once after the loop (A1): a later candidate's re-read

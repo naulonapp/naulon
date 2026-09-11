@@ -79,6 +79,7 @@ export type {
   LicenseScope,
   LicenseTerm,
 } from "./licence-facts.ts";
+export { usageSentence } from "./licence-facts.ts";
 import type {
   LicenseGrant,
   LicensePeriod,

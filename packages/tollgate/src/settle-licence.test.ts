@@ -99,14 +99,20 @@ async function claimsOf(res: Awaited<ReturnType<typeof settleAndAttribute>>): Pr
   return verified.claims;
 }
 
-test("a toll mints exactly what it always did — no scope, no terms, no period, sub = the payer", async () => {
+// Was: "a toll mints exactly what it always did — no scope, no terms, no period". The `no terms`
+// half of that parity was the defect, not the contract: it made a per-read toll the ONLY purchase
+// in the product that stated nothing about what it bought, which is why a buyer's agent refused to
+// show them an article they had paid for. Scope/period/grant parity is unchanged and still
+// asserted; `terms` now carries what the toll sells. Design doc D1.
+test("a toll states its TERMS, and still carries no scope, no period, sub = the payer", async () => {
   const c = await claimsOf(await settleAndAttribute(args(Date.now())));
   assert.equal(c.naulon.scope, undefined);
-  assert.equal(c.naulon.terms, undefined);
   assert.equal(c.naulon.period, undefined);
   assert.equal(c.naulon.grant, undefined, "absent grant is what makes an old verifier read it as a read");
   assert.equal(c.sub.toLowerCase(), PAYER.toLowerCase());
   assert.equal(licenseGrant(c.naulon as never), "read");
+  assert.deepEqual(c.naulon.terms, ["ai-input"], "a toll sells grounding, and now says so in the token");
+  assert.ok(!(c.naulon.terms ?? []).includes("ai-train" as never), "ai-train is never sold");
 });
 
 test("a sale carries the scope, terms, period and subject through to the claim", async () => {

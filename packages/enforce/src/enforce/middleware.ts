@@ -237,10 +237,45 @@ export function naulonMiddleware(
     // from a literal at mount time. Pinning iss/aud to a hand-written constant is how a
     // licence stops verifying the day the control plane restyles what it stamps — and the
     // symptom is a paid reader being charged twice, which nobody reports as a bug.
+    // Boot preflight. `licenseVerification` being CONFIGURED is a statement that this site
+    // intends to honour paid re-reads; if the keys it needs are unreachable, every one of them
+    // 402s and the publisher's buyers are silently charged twice. One fetch at startup turns
+    // that from an invoice-time discovery into a deploy-time log line. Never throws: a JWKS
+    // blip must not take down a publisher's site (the per-request path is stale-if-error).
+    void (async () => {
+      try {
+        const res = await doFetch(jwksUrl, { headers: { accept: "application/json" } });
+        if (!res.ok) {
+          console.error(`[naulon] license verification preflight FAILED: ${jwksUrl} -> HTTP ${res.status}. Paid re-reads will be refused.`);
+          return;
+        }
+        cached = (await res.json()) as JwkSet;
+        fetchedAt = clock();
+      } catch (err) {
+        console.error(
+          `[naulon] license verification preflight FAILED: ${jwksUrl} unreachable (${err instanceof Error ? err.message : String(err)}). Paid re-reads will be refused.`,
+        );
+      }
+    })();
+
+    let warnedMissingIdentity = false;
     return async (issuer: string | undefined): Promise<LicenseVerification | undefined> => {
       // Without an issuer we cannot pin iss/aud, so verification would be unsafe — skip
       // (the re-read falls through to the normal 402 path, same as an unconfigured mount).
-      if (!issuer) return undefined;
+      //
+      // Skipping is correct; skipping QUIETLY is not. With no local signing key this is the
+      // difference between "honours paid re-reads" and "charges every agent twice", and it is
+      // decided by whether one field arrived in a config document. Say so, once.
+      if (!issuer) {
+        if (!warnedMissingIdentity) {
+          warnedMissingIdentity = true;
+          console.error(
+            "[naulon] license verification is configured but the publisher config carries no " +
+              "`licenseIdentity` — licences cannot be pinned, so every paid re-read will be refused.",
+          );
+        }
+        return undefined;
+      }
       const fresh = cached && clock() - fetchedAt < ttl;
       if (!fresh) {
         try {
@@ -279,6 +314,9 @@ export function naulonMiddleware(
     // Whole USDC → integer micro-USDC on the wire. Rounded, never floored: the figure is
     // "what this request would have paid", and a sub-micro price is a real toll.
     if (extra?.priceUsdc !== undefined) r.priceMicro = Math.round(extra.priceUsdc * 1_000_000);
+    // A licence was presented and refused. Carried so a double-charged reader is visible as
+    // itself rather than as an ordinary unpaid agent.
+    if (obs.licenceRefusal !== undefined) r.licenceRefusal = obs.licenceRefusal;
     opts.observe(r);
   };
 

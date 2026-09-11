@@ -127,6 +127,9 @@ test("API mode: middleware fetches the gate JWKS and a gate-minted license re-re
   }) as unknown as typeof fetch;
 
   const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+  // The boot probe fetches the JWKS once at construction (and warms the cache as a side effect).
+  // Settle it before counting, so this asserts caching rather than a race between the two.
+  await new Promise((r) => setTimeout(r, 0));
   const reread = () =>
     mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": mintFor("x") } }));
 
@@ -139,17 +142,61 @@ test("API mode: middleware fetches the gate JWKS and a gate-minted license re-re
   assert.equal(jwksHits, 1, "the JWKS is cached — no per-request refetch");
 });
 
-test("API mode: the hot path (no license header) never fetches the JWKS", async () => {
+// The boot probe exists because the failure it catches is otherwise invisible: an API-mode site
+// whose verifier cannot resolve refuses every valid licence and charges every agent twice, with
+// no log, no observation and no distinct verdict. A probe that stayed quiet when it failed would
+// reproduce exactly that, so BOTH directions are asserted.
+test("API mode: an unreachable JWKS is reported at BOOT, not discovered from an invoice", async () => {
+  const errs: string[] = [];
+  const realError = console.error;
+  console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
+  try {
+    const fetchImpl = (async () => {
+      throw new Error("getaddrinfo ENOTFOUND gate.example");
+    }) as unknown as typeof fetch;
+    naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+    await new Promise((r) => setTimeout(r, 0));
+  } finally {
+    console.error = realError;
+  }
+  assert.ok(
+    errs.some((e) => /preflight FAILED/i.test(e) && /re-reads will be refused/i.test(e)),
+    `boot must say the keys are unreachable AND what it costs; got ${JSON.stringify(errs)}`,
+  );
+});
+
+test("API mode: a reachable JWKS boots SILENT — the probe is not noise", async () => {
+  const errs: string[] = [];
+  const realError = console.error;
+  console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
+  try {
+    const fetchImpl = (async () => new Response(JSON.stringify(GATE_JWKS), { status: 200 })) as unknown as typeof fetch;
+    naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+    await new Promise((r) => setTimeout(r, 0));
+  } finally {
+    console.error = realError;
+  }
+  assert.deepEqual(errs, [], "a healthy deployment must log nothing, or the warning stops being read");
+});
+
+test("API mode: the hot path (no license header) adds NO JWKS fetch beyond the boot probe", async () => {
   let jwksHits = 0;
   const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
     if (String(input).includes("naulon-jwks.json")) jwksHits++;
     return new Response(JSON.stringify(GATE_JWKS), { status: 200 });
   }) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
-  // A human read and a first-time agent 402 carry no license → no JWKS fetch.
+  // Configuring `licenseVerification` now costs ONE fetch at construction: a site that declares it
+  // honours paid re-reads is told at deploy if the keys it needs are unreachable, rather than
+  // discovering it from a buyer who was charged twice. Let it settle before counting.
+  await new Promise((r) => setTimeout(r, 0));
+  const afterBoot = jwksHits;
+  assert.ok(afterBoot <= 1, "the boot probe fetches at most once");
+  // The invariant that actually matters is per-REQUEST laziness: a human read and a first-time
+  // agent 402 carry no license, so they must add nothing.
   await mw(new Request("http://h/essays/x", { headers: { "user-agent": "Mozilla/5.0 (real browser)" } }));
   await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
-  assert.equal(jwksHits, 0, "no license presented ⇒ the JWKS is never fetched on the hot path");
+  assert.equal(jwksHits, afterBoot, "no license presented ⇒ the hot path fetches nothing");
 });
 
 // ── Audit plane ───────────────────────────────────────────────────────────────

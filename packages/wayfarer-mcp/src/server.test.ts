@@ -595,15 +595,23 @@ test("naulon_quote does not pass off a 404 path as a plain free read", async () 
   });
 });
 
-test("naulon_read_held with no held license tells the model to pay first (no network)", async () => {
+test("naulon_read_held with no held license says so — and does NOT instruct a purchase (no network)", async () => {
   await withEnv(
     { WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-empty-${process.pid}.json`) },
     async () => {
       const client = await connectedClient();
       const res = await client.callTool({ name: "naulon_read_held", arguments: { slug: "whatever" } });
-      const r = res.structuredContent as { ok: boolean; error?: string };
+      const r = res.structuredContent as { ok: boolean; error?: string; reason?: string };
       assert.equal(r.ok, false, "no held license → not ok");
-      assert.match(r.error ?? "", /pay/i, "the error points the model at paying");
+      assert.equal(r.reason, "never_held", "the miss is typed, so the model need not parse prose");
+      // D7: a failure states the fact; it never prescribes a purchase. The old copy said
+      // "pay again with naulon_pay_and_read", and a model that follows instructions did — which
+      // is how one article was tolled four times. The only `pay` allowed here is the tool name.
+      assert.doesNotMatch(
+        (r.error ?? "").replace(/naulon_pay_and_read/g, ""),
+        /\bpay\b/i,
+        "the failure path must not tell the model to spend",
+      );
     },
   );
 });
@@ -1211,14 +1219,14 @@ test("C1 — two sessions with separate stores do not cross-read (the hosted lea
   const ra = (await a.callTool({ name: "naulon_read_held", arguments: { slug: "secret" } }))
     .structuredContent as { ok: boolean; error?: string };
   const rb = (await b.callTool({ name: "naulon_read_held", arguments: { slug: "secret" } }))
-    .structuredContent as { ok: boolean; error?: string };
+    .structuredContent as { ok: boolean; error?: string; reason?: string };
   assert.match(ra.error ?? "", /expired/i, "A sees its own held license");
   // The isolation signal is that B gets the NOTHING-HELD answer while A gets the EXPIRED one:
   // "expired" can only be said about a licence the store actually holds. Asserted as the
   // absence of A's answer rather than as B's exact prose, which is copy and will be reworded.
   assert.equal(rb.ok, false);
   assert.doesNotMatch(rb.error ?? "", /expired/i, "B never sees A's license — isolation holds");
-  assert.match(rb.error ?? "", /no live license covers this/i);
+  assert.equal((rb as { reason?: string }).reason, "never_held", "B holds nothing — typed, not prose");
 });
 
 test("W8 — read_held serves a SCOPE licence when given the url, and refuses without one", async () => {
@@ -2702,4 +2710,201 @@ test("PROOF-1: the tool descriptions tell the model to CITE the proof page, and 
   const p = await client.getPrompt({ name: "research", arguments: { topic: "x" } });
   const text = (p.messages[0]!.content as { type: "text"; text: string }).text;
   assert.match(text, /proofUrl/, "the research prompt asks for the proof page beside each citation");
+});
+
+// ── D10 — the chain a result reports is the chain the toll SETTLED on ─────────
+// `networkInfo()` read this process's `SETTLEMENT_NETWORK`, which answers "what is this buyer
+// configured for", not "where did this toll land". Settlement is per TENANT (`tollgate/settle.ts`),
+// so a buyer on arcTestnet paying a `base` publisher was told testnet — and `instructions` tells a
+// model to report testnet as play-money with no fiat value. The one honesty control, inverted.
+
+/** A gate whose 402 advertises `network`, so a test can make the publisher's chain differ from
+ *  this process's configured one — which is the whole condition the bug needed. */
+function payGateOn(network: string, amountAtomic: string) {
+  const header = (): string =>
+    Buffer.from(
+      JSON.stringify({
+        accepts: [
+          {
+            network,
+            asset: "0x3600000000000000000000000000000000000000",
+            payTo: "0x000000000000000000000000000000000000dEaD",
+            amount: amountAtomic,
+            maxTimeoutSeconds: 120,
+            extra: { nonce: "nonce-1", name: "GatewayWalletBatched", version: "1", verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9" },
+          },
+        ],
+      }),
+    ).toString("base64");
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    if (req.headers["payment-signature"]) {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("paid content");
+    } else {
+      res.writeHead(402, { "payment-required": header(), "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "payment required" }));
+    }
+  };
+}
+
+test("a paid read reports the PUBLISHER's chain, not this session's — a mainnet toll is never called testnet", async () => {
+  await withStubGate(payGateOn("eip155:8453", "5000"), async () => {
+    await withEnv({ SETTLEMENT_NETWORK: "arcTestnet", WAYFARER_BUDGET_USDC: "1" }, async () => {
+      const client = await connectedClient();
+      // Precondition: the session's own chain IS a testnet, and is NOT the one the gate quoted.
+      const status = (await client.callTool({ name: "naulon_status", arguments: {} }))
+        .structuredContent as { settlement: { chainName: string; testnet: boolean } };
+      assert.equal(status.settlement.chainName, "arcTestnet", "precondition: the session is configured for arcTestnet");
+      assert.equal(status.settlement.testnet, true, "precondition: and it is a testnet");
+
+      const p = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } }))
+        .structuredContent as PayResult & { settlement: { chainName: string; chainId: number; testnet: boolean } };
+      assert.equal(p.ok, true, `expected a paid read, got ${JSON.stringify(p)}`);
+      assert.equal(p.settlement.chainName, "base", "the result names the chain the toll settled on");
+      assert.equal(p.settlement.chainId, 8453);
+      assert.equal(
+        p.settlement.testnet,
+        false,
+        "real money on the publisher's mainnet must never be reported as testnet play-money",
+      );
+    });
+  });
+});
+
+test("naulon_quote's envelope agrees with the CAIP-2 id in the same payload", async () => {
+  // One response used to carry `network: eip155:8453` and a `settlement.chainName` of whatever this
+  // process was configured for — two answers to one question, three lines apart.
+  await withStubGate(payGateOn("eip155:8453", "5000"), async () => {
+    await withEnv({ SETTLEMENT_NETWORK: "arcTestnet" }, async () => {
+      const client = await connectedClient();
+      const q = (await client.callTool({ name: "naulon_quote", arguments: { slug: "x" } }))
+        .structuredContent as { gated?: boolean; network?: string; settlement: { chainName: string; chainId: number } };
+      assert.equal(q.gated, true);
+      assert.equal(q.network, "eip155:8453");
+      assert.equal(q.settlement.chainId, 8453, "the envelope must not contradict the CAIP-2 id beside it");
+      assert.equal(q.settlement.chainName, "base");
+    });
+  });
+});
+
+test("a CAIP-2 id this build does not know falls back to the session default rather than guessing", async () => {
+  await withStubGate(payGateOn("eip155:999999999", "5000"), async () => {
+    await withEnv({ SETTLEMENT_NETWORK: "arcTestnet" }, async () => {
+      const client = await connectedClient();
+      const q = (await client.callTool({ name: "naulon_quote", arguments: { slug: "x" } }))
+        .structuredContent as { settlement: { chainName: string } };
+      assert.equal(q.settlement.chainName, "arcTestnet", "an unknown chain is a fleet-config problem, not a chain to invent");
+    });
+  });
+});
+
+/** A gate that pays AND returns an x402 `payment-response` carrying `ref` as the transaction —
+ *  the header `paidFetch` reads `settlementRef` out of. The stub `payGate` returns none, so a
+ *  test using it can say nothing about what a settlement reference looks like. */
+function payGateSettling(ref: string, amountAtomic = "5000") {
+  const paymentResponse = Buffer.from(JSON.stringify({ transaction: ref })).toString("base64");
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    if (req.headers["payment-signature"]) {
+      res.writeHead(200, { "content-type": "text/plain", "payment-response": paymentResponse });
+      res.end("paid content");
+    } else {
+      res.writeHead(402, { "payment-required": paymentRequired(amountAtomic), "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "payment required" }));
+    }
+  };
+}
+
+test("a SIMULATED settlement is labelled `mock`, never a transfer that will finalize", async () => {
+  // PAYMENT_MODE=mock is the DEFAULT on the gate side, and `settleMock()` emits `mock-<8hex>-<amount>`.
+  // The kind vocabulary had only txHash|transferId, so every mock-mode read came back claiming a
+  // Circle transfer whose batch lands later. It never lands.
+  await withStubGate(payGateSettling("mock-a1b2c3d4-5000"), async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1" }, async () => {
+      const client = await connectedClient();
+      const p = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } }))
+        .structuredContent as PayResult & { settlementRef?: string; settlementRefKind?: string; explorerTxUrl?: string };
+      assert.equal(p.ok, true, `expected a paid read, got ${JSON.stringify(p)}`);
+      assert.equal(p.settlementRef, "mock-a1b2c3d4-5000");
+      assert.equal(p.settlementRefKind, "mock", "a simulated settlement says so");
+      assert.equal(p.explorerTxUrl, undefined, "and carries no explorer link — there is nothing to look at");
+    });
+  });
+});
+
+test("a batched TRANSFER ID is not a transaction, and gets no explorer link", async () => {
+  await withStubGate(payGateSettling("6b1e5a2c-0f3d-4a7e-9c11-2f8b7d4e1a55"), async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1" }, async () => {
+      const client = await connectedClient();
+      const p = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } }))
+        .structuredContent as PayResult & { settlementRefKind?: string; explorerTxUrl?: string };
+      assert.equal(p.ok, true, `expected a paid read, got ${JSON.stringify(p)}`);
+      assert.equal(p.settlementRefKind, "transferId");
+      assert.equal(p.explorerTxUrl, undefined, "linking a transfer id to a block explorer yields a 404 receipt");
+    });
+  });
+});
+
+test("a real transaction hash on a chain with an explorer DOES get a link — the guard is not a blanket refusal", async () => {
+  const hash = `0x${"a".repeat(64)}`;
+  await withStubGate(payGateSettling(hash), async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1", SETTLEMENT_NETWORK: "arcTestnet" }, async () => {
+      const client = await connectedClient();
+      const p = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } }))
+        .structuredContent as PayResult & { settlementRefKind?: string; explorerTxUrl?: string };
+      assert.equal(p.ok, true, `expected a paid read, got ${JSON.stringify(p)}`);
+      assert.equal(p.settlementRefKind, "txHash");
+      assert.equal(p.explorerTxUrl, `https://testnet.arcscan.app/tx/${hash}`, "a real hash still links, on the chain that settled it");
+    });
+  });
+});
+
+
+// ── the second payment, on the granular MCP path ──────────────────────────────
+// The held pre-check `console.warn`s and falls through to pay. A console line is the operator's
+// copy and nobody else's: the audit event and the tool result both showed an ordinary toll, so a
+// buyer charged twice for the same bytes had no way to tell.
+
+test("a pay made DESPITE a live held licence declares itself, in the audit AND to the caller", async () => {
+  const held: HeldLicense = {
+    slug: "x", title: "X", jti: "jti-held", exp: Math.floor(Date.now() / 1000) + 600,
+    aud: licenseIdentityFor("http://127.0.0.1")!, pop: false, jws: "h.b.s",
+  };
+  // A gate that pays normally but REFUSES the licence on the re-read (no payment-signature, no
+  // license header ⇒ 402), which is the shape the prod incident had.
+  await withStubGate(payGate("5000"), async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1" }, async () => {
+      const audits: DecisionAuditEvent[] = [];
+      const store = memoryHeldStore();
+      // Key it the way every writer does, and bind `aud` to the stub gate's own host.
+      const base = new URL(process.env.TOLLGATE_URL!);
+      const bound: HeldLicense = { ...held, aud: licenseIdentityFor(base.origin)!, url: `${base.origin}/essays/x` };
+      await store.save(new Map([[bound.jti, bound]]));
+
+      const client = await connectedClientWith({ heldStore: store, auditSink: (e) => audits.push(e) });
+      const p = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } }))
+        .structuredContent as PayResult & { heldRefusal?: string };
+
+      assert.equal(p.ok, true, `expected a paid read, got ${JSON.stringify(p)}`);
+      assert.ok(p.heldRefusal, "the caller is told this read was bought a SECOND time");
+
+      const pay = audits.find((a) => a.action === "pay");
+      assert.ok(pay, "the pay was audited");
+      assert.equal(pay.heldRefusal, p.heldRefusal, "and the audit carries the same typed reason");
+      assert.match(pay.reason, /SECOND PAYMENT/, "the sentence says so too, for a reader of the raw event");
+    });
+  });
+});
+
+test("an ordinary pay carries no heldRefusal, in either place", async () => {
+  await withStubGate(payGate("5000"), async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1" }, async () => {
+      const audits: DecisionAuditEvent[] = [];
+      const client = await connectedClientWith({ heldStore: memoryHeldStore(), auditSink: (e) => audits.push(e) });
+      const p = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } }))
+        .structuredContent as PayResult & { heldRefusal?: string };
+      assert.equal(p.ok, true);
+      assert.equal(p.heldRefusal, undefined);
+      assert.equal(audits.find((a) => a.action === "pay")?.heldRefusal, undefined);
+    });
+  });
 });
