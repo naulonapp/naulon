@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 process.env.WAYFARER_LICENSE_PATH = join(tmpdir(), `naulon-held-${process.pid}.json`);
 
-const { loadHeld, saveHeld, decodeHeld, isLive, memoryHeldStore, fileHeldStore } = await import(
+const { loadHeld, saveHeld, decodeHeld, heldKey, isLive, memoryHeldStore, fileHeldStore } = await import(
   "./licenseStore.ts"
 );
 const { mintLicense, loadSigningKey } = await import("@naulon/shared");
@@ -64,13 +64,38 @@ test("isLive respects exp against now (seconds)", () => {
   assert.equal(isLive(h, 1001), false);
 });
 
-test("save then load round-trips the held licenses by slug", async () => {
+test("save then load round-trips the held licenses, keyed by jti", async () => {
   const decoded = decodeHeld(token("the-naulon"))!;
-  const map = new Map<string, HeldLicense>([["the-naulon", { ...decoded, jws: token("the-naulon") }]]);
+  const map = new Map<string, HeldLicense>([[heldKey(decoded), { ...decoded, jws: token("the-naulon") }]]);
   await saveHeld(map);
   const loaded = await loadHeld();
   assert.equal(loaded.size, 1);
-  assert.equal(loaded.get("the-naulon")?.jti, "id-the-naulon");
+  assert.equal(loaded.get("id-the-naulon")?.jti, "id-the-naulon");
+});
+
+test("load RE-KEYS a file written under the old slug key — no migration, nothing lost", async () => {
+  // The on-disk shape is a flat ARRAY of licences; the key is derived at load. A store written by
+  // a build that keyed by slug therefore re-keys itself the first time this one reads it.
+  const decoded = decodeHeld(token("the-naulon"))!;
+  await saveHeld(new Map([["the-naulon", { ...decoded, jws: token("the-naulon") }]]));
+  const loaded = await loadHeld();
+  assert.equal(loaded.has("the-naulon"), false, "the slug key must not survive the load");
+  assert.equal(loaded.get("id-the-naulon")?.slug, "the-naulon");
+});
+
+test("two publishers sharing a slug BOTH survive a save/load — the eviction that cost a second toll", async () => {
+  // `about`, `faq`, `index` and `privacy` are not rare. Under the slug key the second purchase
+  // overwrote the first, leaving one entry for two payments — and the buyer re-paid for the one
+  // that vanished. Keyed by jti, one entry is one purchase.
+  const a = { ...decodeHeld(token("about"))!, jti: "jti-site-a", aud: "naulon:a.example", jws: token("about") };
+  const b = { ...decodeHeld(token("about"))!, jti: "jti-site-b", aud: "naulon:b.example", jws: token("about") };
+  await saveHeld(new Map([[heldKey(a), a], [heldKey(b), b]]));
+  const loaded = await loadHeld();
+  assert.equal(loaded.size, 2, "one licence evicted the other");
+  assert.deepEqual(
+    [...loaded.values()].map((h) => h.aud).sort(),
+    ["naulon:a.example", "naulon:b.example"],
+  );
 });
 
 test("memoryHeldStore round-trips within one instance", async () => {
@@ -106,8 +131,8 @@ test("memoryHeldStore load returns a copy — mutating it never leaks back into 
 
 test("fileHeldStore is the process-global file default (load/save delegate to it)", async () => {
   const decoded = decodeHeld(token("file-essay"))!;
-  await fileHeldStore.save(new Map([["file-essay", { ...decoded, jws: token("file-essay") }]]));
+  await fileHeldStore.save(new Map([[heldKey(decoded), { ...decoded, jws: token("file-essay") }]]));
   // Read through the bare functions to prove fileHeldStore IS the file (same backend).
-  assert.equal((await loadHeld()).get("file-essay")?.jti, "id-file-essay");
-  assert.equal((await fileHeldStore.load()).get("file-essay")?.jti, "id-file-essay");
+  assert.equal((await loadHeld()).get("id-file-essay")?.jti, "id-file-essay");
+  assert.equal((await fileHeldStore.load()).get("id-file-essay")?.jti, "id-file-essay");
 });

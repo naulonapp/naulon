@@ -24,6 +24,10 @@ export interface HeldLicense {
   /** The paths this licence covers, when it is a SCOPED licence rather than a
    *  single-slug one. Absent ⇒ it covers `slug` and nothing else. */
   scope?: { patterns: string[] };
+  /** The RSL usage terms this payment executed (`ai-input` for a per-read toll) — WHAT THE
+   *  HOLDER MAY DO with the bytes. Absent on licences minted before tolls stated their terms;
+   *  a consumer reads absent as the same default grounding right, never as "no rights". */
+  terms?: string[];
   /** The canonical URL this source was actually PAID at — captured at pay time so a
    * later `read_held` re-fetches the exact link (`/articles/<slug>`, a custom domain,
    * whatever the publisher serves) instead of reconstructing a `/essays/<slug>`
@@ -34,6 +38,25 @@ export interface HeldLicense {
 }
 
 const file = (): string => getConfig().WAYFARER_LICENSE_PATH;
+
+/**
+ * The key a held licence is filed under: its `jti`, never its slug.
+ *
+ * Slug was the original key and it EVICTS ACROSS PUBLISHERS. `about`, `faq`, `index` and `privacy`
+ * are not rare; two independently-run sites share one, and the second purchase silently overwrote
+ * the first licence's entry — one row for two payments, with the survivor bound (by `aud`) to only
+ * one of them. The buyer then re-paid for the evicted one, which is the double-charge this store
+ * exists to prevent. Measured in prod on 2026-09-10.
+ *
+ * `jti` is the gate's own unique identifier for the licence, so one entry is one purchase. Nothing
+ * reads the map by key — `findHeld` scans values and decides coverage with `licenseCoversPath` —
+ * so the key's only job is to keep two purchases from colliding, and a slug cannot do it.
+ *
+ * A re-buy of the SAME slug therefore adds an entry rather than replacing one. That is correct:
+ * they are two purchases. Expired entries are pruned by the backing store (the hosted one) or
+ * simply ignored by `isLive` (the file one).
+ */
+export const heldKey = (held: Pick<HeldLicense, "jti">): string => held.jti;
 
 /**
  * Decode a token's `jti`, `exp`, and `naulon.slug/title` WITHOUT verifying — this
@@ -50,7 +73,7 @@ export function decodeHeld(jws: string): Omit<HeldLicense, "jws"> | null {
       exp?: number;
       aud?: string;
       cnf?: { "naulon:addr"?: string };
-      naulon?: { slug?: string; title?: string; grant?: string; scope?: { patterns?: unknown } };
+      naulon?: { slug?: string; title?: string; grant?: string; terms?: unknown; scope?: { patterns?: unknown } };
     };
     if (!claims.jti || !claims.exp || !claims.aud || !claims.naulon?.slug) return null;
     // A held licence is an ACCESS right. A citation record grants nothing and is permanent,
@@ -61,9 +84,14 @@ export function decodeHeld(jws: string): Omit<HeldLicense, "jws"> | null {
     const grant = claims.naulon.grant;
     if (grant !== undefined && grant !== "read") return null;
     const patterns = claims.naulon.scope?.patterns;
+    // The TERMS the payment executed. Carried because the holder is the party that needs to act
+    // on them: an agent with bytes and no statement of rights guesses, and guesses the most
+    // restrictive thing it can — which is how a buyer was refused an article they had paid for.
+    const terms = claims.naulon.terms;
     return {
       slug: claims.naulon.slug,
       title: claims.naulon.title ?? claims.naulon.slug,
+      ...(Array.isArray(terms) ? { terms: terms.filter((x): x is string => typeof x === "string") } : {}),
       ...(Array.isArray(patterns) ? { scope: { patterns: patterns.filter((x): x is string => typeof x === "string") } } : {}),
       jti: claims.jti,
       exp: claims.exp,
@@ -144,7 +172,10 @@ export async function loadHeld(): Promise<Map<string, HeldLicense>> {
   try {
     const raw = await readFile(file(), "utf8");
     const arr = JSON.parse(raw) as HeldLicense[];
-    return new Map(arr.map((h) => [h.slug, h]));
+    // Keyed by `jti` on load, whatever the file was written with: the on-disk shape is a flat ARRAY
+    // of licences, so a store written under the old slug key re-keys itself here with no migration.
+    // The only loss is the eviction that already happened before the file was written.
+    return new Map(arr.map((h) => [heldKey(h), h]));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Map();
     throw err;

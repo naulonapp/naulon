@@ -16,7 +16,7 @@
  * Telemetry, never a toll: a reporter takes no callback and returns nothing. It cannot
  * block a response, cannot fail one, and a sink outage costs at most some visibility.
  */
-import type { TollKind } from "../decide.ts";
+import type { LicenceRefusal, TollKind } from "../decide.ts";
 
 /** The verdicts a publisher's own runtime witnesses (and no one else does). */
 export type ReportableVerdict = "served-free" | "agent-reread" | "denied" | "blocked";
@@ -38,6 +38,13 @@ export interface ObservationReport {
   priceMicro?: number;
   /** epoch ms. */
   at: number;
+  /**
+   * Set when the request CARRIED a Citation License that did not entitle the read. A `denied`
+   * row with this field is a paid reader being charged a second time; a `denied` row without it
+   * is an ordinary unpaid agent. Undistinguished, the first hides inside the second — which is
+   * exactly what let a deployment with no verifier bill one article four times in a day.
+   */
+  licenceRefusal?: LicenceRefusal;
   /** Who the caller was, as this runtime's classifier saw them — what makes a row bucket
    *  under "GPTBot" rather than "(unknown agent)". */
   agent?: {

@@ -159,6 +159,49 @@ test("API mode: a gate-minted license WITHOUT the verifier 402s (the bug — loc
     quote: quoteOf,
   });
   assert.equal(d.kind, "payment-required", "without the gate JWKS, a valid license is re-charged");
+  // Re-charging is the old behaviour and stays (fail closed). What must never come back is doing
+  // it in SILENCE: this is a deployment fault that re-charges every paying agent, and it is only
+  // actionable if it is distinguishable from an ordinary unpaid request. D0.
+  const reason = d.kind === "payment-required" ? d.obs.licenceRefusal : undefined;
+  assert.ok(
+    reason === "no_verifier" || reason === "unverifiable",
+    `a valid licence this deployment cannot check must say so, not read as unpaid (got ${String(reason)})`,
+  );
+  // Which of the two depends on whether a local signing key exists at all: with none (the real
+  // API-mode shape, and the prod case) it is `no_verifier`; with the WRONG local key — this
+  // fixture, since sibling tests mint — a gate licence is indistinguishable from a forged one
+  // and `unverifiable` is the honest answer. Both are "we could not verify a real licence".
+});
+
+test("D0: a request with NO licence is distinguishable from one whose licence was refused", async () => {
+  const raw = new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } });
+  const d = await decide({ raw, host: "h", path: "/essays/x", publisher: basePublisher, now: NOW, quote: quoteOf });
+  assert.equal(d.kind, "payment-required");
+  assert.equal(
+    d.kind === "payment-required" ? d.obs.licenceRefusal : "set",
+    undefined,
+    "no licence presented ⇒ no refusal reason; the two events must never collapse into one",
+  );
+});
+
+test("D0: a licence refused on its own MERITS names that reason, not a verifier fault", async () => {
+  // A citation record verifies perfectly and still grants nothing. The operator must not be sent
+  // to fix their JWKS config over a token that is doing exactly what it was minted to do.
+  const d = await decide({
+    raw: agentReread(gateRecord(GATE_ISS)),
+    host: "h",
+    path: "/essays/x",
+    publisher: basePublisher,
+    now: NOW,
+    quote: quoteOf,
+    licenseVerification: VERIFY,
+  });
+  assert.equal(d.kind, "payment-required");
+  assert.equal(
+    d.kind === "payment-required" ? d.obs.licenceRefusal : undefined,
+    "grant_none",
+    "a record grants nothing — that is the reason, and it is not a deployment fault",
+  );
 });
 
 test("API mode: WITH the gate JWKS + issuer, the same license re-reads FREE", async () => {

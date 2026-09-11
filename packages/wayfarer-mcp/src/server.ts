@@ -44,6 +44,7 @@ import {
   buildPopProof,
   decodeHeld,
   findHeld,
+  heldKey,
   heldRequestFor,
   DEFAULT_POLICY,
   discover,
@@ -69,7 +70,8 @@ import {
   verifyAgainst,
 } from "@naulon/wayfarer";
 import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners } from "@naulon/wayfarer";
-import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, usdc } from "@naulon/shared";
+import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, networkByCaip2, settlementRefKind, usageSentence, usdc } from "@naulon/shared";
+import type { SettlementNetwork } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
@@ -239,6 +241,16 @@ export interface DecisionAuditEvent {
   licenseId?: string;
   /** The policy's agent tag, if configured — audit attribution, not identity. */
   agentId?: string;
+  /**
+   * Present ONLY on a `pay`: this caller HELD a live licence for the source, presented it, the
+   * publisher refused it, and the read was therefore bought a SECOND time. The string is why the
+   * re-read failed.
+   *
+   * A typed field rather than prose folded into `reason`, because the consumer of this event is a
+   * ledger whose rows are rendered: a renderer that had to pattern-match a sentence to find a
+   * double charge would find it until someone reworded the sentence.
+   */
+  heldRefusal?: string;
 }
 
 export interface BuildServerOptions {
@@ -368,8 +380,47 @@ export interface BuildServerOptions {
  * can stand up an isolated server per case. `opts` supplies per-session config for
  * the hosted path (BUY-4); absent, every value falls back to process env.
  */
+/**
+ * MCP's designated slot for "how should a client treat what this server returns". It was empty,
+ * and the vacuum was filled by the most cautious reading available: an agent that had just paid a
+ * toll refused to show the article to the human who paid for it, because nothing told it what the
+ * purchase entitled. A licence that states its grant (D1) is only half the fix — the client has to
+ * be told the grant is there and is the authority.
+ */
+const SERVER_INSTRUCTIONS = [
+  "naulon sells per-read licences for published text. Paying a toll buys a Citation License (CLT):",
+  "a signed, verifiable statement of what that payment entitles.",
+  "",
+  "READ THE GRANT, DO NOT GUESS IT. Paid reads return `terms` and a plain-language `usage` line.",
+  "A toll's terms are `ai-input`: you may read the source, quote it, summarise it, reason over it,",
+  "and show it to the principal who paid for it. You may not republish it publicly, and `ai-train`",
+  "is never sold. When `usage` is present it is the authority — do not substitute a stricter guess.",
+  "",
+  "HUMANS READ FREE, ALWAYS. Only agents are tolled. Every citation carries the source `url`; if a",
+  "person wants the whole article, give them that link — they owe nothing for it.",
+  "",
+  "DON'T PAY TWICE. A licence is short-lived (see `expiresAt`). `naulon_pay_and_read` checks your",
+  "held licences first and serves a live one free (`reused: true`). If a re-read fails with",
+  "`reason: refused_by_publisher`, the licence was valid and the publisher's site rejected it —",
+  "paying again may charge you a second time without fixing anything. Report it rather than retry.",
+  "",
+  "CITE HONESTLY. Cite `proofUrl`. `settlementRef` is often a batched transfer id, not a",
+  "transaction hash — check `settlementRefKind`, and only call a settlement on-chain when an",
+  "`explorerTxUrl` is present. Never build an explorer link yourself. `settlementRefKind: \"mock\"`",
+  "means the settlement was SIMULATED and no money moved — never present it as a payment.",
+  "",
+  "`settlement` describes the chain THIS result's PAYMENT settled on — the publisher's chain, which",
+  "need not be the one this session is configured for. When nothing was paid (`paidUsdc: 0`, a free",
+  "or re-used read) there is no settlement to describe and it falls back to the session's own chain,",
+  "so do not cite it as the chain anything settled on. Read it from the result you are describing,",
+  "never from an earlier one.",
+].join("\n");
+
 export function buildServer(opts: BuildServerOptions = {}): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  const server = new McpServer(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
 
   // ── Surface allowlist (opts.surface) ────────────────────────────────────────
   // Every registration below goes through `reg` / `regPrompt`. An excluded name is registered
@@ -563,13 +614,18 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     return fleetAllow.length ? { ...base, allowDomains: fleetAllow } : base;
   };
   const remainingUsdc = (): number => round6(Math.max(0, ceilingUsdc() - spentUsdc));
-  /** The settlement network this session tolls on — the fact that was MISSING, so an
-   *  agent could not tell whether a paid read cost real money or testnet play-money
-   *  (it would report a testnet toll as "real USDC"). `testnet:true` = no fiat value.
-   *  Constant for the session (`SETTLEMENT_NETWORK`); echoed alongside every spend
-   *  envelope and on naulon_status. */
-  const networkInfo = (): NetworkInfo => {
-    const net = activeNetwork();
+  /** The settlement network a result concerns — the fact that was MISSING, so an agent could not
+   *  tell whether a paid read cost real money or testnet play-money (it would report a testnet
+   *  toll as "real USDC"). `testnet:true` = no fiat value.
+   *
+   *  DEFAULTS to this process's `SETTLEMENT_NETWORK`, which is the right answer for a session-wide
+   *  question (naulon_status, a refusal, a free re-read — nothing settled). It is the WRONG answer
+   *  for a toll that actually settled: the chain is the PUBLISHER's, per tenant
+   *  (`tollgate/settle.ts`), so a buyer process on `arcTestnet` paying a `base` tenant used to be
+   *  told testnet — and `instructions` tells the model to report testnet as play-money with no
+   *  fiat value, which inverts this file's only honesty control. Every caller that HAS a quote
+   *  passes that quote's network. */
+  const networkInfo = (net: SettlementNetwork = activeNetwork()): NetworkInfo => {
     return {
       network: net.network,
       chainId: net.chainId,
@@ -582,12 +638,19 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   /** The session-budget + network fields every spend-aware tool echoes so the host LLM
    *  always sees the live envelope — and what chain/token it is spending — alongside the
    *  tool's own result. */
-  const envelope = (): { ceilingUsdc: number; spentSessionUsdc: number; remainingUsdc: number; settlement: NetworkInfo } => ({
+  const envelope = (
+    net?: SettlementNetwork,
+  ): { ceilingUsdc: number; spentSessionUsdc: number; remainingUsdc: number; settlement: NetworkInfo } => ({
     ceilingUsdc: round6(ceilingUsdc()),
     spentSessionUsdc: round6(spentUsdc),
     remainingUsdc: remainingUsdc(),
-    settlement: networkInfo(),
+    settlement: networkInfo(net),
   });
+  /** The chain a QUOTE says the toll will settle on — the publisher's, read off the 402's own
+   *  requirements. Falls back to the session default only when the CAIP-2 id names a chain this
+   *  build does not know, which is a fleet-config problem rather than something to guess about. */
+  const quotedNetwork = (caip2: string | undefined): SettlementNetwork =>
+    (caip2 ? networkByCaip2(caip2) : undefined) ?? activeNetwork();
   // BUY-4.4: hand each buyer decision to the injected audit sink (the cloud writes it to
   // its org audit plane). Best-effort — a misbehaving sink must never break a paid read,
   // mirroring the cloud's own fire-and-forget AuditTrail. No-op when no sink is injected
@@ -1006,7 +1069,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ...(legs?.length
           ? { legs: legs.map((leg) => ({ role: leg.role, payTo: leg.payTo, amount: leg.amount })) }
           : {}),
-        ...envelope(),
+        // The publisher's chain, not this process's — otherwise one payload carried the quoted
+        // CAIP-2 id above and a contradicting `settlement.chainName` three lines below it.
+        ...envelope(quotedNetwork(quoted.requirements.network)),
       });
     },
   );
@@ -1018,12 +1083,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       title: "Pay the toll and read the source",
       description:
         "Pay the x402 toll for a source and return its full content, the settlement reference, and the " +
-        "Citation License id (jti) — the verifiable proof this read was paid for, which you cite. The " +
-        "license is kept so you can re-read this source FREE later with naulon_read_held. This SPENDS " +
-        "MONEY from the server-configured wallet, debited from the session budget. The toll is quoted " +
-        "first: if it would exceed the remaining session budget the call is REFUSED and spends nothing " +
-        "(the budget ceiling is server-configured and cannot be raised from a tool). If the source is not " +
-        "gated, or payment is rejected, it returns ok:false and spends nothing.",
+        "Citation License id (jti) — the verifiable proof this read was paid for, which you cite. This " +
+        "SPENDS MONEY from the server-configured wallet, debited from the session budget. " +
+        "It checks your held licences FIRST: if you already hold a live one for this source it serves " +
+        "the read free and returns reused:true with paidUsdc:0, so calling this twice in a session does " +
+        "not pay twice. The licence it mints is kept for later free re-reads via naulon_read_held, but " +
+        "it EXPIRES — `expiresAt`/`expiresInSec` in the result say when, typically 10 minutes. " +
+        "The toll is quoted first: if it would exceed the remaining session budget the call is REFUSED " +
+        "and spends nothing (the budget ceiling is server-configured and cannot be raised from a tool). " +
+        "If the source is not gated, or payment is rejected, it returns ok:false and spends nothing.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug from naulon_discover / naulon_quote."),
         url: z
@@ -1037,8 +1105,52 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       outputSchema: {
         ok: z.boolean(),
         content: z.string().optional().describe("The paid-for content."),
-        settlementRef: z.string().optional().describe("On-chain / settlement reference for the payment."),
-        explorerTxUrl: z.string().optional().describe("A clickable block-explorer link for settlementRef (<explorer>/tx/<ref>), when the chain has a known explorer. Cite this so a human can verify the on-chain settlement."),
+        settlementRef: z
+          .string()
+          .optional()
+          .describe(
+            "The settlement reference. NOT always a transaction hash: tolls settle through a batching " +
+              "facilitator, so this is usually a transfer id whose on-chain batch lands later. Read " +
+              "settlementRefKind before describing it as on-chain.",
+          ),
+        heldRefusal: z
+          .string()
+          .optional()
+          .describe(
+            "Present ONLY when you already HELD a live licence for this source, it was presented, and the " +
+              "publisher refused it — so this read was bought a SECOND time and the string is why. Report " +
+              "it rather than retrying: paying again may charge you a third time without fixing anything.",
+          ),
+        settlementRefKind: z
+          .enum(["txHash", "transferId", "mock", "none"])
+          .optional()
+          .describe(
+            "What settlementRef IS. `txHash` is a real transaction. `transferId` means the batch had not " +
+              "settled on-chain when this returned. `mock` is a SIMULATED settlement (PAYMENT_MODE=mock) — " +
+              "no money moved and it is proof of nothing; say so rather than citing it. `none` means no " +
+              "reference was recorded.",
+          ),
+        explorerTxUrl: z
+          .string()
+          .optional()
+          .describe(
+            "A block-explorer link, present ONLY when settlementRef is a real transaction hash on a chain " +
+              "with a known explorer. Absent otherwise — cite proofUrl instead. Never construct this yourself.",
+          ),
+        terms: z
+          .array(z.string())
+          .optional()
+          .describe("The RSL usage terms this payment executed — WHAT YOU MAY DO with the content."),
+        usage: z
+          .string()
+          .optional()
+          .describe(
+            "The grant in one sentence, derived from the licence. THIS IS THE AUTHORITY on what you " +
+              "may do with the content — do not substitute a stricter guess of your own.",
+          ),
+        reused: z.boolean().optional().describe("True when a live held licence served this read and nothing was spent."),
+        expiresAt: z.number().optional().describe("Epoch SECONDS at which the licence stops entitling a free re-read."),
+        expiresInSec: z.number().optional().describe("Seconds remaining on the licence at the moment this returned."),
         paidUsdc: z.number().optional().describe("The author leg paid, in USDC."),
         costUsdc: z.number().optional().describe("The true total debited from the session budget (author + any fee legs)."),
         licenseId: z.string().optional().describe("Citation License jti — the settlement's id. Prefer citing proofUrl, which a reader can open."),
@@ -1122,6 +1234,49 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       if (refusal) {
         emitAudit({ slug, action: "skip", reason: refusal, agentId: policy.agentId });
         return structured({ ok: false, error: refusal, errorCode: "rejected", retryable: false, ...envelope() });
+      }
+      /** Set when a live held licence was presented for this read and the publisher refused it, so
+       *  the purchase below can declare itself a SECOND payment rather than an ordinary toll. */
+      let heldRefusal: string | undefined;
+      // ALREADY BOUGHT? Ask before spending, not after.
+      //
+      // This tool only ever SAVED licences; checking them was left to the caller remembering to
+      // call naulon_read_held first. A model that forgets — or one whose read_held missed for any
+      // of the reasons that tool now names — pays a second toll for bytes it already owns. The
+      // held store is right here, the check is free, and a duplicate charge is not recoverable.
+      try {
+        const heldNow = await heldStore.load();
+        const liveReq = heldRequestFor(gateBase(), slug, target);
+        const already = findHeld([...heldNow.values()], liveReq, Math.floor(Date.now() / 1000));
+        if (already && !already.pop) {
+          const free = await rereadWithLicense(target, KIND, already.jws, popWallet().address);
+          if (free.ok) {
+            emitAudit({ slug, action: "cache", reason: "served from a live held licence — nothing spent", agentId: policy.agentId });
+            return structured({
+              ok: true,
+              content: free.content,
+              licenseId: already.jti,
+              ...proofLinksFor({ jti: already.jti, aud: already.aud, paidUrl: target }),
+              paidUsdc: 0,
+              costUsdc: 0,
+              ...(already.terms ? { terms: already.terms } : {}),
+              usage: usageSentence(already.terms),
+              reused: true,
+              expiresAt: already.exp,
+              expiresInSec: Math.max(0, already.exp - Math.floor(Date.now() / 1000)),
+              ...envelope(),
+            });
+          }
+          // Held but the publisher refused it. Fall through and pay — the read is what the caller
+          // asked for — but leave a trace, because this is the exact silent path that turned one
+          // article into four tolls. The trace is a LOG for the operator and a typed field on the
+          // audit event + the result for everyone else; a console line alone is what nobody reads.
+          heldRefusal = free.error ?? "the publisher refused a licence it had issued";
+          console.warn(`[naulon] pay_and_read: a live held licence for slug=${slug} was refused by the publisher (${heldRefusal}); paying again`);
+        }
+      } catch (err) {
+        // A held-store fault must never block a paid read — it just means "pay, as before".
+        console.warn(`[naulon] pay_and_read: held-licence pre-check failed (${err instanceof Error ? err.message : String(err)})`);
       }
       const outcome = await probe(target, KIND, payerAddress());
       if (outcome.status !== "gated") {
@@ -1252,7 +1407,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             const held = await heldStore.load();
             // Capture the url actually paid so a later read_held re-fetches THIS link
             // verbatim, not a reconstructed /essays/<slug> template that 404s off-shape.
-            held.set(decoded.slug, { ...decoded, jws: result.license, url: target });
+            // Keyed by `jti` (`heldKey`), never by slug — two publishers sharing a generic slug
+            // used to evict each other, so one of two paid licences vanished and was re-bought.
+            held.set(heldKey(decoded), { ...decoded, jws: result.license, url: target });
             await heldStore.save(held);
           } catch {
             /* swallow — a held-license persist failure must never fail an already-paid read */
@@ -1270,7 +1427,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       emitAudit({
         slug,
         action: "pay",
-        reason: `paid $${round6(result.paidUsdc ?? 0)} (true total $${cost})`,
+        reason: heldRefusal
+          ? `paid $${round6(result.paidUsdc ?? 0)} (true total $${cost}) — SECOND PAYMENT: a live licence was refused (${heldRefusal})`
+          : `paid $${round6(result.paidUsdc ?? 0)} (true total $${cost})`,
+        ...(heldRefusal ? { heldRefusal } : {}),
         priceUsdc: quoted.priceUsdc,
         paidUsdc: result.paidUsdc,
         costUsdc: cost,
@@ -1279,19 +1439,36 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         agentId: policyFromConfig().agentId,
       });
 
-      const explorerUrl = explorerTxUrl(activeNetwork(), result.settlementRef);
+      // `explorerTxUrl` now refuses a non-hash ref, so a batched transfer id yields NO link
+      // rather than one that 404s. The kind travels beside the ref so the model can describe it
+      // truthfully instead of calling every settlement "on-chain".
+      // The chain the toll SETTLED on — the publisher's, off the 402 this pay was signed against.
+      // `activeNetwork()` was this buyer process's own configured chain, which is a different
+      // question and frequently a different answer.
+      const settledNet = quotedNetwork(quoted.requirements.network);
+      const explorerUrl = explorerTxUrl(settledNet, result.settlementRef);
+      const heldDecoded = result.license ? decodeHeld(result.license) : null;
+      const heldExp = heldDecoded?.exp;
       return structured({
         ok: true,
         content: result.content,
         settlementRef: result.settlementRef,
+        ...(result.settlementRef ? { settlementRefKind: settlementRefKind(result.settlementRef) } : {}),
         ...(explorerUrl ? { explorerTxUrl: explorerUrl } : {}),
+        ...(heldExp === undefined
+          ? {}
+          : { expiresAt: heldExp, expiresInSec: Math.max(0, heldExp - Math.floor(Date.now() / 1000)) }),
+        ...(heldDecoded?.terms ? { terms: heldDecoded.terms } : {}),
+        usage: usageSentence(heldDecoded?.terms),
+        reused: false,
         paidUsdc: result.paidUsdc,
         // Report the total ACTUALLY authorized (what the budget was debited), not the pre-pay quote.
         costUsdc: result.costUsdc ?? cost,
         ...(licenseId ? { licenseId } : {}),
         ...proofLinks,
         ...(licenseVerified === undefined ? {} : { licenseVerified }),
-        ...envelope(),
+        ...(heldRefusal ? { heldRefusal } : {}),
+        ...envelope(settledNet),
       });
       });
     },
@@ -1304,13 +1481,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       title: "Re-read a source you already licensed (free)",
       description:
         "Re-read a source you previously paid for, FREE, using the held Citation License — no second " +
-        "payment. This also covers a source inside a SCOPE licence you bought up front: pass the url " +
-        "and any live licence whose scope covers that path is used. If the license is holder-of-key " +
-        "bound, a fresh wallet proof-of-possession is signed automatically. Returns ok:false (telling " +
-        "you to pay) if no live license covers it. " +
-        "A citation must always carry a LIVE license (jti): when the held one has expired this returns " +
-        "ok:false — re-read here to re-verify, or pay again. Any locally-cached copy of earlier content " +
-        "is your own continuity only; it carries no live license and must never be cited as a paid read.",
+        "payment. Held licences are SHORT-LIVED (typically 10 minutes from purchase); `expiresAt` on " +
+        "the original pay tells you when. This also covers a source inside a SCOPE licence you bought " +
+        "up front: pass the url and any live licence whose scope covers that path is used. If the " +
+        "license is holder-of-key bound, a fresh wallet proof-of-possession is signed automatically. " +
+        "Returns ok:false with a `reason` when no live licence covers it. Any locally-cached copy of " +
+        "earlier content is your own continuity only; it carries no live license and must never be " +
+        "cited as a paid read.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug you previously paid for with naulon_pay_and_read."),
         url: z
@@ -1318,8 +1495,11 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .url()
           .optional()
           .describe(
-            "The exact url to re-read. Required to use a SCOPE licence, whose coverage is decided by " +
-              "path and which is therefore filed under no single slug. Ignored unless it is on this gate.",
+            "The exact url this source was paid at. Pass it whenever you have it — a held licence is " +
+              "matched against the ISSUER derived from this url, so a url on a different host than the " +
+              "one that minted the licence will MISS. Required to use a SCOPE licence, whose coverage " +
+              "is decided by path and which is therefore filed under no single slug. Never pass a " +
+              "proofUrl or recordUrl here; those are naulon's hosts, not the publisher's.",
           ),
       },
       outputSchema: {
@@ -1328,7 +1508,29 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         licenseId: z.string().optional(),
         proofUrl: z.string().optional().describe("CITE THIS beside the source — the same proof page the original pay returned."),
         recordUrl: z.string().optional().describe("The gate's permanent citation record for the settlement behind this licence."),
+        terms: z
+          .array(z.string())
+          .optional()
+          .describe("The RSL usage terms this payment executed — WHAT YOU MAY DO with the content."),
+        usage: z
+          .string()
+          .optional()
+          .describe(
+            "The grant in one sentence, derived from the licence. THIS IS THE AUTHORITY on what you " +
+              "may do with the content — do not substitute a stricter guess of your own.",
+          ),
         paidUsdc: z.number().optional().describe("Always 0 on a held re-read."),
+        reason: z
+          .enum(["expired", "not_matched", "never_held", "refused_by_publisher"])
+          .optional()
+          .describe(
+            "Why the free re-read did not happen. `expired` — you held it, its window closed. " +
+              "`not_matched` — you hold a licence for this slug but it was not matched (usually the " +
+              "url's host differs from the issuer that minted it; retry with the exact paid url). " +
+              "`never_held` — nothing for this source. `refused_by_publisher` — the licence was " +
+              "presented and the publisher's site rejected it, which may be a fault on THEIR side, " +
+              "not yours.",
+          ),
         error: z.string().optional(),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -1337,19 +1539,28 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       const held = await heldStore.load();
       const req = heldRequestFor(gateBase(), slug, url);
       const nowSec = Math.floor(Date.now() / 1000);
-      const license = findHeld([...held.values()], req, nowSec);
+      const all = [...held.values()];
+      const license = findHeld(all, req, nowSec);
       if (!license) {
-        // The two misses are different problems and deserve different next moves: an EXPIRED
-        // licence means pay again, a missing one means you never bought this. Distinguished by
-        // asking the same matcher without the liveness cut-off, so the two answers cannot drift.
-        const expired = findHeld([...held.values()], req, 0) !== null;
-        return structured({
-          ok: false,
-          error: expired
-            ? "Held license has expired — pay again with naulon_pay_and_read."
-            : "No live license covers this — pay for it with naulon_pay_and_read. " +
-              "If you hold a scope licence, pass the exact url so its scope can be matched.",
-        });
+        // THREE misses, not two. `findHeld` collapses expiry, issuer mismatch and scope
+        // non-coverage into one null, and the old two-branch message reported the last two as
+        // "you never bought this" — a false statement about the caller's own wallet, and the
+        // one statement that guarantees a second payment. Holding a licence we failed to MATCH
+        // is a different next move (retry with the paid url) from holding none at all.
+        const expired = findHeld(all, req, 0) !== null;
+        const heldForSlug = all.some((h) => h.slug === slug);
+        const reason = expired ? "expired" : heldForSlug ? "not_matched" : "never_held";
+        const error = expired
+          ? "The licence you hold for this source has expired."
+          : heldForSlug
+            ? "You hold a licence for this source but it was not matched here — most often the url's " +
+              "host differs from the issuer that minted it. Retry with the exact url the toll was paid at."
+            : "No licence held for this source. If you hold a scope licence, pass the exact url so its " +
+              "scope can be matched.";
+        // Logged because this handler logged NOTHING, which is why a re-read that silently
+        // became a second toll was invisible in production for as long as it ran.
+        console.warn(`[naulon] read_held miss: slug=${slug} reason=${reason}`);
+        return structured({ ok: false, reason, error });
       }
 
       let proof: string | undefined;
@@ -1358,7 +1569,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         if (!proof) {
           return structured({
             ok: false,
-            error: "License is holder-of-key bound but the wallet cannot sign — pay again instead.",
+            reason: "not_matched",
+            error: "This licence is holder-of-key bound and the configured wallet cannot sign the proof.",
           });
         }
       }
@@ -1370,13 +1582,27 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       const target = license.scope ? req.url : (license.url ?? slugUrl(slug));
       const reread = await rereadWithLicense(target, KIND, license.jws, popWallet().address, proof);
       if (!reread.ok) {
-        return structured({ ok: false, error: reread.error ?? "re-read failed" });
+        // A live, matched licence the PUBLISHER refused. This is the shape that produced four
+        // tolls for one article: the licence was valid and the site could not verify it, so the
+        // only signal was a bare failure that read as "pay again". Name it, and say out loud that
+        // paying again may not be the caller's fault or their fix.
+        console.warn(`[naulon] read_held: publisher refused a live licence for slug=${slug} (${reread.error ?? "no detail"})`);
+        return structured({
+          ok: false,
+          reason: "refused_by_publisher",
+          error:
+            `The publisher refused a licence that is live and correctly held (${reread.error ?? "re-read failed"}). ` +
+            "This can be a misconfiguration on the publisher's side; paying again may incur a second " +
+            "toll without fixing it.",
+        });
       }
       return structured({
         ok: true,
         content: reread.content,
         licenseId: license.jti,
         ...proofLinksFor({ jti: license.jti, aud: license.aud, paidUrl: target }),
+        ...(license.terms ? { terms: license.terms } : {}),
+        usage: usageSentence(license.terms),
         paidUsdc: 0,
       });
     },

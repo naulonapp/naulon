@@ -24,6 +24,7 @@ import {
   type AttributedEvent,
   type ForgoneLeg,
   type LicenceFacts,
+  type LicenseTerm,
   type PublisherConfig,
 } from "@naulon/shared";
 import { licensing, type Quote, type SettlementLegReq } from "@naulon/enforce";
@@ -33,6 +34,16 @@ import { verifyAndSettle } from "./x402.ts";
 
 const cfg = getConfig();
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/**
+ * What a per-read toll sells, in RSL 1.0's vocabulary.
+ *
+ * `ai-input` is grounding: read it, quote it, reason over it, show it to the principal who paid.
+ * It is deliberately NOT `ai-train` (never sold) and carries no republication right — a toll buys
+ * one reader one read, not a licence to redistribute. Stated here so the buyer's agent can act on
+ * it instead of inferring, which it did badly and expensively.
+ */
+export const DEFAULT_TOLL_TERMS: LicenseTerm[] = ["ai-input"];
 
 export interface SettleResult {
   ok: boolean;
@@ -181,11 +192,19 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
         // Holder-of-key: bind to the (already non-zero) payer wallet so re-reads
         // need a proof-of-possession. Off → a v1 bearer license, demo unchanged.
         popBindAddress: cfg.LICENSE_POP ? payerResolved : undefined,
-        // Spread so every key stays ABSENT on a toll. `mintLicense` treats absent as "today's
-        // single-slug licence with sub = the payer", so a settle that passes no `licence` emits
-        // the same bytes it did before this field existed — which is what the parity test asserts.
+        // `scope`, `period` and `subject` stay ABSENT on a toll — a toll is one payment for one
+        // slug, and `mintLicense` reads absent as exactly that.
         ...(licence?.scope ? { scope: licence.scope } : {}),
-        ...(licence?.terms ? { terms: licence.terms } : {}),
+        // `terms` does NOT stay absent any more, and that is a deliberate break with the
+        // byte-parity the three below still keep.
+        //
+        // A toll was the one purchase that stated nothing about what it bought: the sale path
+        // populated the W6 vocabulary and the toll path — the common case, the one the rail runs
+        // on — carried none of it. A buyer therefore received bytes, a jti, and no machine-readable
+        // statement of rights, so every agent holding a paid read had to guess, and guessed the
+        // most restrictive thing available. `ai-input` is not a new grant; it is the name of what
+        // a citation toll has always sold, finally written down where the buyer can read it.
+        terms: licence?.terms ?? DEFAULT_TOLL_TERMS,
         ...(licence?.period ? { period: licence.period } : {}),
         ...(licence?.subject ? { subject: licence.subject } : {}),
       },

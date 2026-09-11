@@ -88,7 +88,7 @@ export { allocateByContribution } from "./allocation.ts";
 export type { SourceAllocation } from "./allocation.ts";
 
 // ── citation licenses (pay once, re-read free) ──────────────────────────────
-export { decodeHeld, fileHeldStore, findHeld, isLive, loadHeld, memoryHeldStore, saveHeld } from "./licenseStore.ts";
+export { decodeHeld, fileHeldStore, findHeld, heldKey, isLive, loadHeld, memoryHeldStore, saveHeld } from "./licenseStore.ts";
 export type { HeldLicense, HeldStore } from "./licenseStore.ts";
 export { buildPopProof } from "./pop.ts";
 
