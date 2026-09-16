@@ -273,7 +273,7 @@ async function defaultViemBroadcaster(
   tx: { to: `0x${string}`; data: `0x${string}` },
   net: SettlementNetwork,
 ): Promise<{ success: boolean; transaction?: string; errorReason?: string }> {
-  const { getConfig, relayerKeyFor } = await import("@naulon/shared");
+  const { relayerKeyFor, settlementRpcUrl } = await import("@naulon/shared");
   const relayerKey = relayerKeyFor(net);
   if (!relayerKey) {
     return {
@@ -283,17 +283,12 @@ async function defaultViemBroadcaster(
         : "RELAYER_PRIVATE_KEY_MAINNET required for mainnet memo-network settlement",
     };
   }
-  // Arc mainnet has no public RPC during the private preview — ARC_RPC_URL is required.
-  // Fail loud (a typed failure return, not a silent dial of the placeholder net.rpcUrl,
-  // which would just time out against a chain that isn't actually reachable there).
-  let rpcUrl = net.rpcUrl;
-  if (net.chainName === "arc") {
-    const arcRpcUrl = getConfig().ARC_RPC_URL;
-    if (!arcRpcUrl) {
-      return { success: false, errorReason: "ARC_RPC_URL required to settle on Arc mainnet (no public RPC in preview)" };
-    }
-    rpcUrl = arcRpcUrl;
-  }
+  // ARC_RPC_URL if an enrolled operator set one, else the registry's own URL — `settlementRpcUrl`
+  // owns that rule for every chain and both repos. It used to be a hard requirement on Arc mainnet,
+  // correctly, while the registry's Arc URL was a host that did not resolve; the registry now
+  // carries the public endpoint the SDK states, so requiring the env would refuse a settle the
+  // chain would have accepted.
+  const rpcUrl = settlementRpcUrl(net);
   const key = (relayerKey.startsWith("0x") ? relayerKey : `0x${relayerKey}`) as `0x${string}`;
   try {
     const [{ createWalletClient, http, defineChain }, { privateKeyToAccount }] = await Promise.all([

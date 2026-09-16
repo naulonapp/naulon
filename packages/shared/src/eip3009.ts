@@ -39,6 +39,32 @@ export const TRANSFER_WITH_AUTHORIZATION_TYPES = {
   ],
 } as const;
 
+/**
+ * EIP-712 typed-data type for the EIP-3009 RECEIVE authorization — the same six fields, signed
+ * against the same USDC domain, under a DIFFERENT primary type.
+ *
+ * The difference is the whole security property. `transferWithAuthorization` may be submitted by
+ * anyone, so a signed transfer sitting in a mempool can be relayed by a stranger. `receiveWithAuthorization`
+ * requires `msg.sender == to`, which binds the signature to ONE caller: the contract named as `to`.
+ *
+ * That is what makes a gasless Gateway deposit possible. Circle's GatewayWallet exposes
+ * `depositWithAuthorization(token, from, value, validAfter, validBefore, nonce, signature)` and pulls
+ * the funds via `receiveWithAuthorization` with itself as `to`
+ * (developers.circle.com/gateway/references/contract-interfaces-and-events). So the depositor signs
+ * off-chain, a relayer submits and pays the gas, and the authorization cannot be redirected to any
+ * other destination — not even by the relayer holding it.
+ */
+export const RECEIVE_WITH_AUTHORIZATION_TYPES = {
+  ReceiveWithAuthorization: [
+    { name: "from", type: "address" },
+    { name: "to", type: "address" },
+    { name: "value", type: "uint256" },
+    { name: "validAfter", type: "uint256" },
+    { name: "validBefore", type: "uint256" },
+    { name: "nonce", type: "bytes32" },
+  ],
+} as const;
+
 /** The USDC EIP-712 domain name/version — LAST-RESORT fallback only. The real values
  *  live per-network on `SettlementNetwork.usdcName`/`usdcVersion` (verified on-chain,
  *  e.g. Arc testnet = "USDC"/"2", NOT this mainnet FiatToken default), and the

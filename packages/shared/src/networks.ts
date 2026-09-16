@@ -358,6 +358,37 @@ export function arcPreviewHeaders(chain: string): Record<string, string> {
   return chain === "arc" ? { [ARC_PRIVATE_MAINNET_HEADER]: "true" } : {};
 }
 
+/**
+ * WHICH RPC a network is dialled on — the registry's URL, unless an operator has named their own.
+ *
+ * There is exactly one override, `ARC_RPC_URL`, and it exists because Arc's endpoints are
+ * credentialed during the private-mainnet phase: docs.arc.io/arc/references/rpc-endpoints still
+ * says "during the private mainnet phase, these endpoints are permissioned and require
+ * credentials", so an enrolled operator may hold a URL nobody else can use.
+ *
+ * Until 2026-09-16 the override was MANDATORY on Arc mainnet: three call sites (the settle relay
+ * here, and the buyer balance/withdraw/stray legs plus the code reader in the private control
+ * plane) each returned a typed failure when it was unset, because the registry's Arc URL was
+ * `https://rpc.arc.network` — written from the preview announcement, and a host that does not
+ * resolve. Failing loud was the right answer to a dead default.
+ *
+ * It is the wrong answer now. The registry carries the RPC the SDK states from 3.5.0, and it
+ * answers unauthenticated: measured 2026-09-16 at chainId 5042, block 21,085,319, with the USDC
+ * predeploy returning name "USDC" and the GatewayWallet at 0x7777…00eE carrying code. So the
+ * default is reachable, and a fleet that flips `SETTLEMENT_NETWORK=arc` without also setting an env
+ * var should settle rather than refuse every leg with "ARC_RPC_URL required".
+ *
+ * The override stays first because the docs and the measurement disagree, and the docs describe the
+ * side that could still bite: a credentialed endpoint an operator was given must keep winning.
+ */
+export function settlementRpcUrl(net: SettlementNetwork): string {
+  if (net.chainName === "arc") {
+    const override = getConfig().ARC_RPC_URL;
+    if (override) return override;
+  }
+  return net.rpcUrl;
+}
+
 /** The Gateway batching x402 `extra` block, naming the verifying contract. */
 export function gatewayExtra(net: SettlementNetwork = activeNetwork()): Record<string, unknown> {
   return { name: "GatewayWalletBatched", version: "1", verifyingContract: net.gatewayWallet };

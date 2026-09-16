@@ -22,6 +22,7 @@ import {
   networkByCaip2,
   NETWORKS,
   relayerKeyFor,
+  settlementRpcUrl,
   supportsMemo,
   supportsModularWallet,
   type NetworkName,
@@ -35,6 +36,7 @@ const ALL: NetworkName[] = [
 
 afterEach(() => {
   delete process.env.SETTLEMENT_NETWORK;
+  delete process.env.ARC_RPC_URL;
   delete process.env.RELAYER_PRIVATE_KEY;
   delete process.env.RELAYER_PRIVATE_KEY_MAINNET;
   resetConfig();
@@ -248,4 +250,30 @@ test("arc mainnet ships WITHOUT a memo field until the predeploy is verified on 
   assert.equal(supportsMemo(NETWORKS.arc), false, "arc mainnet memo is unverified — must be absent");
   assert.equal(NETWORKS.arc.testnet, false);
   assert.equal(NETWORKS.arc.network, "eip155:5042");
+});
+
+/**
+ * The RPC override. Arc's endpoints are credentialed during the private-mainnet phase, so an
+ * enrolled operator's URL has to win — but it must not be REQUIRED, which is what it was until
+ * 2026-09-16 and which would refuse every leg on a chain that now answers unauthenticated.
+ */
+test("settlementRpcUrl: the registry's URL is the default, on every chain", () => {
+  delete process.env.ARC_RPC_URL;
+  resetConfig();
+  assert.equal(settlementRpcUrl(NETWORKS.base), NETWORKS.base.rpcUrl);
+  assert.equal(settlementRpcUrl(NETWORKS.arcTestnet), NETWORKS.arcTestnet.rpcUrl);
+  // The case that mattered: Arc mainnet with no env set resolves rather than refusing.
+  assert.equal(settlementRpcUrl(NETWORKS.arc), "https://rpc.mainnet.arc.io");
+});
+
+test("settlementRpcUrl: ARC_RPC_URL overrides Arc mainnet and NOTHING else", () => {
+  process.env.ARC_RPC_URL = "https://enrolled.example/arc";
+  resetConfig();
+  assert.equal(settlementRpcUrl(NETWORKS.arc), "https://enrolled.example/arc");
+  // An Arc-specific credential must never be dialled for another chain — that would send an
+  // operator's permissioned endpoint traffic it was not issued for, and silently.
+  assert.equal(settlementRpcUrl(NETWORKS.base), NETWORKS.base.rpcUrl);
+  assert.equal(settlementRpcUrl(NETWORKS.arcTestnet), NETWORKS.arcTestnet.rpcUrl);
+  delete process.env.ARC_RPC_URL;
+  resetConfig();
 });
