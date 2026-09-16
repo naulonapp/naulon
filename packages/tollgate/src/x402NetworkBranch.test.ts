@@ -71,24 +71,24 @@ test("facilitatorBearer picks test key on testnet, live key on mainnet", () => {
   }
 });
 
-test("facilitatorHeaders: bearer + Arc-preview header, scoped to Arc only", () => {
+test("facilitatorHeaders: the bearer, and nothing chain-specific — Arc included", () => {
   process.env.CIRCLE_API_KEY = "live-key";
   resetConfig();
   try {
-    // Mainnet base with a live key: auth header only, no preview header.
     assert.deepEqual(facilitatorHeaders(NETWORKS.base), { authorization: "Bearer live-key" });
-    // Arc: BOTH the auth header and the private-mainnet preview header.
-    assert.deepEqual(facilitatorHeaders(NETWORKS.arc), {
-      authorization: "Bearer live-key",
-      "X-ARC-PRIVATE-MAINNET-ENABLED": "true",
-    });
-    // A different mainnet chain must never pick up the Arc-only preview header.
+    // Arc used to carry a second header, `X-ARC-PRIVATE-MAINNET-ENABLED`, opting the call into the
+    // private-mainnet preview. Arc mainnet went public on 2026-09-16; measured that day, the
+    // Gateway API returns the identical body for a domain-26 balances call with the header and
+    // without it. So Arc's headers are now byte-identical to every other mainnet's.
+    assert.deepEqual(facilitatorHeaders(NETWORKS.arc), { authorization: "Bearer live-key" });
     assert.deepEqual(facilitatorHeaders(NETWORKS.ethereum), { authorization: "Bearer live-key" });
-    assert.equal(
-      "X-ARC-PRIVATE-MAINNET-ENABLED" in facilitatorHeaders(NETWORKS.ethereum),
-      false,
-      "preview header must not leak onto a non-Arc mainnet",
-    );
+    for (const net of [NETWORKS.arc, NETWORKS.base, NETWORKS.ethereum]) {
+      assert.equal(
+        "X-ARC-PRIVATE-MAINNET-ENABLED" in facilitatorHeaders(net),
+        false,
+        `${net.chainName} must not send a retired preview header`,
+      );
+    }
   } finally {
     delete process.env.CIRCLE_API_KEY;
     resetConfig();
@@ -106,7 +106,7 @@ test("facilitatorHeaders: keyless testnet → empty header map", () => {
   }
 });
 
-test("facilitatorCacheKey: differs across env/url, isolates Arc from a same-endpoint mainnet, stable per env", () => {
+test("facilitatorCacheKey: differs across env/url, stable per env, one client per ENDPOINT", () => {
   process.env.CIRCLE_API_KEY = "live-key";
   resetConfig();
   try {
@@ -116,12 +116,12 @@ test("facilitatorCacheKey: differs across env/url, isolates Arc from a same-endp
     // this to reuse one client instead of rebuilding per call.
     assert.equal(facilitatorCacheKey(NETWORKS.base), baseKey);
 
-    // Arc shares base's mainnet facilitator endpoint + bearer, but must still key to
-    // a DIFFERENT client (the preview header only applies to Arc) — differing by
-    // exactly the trailing "arc" segment.
-    const arcKey = facilitatorCacheKey(NETWORKS.arc);
-    assert.notEqual(arcKey, baseKey);
-    assert.equal(arcKey, `${baseKey}arc`);
+    // Arc shares base's mainnet endpoint and bearer, and since the private-mainnet header was
+    // retired (2026-09-16) there is nothing left to tell the two clients apart — so they ARE one
+    // client, exactly as Base and Ethereum always were. The key is per endpoint, never per chain;
+    // the chain travels in each request.
+    assert.equal(facilitatorCacheKey(NETWORKS.arc), baseKey);
+    assert.equal(facilitatorCacheKey(NETWORKS.ethereum), baseKey);
 
     // A different bearer (env) → a different key.
     process.env.CIRCLE_API_KEY = "live-key-2";

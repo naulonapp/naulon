@@ -250,32 +250,22 @@ test("classifyGatewaySettlement: an unknown/future status is treated as pending,
 });
 
 // ── GatewayClient construction ───────────────────────────────────────────────
-// SDK 3.2.0 turned the Arc private-mainnet header on by itself
-// (`config.arcPrivateMainnet ?? config.chain === "arc"`). 3.3.0 deleted that option, so
-// every wrapper here now passes `headers` explicitly. Testing the pure config — rather
-// than mocking the SDK's dynamic import — is the same discipline as tollgate's
-// `facilitatorHeaders`; `newGatewayClient` is the only construction path, and it builds
-// its config from exactly this function.
+// Testing the pure config — rather than mocking the SDK's dynamic import — is the same
+// discipline as tollgate's `facilitatorHeaders`; `newGatewayClient` is the only construction
+// path, and it builds its config from exactly this function.
+//
+// Three tests here used to pin an Arc-only `headers` entry, because SDK 3.2.0 defaulted the
+// private-mainnet opt-in on and 3.3.0 deleted the default. Arc mainnet went public on 2026-09-16
+// and Circle stopped reading the header at all (measured: an Arc balances call answers identically
+// with it and without), so the config is the two fields the SDK needs.
 const { gatewayClientConfig } = await import("./gateway.ts");
 const KEY = generatePrivateKey();
 
-test("gatewayClientConfig carries the Arc preview header on arc mainnet", () => {
-  const config = gatewayClientConfig("arc", KEY);
-  assert.equal(config.chain, "arc");
-  assert.equal(config.privateKey, KEY);
-  assert.deepEqual(config.headers, { "X-ARC-PRIVATE-MAINNET-ENABLED": "true" });
-});
-
-test("gatewayClientConfig sends no preview header on any other chain", () => {
-  for (const chain of ["base", "baseSepolia", "arcTestnet", "ethereum"] as const) {
-    assert.deepEqual(gatewayClientConfig(chain, KEY).headers, {}, `${chain} must not opt in`);
-  }
-});
-
-test("gatewayClientConfig always sets headers — never undefined, which 3.3.0 reads as {}", () => {
-  // Guards the regression shape rather than its value: an omitted `headers` compiles fine
-  // and is exactly what silently dropped the header when the SDK's default went away.
-  for (const chain of ["arc", "base"] as const) {
-    assert.equal(typeof gatewayClientConfig(chain, KEY).headers, "object");
+test("gatewayClientConfig is the chain and the key, on every chain", () => {
+  for (const chain of ["arc", "base", "baseSepolia", "arcTestnet", "ethereum"] as const) {
+    const config = gatewayClientConfig(chain, KEY);
+    assert.equal(config.chain, chain);
+    assert.equal(config.privateKey, KEY);
+    assert.deepEqual(Object.keys(config).sort(), ["chain", "privateKey"], `${chain} config shape`);
   }
 });

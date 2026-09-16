@@ -18,7 +18,6 @@
 import { createHash } from "node:crypto";
 import {
   activeNetwork,
-  arcPreviewHeaders,
   getConfig,
   networkByCaip2,
   type ForgoneLeg,
@@ -114,33 +113,37 @@ export function facilitatorBearer(net: SettlementNetwork): string | undefined {
   return net.testnet ? (c.CIRCLE_API_KEY_TESTNET ?? c.CIRCLE_API_KEY) : c.CIRCLE_API_KEY;
 }
 
-/** The auth + Arc-preview header map for a network's facilitator calls: `authorization`
- *  when a bearer is configured (see `facilitatorBearer`), plus whatever preview headers
- *  the chain needs (`arcPreviewHeaders` — Arc mainnet only). Empty object when neither
- *  applies (the testnet facilitator works keyless). Pure + exported so it's unit-testable
- *  without module-mocking the SDK's dynamic import — `getFacilitator` is the only
- *  production caller, so this IS the code that runs, not a parallel copy.
+/** The auth header map for a network's facilitator calls: `authorization` when a bearer is
+ *  configured (see `facilitatorBearer`), `{}` when none applies (the testnet facilitator works
+ *  keyless). Pure + exported so it's unit-testable without module-mocking the SDK's dynamic
+ *  import — `getFacilitator` is the only production caller, so this IS the code that runs, not a
+ *  parallel copy.
  *
- *  The Arc header string is NOT spelled here: `@naulon/shared` owns it, so this path and
- *  wayfarer's GatewayClient path cannot drift (SDK 3.3.0 deleted the SDK's own copy). */
+ *  It used to also carry `X-ARC-PRIVATE-MAINNET-ENABLED` on Arc mainnet. Arc mainnet went public
+ *  on 2026-09-16 and the opt-in became meaningless: measured the same day, `POST /v1/balances`
+ *  against domain 26 returns the identical body with the header and without it. A header that
+ *  names a preview the chain has left is a comment that reads as a requirement, so it is gone. */
 export function facilitatorHeaders(net: SettlementNetwork): Record<string, string> {
-  const headers: Record<string, string> = { ...arcPreviewHeaders(net.chainName) };
+  const headers: Record<string, string> = {};
   const bearer = facilitatorBearer(net);
   if (bearer) headers.authorization = `Bearer ${bearer}`;
   return headers;
 }
 
-/** The facilitator-client cache key for a network: endpoint + bearer + an Arc-preview
- *  flag, so a multi-network fleet never shares a client across a different endpoint,
- *  key, or preview requirement. Reads `GATEWAY_API_URL` FRESH (`getConfig()`, not the
- *  module-frozen `cfg`) so it stays self-consistent with `facilitatorBearer` (also
- *  fresh) within one `getFacilitator` call — see the module doc on `facilitatorBearer`.
- *  Pure + exported for direct unit testing. */
+/** The facilitator-client cache key for a network: endpoint + bearer, so a multi-network fleet
+ *  never shares a client across a different endpoint or key. Reads `GATEWAY_API_URL` FRESH
+ *  (`getConfig()`, not the module-frozen `cfg`) so it stays self-consistent with
+ *  `facilitatorBearer` (also fresh) within one `getFacilitator` call — see the module doc on
+ *  `facilitatorBearer`. Pure + exported for direct unit testing.
+ *
+ *  A third segment used to isolate Arc from a same-endpoint mainnet, because Arc's calls carried
+ *  the private-mainnet header and Base's did not. Nothing distinguishes the two clients now, so
+ *  Arc and Base share one facilitator client exactly as Base and Ethereum always have — the
+ *  client is per ENDPOINT, never per chain (the chain travels in each request). */
 export function facilitatorCacheKey(net: SettlementNetwork): string {
   const url = getConfig().GATEWAY_API_URL ?? net.gatewayApiUrl;
   const bearer = facilitatorBearer(net);
-  const arcFlag = net.chainName === "arc" ? "arc" : "";
-  return `${url}|${bearer ?? ""}|${arcFlag}`;
+  return `${url}|${bearer ?? ""}`;
 }
 
 async function getFacilitator(net: SettlementNetwork = activeNetwork()): Promise<FacilitatorClient> {
