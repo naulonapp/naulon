@@ -110,7 +110,9 @@ export interface SettlementNetwork {
   };
   /** Circle Modular Wallets transport URL suffix (the browser embedded passkey wallet).
    *  Present ONLY on chains Circle's Modular Wallets support; ABSENT on the four
-   *  gateway-only mainnets (sei/sonic/hyperEvm/worldChain) and Arc mainnet. The portal
+   *  gateway-only mainnets (sei/sonic/hyperEvm/worldChain). Arc mainnet was in that list
+   *  until 2026-09-16 and is not any more — the live client key was measured against the
+   *  `arc` transport and accepted, on both the RPC and the passkey plane. The portal
    *  gates its embedded-wallet UI on the PRESENCE of this field (field-presence
    *  capability, mirroring `memo`/`supportsMemo`) — a chain without it takes
    *  API/agent buyers only. The modular transport URL is `clientUrl + '/' + this`. */
@@ -264,8 +266,25 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     // Arc mainnet with it failed, which `cfg.ARC_RPC_URL` was masking by being mandatory.
     rpcUrl: "https://rpc.mainnet.arc.io",
     testnet: false,
-    // NO memo field: the Arc mainnet Memo predeploy is unverified. Add only after an
-    // on-chain read confirms it (illegal-state-unrepresentable — never assume a capability).
+    // Blockscout, as Arc's own network-details table states it (docs.arc.io "connect to Arc":
+    // Explorer URL `https://explorer.arc.io`). Verified 2026-09-16 by rendering a real mainnet
+    // transaction there, not by the 200 the origin returns for any path — it sits behind a
+    // Cloudflare challenge, so an unauthenticated HEAD proves nothing either way.
+    explorer: "https://explorer.arc.io",
+    // Circle's published same-chain Gateway withdrawal gas fee for Arc: $0.0035, the cheapest of
+    // the thirteen. Read live 2026-09-16 from developers.circle.com/gateway/references/fees.
+    gatewayWithdrawFeeMicro: 3500,
+    // Circle Modular Wallets DO support Arc mainnet. Measured 2026-09-16 with the live client key
+    // through `scripts/circle-key-check.sh` (naulon-cloud): the `arc` transport answered
+    // `eth_blockNumber` 200 and the passkey RP plane accepted the same key. The registry said
+    // otherwise until now — written when Arc mainnet was a private preview.
+    modularChainName: "arc",
+    // NO memo field, and now for the SECOND reason rather than the first. The address is no longer
+    // unverified: `eth_getCode` at 0x5294E9927c3306DcBaDb03fe70b92e01cCede505 returns the same
+    // 2,458 bytes (sha256 031d06a5fba498e4) on Arc mainnet as on Arc testnet, measured 2026-09-16.
+    // It stays absent because of the ECONOMICS the capability carries, which mainnet does not
+    // change: see networks.test.ts, "the self-relay rail is TESTNET-ONLY". Verifying the address
+    // was necessary and is not sufficient.
   },
 };
 
@@ -323,39 +342,6 @@ export function explorerTxUrl(net: SettlementNetwork, ref: string | undefined): 
 export function relayerKeyFor(net: SettlementNetwork): string | undefined {
   const cfg = getConfig();
   return net.testnet ? cfg.RELAYER_PRIVATE_KEY : cfg.RELAYER_PRIVATE_KEY_MAINNET;
-}
-
-/** The header that opts a call into Arc's private-mainnet preview, before Arc mainnet
- *  is publicly available. We own this string because Circle stopped owning it: SDK
- *  `@circle-fin/x402-batching` 3.2.0 exported `ARC_PRIVATE_MAINNET_HEADER` +
- *  `arcPrivateMainnetHeaders()`, and 3.3.0 DELETED both, replacing the dedicated
- *  `arcPrivateMainnet?: boolean` config on the Gateway client and the facilitator client
- *  with a generic `headers?: Record<string, string>` bag. */
-export const ARC_PRIVATE_MAINNET_HEADER = "X-ARC-PRIVATE-MAINNET-ENABLED";
-
-/** The preview headers a Gateway/facilitator call needs for `chain`: the Arc
- *  private-mainnet opt-in on Arc MAINNET only, `{}` everywhere else (including
- *  `arcTestnet` — the public testnet needs no opt-in).
- *
- *  This is the single owner of that rule. Two call sites depend on it and they used to
- *  disagree in kind: the facilitator path spelled the literal itself, while the Gateway
- *  client path never spelled it at all and inherited SDK 3.2.0's implicit
- *  `config.arcPrivateMainnet ?? config.chain === "arc"` default. 3.3.0 deleted that
- *  default, so an inherited header became a MISSING header — visible only on the first
- *  Arc-mainnet call, and only on the funding half (deposit/withdraw/balances) while
- *  settle kept working. Both sides now ask this function, so neither can drift from the
- *  other.
- *
- *  Narrows on the chain NAME, not on `net.testnet` or a memo capability — the preview is
- *  an Arc-mainnet enrollment fact, unrelated to what the chain can do.
- *
- *  Takes a bare `string`, not `NetworkName`: the SDK's own `SupportedChainName` is WIDER
- *  than this registry (it carries 12 testnets NETWORKS deliberately omits — sepolia,
- *  arbitrumSepolia, polygonAmoy, …), so a `NetworkName` parameter would reject the
- *  wayfarer call sites that pass an SDK chain name through. Narrowing it properly would
- *  mean importing the SDK's type here, and `shared` stays SDK-free by design. */
-export function arcPreviewHeaders(chain: string): Record<string, string> {
-  return chain === "arc" ? { [ARC_PRIVATE_MAINNET_HEADER]: "true" } : {};
 }
 
 /**

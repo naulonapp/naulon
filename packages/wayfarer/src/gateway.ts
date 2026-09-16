@@ -20,7 +20,7 @@
  * deposits via the SDK `GatewayClient` for backwards compatibility.
  */
 import { type Address, type Hex, type TypedDataDomain } from "viem";
-import { activeNetwork, arcPreviewHeaders, getConfig } from "@naulon/shared";
+import { activeNetwork, getConfig } from "@naulon/shared";
 // Type-only (erased at runtime) — the SDK itself is loaded lazily so the mock path never pulls it in.
 import type {
   Balances,
@@ -305,18 +305,16 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
  * sites below all build their client through `newGatewayClient`, so this IS the config
  * that runs, not a parallel copy.
  *
- * `headers` is the load-bearing part. SDK 3.2.0 turned the Arc private-mainnet header on
- * by itself (`config.arcPrivateMainnet ?? config.chain === "arc"`); 3.3.0 deleted that
- * default along with the whole `arcPrivateMainnet` option, so a client built with only
- * `{chain, privateKey}` now sends nothing. Passing it explicitly keeps Arc-mainnet
- * funding calls behaving exactly as they did on 3.2.0, and — unlike the old default —
- * says so out loud at a spot a reader can find.
+ * It used to add `X-ARC-PRIVATE-MAINNET-ENABLED` on Arc, restoring by hand the default SDK 3.2.0
+ * applied and 3.3.0 deleted. Arc mainnet went public on 2026-09-16, which retired the opt-in
+ * itself: measured that day, the Gateway API answers an Arc (domain 26) balances call identically
+ * with the header and without it. So the config is the two fields the SDK needs and nothing else.
  */
 export function gatewayClientConfig(
   chain: SupportedChainName,
   privateKey: Hex,
-): { chain: SupportedChainName; privateKey: Hex; headers: Record<string, string> } {
-  return { chain, privateKey, headers: arcPreviewHeaders(chain) };
+): { chain: SupportedChainName; privateKey: Hex } {
+  return { chain, privateKey };
 }
 
 /** One owner for every `GatewayClient` construction in this module: the lazy SDK import

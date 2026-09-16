@@ -14,8 +14,6 @@ import { afterEach, test } from "node:test";
 import { resetConfig } from "./config.ts";
 import {
   activeNetwork,
-  ARC_PRIVATE_MAINNET_HEADER,
-  arcPreviewHeaders,
   ARC_TESTNET,
   gatewayExtra,
   getNetwork,
@@ -140,9 +138,10 @@ test("only Arc carries the memo capability — Base networks never do", () => {
  * only above ~$0.01/payment, batched settlement down to $0.000001.
  *
  * So this test pins the COMPLETE set. It is not here to describe today's registry — it is
- * here so that adding `memo` to a MAINNET entry cannot happen quietly. `arc` mainnet is the
- * one that will tempt someone: its entry says "Add only after an on-chain read confirms it",
- * which is true about the ADDRESS and silent about the ECONOMICS.
+ * here so that adding `memo` to a MAINNET entry cannot happen quietly. `arc` mainnet is the one
+ * that will tempt someone, and as of 2026-09-16 the tempting half is DONE: the predeploy is
+ * verified on Arc mainnet, byte-identical to the testnet one. That was the necessary half. This
+ * test is the sufficient half, and it has not moved.
  *
  * If you are here because this test failed: the address being verified is necessary and not
  * sufficient. State what a settle will cost against the fee at the price that network will
@@ -209,7 +208,7 @@ test("all 12 mainnets carry the mainnet GatewayWallet; both testnets carry the t
 
 test("modular-wallet capability is present exactly on the modular-supported chains", () => {
   const MODULAR = new Set<NetworkName>([
-    "base", "ethereum", "arbitrum", "optimism", "polygon", "avalanche", "unichain",
+    "arc", "base", "ethereum", "arbitrum", "optimism", "polygon", "avalanche", "unichain",
     "arcTestnet", "baseSepolia",
   ]);
   for (const name of ALL) {
@@ -217,37 +216,20 @@ test("modular-wallet capability is present exactly on the modular-supported chai
     assert.equal(supportsModularWallet(net), MODULAR.has(name), `${name} modular capability`);
     if (supportsModularWallet(net)) assert.equal(typeof net.modularChainName, "string");
   }
-  // The four gateway-only mainnets + arc-mainnet must NOT advertise an embedded wallet.
-  for (const name of ["sei", "sonic", "hyperEvm", "worldChain", "arc"] as NetworkName[]) {
+  // The four gateway-only mainnets must NOT advertise an embedded wallet. Arc mainnet was in this
+  // list until 2026-09-16, when the live client key was measured against the `arc` transport and
+  // accepted (scripts/circle-key-check.sh in naulon-cloud) — a buyer on Arc gets the passkey wallet.
+  for (const name of ["sei", "sonic", "hyperEvm", "worldChain"] as NetworkName[]) {
     assert.equal(supportsModularWallet(NETWORKS[name]), false, `${name} must be API-buyers-only`);
   }
 });
 
-// The SDK used to own this rule and then deleted it (3.2.0 exported
-// `arcPrivateMainnetHeaders()`; 3.3.0 removed it and the `arcPrivateMainnet` option that
-// defaulted it on for `chain === "arc"`). These pin OUR copy, since both the facilitator
-// path (tollgate `facilitatorHeaders`) and the funding path (wayfarer
-// `gatewayClientConfig`) now read it from here.
-test("the Arc preview header is sent on arc MAINNET and nowhere else — arcTestnet included", () => {
-  assert.deepEqual(arcPreviewHeaders("arc"), { "X-ARC-PRIVATE-MAINNET-ENABLED": "true" });
-  for (const name of ALL) {
-    if (name === "arc") continue;
-    assert.deepEqual(arcPreviewHeaders(name), {}, `${name} must not opt into the Arc preview`);
-  }
-  // Chains the SDK supports but this registry deliberately omits (12 extra testnets) reach
-  // this function too — via wayfarer's SupportedChainName, which is wider than NetworkName.
-  assert.deepEqual(arcPreviewHeaders("sepolia"), {});
-});
-
-test("the Arc preview header name is the exact string Circle's facilitator reads", () => {
-  // Was `ARC_PRIVATE_MAINNET_HEADER` in the SDK until 3.3.0 deleted it; a rename here is a
-  // silent 'not enrolled' on Arc mainnet, so the literal is asserted, not referenced.
-  assert.equal(ARC_PRIVATE_MAINNET_HEADER, "X-ARC-PRIVATE-MAINNET-ENABLED");
-  assert.equal(Object.keys(arcPreviewHeaders("arc"))[0], ARC_PRIVATE_MAINNET_HEADER);
-});
-
-test("arc mainnet ships WITHOUT a memo field until the predeploy is verified on mainnet", () => {
-  assert.equal(supportsMemo(NETWORKS.arc), false, "arc mainnet memo is unverified — must be absent");
+test("arc mainnet ships WITHOUT a memo field — the address is verified, the economics still refuse it", () => {
+  // The predeploy IS there: `eth_getCode` returns bytes identical to the testnet contract
+  // (sha256 031d06a5fba498e4, measured 2026-09-16). Absence is now a cost decision, not an
+  // unknown — a memo settle self-relays one transaction per toll at our own gas. See the
+  // self-relay cost guard above before changing this.
+  assert.equal(supportsMemo(NETWORKS.arc), false, "arc mainnet must not self-relay — see the cost guard");
   assert.equal(NETWORKS.arc.testnet, false);
   assert.equal(NETWORKS.arc.network, "eip155:5042");
 });

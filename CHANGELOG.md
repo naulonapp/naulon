@@ -18,6 +18,28 @@ tags and the auto-generated notes on each GitHub Release.
 
 Unpublished — the packages below are unbumped on npm until the next tag.
 
+`@naulon/shared` — **Arc mainnet is a first-class chain, and the private-preview scaffolding
+around it is gone.** Arc opened publicly on 2026-09-16. `NETWORKS.arc` gains the explorer Arc
+published (`https://explorer.arc.io`, confirmed by rendering a real mainnet transaction), Circle's
+published Gateway withdrawal fee for the chain (`gatewayWithdrawFeeMicro: 3500`, the cheapest of
+the thirteen), and `modularChainName: "arc"` — Circle's Modular Wallets accept the chain, measured
+with a live client key on both the RPC and the passkey plane, so a buyer on Arc gets the passkey
+wallet the registry previously said did not exist there.
+
+**Removed, and this one is breaking for anyone who imported it:** `ARC_PRIVATE_MAINNET_HEADER` and
+`arcPreviewHeaders()`. They existed to opt a call into Arc's private-mainnet preview, and the
+preview is over: measured the same day, Circle's Gateway API returns an identical body for a
+domain-26 balances call with the header and without it. `@naulon/tollgate`'s `facilitatorHeaders`
+is now the bearer alone, and its `facilitatorCacheKey` drops the Arc segment that isolated Arc from
+a same-endpoint mainnet, so Arc and Base share one facilitator client exactly as Base and Ethereum
+always have. `@naulon/wayfarer`'s `gatewayClientConfig` returns `{chain, privateKey}` with no
+`headers` field.
+
+`NETWORKS.arc` still carries no `memo`. The predeploy IS on mainnet — byte-identical to the testnet
+contract — but a memo settle self-relays one transaction per toll at our own gas, which is the
+economics the cost guard in `networks.test.ts` refuses. The address being verified was necessary
+and is not sufficient.
+
 `@naulon/enforce` — **the middleware now answers `/license.xml` itself**, so an in-app
 publisher's licence needs no wiring at all. Every publisher is told to add
 `License: https://<their host>/license.xml` to robots.txt — RSL's primary discovery
