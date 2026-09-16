@@ -32,8 +32,8 @@ function errorCode(err: unknown): string | undefined {
   return undefined;
 }
 
-test("every NETWORKS entry matches the installed SDK CHAIN_CONFIGS (chainId/usdc/gatewayWallet)", async () => {
-  let CHAIN_CONFIGS: Record<string, { chain: { id: number }; usdc: string; gatewayWallet: string }>;
+test("every NETWORKS entry matches the installed SDK CHAIN_CONFIGS (chainId/usdc/gatewayWallet/rpcUrl)", async () => {
+  let CHAIN_CONFIGS: Record<string, { chain: { id: number }; usdc: string; gatewayWallet: string; rpcUrl?: string }>;
   try {
     ({ CHAIN_CONFIGS } = await import("@circle-fin/x402-batching/client"));
   } catch (err) {
@@ -52,5 +52,15 @@ test("every NETWORKS entry matches the installed SDK CHAIN_CONFIGS (chainId/usdc
     assert.equal(net.chainId, sdk.chain.id, `${key} chainId`);
     assert.equal(net.usdc.toLowerCase(), sdk.usdc.toLowerCase(), `${key} usdc`);
     assert.equal(net.gatewayWallet.toLowerCase(), sdk.gatewayWallet.toLowerCase(), `${key} gatewayWallet`);
+    // THE RPC IS PART OF THE MIRROR, and leaving it out is how the one that mattered got through.
+    // Arc mainnet's entry said `https://rpc.arc.network` — written from the preview announcement, a
+    // host that does not resolve — while the SDK stated `https://rpc.mainnet.arc.io`. Nothing
+    // compared them for months, and every on-chain leg on that chain dials this field: the settle
+    // relay, the buyer's balance read, a withdrawal's mint, a stray return.
+    //
+    // Compared only where the SDK states one. It omits `rpcUrl` for chains where its own client
+    // falls back to viem's default endpoint, and asserting a disagreement against an absent value
+    // would fail for chains nobody is wrong about.
+    if (sdk.rpcUrl) assert.equal(net.rpcUrl, sdk.rpcUrl, `${key} rpcUrl`);
   }
 });

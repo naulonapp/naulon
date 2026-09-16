@@ -65,7 +65,11 @@ export const configSchema = z.object({
   // the testnet-vs-mainnet facilitator) from one switch. Default arcTestnet so a
   // misconfigured deploy settles on testnet, never silently on mainnet. See
   // shared/networks.ts for the per-network constants.
-  SETTLEMENT_NETWORK: z.enum(["arcTestnet", "baseSepolia", "base"]).default("arcTestnet"),
+  // `arc` joined the list on 2026-09-16, the day Arc mainnet's public RPC opened and the registry
+  // entry was verified on chain (name USDC / version 2 / decimals 6, chainId 5042). Until then the
+  // enum would have refused the value outright — a fleet that flipped the env to `arc` would not have
+  // booted, which is the worst possible moment to discover a validation list.
+  SETTLEMENT_NETWORK: z.enum(["arcTestnet", "baseSepolia", "base", "arc"]).default("arcTestnet"),
 
   // Circle Gateway. GATEWAY_API_URL overrides the facilitator endpoint; the
   // testnet facilitator needs no key.

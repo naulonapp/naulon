@@ -251,12 +251,18 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
   arc: {
     chainName: "arc", network: "eip155:5042", chainId: 5042,
     usdc: "0x3600000000000000000000000000000000000000",
-    // Arc mainnet's USDC EIP-712 domain is UNVERIFIED (chain not public). Left unset;
-    // the memo rail (which reads these) is absent until verified on-chain at enrollment.
+    // VERIFIED ON MAINNET 2026-09-16, the day the public RPC opened: the Arc predeploy reports
+    // name "USDC", version "2", decimals 6 — the same as Arc testnet, and NOT the mainnet FiatToken
+    // "USD Coin" that `usdcDomain` falls back to. Stated rather than defaulted, because a signature
+    // built over the wrong domain name is rejected by the token after the gas is spent.
+    usdcName: "USDC", usdcVersion: "2",
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR,
-    // No public RPC yet — the settle path substitutes cfg.ARC_RPC_URL (fail-loud if unset).
-    rpcUrl: "https://rpc.arc.network",
+    // The PUBLIC Arc mainnet RPC, as the SDK states it from 3.5.0 (`CHAIN_CONFIGS.arc.rpcUrl`) and
+    // as measured here: chainId 5042, block 21,081,216 on 2026-09-16. The previous value
+    // `https://rpc.arc.network` was written from the preview and does not resolve — anything dialling
+    // Arc mainnet with it failed, which `cfg.ARC_RPC_URL` was masking by being mandatory.
+    rpcUrl: "https://rpc.mainnet.arc.io",
     testnet: false,
     // NO memo field: the Arc mainnet Memo predeploy is unverified. Add only after an
     // on-chain read confirms it (illegal-state-unrepresentable — never assume a capability).
@@ -350,6 +356,37 @@ export const ARC_PRIVATE_MAINNET_HEADER = "X-ARC-PRIVATE-MAINNET-ENABLED";
  *  mean importing the SDK's type here, and `shared` stays SDK-free by design. */
 export function arcPreviewHeaders(chain: string): Record<string, string> {
   return chain === "arc" ? { [ARC_PRIVATE_MAINNET_HEADER]: "true" } : {};
+}
+
+/**
+ * WHICH RPC a network is dialled on — the registry's URL, unless an operator has named their own.
+ *
+ * There is exactly one override, `ARC_RPC_URL`, and it exists because Arc's endpoints are
+ * credentialed during the private-mainnet phase: docs.arc.io/arc/references/rpc-endpoints still
+ * says "during the private mainnet phase, these endpoints are permissioned and require
+ * credentials", so an enrolled operator may hold a URL nobody else can use.
+ *
+ * Until 2026-09-16 the override was MANDATORY on Arc mainnet: three call sites (the settle relay
+ * here, and the buyer balance/withdraw/stray legs plus the code reader in the private control
+ * plane) each returned a typed failure when it was unset, because the registry's Arc URL was
+ * `https://rpc.arc.network` — written from the preview announcement, and a host that does not
+ * resolve. Failing loud was the right answer to a dead default.
+ *
+ * It is the wrong answer now. The registry carries the RPC the SDK states from 3.5.0, and it
+ * answers unauthenticated: measured 2026-09-16 at chainId 5042, block 21,085,319, with the USDC
+ * predeploy returning name "USDC" and the GatewayWallet at 0x7777…00eE carrying code. So the
+ * default is reachable, and a fleet that flips `SETTLEMENT_NETWORK=arc` without also setting an env
+ * var should settle rather than refuse every leg with "ARC_RPC_URL required".
+ *
+ * The override stays first because the docs and the measurement disagree, and the docs describe the
+ * side that could still bite: a credentialed endpoint an operator was given must keep winning.
+ */
+export function settlementRpcUrl(net: SettlementNetwork): string {
+  if (net.chainName === "arc") {
+    const override = getConfig().ARC_RPC_URL;
+    if (override) return override;
+  }
+  return net.rpcUrl;
 }
 
 /** The Gateway batching x402 `extra` block, naming the verifying contract. */
