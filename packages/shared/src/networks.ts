@@ -251,12 +251,18 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
   arc: {
     chainName: "arc", network: "eip155:5042", chainId: 5042,
     usdc: "0x3600000000000000000000000000000000000000",
-    // Arc mainnet's USDC EIP-712 domain is UNVERIFIED (chain not public). Left unset;
-    // the memo rail (which reads these) is absent until verified on-chain at enrollment.
+    // VERIFIED ON MAINNET 2026-09-16, the day the public RPC opened: the Arc predeploy reports
+    // name "USDC", version "2", decimals 6 — the same as Arc testnet, and NOT the mainnet FiatToken
+    // "USD Coin" that `usdcDomain` falls back to. Stated rather than defaulted, because a signature
+    // built over the wrong domain name is rejected by the token after the gas is spent.
+    usdcName: "USDC", usdcVersion: "2",
     gatewayWallet: "0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE",
     gatewayApiUrl: MAINNET_FACILITATOR,
-    // No public RPC yet — the settle path substitutes cfg.ARC_RPC_URL (fail-loud if unset).
-    rpcUrl: "https://rpc.arc.network",
+    // The PUBLIC Arc mainnet RPC, as the SDK states it from 3.5.0 (`CHAIN_CONFIGS.arc.rpcUrl`) and
+    // as measured here: chainId 5042, block 21,081,216 on 2026-09-16. The previous value
+    // `https://rpc.arc.network` was written from the preview and does not resolve — anything dialling
+    // Arc mainnet with it failed, which `cfg.ARC_RPC_URL` was masking by being mandatory.
+    rpcUrl: "https://rpc.mainnet.arc.io",
     testnet: false,
     // NO memo field: the Arc mainnet Memo predeploy is unverified. Add only after an
     // on-chain read confirms it (illegal-state-unrepresentable — never assume a capability).
