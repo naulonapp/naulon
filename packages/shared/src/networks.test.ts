@@ -218,7 +218,7 @@ test("modular-wallet capability is present exactly on the modular-supported chai
   }
   // The four gateway-only mainnets must NOT advertise an embedded wallet. Arc mainnet was in this
   // list until 2026-09-16, when the live client key was measured against the `arc` transport and
-  // accepted (scripts/circle-key-check.sh in naulon-cloud) — a buyer on Arc gets the passkey wallet.
+  // accepted by a hosted control plane's key check: a buyer on Arc gets the passkey wallet.
   for (const name of ["sei", "sonic", "hyperEvm", "worldChain"] as NetworkName[]) {
     assert.equal(supportsModularWallet(NETWORKS[name]), false, `${name} must be API-buyers-only`);
   }

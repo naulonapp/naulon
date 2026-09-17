@@ -274,10 +274,10 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     // Circle's published same-chain Gateway withdrawal gas fee for Arc: $0.0035, the cheapest of
     // the thirteen. Read live 2026-09-16 from developers.circle.com/gateway/references/fees.
     gatewayWithdrawFeeMicro: 3500,
-    // Circle Modular Wallets DO support Arc mainnet. Measured 2026-09-16 with the live client key
-    // through `scripts/circle-key-check.sh` (naulon-cloud): the `arc` transport answered
-    // `eth_blockNumber` 200 and the passkey RP plane accepted the same key. The registry said
-    // otherwise until now — written when Arc mainnet was a private preview.
+    // Circle Modular Wallets DO support Arc mainnet. Measured 2026-09-16 with a live client key
+    // from a control plane built on this core: the `arc` transport answered `eth_blockNumber` 200
+    // and the passkey RP plane accepted the same key. The registry said otherwise until now,
+    // written when Arc mainnet was a private preview.
     modularChainName: "arc",
     // NO memo field, and now for the SECOND reason rather than the first. The address is no longer
     // unverified: `eth_getCode` at 0x5294E9927c3306DcBaDb03fe70b92e01cCede505 returns the same
