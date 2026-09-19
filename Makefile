@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install hooks build-shared build-enforce build-wayfarer build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-build docker-down
+.PHONY: help install hooks deps-check build-shared build-enforce build-wayfarer build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-build docker-down
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[33m%-18s\033[0m %s\n", $$1, $$2}'
@@ -71,6 +71,16 @@ seed: ## Seed the ledger with sample crossings
 
 settle: ## Run one attribution settlement pass
 	npm run attribution
+
+deps-check: ## Is node_modules what the lockfile says?
+	@if npm ls >/dev/null 2>&1; then \
+	  echo "deps-check: node_modules matches the lockfile"; \
+	else \
+	  echo "deps-check: node_modules does not match the lockfile."; \
+	  npm ls 2>&1 | grep -iE 'missing|invalid|UNMET' | head -5 | sed 's/^/  /'; \
+	  echo "  Fix: npm install"; \
+	  exit 1; \
+	fi
 
 test: build-sdk ## Run unit tests
 	npm test

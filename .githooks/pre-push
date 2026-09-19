@@ -28,6 +28,12 @@ if [ -n "$changed" ] && ! echo "$changed" | grep -qvE '\.(md|txt)$|^docs/|^\.git
   exit 0
 fi
 
+# A pull or a merge brings package.json and the lockfile but never runs an install, so
+# node_modules silently lags and the typecheck below reports the missing package as a wall of
+# errors in whatever file imports it. One line beats fourteen.
+echo "pre-push: make deps-check"
+make deps-check || { echo "pre-push: node_modules is stale, so nothing below was run." >&2; exit 1; }
+
 echo "pre-push: make lint"
 make lint || { echo "pre-push: typecheck failed. Fix it, or push with --no-verify if you know why." >&2; exit 1; }
 
