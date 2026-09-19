@@ -12,18 +12,18 @@ import { checkProse } from "../../../scripts/prose-voice.mjs";
  * it is the only thing they have seen. The README is the project's front page, docs/ is the
  * documentation site, and each packages/*\/README.md is rendered as the entire npm package page.
  *
- * Prose that reads as machine-written discourages that reader. The most mechanical tell is the
- * em dash, which clusters with the rest of the shape, and it is the one a test can see with no
- * false positives once code, indented blocks, inline spans and URLs are excluded.
+ * So the docs follow one house style, and the one rule of it a test can check without false
+ * positives is the em dash: this project does not use them in prose. Code, indented blocks,
+ * inline spans and URLs are excluded, so only prose is read.
  *
  * This is a sibling of no-private-names.test.ts and exists for the same reason: that rule had
  * been written down and was broken four times anyway. A rule nothing checks is a comment. When
  * this test was added the published corpus carried 515 violations across these files, against a
  * convention that had been in CONTRIBUTING.md the whole time.
  *
- * Deliberately NOT checked here: tone, hedging, a tricolon, or a paragraph that explains when it
- * should ask. Those are the rest of the tell and they stay a review judgment. A test that claimed
- * them would be trusted for something it cannot do.
+ * Deliberately NOT checked here: tone, rhythm, hedging, or a paragraph that explains when it
+ * should ask. Those stay a review judgment, and a test that claimed them would be trusted for
+ * something it cannot do.
  *
  * Source comments are also out of scope, on purpose. A comment is read by someone already inside
  * the code, and the repo's long explanatory comments are an asset: rewriting thousands of them
@@ -70,7 +70,7 @@ function published(): string[] {
   ].filter(existsSync);
 }
 
-test("no published document reads as machine-written", () => {
+test("published prose follows the house style", () => {
   const files = published();
 
   // A test that silently passes because it found nothing is the failure mode here, so the
@@ -98,6 +98,6 @@ test("no published document reads as machine-written", () => {
     `${offences.length} published line(s) carry an em dash:\n\n${offences.join("\n")}\n\n` +
       `Use a full stop, a comma or a colon. The clause after an em dash is usually an appositive\n` +
       `restating the clause before it, so deleting it is nearly always the right fix.\n` +
-      `The contract is in CONTRIBUTING.md.`,
+      `The style guide is in CONTRIBUTING.md.`,
   );
 });

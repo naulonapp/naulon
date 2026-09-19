@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * The machine-checkable half of this project's writing rule (see CONTRIBUTING.md).
+ * The machine-checkable half of this project's house style (see CONTRIBUTING.md).
  *
- * One module, two planes, because the defect is one defect:
+ * One module, two planes, because it is one style in two places:
  *
  *   commit-msg  — the message a `git commit` is about to write
  *   files       — the prose a stranger reads: README, CONTRIBUTING, DEPLOY,
  *                 CHANGELOG, docs/, apps/portal/content/
  *
- * It is deliberately mechanical. It closes the tells a machine can see with no
- * false positives; tone, tricolons and a paragraph that explains instead of asks
- * stay a judgment call, held to the rule rather than to this file.
+ * It is deliberately mechanical: it checks the few rules that can be checked with no
+ * false positives. Tone, rhythm and whether a paragraph explains when it should ask are
+ * a review judgment, held to CONTRIBUTING.md rather than to this file.
  *
  * Portable by design: no dependencies, no repo-specific paths, plain Node. The
  * public sibling and the plugin-marketplace repo carry byte-identical copies, so
@@ -29,7 +29,7 @@ import { readFileSync } from "node:fs";
 /** Where this repo writes the rule down. Overridden by the caller when it lives elsewhere. */
 const RULE = process.env.PROSE_VOICE_RULE ?? "CONTRIBUTING.md";
 
-/** The tell that makes prose read as generated. */
+/** Not used in this project's prose. A full stop, a comma or a colon does the job. */
 export const EM_DASH = "—";
 
 /**
@@ -202,9 +202,9 @@ export function checkCommitMessage(message) {
 
 const ADVICE = {
   "em-dash":
-    "Em dashes are the tell that makes prose read as generated. Use a full stop, a\n" +
-    "comma or a colon. The clause after the dash is usually an appositive restating\n" +
-    "the clause before it, so the fix is nearly always to delete it.",
+    "This project does not use em dashes in prose. Use a full stop, a comma or a\n" +
+    "colon. The clause after a dash is usually an appositive restating the clause\n" +
+    "before it, so deleting it is nearly always the better fix.",
   attribution:
     "This repo ships no machine-appended trailer. A tool adds one by default, which is\n" +
     "exactly why it is checked rather than trusted.",
