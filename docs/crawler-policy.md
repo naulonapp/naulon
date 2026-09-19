@@ -1,7 +1,7 @@
 # Crawler policy
 
 By default the gate decides what to do with a request by classifying it: humans read
-free, automated readers pay. A crawler policy overrides that per crawler — this one
+free, automated readers pay. A crawler policy overrides that per crawler: this one
 reads free, that one pays, this other one is refused outright.
 
 The gate has always **enforced** a policy. What it never had was a way to write one:
@@ -29,10 +29,10 @@ CRAWLER_POLICY_PATH=/etc/naulon/crawler-policy.json
 
 Each state means:
 
-- **`allow`** — served free, no toll, no 402. Use it for the search crawlers whose
+- **`allow`**: served free, no toll, no 402. Use it for the search crawlers whose
   indexing you want.
-- **`charge`** — must pay the toll even if the classifier would have let it through.
-- **`block`** — refused with a 403. It never reaches your origin and never gets a
+- **`charge`**: must pay the toll even if the classifier would have let it through.
+- **`block`**: refused with a 403. It never reaches your origin and never gets a
   quote.
 
 Matching is **case-insensitive substring** against the request's user-agent, so
@@ -45,23 +45,23 @@ The policy is validated when it is read, and a few things are refused outright:
 
 - **A fragment that would match a real browser.** `mozilla`, `chrome`, `mac os`, and
   any other slice of a real browser's user-agent is rejected in `block` and `charge`.
-  Humans read free, forever — and by match time a fragment is just a substring that
+  Humans read free, forever, and by match time a fragment is just a substring that
   matched, so the only place to catch this is at write time. Fragments are tested
   against whole sample user-agents spanning Blink, WebKit and Gecko on desktop and
   mobile, which is deliberately stronger than a list of five famous tokens: it catches
-  `ozill` and `hrome` too. `allow` is exempt — allowing a human is a no-op.
+  `ozill` and `hrome` too. `allow` is exempt, since allowing a human is a no-op.
 - **The same fragment in two states.** Overlap is a user error (which state did you
   mean?), so it is refused rather than resolved. The gate's own block-wins precedence
   is only a fail-safe for policies this validator never saw.
 - **Control characters.** The matched fragment is echoed into the `X-Naulon-Verdict`
   response header, so a stray CR or LF surviving in a stored fragment would be header
-  injection. Spaces and dashes are legal — `claude-user` has to work.
+  injection. Spaces and dashes are legal, because `claude-user` has to work.
 - **Anything oversized.** 64 characters per fragment, 200 fragments per list.
 
 ## When something is wrong with the file
 
 The failure posture is quiet and open. A missing file, malformed JSON, or a policy the
-validator refuses all resolve to "no policy" — classifier defaults, exactly the
+validator refuses all resolve to "no policy", meaning classifier defaults, exactly the
 behaviour a deploy with no policy file already has. Failing the boot instead would let
 a typo in an optional file take a whole site offline.
 
@@ -71,7 +71,7 @@ the normal state, not an error.
 
 ## Verified crawler identity (Web Bot Auth)
 
-A user-agent string is a claim, not a credential — anything can send `GPTBot`. Web Bot
+A user-agent string is a claim, not a credential: anything can send `GPTBot`. Web Bot
 Auth (RFC 9421 HTTP message signatures) is the cryptographic version: the crawler signs
 its request, names its key directory in `Signature-Agent`, and the gate fetches that
 directory and verifies the signature against it.
@@ -79,18 +79,18 @@ directory and verifies the signature against it.
 Verification happens inside `decide()` for every request, with no configuration. The
 outcome is one of:
 
-- **absent** — no signature, or one tagged for some other protocol. This is most
+- **absent**: no signature, or one tagged for some other protocol. This is most
   traffic, and it is not an error.
-- **invalid** — a signature that doesn't parse, is missing `created` / `expires` /
+- **invalid**: a signature that doesn't parse, is missing `created` / `expires` /
   `keyid`, or has expired. A small clock-skew allowance applies.
-- **verified** — the signature checks out against the directory the request named.
+- **verified**: the signature checks out against the directory the request named.
 
 Two variables control the gate's own **signing** identity, which is a separate thing
 from verifying other people's:
 
 | Variable | What it does |
 |---|---|
-| `BOT_AUTH_SIGNING_KEY` | A base64url 32-byte Ed25519 seed (`node scripts/wba-keygen.mjs`). Set it and the gate serves and self-signs its key directory at `/.well-known/http-message-signatures-directory`, and signs its own outbound fetches — its pull from your origin, and the buying agent's requests. Unset, both surfaces are dark and the traffic is byte-identical to an unsigned deploy. |
+| `BOT_AUTH_SIGNING_KEY` | A base64url 32-byte Ed25519 seed (`node scripts/wba-keygen.mjs`). Set it and the gate serves and self-signs its key directory at `/.well-known/http-message-signatures-directory`, and signs its own outbound fetches, both its pull from your origin and the buying agent's requests. Unset, both surfaces are dark and the traffic is byte-identical to an unsigned deploy. |
 | `BOT_AUTH_SIGNATURE_AGENT` | The directory host advertised in `Signature-Agent`. It must actually serve your directory. |
 | `BOT_AUTH_ALLOW_HTTP` | Allows `http://` and loopback directories for local test walks only. The directory URL is attacker-supplied, so never set this in production. |
 
@@ -102,6 +102,6 @@ IP allowlist.
 
 `CRAWLER_POLICY_PATH` is the single-tenant gate's route to a policy. A multi-tenant
 deployment sets the same `PublisherConfig.crawlerPolicy` per publisher through its own
-resolver instead — the enforcement path is identical either way.
+resolver instead; the enforcement path is identical either way.
 
 Every variable named here is in [configuration.md](./configuration.md).

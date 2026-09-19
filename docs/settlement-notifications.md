@@ -1,22 +1,22 @@
-# Settlement notifications — the signed webhook
+# Settlement notifications: the signed webhook
 
 > How naulon tells your site **a payment settled**. After an agent pays the toll and
 > the gate settles on-chain, a signed `settlement.completed` webhook is POSTed to the
 > endpoint you registered; you store it as your canonical earnings ledger. This is a
 > money-adjacent boundary, so the rules are exact: verify the HMAC over the raw
-> bytes, reject a stale timestamp, and **dedupe on `eventId`** — delivery is
+> bytes, reject a stale timestamp, and **dedupe on `eventId`**, because delivery is
 > at-least-once by design. The verify side lives in `@naulon/sdk`
 > (`verifyPayload`, `createWebhookReceiver`), and it is the same signing function
 > the sender uses, not a mirror of it.
 
-There used to be a second wire — an HMAC-signed `POST {origin}/api/credits/settlement`
+There used to be a second wire, an HMAC-signed `POST {origin}/api/credits/settlement`
 straight at your site. It is **deleted**. One fact, one delivery mechanism: if you
 want to know that money moved, subscribe to this webhook.
 
 ## Direction
 
-You are the receiver. naulon — your own gate if you self-host, or the cloud fleet if
-you're a tenant — calls **you**. The SDK is receive-side only; it never makes an
+You are the receiver. naulon calls **you**, whether that is your own gate if you
+self-host or the cloud fleet if you're a tenant. The SDK is receive-side only; it never makes an
 outbound call to a "naulon API", and there is no naulon base URL in it.
 
 ```
@@ -25,7 +25,7 @@ naulon (your gate OR the fleet)  ──POST your endpoint──▶  your receive
 
 ## Subscribing
 
-**Self-host.** One env var, a JSON array — the gate is dark until you set it (no
+**Self-host.** One env var, a JSON array. The gate is dark until you set it (no
 endpoints ⇒ no timer, no POST):
 
 ```bash
@@ -35,7 +35,7 @@ NAULON_WEBHOOK_ENDPOINTS='[{"url":"https://you.example/naulon-hook","secret":"wh
 **Cloud tenant.** Settings → API & webhooks. The secret is shown once when you create
 the endpoint; store it then.
 
-Either way the endpoint must be **https** — the sender refuses cleartext, and refuses
+Either way the endpoint must be **https**: the sender refuses cleartext, and refuses
 targets that resolve to a private or loopback address (that block is permanent, not
 retried).
 
@@ -48,7 +48,7 @@ retried).
 | `Naulon-Event` | The event type, e.g. `settlement.completed`. |
 
 The signature covers the **exact bytes** of the request body. Read the raw text and
-verify *that* — never re-serialize the parsed JSON first, or a whitespace difference
+verify *that*, never re-serializing the parsed JSON first, or a whitespace difference
 breaks the HMAC.
 
 ## Body
@@ -87,16 +87,16 @@ A self-host gate reports the settled event directly:
 ```
 
 The cloud fleet coalesces a window of settlements and offers two body profiles per
-endpoint (`summary` / `detailed`) — see the fleet's own webhooks doc. Both ride this
+endpoint (`summary` or `detailed`); see the fleet's own webhooks doc. Both ride this
 same envelope and the same signature.
 
 Money is always **integer micro-USDC**. Never parse a formatted string back into a
 number.
 
-## Retries — and what your status code does
+## Retries: and what your status code does
 
 The sender treats **any non-2xx as a failed attempt** and re-sends with backoff:
-5s, 5m, 30m, 2h, 5h, 10h, 10h — 8 attempts, then the delivery is *dead-lettered*
+5s, 5m, 30m, 2h, 5h, 10h, 10h: 8 attempts, then the delivery is *dead-lettered*
 (parked, still owed, revivable by an operator). There is no
 "400 means stop trying" shortcut; that was the deleted origin-mirror's contract, not
 this one.
@@ -106,7 +106,7 @@ So the status you return is a **diagnosis for you**, not a signal to us:
 | Outcome | Return | Why |
 |---|---|---|
 | Stored (or already stored) | **2xx** | the only thing that stops the retries |
-| Signature doesn't match | **401** | you have the wrong secret — fix it before the budget runs out |
+| Signature doesn't match | **401** | you have the wrong secret, so fix it before the budget runs out |
 | Body isn't valid JSON / not an envelope | **400** | it will still be retried; the code is for your logs |
 | Your database was down | **5xx** | correct: a retry is exactly what you want |
 
@@ -127,7 +127,7 @@ const ok = verifyPayload(
 );                                                      // → boolean
 ```
 
-Anything outside a ±300s window of the signed timestamp is rejected — that bound is
+Anything outside a ±300s window of the signed timestamp is rejected, and that bound is
 what makes a captured request stop being replayable.
 
 ### Secret rotation
@@ -145,7 +145,7 @@ nothing is signing with the old one, drop it.
 ## Idempotency is mandatory
 
 `verifyPayload` proves a request is **authentic**. It does not make storing it
-**exactly once** — that's stateful, and it's on you. Delivery is at-least-once: a
+**exactly once**: that's stateful, and it's on you. Delivery is at-least-once: a
 timeout on our side or a retry after your 500 both present the same event again, and
 an authentic POST stays replayable for the whole skew window. Without a dedupe guard,
 that's a **double-counted payout** in your ledger.
@@ -166,7 +166,7 @@ await recordPayout(event);
 ```
 
 The SDK models this as an `IdempotencyStore` the receiver adapter **requires**. It
-ships a `memoryIdempotencyStore()` so the type is satisfiable in development — but it
+ships a `memoryIdempotencyStore()` so the type is satisfiable in development, but it
 is **NOT durable** (lost on restart, useless across instances). Using it in production
 is the double-count footgun above.
 
@@ -195,7 +195,7 @@ export const POST = createWebhookReceiver({
 ```
 
 A redelivery short-circuits to `200 {deduped: true}` before `onEvent` runs. If
-`onEvent` throws, the adapter **releases the claim** and rethrows — so your framework
+`onEvent` throws, the adapter **releases the claim** and rethrows, so your framework
 returns a 5xx and the retry is actually processed instead of being deduped into
 silence.
 
@@ -216,10 +216,10 @@ app.post(
 ### Hand-rolled
 
 If you'd rather own the loop, `verifyPayload` gives you the verdict and you supply the
-persistence and the dedupe (see the SQL above). The contract is identical either way —
+persistence and the dedupe (see the SQL above). The contract is identical either way;
 the adapter just saves you the wiring.
 
-## Testing it offline — there is no dry-run
+## Testing it offline: there is no dry-run
 
 A money-adjacent receiver gets no public "pretend" mode, so there's no dry-run header
 to POST in production. Instead, exercise your receiver in **your own** test harness
@@ -233,7 +233,7 @@ const { rawBody, headers } = makeSignedWebhookFixture({ secret: "whsec_test" });
 // POST the same bytes twice; assert the second is deduped and records nothing.
 ```
 
-That replay assertion is the one that matters — it's the difference between a correct
+That replay assertion is the one that matters: it's the difference between a correct
 ledger and a double count. The CLI prints the same fixture:
 
 ```bash

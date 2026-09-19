@@ -1,7 +1,7 @@
 # Writing a crawl adapter
 
 `naulon crawl` reads a publisher's own site and drafts a `credits.json` so nobody has to hand-write
-one article at a time. It ships three adapters — WordPress, RSS/Atom, and sitemap — which between
+one article at a time. It ships three adapters, for WordPress, RSS or Atom, and sitemap, which between
 them cover most sites. This page is for the case they don't: your CMS, your internal publishing
 system, a platform API nobody has wired up yet.
 
@@ -52,7 +52,7 @@ adapter that imports `fetch` itself is a server-side request forgery waiting for
 
 **Never derive the slug.** Return a URL; the orchestrator derives the credits key from it. The key
 must equal what the gate computes for the same URL, and centralising that is the only way it stays
-true. This is why `discover` returns candidates rather than finished articles — an adapter cannot
+true. This is why `discover` returns candidates rather than finished articles: an adapter cannot
 emit a key the gate can't reproduce, because it cannot emit a key at all.
 
 **Never infer money.** An adapter reports the author STRING the source states. Mapping that string
@@ -66,7 +66,7 @@ publisher's origin, declare it:
 requires: { secret: true, offOrigin: ["api.example.com"] }
 ```
 
-A front-door that cannot grant those never runs your adapter — it is filtered out before `detect`,
+A front-door that cannot grant those never runs your adapter. It is filtered out before `detect`,
 not trusted to behave. `naulon crawl` grants neither, so a keyed adapter is inert there by
 construction; a host that holds publisher credentials can grant both.
 
@@ -94,4 +94,4 @@ word for it: which hosts it touched, whether `detect` survives a dead origin, wh
 ever carried a wallet or a slug. A failing report names every check that failed, not just the first.
 
 It is the same suite the built-in adapters run in this repo's own test run. If your adapter passes
-it, it is an adapter — not merely shaped like one.
+it, it is an adapter, not merely shaped like one.

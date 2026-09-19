@@ -1,0 +1,87 @@
+name: Bug report
+description: Something behaves differently from what the docs say it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The required fields below are the ones that usually decide how fast this gets fixed. Fill
+         them in even when the answer feels obvious.
+
+        If this is a security issue, close this and
+        [report it privately](https://github.com/naulonapp/naulon/security/advisories/new) instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, including the exact error text if there is one.
+      placeholder: A paid read returned 402 a second time instead of serving the article.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce it
+      description: The smallest sequence that shows the problem. A failing test is ideal.
+      placeholder: |
+        1. `make demo`
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which part
+      options:
+        - tollgate (the gate)
+        - enforce (in-app middleware)
+        - sdk (credits route, webhook receiver, crawl)
+        - wayfarer or wayfarer-mcp (the buying agent)
+        - attribution (payouts)
+        - dashboard (the operator console)
+        - the WordPress plugin
+        - not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The package version, the git SHA, or the image tag you are running.
+      placeholder: "@naulon/enforce 0.4.4, or v0.8.4, or main at abc1234"
+    validations:
+      required: true
+
+  - type: input
+    id: settlement
+    attributes:
+      label: PAYMENT_MODE and SETTLEMENT_NETWORK
+      description: These decide which settlement path runs, so almost every money-adjacent bug depends on them.
+      placeholder: "mock / arcTestnet"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Anything the gate or the agent printed. This is rendered as code, so no backticks needed.
+      render: shell
+
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Before you post
+      options:
+        - label: I have removed any private key, API key or wallet secret from the text above.
+          required: true

@@ -1,4 +1,4 @@
-# Citation License Token (CLT) — spec
+# Citation License Token (CLT): spec
 
 > The durable specification of the token: its claims, the verifier's rules, the
 > security invariants, and how any stack verifies one. Implementation lives in
@@ -8,13 +8,13 @@
 ## Thesis
 
 When an agent pays the x402 toll, the tollgate returns a **signed, independently
-verifiable receipt** — the Citation License Token — proving *who paid, how much
+verifiable receipt**, the Citation License Token, proving *who paid, how much
 USDC, for which essay, to which author wallet(s) with what split, settled on-chain*.
 The agent surfaces it downstream as provenance, and re-presenting a valid unexpired
 CLT re-reads that essay **free** within a short window.
 
 This converts the toll from an **evadable tax** (agents dodge it by spoofing a human
-`User-Agent`) into a **signed asset the payer wants to keep** — so enforcement stops
+`User-Agent`) into a **signed asset the payer wants to keep**, so enforcement stops
 depending on the human/agent classifier. The CLT is a signed projection of the
 `AttributedEvent` already recorded per payment (`jti = event.id`), reusing
 `settlementRef` / `payees` / `payerAddress`.
@@ -52,7 +52,7 @@ sequenceDiagram
    over the literal received bytes, and parse claims only **after** the signature
    passes.
 3. **Only a citation record may omit `exp`.** A licence that entitles a read MUST
-   expire — its TTL is the only kill switch an unrevocable bearer credential has on
+   expire, and its TTL is the only kill switch an unrevocable bearer credential has on
    the offline tier. `verifyLicense` therefore refuses an absent `exp` on anything
    whose `naulon.grant` is not `"none"`, and `licenseEntitlesRead` refuses any grant
    that is not `"read"`. Both directions are needed: the first stops a permanent token
@@ -69,16 +69,16 @@ credentials, so the two jobs are two objects.
 | | Access licence (CLT) | Citation record |
 |---|---|---|
 | Grants | a free re-read of the bytes | nothing |
-| Term | `LICENSE_TTL_SECONDS`, capped at 3600 | permanent — no `exp` |
+| Term | `LICENSE_TTL_SECONDS`, capped at 3600 | permanent, with no `exp` |
 | Proves | you may fetch this now | account X licensed Y from Z at T for $P |
 | Revocation | none on the offline tier → the TTL is the kill switch | irrelevant; it grants nothing |
 
-A record is a second projection of the **same ledger row** — same `jti`, `amount`,
-`payees`, `settlementRef` — minted by `mintCitationRecord()` with `grant: "none"` and
+A record is a second projection of the **same ledger row**, with the same `jti`, `amount`,
+`payees` and `settlementRef`, minted by `mintCitationRecord()` with `grant: "none"` and
 no `exp`. It is safe to be permanent *because* presenting one buys nothing.
 
 `GET /licenses/:jti/record` mints it on demand, host-scoped and publisher-checked
-exactly like `GET /licenses/:jti` — minting discloses no more than reading did. It
+exactly like `GET /licenses/:jti`, so minting discloses no more than reading did. It
 names the resource by **`slug`, never a title**: the ledger row carries no title, and
 an unverifiable string inside a document whose whole value is that a stranger can
 check it is worse than none.
@@ -105,7 +105,7 @@ A **strict RFC 7519 JWT**, EdDSA-signed (Ed25519), verifiable by an unmodified
 ```json
 { "alg": "EdDSA", "typ": "JWT", "kid": "<base64url(SHA-256(rawEd25519PublicKey))[:16]>" }
 ```
-No `crit`/`jku`/`x5u`/`jwk` — verifier MUST reject if present.
+No `crit`, `jku`, `x5u` or `jwk`: a verifier MUST reject if present.
 
 **Claims (registered + one namespaced `naulon` object):**
 ```jsonc
@@ -138,7 +138,7 @@ No `crit`/`jku`/`x5u`/`jwk` — verifier MUST reject if present.
 }
 ```
 
-`exp` is **required on a read grant and absent on a record** — see invariant 3.
+`exp` is **required on a read grant and absent on a record**; see invariant 3.
 `sub` defaults to the payer wallet and may be set to a stable buyer identity
 (`MintInput.subject`); it must be an account handle or a key, never an email or a
 name, because the record is meant to be publicly verifiable.
@@ -146,37 +146,37 @@ name, because the record is meant to be publicly verifiable.
 **`scope` is matched against the request PATH, not the slug.** Prefix mode's slug is
 the captured segment (`on-stillness`), not a path, so a path pattern could never match
 it. An unscoped licence keeps exact slug equality. A scoped one does **not** fall back
-to slug equality — a scope that fails to match must not silently widen back to
+to slug equality, because a scope that fails to match must not silently widen back to
 whatever slug was current at mint time.
 
-**Signing** — `crypto.sign(null, msg, ed25519PrivateKey)` over
+**Signing**: `crypto.sign(null, msg, ed25519PrivateKey)` over
 `b64url(header)+'.'+b64url(payload)` (node:crypto, no new dep). Key never logged;
 the `X-Naulon-License` header is treated as a secret (not in `logger()` output).
 
-**`mint(event, host, now)`** — pure, in `shared/license.ts`. Explicit `now` (no
-`Date.now()` in shared). Mints from **in-memory event fields only** — never reads
-the EventSink — so a `record()` failure after settle still yields a valid receipt.
+**`mint(event, host, now)`**: pure, in `shared/license.ts`. Explicit `now` (no
+`Date.now()` in shared). Mints from **in-memory event fields only** and never reads
+the EventSink, so a `record()` failure after settle still yields a valid receipt.
 
-**`verifyLicense(jws, { now, expectedIssuer, expectedAudience, jwks })`** — pure:
+**`verifyLicense(jws, { now, expectedIssuer, expectedAudience, jwks })`**: pure:
 1. Cap input at 4096 bytes before any parse.
 2. Split on `.`; require exactly 3 base64url segments.
 3. Decode header; require `alg==='EdDSA'`, `typ==='JWT'`, `kid` ∈ JWKS; reject `none`, `crit/jku/x5u/jwk`.
-4. `crypto.verify(null, Buffer.from(b64h+'.'+b64p,'ascii'), pubKeyForKid, sig)` — literal bytes, not re-serialized JSON.
+4. `crypto.verify(null, Buffer.from(b64h+'.'+b64p,'ascii'), pubKeyForKid, sig)`, over literal bytes, not re-serialized JSON.
 5. Only after sig passes: `JSON.parse` payload; read claims from that object.
 6. Enforce `iss===expectedIssuer`, `aud===expectedAudience`. Time in **seconds**:
    `nowSec=Math.floor(now/1000)`; expired if `nowSec >= exp` (matches nonce's `<=`
    discipline); reject `nowSec < nbf-60` and `iat > nowSec+60`.
 
-**Re-read entitlement (gate, before pricing):** on `X-Naulon-License: <jws>` —
+**Re-read entitlement (gate, before pricing):** on `X-Naulon-License: <jws>`,
 verify (fail **closed** to the 402 path on any error, never 500, never free
 passthrough); require `naulon.slug === slugFromPath(path)` (post-decode),
 `aud===naulon:<thisHost>`, and `kind` covers the requested kind; if
 `LICENSE_ONLINE_CHECK`, consult the `jti` revocation seam. Valid → serve origin
 free with `X-Naulon-Verdict: agent reread (license)`.
 
-**Two verify tiers:** *offline* (fetch JWKS once, verify locally — O(1), trustless,
+**Two verify tiers:** *offline* (fetch JWKS once, verify locally: O(1), trustless,
 the primary path for wayfarer/dashboard/third parties) and *online*
-(`GET /licenses/:jti` via a new `EventSink.get(id)` — Supabase PK lookup
+(`GET /licenses/:jti` via a new `EventSink.get(id)`, a Supabase PK lookup
 `?id=eq.<jti>&limit=1`; jsonl short-circuits; **never `readAll()`**; rate-limited;
 also where revocation is enforced).
 
@@ -189,10 +189,10 @@ x402 clients) **and** `X-Naulon-License: <jws>` on the 200.
 ## Verifying a license (any stack, ~5 lines)
 
 The CLT is a plain RFC 7519 JWT signed with EdDSA, and the gate publishes a
-standard JWK Set — so an **unmodified** JWT library verifies it. No naulon
+standard JWK Set, so an **unmodified** JWT library verifies it. No naulon
 code required. This is the standards play: the snippet *is* the integration.
 
-**Node — [`jose`](https://github.com/panva/jose):**
+**Node, using [`jose`](https://github.com/panva/jose):**
 ```js
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
@@ -204,7 +204,7 @@ const { payload } = await jwtVerify(token, JWKS, {
 // payload.naulon.{ slug, kind, amount, settlementRef, payees } — the attribution.
 ```
 
-**Python — [`pyjwt`](https://pyjwt.readthedocs.io)** (`pip install "pyjwt[crypto]"`):
+**Python, using [`pyjwt`](https://pyjwt.readthedocs.io)** (`pip install "pyjwt[crypto]"`):
 ```python
 import jwt
 from jwt import PyJWKClient
@@ -218,7 +218,7 @@ print(claims["naulon"]["slug"])
 ```
 
 Both enforce the signature, `exp`, `iss`, and `aud` for you. Pin
-`algorithms=["EdDSA"]` (pyjwt) / rely on jose's alg-from-JWKS — never accept a
+`algorithms=["EdDSA"]` (pyjwt), or rely on jose's alg-from-JWKS. Never accept a
 caller-chosen alg. For an authoritative/revocation check, additionally call
 `GET /licenses/:jti`. `shared/src/interop.test.ts` proves a minted token verifies
 with these generic primitives in CI.
@@ -230,7 +230,7 @@ with these generic primitives in CI.
 | `alg:none` / HMAC-with-published-pubkey forgery | Ignore `alg`, hard-pin EdDSA; `crypto.verify(null,...)`; reject `crit/jku/x5u/jwk`; covered by adversarial tests |
 | Ephemeral key on Vercel fan-out → flaky verify, voided licenses | Stable `LICENSE_SIGNING_KEY` required off mock (superRefine, fail loud); `kid` for selection/rotation |
 | Privilege escalation (read license → citation; cross-essay) | Bind slug+kind+iss+aud; re-derive requested slug/kind on the gate; kind equal-or-greater, never wildcard |
-| Cross-deployment replay | Enforce `aud` (= gate host) and `iss` equality — mandatory |
+| Cross-deployment replay | Enforce `aud` (= gate host) and `iss` equality, mandatory |
 | Zero-address bearer token | Never mint when payer resolved to `0x000…000`; gate skips mint, still serves content |
 | Token leak / replay-as-entitlement, no kill switch | TTL default 600 (cap 3600); `jti` denylist (online + re-read); `kid` rotation; header treated as secret in logs |
 | DoS via `/licenses/:jti` full scan | `EventSink.get(id)` PK lookup; rate-limit ahead of verify; 4 KB cap before parse |
@@ -272,7 +272,7 @@ with these generic primitives in CI.
 
 Off by default (`LICENSE_POP=false`): licenses stay short-TTL **bearer** tokens and the
 demo loop is untouched. Turned on, the gate mints a license with an RFC 7800 `cnf`
-claim — `cnf: { "naulon:addr": <lowercased payer wallet> }` — and a free re-read of
+claim, `cnf: { "naulon:addr": <lowercased payer wallet> }`, and a free re-read of
 that license is no longer a bearer right.
 
 **Proof wire:** `X-Naulon-Proof: <ts>.<nonce>.<sig>`, where the holder signed
@@ -282,14 +282,14 @@ plus the proof's `ts`/`nonce`, recovers the signer (viem), and accepts iff:
 
 1. the recovered address equals the wallet in `cnf` (lowercased compare),
 2. `ts` is within ±`LICENSE_POP_WINDOW_SECONDS` of the gate clock (freshness, both directions),
-3. `(jti, nonce)` has not been spent — single-use via the **same `ConsumedStore`** the 402
+3. `(jti, nonce)` has not been spent, kept single-use via the **same `ConsumedStore`** the 402
    nonces use (memory, or the shared Supabase table with a `pop:` key namespace).
 
 Fails **closed**: a missing, stale, replayed, or wrong-wallet proof drops the caller to
-the normal 402 — never a 500, never free. This is a **one-round** proof (self-asserted
+the normal 402, never a 500 and never free. This is a **one-round** proof (self-asserted
 fresh `ts`+`nonce`, spent once), not a two-round server-issued challenge: it already
 makes a captured token worthless (you need the wallet key to forge a proof). The
-residual gap — an on-path TLS attacker racing a captured *proof* within the window — is
+residual gap, an on-path TLS attacker racing a captured *proof* within the window, is
 out of scope (and the legitimate holder spends the single-use nonce first). The window
 is the tuning knob: shorter = tighter replay window, longer = more clock-skew tolerance.
 
@@ -299,13 +299,13 @@ The mock wayfarer derives a deterministic, non-secret **dev wallet** from a fixe
 
 ## Residual risks (accepted, documented)
 
-1. **Offline tier is unrevocable by construction** — a JWKS-only verifier can't see the `jti` denylist; a leaked token is valid offline until `exp` (≤600s default). Bounded by short TTL + `kid` rotation.
-2. **A v1 (bearer) license is a bearer credential** — anyone who captures it within TTL gets a free re-read of that slug. Closed by enabling holder-of-key (`LICENSE_POP`): a captured token is then useless without the payer wallet key. Off by default, so the bearer caveat still applies to the default deployment (bounded by the short TTL).
-3. **Zero-address mint guard is a guard, not a structural impossibility** — a future code path that forgets it could mint a bearer token. Enforced by one guard + test.
-4. **Online revocation adds a per-verify round-trip + shared-state dependency** — if Supabase is down, the online tier degrades to offline-only (can't see revocations).
-5. **jsonl `get(id)` still scans** (short-circuiting) — fine for single-box dev, O(n) worst case for a missing `jti`; indexed path is Supabase-only.
-6. **Clock skew beyond 60s** across instances can prematurely reject a near-`exp` license — mitigated by keeping TTL ≫ skew, not eliminated.
-7. **Key rotation is operational/manual in v1** — a mis-sequenced rotation can invalidate outstanding licenses early.
+1. **Offline tier is unrevocable by construction**: a JWKS-only verifier can't see the `jti` denylist; a leaked token is valid offline until `exp` (≤600s default). Bounded by short TTL + `kid` rotation.
+2. **A v1 (bearer) license is a bearer credential**: anyone who captures it within TTL gets a free re-read of that slug. Closed by enabling holder-of-key (`LICENSE_POP`): a captured token is then useless without the payer wallet key. Off by default, so the bearer caveat still applies to the default deployment (bounded by the short TTL).
+3. **Zero-address mint guard is a guard, not a structural impossibility**: a future code path that forgets it could mint a bearer token. Enforced by one guard + test.
+4. **Online revocation adds a per-verify round-trip and a shared-state dependency**: if Supabase is down, the online tier degrades to offline-only (can't see revocations).
+5. **jsonl `get(id)` still scans** (short-circuiting): fine for single-box dev, O(n) worst case for a missing `jti`; indexed path is Supabase-only.
+6. **Clock skew beyond 60s** across instances can prematurely reject a near-`exp` license, mitigated by keeping TTL ≫ skew, not eliminated.
+7. **Key rotation is operational and manual in v1**: a mis-sequenced rotation can invalidate outstanding licenses early.
 
 ## The demo
 

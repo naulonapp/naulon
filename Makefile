@@ -1,12 +1,19 @@
 .DEFAULT_GOAL := help
-.PHONY: help install build-shared build-enforce build-wayfarer build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-build docker-down
+.PHONY: help install hooks build-shared build-enforce build-wayfarer build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-build docker-down
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[33m%-18s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install dependencies (+ build the SDK so consumers resolve dist/)
 	npm install
+	$(MAKE) hooks
 	$(MAKE) build-sdk
+
+# .git/hooks is not tracked, so a fresh clone has NO gate until core.hooksPath points at the
+# tracked directory. Wired into `install` rather than left to a README line, because a gate
+# somebody has to remember to arm is a gate half the clones do not have.
+hooks: ## Arm the tracked git hooks (commit-msg, pre-commit, pre-push)
+	@git config core.hooksPath .githooks && echo "git hooks armed (.githooks)"
 
 # The gate and any downstream consumer (incl. a non-tsx publisher app) resolve the
 # @naulon/{sdk,shared,enforce} package exports against dist/, so these three must be

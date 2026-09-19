@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+#
+# pre-commit — the published prose, checked on what is actually staged.
+#
+# Everything this repo publishes is read by someone deciding whether to adopt it: the README
+# is the project's front page, docs/ is the documentation site, and every packages/*/README.md
+# is the whole npm package page. commit-msg reads the message and never the diff, so this is
+# the only gate between an edit and a published document.
+#
+# Staged content only (`git show :file`), never the working tree: a partially staged file must
+# be judged by what is going in, not by what happens to be on disk.
+#
+# Escape hatch, deliberate and visible in shell history:  git commit --no-verify
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+CHECKER="$ROOT/scripts/prose-voice.mjs"
+[ -f "$CHECKER" ] || { echo "pre-commit: scripts/prose-voice.mjs is missing, prose was NOT checked." >&2; exit 0; }
+
+# The published planes. Keep in step with packages/shared/src/published-prose-voice.test.ts.
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E \
+  '^((README|CONTRIBUTING|DEPLOY|CHANGELOG|SECURITY)\.md|docs/.*\.mdx?|packages/[^/]+/README\.md|plugins/naulon/readme\.txt|\.github/PULL_REQUEST_TEMPLATE\.md)$' || true)
+[ -z "$staged" ] && exit 0
+
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+list=()
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  mkdir -p "$tmp/$(dirname "$f")"
+  git show ":$f" > "$tmp/$f" 2>/dev/null || continue
+  list+=("$tmp/$f")
+done <<< "$staged"
+[ ${#list[@]} -eq 0 ] && exit 0
+
+if ! out=$(cd "$tmp" && node "$CHECKER" files "${list[@]}" 2>&1); then
+  echo "$out" | sed "s#$tmp/##g" >&2
+  echo "" >&2
+  echo "These are the staged versions. Fix the files, stage them, and commit again." >&2
+  exit 1
+fi

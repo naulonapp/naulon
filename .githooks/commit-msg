@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#
+# commit-msg — the commit contract, checked before the commit is written.
+#
+# Conventional Commits, a 72-character subject, an imperative summary, and prose that reads
+# like a person wrote it. The checks and the reasoning are in scripts/prose-voice.mjs;
+# the contract a contributor reads is in CONTRIBUTING.md.
+#
+# Escape hatch, deliberate and visible in shell history:  git commit --no-verify
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+CHECKER="$ROOT/scripts/prose-voice.mjs"
+
+# A missing checker must be loud. A gate that passes silently when it cannot read its input
+# is worse than no gate, because it is trusted.
+if [ ! -f "$CHECKER" ]; then
+  echo "commit-msg: scripts/prose-voice.mjs is missing, so the commit contract was NOT checked." >&2
+  exit 0
+fi
+
+exec node "$CHECKER" commit-msg "$1"

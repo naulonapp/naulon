@@ -2,17 +2,17 @@
 
 The runtime-agnostic toll-decision kernel plus the in-app enforcement middleware.
 
-This is the neutral low-level core that both `@naulon/tollgate` (the gate shell —
-the reverse-proxy that boots `createApp`) and `@naulon/sdk` (the publisher SDK)
+This is the neutral low-level core that both `@naulon/tollgate` (the gate shell, the
+reverse-proxy that boots `createApp`) and `@naulon/sdk` (the publisher SDK)
 sit **above**, with no dependency cycle. It depends only on `@naulon/shared` (and
-`viem`, for the holder-of-key proof). The heavy settlement path — the Circle
-facilitator, the pending-leg drain — stays in `@naulon/tollgate`; nothing here
+`viem`, for the holder-of-key proof). The heavy settlement path, the Circle
+facilitator and the pending-leg drain, stays in `@naulon/tollgate`; nothing here
 imports `@circle-fin/x402-batching`.
 
 ## Why it exists
 
 `decide()` is one pure function: given a web `Request` and a known publisher, it
-returns a verdict — serve free, refuse, or `402` with the payment legs — and
+returns a verdict, whether serve free, refuse, or `402` with the payment legs, and
 performs **no** side effects (no proxy, no settle, no observe). Extracting it lets
 two very different runtimes reach the *same* verdict:
 
@@ -29,20 +29,20 @@ Both build a byte-identical `402`, because they share this code.
 
 The decision kernel and the framework-agnostic middleware core:
 
-- `decide(input)` — the pure verdict function.
-- `naulonMiddleware(opts)` — takes a `Request`, returns `{ response, setHeaders }`:
+- `decide(input)`: the pure verdict function.
+- `naulonMiddleware(opts)` takes a `Request` and returns `{ response, setHeaders }`:
   a `Response` to short-circuit (`402`/`403`), or `null` to let the app render
   (with `setHeaders` to attach to the app's response on a paid pass).
-- `withNaulon(handler, opts)` — wrap a generic `fetch` handler.
-- `localQuoteSource(fn)` / `httpQuoteSource(url, key)` — pluggable price + payees.
+- `withNaulon(handler, opts)` wraps a generic `fetch` handler.
+- `localQuoteSource(fn)` / `httpQuoteSource(url, key)`: pluggable price and payees.
 - The classification, Web Bot Auth, nonce, and proof primitives (`classify`,
   `verifyBotAuth`, …) and the x402 build side (`build402`, `buildRequirements`).
-- Cloudflare pay-per-crawl interop — `formatCrawlerPrice`, `parseCrawlerPrice`,
+- Cloudflare pay-per-crawl interop: `formatCrawlerPrice`, `parseCrawlerPrice`,
   `declaredCrawlerBudget`, `crawlerBudgetVerdict`, `totalChargedMicro`, and the four
   header constants (`crawler-max-price` / `crawler-exact-price` on the request,
   `crawler-price` on a `402`, `crawler-charged` on a paid `200`). A crawler already
   fluent in that vocabulary can price your origin with no change on its side. You
-  advertise in their vocabulary and settle in ours — x402/USDC, buyer→author — so
+  advertise in their vocabulary and settle in ours, x402 over USDC, buyer to author, so
   nothing here moves money or changes who is charged. Prices render at full precision
   rather than Cloudflare's `USD XX.XX`: a citation toll is often sub-cent, and
   `(0.001).toFixed(2)` would advertise a free read. It lives here rather than in
@@ -50,7 +50,7 @@ The decision kernel and the framework-agnostic middleware core:
 
 ### `@naulon/enforce/next`
 
-- `createNaulonMiddleware(opts, NextResponse)` — the Next.js App Router adapter.
+- `createNaulonMiddleware(opts, NextResponse)`: the Next.js App Router adapter.
   It has no hard `next` dependency; you inject `NextResponse` (your app already has
   it), keeping the core framework-agnostic.
 
@@ -78,9 +78,9 @@ export const config = { matcher: ["/articles/:path*"] };
 Next 16 renamed the file convention: `middleware.ts` still runs but warns
 (`The "middleware" file convention is deprecated. Please use "proxy" instead.`),
 and the export it looks for is `proxy`. On Next ≤ 15 keep the file `middleware.ts`
-and export `middleware` — the adapter itself is identical either way.
+and export `middleware`. The adapter itself is identical either way.
 
-`quote` and `verifyUrl` point at whatever runs the money + catalog legs — the
+`quote` and `verifyUrl` point at whatever runs the money and catalog legs: the
 managed control plane, or your own self-hosted `POST /_naulon/verify` +
 `GET /_naulon/quote`. The middleware never holds funds: it forwards the buyer's
 signed payment to `verifyUrl`, which settles buyer → author directly.
@@ -98,7 +98,7 @@ flowchart TD
 A publisher vendors `@naulon/enforce` directly (it builds to its own `dist/`
 tarball) and wires the middleware; the gate consumes the very same package, which
 is what guarantees both reach an identical verdict. `@naulon/enforce` is
-deliberately NOT re-exported through `@naulon/sdk` — `@naulon/shared` imports the SDK
+deliberately NOT re-exported through `@naulon/sdk`, because `@naulon/shared` imports the SDK
 and re-exports it, so an `sdk → enforce` edge would close the loop
 `sdk → enforce → shared → sdk`, a declaration-build cycle. Keeping enforce standalone
 (a second, small dependency alongside the SDK) avoids that and keeps the package

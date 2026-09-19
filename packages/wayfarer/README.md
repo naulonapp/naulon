@@ -3,7 +3,7 @@
 The paying agent. Give it a topic and a budget; it discovers tolled articles,
 decides which are worth citing, pays only those, and answers from what it bought.
 
-The point isn't automation for its own sake — it's that the agent makes a real
+The point isn't automation for its own sake. It is that the agent makes a real
 budget decision at each step instead of paying for everything. It ranks candidates
 by relevance-per-dollar, buys greedily under the budget down to a relevance floor,
 reuses anything already paid for, and logs *why* for every candidate. The
@@ -29,10 +29,10 @@ with a funded buyer wallet to pay for real over Circle Gateway on Arc Network.
 
 ## What's inside
 
-- **`discover.ts` / `discovery.ts`** — find tollable candidates from a gate or feed.
-- **`appraise.ts` / `decide.ts` / `allocation.ts`** — relevance, the pay/skip call, budget allocation.
-- **`buyer.ts` / `gateway.ts`** — the x402 payment loop (mock and Circle Gateway).
-- **`agent.ts` / `lib.ts`** — the end-to-end research run, also importable as a library.
+- **`discover.ts` / `discovery.ts`**: find tollable candidates from a gate or feed.
+- **`appraise.ts` / `decide.ts` / `allocation.ts`**: relevance, the pay or skip call, budget allocation.
+- **`buyer.ts` / `gateway.ts`**: the x402 payment loop (mock and Circle Gateway).
+- **`agent.ts` / `lib.ts`**: the end-to-end research run, also importable as a library.
 
 Exposed as an MCP server by [`@naulon/wayfarer-mcp`](../wayfarer-mcp).
 

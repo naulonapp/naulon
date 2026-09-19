@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose something the project should be able to do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most useful proposals start from the problem rather than the solution, because the seam
+        that solves it is often not the one that first comes to mind.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and where the project stops you.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+
+  - type: dropdown
+    id: seam
+    attributes:
+      label: Does an existing seam cover this?
+      description: >
+        The project is extended by implementing an interface rather than by forking a package.
+        CreditsResolver adds a publisher, Settlement or Buyer adds a payment rail, EventSink
+        persists events elsewhere, and a crawl adapter teaches it a new CMS.
+      options:
+        - One of those seams fits, and I want help using it
+        - A seam fits but it is missing something it would need
+        - No existing seam covers this
+        - I do not know
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried or considered instead

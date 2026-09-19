@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question, or an idea you want to talk through
+    url: https://github.com/naulonapp/naulon/discussions
+    about: Discussions is the place for how-do-I and should-we questions. Issues are for defects and concrete proposals.
+  - name: Security vulnerability
+    url: https://github.com/naulonapp/naulon/security/advisories/new
+    about: Report it privately here, never as a public issue. SECURITY.md has the scope and what to expect.
+  - name: Documentation
+    url: https://github.com/naulonapp/naulon/tree/main/docs
+    about: Configuration, the credits contract, settlement notifications, and the citation license spec.
