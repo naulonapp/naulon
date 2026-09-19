@@ -1,12 +1,12 @@
 # @naulon/wayfarer-mcp
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server that lets any
-LLM **discover, quote, pay, and cite** naulon-tolled sources — bring your own
+LLM **discover, quote, pay, and cite** naulon-tolled sources. Bring your own
 wallet, local stdio, the [wayfarer](../wayfarer) brain running in-process.
 
 Point any MCP-capable client at this server and the model gains tools to find
 tolled articles, get a quote, pay the `402` toll from a wallet you control, and
-cite what it bought — the same budgeted buying loop the CLI agent runs, exposed
+cite what it bought: the same budgeted buying loop the CLI agent runs, exposed
 as callable tools and slash commands.
 
 Works with **any MCP client**: Claude Code, Claude Desktop, Cursor, Windsurf,
@@ -22,20 +22,20 @@ npx -y @naulon/wayfarer-mcp        # runs the stdio MCP server
 
 The package is scoped (`@naulon/wayfarer-mcp`); the binary it installs is
 `wayfarer-mcp`. Zero-config, it starts and mocks **settlement** (no wallet, no
-spend) — but mock settlement is not a mock catalog: `discover` / `research` /
+spend), but mock settlement is not a mock catalog: `discover`, `research` and
 `verify` need a real place to look, so with nothing configured they refuse
 (they never fabricate sources). To actually find and read something, pick one:
 
 - **Buy from the fleet (hosted):** point a client at the hosted endpoint with an
-  agent token and use `naulon_ask` — it buys across the whole naulon fleet
+  agent token and use `naulon_ask`, which buys across the whole naulon fleet
   directory, real corpus, no local wallet. See [Hosted endpoint](#hosted-endpoint-no-local-wallet).
 - **Single publisher (stdio):** set `RSS_URL`, `PUBLISHER_URL`, or `CATALOG_URL`
   to that site's feed/catalog, plus `TOLLGATE_URL` to pay. A lone `TOLLGATE_URL`
-  pins **every** payment to one gate — that's single-publisher by design.
+  pins **every** payment to one gate, which is single-publisher by design.
 - **Fleet / many publishers (stdio):** to buy across more than one publisher
   locally, set `WAYFARER_ALLOW_DOMAINS` to the publisher hosts you trust (and
   point discovery at a fleet directory via `CATALOG_URL`) instead of pinning a
-  single `TOLLGATE_URL` — each discovered publisher is then paid at its own gate,
+  single `TOLLGATE_URL`, and each discovered publisher is then paid at its own gate,
   bounded by the allowlist. See [Configuration](#configuration).
 - **Full loop offline:** run the repo's `make demo` (or `make dev`) to drive the
   whole discover → toll → pay → settle loop against a local stub publisher.
@@ -55,13 +55,13 @@ The canonical registration, which every client below is a variant of:
 ## Slash commands (prompts)
 
 Every prompts-capable client surfaces these as native, argument-taking slash
-commands — no per-user config. In Claude Code / Desktop they appear as
+commands, with no per-user config. In Claude Code and Desktop they appear as
 `/mcp__naulon__<name>` (the `naulon` segment is whatever you named the server):
 
 | Prompt | Argument | Does |
 |--------|----------|------|
 | `research` | `topic` | Discover sources, see prices, return a grounded cited answer within budget. |
-| `discover` | `topic` | List candidate sources — **free**, no payment. |
+| `discover` | `topic` | List candidate sources. **Free**, no payment. |
 | `verify` | `claim` | Fact-check a claim against tolled sources, citing what it paid for. |
 | `ask`\* | `question` | Hosted reading agent: pays per citation, returns a grounded answer. |
 
@@ -74,7 +74,7 @@ commands — no per-user config. In Claude Code / Desktop they appear as
 
 ### Claude Code
 
-CLI (recommended — `--scope project` writes a shared `.mcp.json`, `user` makes it
+CLI (recommended, since `--scope project` writes a shared `.mcp.json` and `user` makes it
 global across your projects):
 
 ```bash
@@ -103,11 +103,11 @@ Restart Claude Desktop. Prompts appear in the `+` / slash-command menu.
 ### Cursor
 
 `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per-project), key
-`mcpServers` — same canonical block above.
+`mcpServers`, the same canonical block as above.
 
 ### Windsurf
 
-`~/.codeium/windsurf/mcp_config.json`, key `mcpServers` — same canonical block.
+`~/.codeium/windsurf/mcp_config.json`, key `mcpServers`, the same canonical block.
 
 ### VS Code (native MCP / Copilot agent)
 
@@ -124,7 +124,7 @@ Restart Claude Desktop. Prompts appear in the `+` / slash-command menu.
 
 ### Cline
 
-Cline → MCP Servers → Configure (`cline_mcp_settings.json`), key `mcpServers` —
+Cline → MCP Servers → Configure (`cline_mcp_settings.json`), key `mcpServers`,
 same canonical block.
 
 ### Any other MCP host
@@ -140,7 +140,7 @@ command: npx   args: ["-y", "@naulon/wayfarer-mcp"]
 ## Hosted endpoint (no local wallet)
 
 The hosted naulon service exposes the same brain over **Streamable HTTP** at
-`/_naulon/mcp`, authenticated with an agent token — tolls are signed by naulon's
+`/_naulon/mcp`, authenticated with an agent token. Tolls are signed by naulon's
 custody-free session key, so **no private key ever touches your machine**. This
 endpoint also adds the hosted-only `naulon_ask` tool + its `ask` prompt.
 
@@ -167,26 +167,26 @@ claude mcp add --transport http naulon \
 ```
 
 Mint the agent token from your naulon buyer wallet / dashboard. Spend is bounded
-by the server budget **and** the token's sub-cap — the model can lower a run's
+by the server budget **and** the token's sub-cap, so the model can lower a run's
 budget, never raise it past either.
 
 ---
 
 ## Configuration
 
-Env read by the stdio server (all optional — omit for the offline mock):
+Env read by the stdio server (all optional, so omit for the offline mock):
 
 | Var | Purpose |
 |-----|---------|
 | `PAYMENT_MODE` | `gateway` to pay real tolls over Circle Gateway on Arc Network (default: mock). |
 | `BUYER_PRIVATE_KEY` | The wallet the toll is paid from. BYO-key path; a hosted deploy signs through a cloud signer instead. |
-| `TOLLGATE_URL` | The gate every payment resolves against. Payments only ever flow here — a prompt-injected model cannot redirect them. |
+| `TOLLGATE_URL` | The gate every payment resolves against. Payments only ever flow here, so a prompt-injected model cannot redirect them. |
 | `WAYFARER_BUDGET_USDC` | The session spend ceiling. The model can never raise it. |
-| `WAYFARER_ALLOW_DOMAINS` / `WAYFARER_DENY_DOMAINS` | Publisher allow/deny lists applied to **every paid tool** (`naulon_quote`, `naulon_pay_and_read`, `naulon_research`) — not just research. A stated `WAYFARER_ALLOW_DOMAINS` *replaces* the single-gate identity pin, so one server can buy across many publishers. Blank/malformed reads as **unset** (no restriction); comma-separated hosts to allow. (Internally, a defined-but-empty allowlist denies all — a blank env var can only ever read as unset, never empty.) |
+| `WAYFARER_ALLOW_DOMAINS` / `WAYFARER_DENY_DOMAINS` | Publisher allow/deny lists applied to **every paid tool** (`naulon_quote`, `naulon_pay_and_read`, `naulon_research`), not just research. A stated `WAYFARER_ALLOW_DOMAINS` *replaces* the single-gate identity pin, so one server can buy across many publishers. Blank/malformed reads as **unset** (no restriction); comma-separated hosts to allow. (Internally, a defined-but-empty allowlist denies all, and a blank env var can only ever read as unset, never empty.) |
 | `WAYFARER_PER_DOMAIN_CAP` | Max paid reads per publisher per session. |
-| `WAYFARER_KILL_SWITCH` | Hard stop — refuse all spend. |
+| `WAYFARER_KILL_SWITCH` | Hard stop: refuse all spend. |
 
-Budget and wallet are **server config, never tool arguments** — the model plans
+Budget and wallet are **server config, never tool arguments**, so the model plans
 spend within the envelope but can't widen it.
 
 ---
@@ -197,11 +197,11 @@ spend within the envelope but can't widen it.
 |------|------|------|
 | `naulon_discover` | free | Candidate teasers for a topic (slug, title, summary). Start here. |
 | `naulon_appraise` | free | Relevance + rationale for teasers already held. |
-| `naulon_quote` | free | The x402 `402` probe — real price + terms, **no spend**. |
-| `naulon_pay_and_read` | **$** | Pays the toll, returns content + settlement ref + citation license, and `proofUrl` — the page a reader opens to see the author was paid. Cite it beside the source. |
+| `naulon_quote` | free | The x402 `402` probe: real price and terms, **no spend**. |
+| `naulon_pay_and_read` | **$** | Pays the toll, returns content + settlement ref + citation license, and `proofUrl`, the page a reader opens to see the author was paid. Cite it beside the source. |
 | `naulon_read_held` | free | Re-read a held live license (PoP-signed if cnf-bound). Carries the same `proofUrl`. |
 | `naulon_research` | **$** | One composite that runs the whole discover→quote→pay→ground loop. |
-| `naulon_ask`\* | **$** | Hosted-only reading agent — grounded, numbered-citation answer. |
+| `naulon_ask`\* | **$** | Hosted-only reading agent: grounded, numbered-citation answer. |
 
 \* hosted endpoint only. All tools carry MCP annotations (`readOnlyHint` on the
 free ones) so clients render safe-vs-spends correctly.

@@ -2,7 +2,7 @@
 
 This is the click-by-click for putting the toll in front of a live site, hosted
 on **Vercel** with **Supabase** for state. It's publisher-agnostic; the worked
-example is Meridian (`meridian.example`) — a fictional publisher used across the
+example is Meridian (`meridian.example`), a fictional publisher used across the
 examples.
 
 > **Local / a single box?** You don't need any of this. `make demo` runs the
@@ -14,7 +14,7 @@ examples.
 
 ## The shape
 
-Two small services and one database, wired to the live site by DNS only — no code
+Two small services and one database, wired to the live site by DNS only, with no code
 coupling to the publisher (the gate talks to it purely over HTTP):
 
 ```
@@ -30,7 +30,7 @@ coupling to the publisher (the gate talks to it purely over HTTP):
                Supabase          (naulon_events + naulon_nonces + naulon_revocations)
 ```
 
-Humans keep hitting `<site>` directly — free, untouched. Only traffic pointed at
+Humans keep hitting `<site>` directly, free and untouched. Only traffic pointed at
 `naulon.<site>` meets the gate. Flip to a full edge later by moving the apex DNS;
 no code changes.
 
@@ -46,17 +46,17 @@ and `enforce/src/nonce.ts`.
 
 ## 0. Prerequisites
 
-- A **Vercel account** (Hobby/free is fine for the demo — see the ToS note at the
+- A **Vercel account** (Hobby or free is fine for the demo; see the ToS note at the
   end).
 - A **Supabase account** (free tier; 500 MB is plenty).
 - Access to the **DNS** for the site's domain (to add one subdomain record).
 - For real settlement: a funded **Arc Network testnet** wallet (`PAYMENT_MODE=gateway`).
-  To demo the loop without a chain, use `PAYMENT_MODE=mock` — it still settles,
+  To demo the loop without a chain, use `PAYMENT_MODE=mock`: it still settles,
   records, and lights up the dashboard.
 
 ---
 
-## 1. Supabase — create the project + schema
+## 1. Supabase: create the project and schema
 
 1. Supabase → **New project**. Pick a region near your users. Save the DB password.
 2. Open **SQL Editor**, paste `supabase/migrations/0001_naulon.sql`, run it. You
@@ -65,12 +65,12 @@ and `enforce/src/nonce.ts`.
    - Or, with the Supabase CLI from the repo root: `supabase db push`.
 3. **Project Settings → API**, copy two values:
    - **Project URL** → `SUPABASE_URL` (e.g. `https://abcd.supabase.co`)
-   - **service_role** key → `SUPABASE_SERVICE_KEY` *(secret — server-side only,
+   - **service_role** key → `SUPABASE_SERVICE_KEY` *(secret, server-side only,
      never the anon key, never committed)*
 
 ---
 
-## 2. Vercel project A — the tollgate
+## 2. Vercel project A, the tollgate
 
 1. Vercel → **Add New… → Project**, import this repo.
 2. **Root Directory:** `packages/tollgate`. Vercel detects the npm workspace and
@@ -87,25 +87,25 @@ and `enforce/src/nonce.ts`.
    | `SUPABASE_URL` | from step 1 | |
    | `SUPABASE_SERVICE_KEY` | from step 1 | secret |
    | `TOLLGATE_SECRET` | a random 32+ byte hex string | **required** multi-instance, so every instance signs nonces alike |
-   | `TRUST_PROXY` | `true` | you're behind Vercel's edge. Optional here — a serverless request has no socket, so the forwarded address is used either way — but set it so the same env works on a VPS |
+   | `TRUST_PROXY` | `true` | you're behind Vercel's edge. Optional here, since a serverless request has no socket so the forwarded address is used either way, but set it so the same env works on a VPS |
    | `TRUST_PROXY_HOPS` | `1` | trusted hops in front, counted outward. Leave at 1 unless a CDN sits in front of your proxy **and** the proxy refuses traffic that skips it; a bypassable outer hop makes a raised count forgeable |
    | `ORIGIN_URL` | `https://<site>` | the site the gate proxies to |
    | `ARTICLE_PATH_PREFIXES` | e.g. `essays` | which URL prefixes are gateable; match the site |
    | `DEFAULT_PRICE_USDC` | e.g. `0.001` | per machine read |
    | `CITATION_MULTIPLIER` | e.g. `5` | a citation costs this × a read (default 5; 1 = same) |
-   | `SETTLEMENT_NETWORK` | `arcTestnet` (default) | `arcTestnet` · `baseSepolia` · `base` — Arc-first; the full Circle chain registry lives in `shared/src/networks.ts` |
+   | `SETTLEMENT_NETWORK` | `arcTestnet` (default) | `arcTestnet` · `baseSepolia` · `base`, Arc-first; the full Circle chain registry lives in `shared/src/networks.ts` |
    | `PAYMENT_MODE` | `mock` or `gateway` | start `mock` to prove the path, switch to `gateway` once a wallet is funded |
-   | `CREDITS_API_URL` *or* `CREDITS_FIXTURES` | author resolution | how slugs map to wallets — see `examples/meridian` |
-   | `LICENSE_SIGNING_KEY` | an Ed25519 PKCS8 PEM | **secret; required** once `PAYMENT_MODE=gateway` *or* any `*_BACKEND=supabase` — an ephemeral key breaks license verification across instances. Generate: `node -e "const{generateKeyPairSync}=require('crypto');console.log(generateKeyPairSync('ed25519',{privateKeyEncoding:{type:'pkcs8',format:'pem'}}).privateKey)"` |
+   | `CREDITS_API_URL` *or* `CREDITS_FIXTURES` | author resolution | how slugs map to wallets; see `examples/meridian` |
+   | `LICENSE_SIGNING_KEY` | an Ed25519 PKCS8 PEM | **secret; required** once `PAYMENT_MODE=gateway` *or* any `*_BACKEND=supabase`, because an ephemeral key breaks license verification across instances. Generate: `node -e "const{generateKeyPairSync}=require('crypto');console.log(generateKeyPairSync('ed25519',{privateKeyEncoding:{type:'pkcs8',format:'pem'}}).privateKey)"` |
    | `NAULON_WEBHOOK_ENDPOINTS` | JSON array | where settlements are reported: `[{"url":"https://…","secret":"whsec_…","events":["settlement.completed"]}]`. Contains a **secret**. Leave blank → the webhook plane is dark (the gate still tolls + serves) |
-   | `RELAYER_PRIVATE_KEY` | an EOA private key | **secret**; only when `SETTLEMENT_NETWORK` is a memo-capable chain (Arc) — the EOA that pays gas to self-relay the buyer's transfer through the Memo contract. It pays gas but never touches the funds (custody-free holds). Leave blank on Base |
+   | `RELAYER_PRIVATE_KEY` | an EOA private key | **secret**; only when `SETTLEMENT_NETWORK` is a memo-capable chain (Arc). It is the EOA that pays gas to self-relay the buyer's transfer through the Memo contract. It pays gas but never touches the funds (custody-free holds). Leave blank on Base |
 
    Add the Arc/Circle vars (`CIRCLE_API_KEY`, `GATEWAY_API_URL`, …) only when you
    move `PAYMENT_MODE=gateway`; the testnet facilitator needs no key.
 5. **Deploy.** Smoke-test the health route: `curl https://<deployment>/healthz`
    → `{"ok":true,"service":"tollgate","startedAt":…}`.
 
-## 3. Vercel project B — the dashboard
+## 3. Vercel project B, the dashboard
 
 Same import, **Root Directory:** `packages/dashboard`. Env vars are the read side of
 the ledger, plus the two that make the exposure deliberate:
@@ -115,12 +115,12 @@ the ledger, plus the two that make the exposure deliberate:
 | `EVENTS_BACKEND` | `supabase` |
 | `SUPABASE_URL` | same project as the gate |
 | `SUPABASE_SERVICE_KEY` | same |
-| `DASHBOARD_ALLOWED_HOSTS` | `dash.<site>` — the hostname you reach it on |
-| `DASHBOARD_AUTH` | `user:pass` — the credential for the ops console |
+| `DASHBOARD_ALLOWED_HOSTS` | `dash.<site>`, the hostname you reach it on |
+| `DASHBOARD_AUTH` | `user:pass`, the credential for the ops console |
 
 Those last two are not optional here, and it is worth being clear why. This console
 shows payout wallets and earnings. On a box you would leave it on loopback and that
-is the whole story — but a serverless deployment never binds a socket, so "bound to
+is the whole story, but a serverless deployment never binds a socket, so "bound to
 127.0.0.1" stops meaning anything while the console answers the public internet.
 Naming a non-loopback host without a credential is refused at boot rather than
 served.
@@ -133,7 +133,7 @@ Deploy. The page streams live from the same Supabase the gate writes to.
 
 ---
 
-## 4. DNS — point the subdomains at the projects
+## 4. DNS: point the subdomains at the projects
 
 In each Vercel project: **Settings → Domains → Add**.
 
@@ -141,7 +141,7 @@ In each Vercel project: **Settings → Domains → Add**.
 - Project B → `dash.<site>`
 
 Vercel shows a **CNAME target** for each. Add those CNAME records wherever the
-domain's DNS is managed. The apex (`<site>` — real readers) is left alone.
+domain's DNS is managed. The apex (`<site>`, where real readers land) is left alone.
 
 ---
 
@@ -164,13 +164,13 @@ wallet/faucet steps.)
 ## Notes & caveats
 
 - **Hobby ToS.** Vercel Hobby is non-commercial. Moving real USDC is arguably
-  commercial — fine for a throwaway trial, but move to Pro (or the Fly/VPS path
+  commercial: fine for a throwaway trial, but move to Pro (or the Fly and VPS path
   below) for anything ongoing.
 - **Serverless gotchas.** The two spots most likely to need a tweak on Vercel are
-  the `.ts`-extension imports and the npm-workspace install — check those first if
+  the `.ts`-extension imports and the npm-workspace install. Check those first if
   the build fights the monorepo.
 - **`getConnInfo` on Vercel.** Client IP comes from the platform, not a raw socket,
-  so `getConnInfo` throws. That absence is treated as proof an edge is in front —
+  so `getConnInfo` throws. That absence is treated as proof an edge is in front, so
   the forwarded address is used without `TRUST_PROXY`, because a caller that could
   forge that header would have a socket. It is why per-client rate limiting and the
   console's failed-sign-in lockout both work on a serverless deploy out of the box;
@@ -178,7 +178,7 @@ wallet/faucet steps.)
 - **A CDN in front of your proxy is where `TRUST_PROXY_HOPS` earns its caveat.** With
   Cloudflare (or any CDN) ahead of your own reverse proxy, the trail reaching the gate
   is `<client>, <cdn-edge>`: at `HOPS=1` the key is the **CDN's** address, so every
-  client arriving through one edge node shares a bucket. `HOPS=2` reads the client —
+  client arriving through one edge node shares a bucket. `HOPS=2` reads the client,
   but only safely if the CDN is the *only* way in. Check before you raise it:
 
   ```bash
@@ -186,11 +186,11 @@ wallet/faucet steps.)
   ```
 
   A `200` there means the edge can be skipped, and a caller doing so lands exactly
-  where the CDN's entry would be — rotating a forged header then buys a fresh bucket
+  where the CDN's entry would be, and rotating a forged header then buys a fresh bucket
   per request. Lock the origin first (mTLS / authenticated origin pulls, or a firewall
   limited to the CDN's ranges), then raise the count. `HOPS=1` under-meters; a
   bypassable `HOPS=2` doesn't meter at all.
 - **Tested fallback host.** If the Vercel build fights the monorepo, the
   `docker-compose.yml` runs the same two services on **Fly.io** or any small VPS
-  with a persistent volume — there you can keep `EVENTS_BACKEND=jsonl` and a single
+  with a persistent volume. There you can keep `EVENTS_BACKEND=jsonl` and a single
   instance, or still point at Supabase. Same app, fewer moving parts.

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#
+# pre-push — typecheck and test before anything leaves the machine.
+#
+# CI runs the same two targets on every push and pull request, so this is not the only gate.
+# It is the FAST one: a red build found here costs seconds, and one found in CI costs a round
+# trip plus a public red mark on the branch.
+#
+# Skipped when the push carries nothing but prose, mirroring what CI can afford to skip.
+#
+# Escape hatch, deliberate and visible in shell history:
+#   git push --no-verify
+#   NAULON_SKIP_VERIFY=1 git push
+set -uo pipefail
+
+[ "${NAULON_SKIP_VERIFY:-}" = "1" ] && { echo "pre-push: skipped by NAULON_SKIP_VERIFY=1"; exit 0; }
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 0
+
+remote_head=$(git rev-parse --verify --quiet "@{upstream}" 2>/dev/null || true)
+range=${remote_head:+"$remote_head..HEAD"}
+changed=$(git diff --name-only ${range:-HEAD~1..HEAD} 2>/dev/null || git diff --name-only HEAD)
+
+# Prose-only pushes do not need a typecheck. Anything else does.
+if [ -n "$changed" ] && ! echo "$changed" | grep -qvE '\.(md|txt)$|^docs/|^\.github/ISSUE_TEMPLATE/'; then
+  echo "pre-push: prose only, skipping lint and test"
+  exit 0
+fi
+
+echo "pre-push: make lint"
+make lint || { echo "pre-push: typecheck failed. Fix it, or push with --no-verify if you know why." >&2; exit 1; }
+
+echo "pre-push: make test"
+make test || { echo "pre-push: tests failed. Fix them, or push with --no-verify if you know why." >&2; exit 1; }

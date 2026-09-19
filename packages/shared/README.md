@@ -1,6 +1,6 @@
 # @naulon/shared
 
-The contract layer every naulon package agrees on — the types, validators, and
+The contract layer every naulon package agrees on: the types, validators, and
 low-level primitives that define the toll, with no framework or transport
 attached.
 
@@ -16,7 +16,7 @@ package one layer up gets the whole contract from a single import.
 npm install @naulon/shared
 ```
 
-You usually don't add this directly — it arrives as a dependency of
+You usually don't add this directly. It arrives as a dependency of
 [`@naulon/enforce`](https://www.npmjs.com/package/@naulon/enforce) and of the gate.
 Install it on its own only if you're consuming the shared types or config loader directly.
 
