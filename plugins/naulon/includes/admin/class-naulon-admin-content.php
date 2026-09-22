@@ -86,11 +86,11 @@ class Naulon_Admin_Content {
 		if ( $counts['no_wallet'] > 0 ) {
 			printf(
 				'<p class="naulon-warn">%s <a href="%s">%s</a></p>',
+				// Not "reads free": an author with a naulon payout account is paid to their
+				// own wallet even with none set here, and this site cannot see that.
 				esc_html(
 					sprintf(
 						/* translators: %d: number of posts. */
-						// Not "reads free": an author with a naulon payout account is paid to their
-						// own wallet even with none set here, and this site cannot see that.
 						_n(
 							'%d published post has no author wallet on this site. If that author has a naulon account, their share is paid there; if not, the post reads free.',
 							'%d published posts have no author wallet on this site. If those authors have a naulon account, their share is paid there; if not, those posts read free.',

@@ -36,6 +36,36 @@ class Naulon_Roles {
 	const VIEW_OWN_EARNINGS = 'naulon_view_own_earnings';
 
 	/**
+	 * What each capability lets a person DO, in a sentence. The People screen used to print the
+	 * slugs themselves, which told a site owner deciding who to trust with money nothing they
+	 * could act on. The slug stays beside the sentence: it is what a theme or snippet passes to
+	 * `current_user_can()`, so removing it would cost a developer the only useful half.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function labels() {
+		return array(
+			self::MANAGE_SETTINGS   => __( 'Connect the site and switch the toll on or off', 'naulon' ),
+			self::MANAGE_WALLETS    => __( "Set any author's payout wallet", 'naulon' ),
+			self::EDIT_OWN_WALLET   => __( 'Set their own payout wallet', 'naulon' ),
+			self::TOLL_POSTS        => __( 'Mark one of their articles free', 'naulon' ),
+			self::VIEW_EARNINGS_ALL => __( 'See what every author earned', 'naulon' ),
+			self::VIEW_OWN_EARNINGS => __( 'See what they earned themselves', 'naulon' ),
+		);
+	}
+
+	/**
+	 * One capability, as a sentence. Falls back to the slug for anything a filter added.
+	 *
+	 * @param string $cap Capability slug.
+	 * @return string
+	 */
+	public static function label( $cap ) {
+		$labels = self::labels();
+		return isset( $labels[ $cap ] ) ? $labels[ $cap ] : (string) $cap;
+	}
+
+	/**
 	 * The role → capability map. Kept as data so the admin screen can render exactly what is
 	 * granted rather than describing it in prose that drifts.
 	 *

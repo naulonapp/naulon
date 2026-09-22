@@ -197,14 +197,11 @@ jobs:
           echo "::error::CHANGELOG.md has no '## ${tag}' section. Add one before tagging — a plugin-only or metadata-only release still needs a stub that says so, or the next reader cannot tell an empty release from an undocumented one."
           exit 1
 
-      # The LAST guard, and it moved up here on 2026-09-02 for the reason the block above states.
-      # It used to live with the packaging steps, AFTER the npm publish — so on v0.8.0 it caught a
-      # real omission (the plugin's readme carried a Changelog entry for the shipping version and no
-      # Upgrade Notice) only once five packages were already on the registry, and skipped the GitHub
-      # Release. npm shipped correctly and WordPress got nothing: no zip, no manifest, no update
-      # offered to any site. A guard that fires after the irreversible step is a report, not a gate.
-      - name: The WordPress update manifest is complete
-        run: node scripts/wp-update-manifest.mjs --check
+      # The update manifest this once validated was retired with the self-updater: a plugin hosted
+      # on wordpress.org may not serve its own updates, so scripts/wp-update-manifest.mjs is gone
+      # and this step called a file that no longer exists — every tag died here, before publish.
+      # The one property worth keeping was the readme's Upgrade Notice for the shipping version,
+      # and VersionTest asserts it now, on every push rather than only at a tag.
 
       - uses: actions/setup-node@v4
         with:

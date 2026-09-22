@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name:       naulon — citation toll
+ * Plugin Name:       naulon citation toll
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
  * Version:           0.5.4
@@ -22,6 +22,10 @@
  * the permalink from this header. It does, but only at submission: the slug `naulon` is already
  * allocated, the Text Domain must equal THAT and not the display name, and Plugin Check reads a
  * header and readme that disagree as one plugin claiming two names.
+ *
+ * The two spellings sit on opposite sides of the writing-voice em-dash ban, since readme.txt is
+ * a published-prose plane and this header is not, so a de-slop pass over one of them broke the
+ * pair silently. VersionTest reads both now.
  *
  * Licensing note: the rest of this monorepo is MIT. wordpress.org requires GPLv2-or-later, and
  * we hold the copyright, so this directory ships GPL-2.0-or-later. MIT is GPL-compatible, so

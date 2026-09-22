@@ -607,29 +607,52 @@ class Naulon_Admin_Setup {
 			return;
 		}
 
+		$legs = isset( $decoded['extensions']['naulonLegs']['legs'] ) && is_array( $decoded['extensions']['naulonLegs']['legs'] )
+			? $decoded['extensions']['naulonLegs']['legs']
+			: array();
+
+		// What the agent hands over is every leg, not `accepts[0]`. That field carries the AUTHOR
+		// leg alone, because stock x402 reads `accepts[]` as alternatives and our extra legs ride
+		// in the extension below. Printing it under "Price" next to a split that added up to more
+		// left a publisher with two different numbers for one read and no way to tell which one
+		// an agent actually pays.
+		$total = 0;
+		foreach ( $legs as $leg ) {
+			$total += (int) ( isset( $leg['amount'] ) ? $leg['amount'] : 0 );
+		}
+		if ( 0 === $total ) {
+			$total = (int) ( isset( $accepts['amount'] ) ? $accepts['amount'] : 0 );
+		}
+
 		echo '<table class="naulon-kv"><tbody>';
 		printf(
 			'<tr><th>%s</th><td><strong>%s USDC</strong></td></tr>',
-			esc_html__( 'Price', 'naulon' ),
-			esc_html( Naulon_Ledger::format_usdc( isset( $accepts['amount'] ) ? $accepts['amount'] : 0 ) )
+			esc_html__( 'Agent pays', 'naulon' ),
+			esc_html( Naulon_Ledger::format_usdc( $total ) )
 		);
 		printf(
-			'<tr><th>%s</th><td><code>%s</code></td></tr>',
-			esc_html__( 'Paid to', 'naulon' ),
+			'<tr><th>%s</th><td><strong>%s USDC</strong> <code>%s</code></td></tr>',
+			esc_html__( 'Your author gets', 'naulon' ),
+			esc_html( Naulon_Ledger::format_usdc( isset( $accepts['amount'] ) ? $accepts['amount'] : 0 ) ),
 			esc_html( isset( $accepts['payTo'] ) ? (string) $accepts['payTo'] : '' )
 		);
-		printf(
-			'<tr><th>%s</th><td><code>%s</code></td></tr>',
-			esc_html__( 'Chain', 'naulon' ),
-			esc_html( isset( $accepts['network'] ) ? (string) $accepts['network'] : '' )
-		);
+		$network = isset( $accepts['network'] ) ? (string) $accepts['network'] : '';
+		if ( '' !== $network ) {
+			printf(
+				'<tr><th>%s</th><td>%s <code>%s</code></td></tr>',
+				esc_html__( 'Chain', 'naulon' ),
+				esc_html( Naulon_Ledger::network_name( $network ) ),
+				esc_html( $network )
+			);
+		}
 
-		if ( isset( $decoded['extensions']['naulonLegs']['legs'] ) && is_array( $decoded['extensions']['naulonLegs']['legs'] ) ) {
-			$legs  = $decoded['extensions']['naulonLegs']['legs'];
+		if ( ! empty( $legs ) ) {
 			$lines = array();
 			foreach ( $legs as $leg ) {
+				$label = Naulon_Ledger::role_label( isset( $leg['role'] ) ? $leg['role'] : '' );
 				$lines[] = sprintf(
-					'%s → %s USDC',
+					'%s%s → %s USDC',
+					'' === $label ? '' : $label . ' ',
 					isset( $leg['payTo'] ) ? (string) $leg['payTo'] : '',
 					Naulon_Ledger::format_usdc( isset( $leg['amount'] ) ? $leg['amount'] : 0 )
 				);
@@ -641,6 +664,7 @@ class Naulon_Admin_Setup {
 			);
 		}
 		echo '</tbody></table>';
+		echo '<p class="naulon-muted">' . esc_html__( 'naulon\'s fee is charged to the agent on top of your author\'s share. It is never taken out of what your author is paid.', 'naulon' ) . '</p>';
 	}
 
 	/**

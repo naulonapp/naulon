@@ -54,6 +54,86 @@ class Naulon_Ledger {
 	const STATUS_UNKNOWN = 'unknown';
 
 	/**
+	 * The leg that pays naulon its commission. Recorded like any other, because the buyer really
+	 * did pay it and a ledger that hides a leg cannot be reconciled against the chain. It is not
+	 * income for anyone on this site, so it never counts toward what this site was PAID.
+	 *
+	 * Every publisher-facing total therefore reads `WHERE role <> %s` bound to this constant. The
+	 * predicate is written out at each call site and the value is BOUND, never concatenated:
+	 * `$wpdb->prepare()` cannot tell a class constant from user input, nor can Plugin Check, and a
+	 * money query is the last place to teach anyone that warning is ignorable.
+	 *
+	 * It is `<> operator` rather than `= author` for two reasons. A co-author leg is this site
+	 * earning money and must survive. And `role` is NOT NULL DEFAULT '', so rows written before
+	 * the fee existed carry an empty role and were all author legs; excluding them would delete
+	 * history from a money screen while fixing a different bug.
+	 */
+	const ROLE_OPERATOR = 'operator';
+
+	/**
+	 * CAIP-2 chain id to the name the rest of naulon uses for it. Mirrors `networks.ts` in the
+	 * open core, which is the source of truth; this is a display map, so an id missing from it
+	 * degrades to the id itself rather than to nothing.
+	 *
+	 * A publisher reading "eip155:5042" cannot tell which chain their authors are paid on, and
+	 * cannot check it against the settlement network they chose on their account. Every other
+	 * naulon surface calls that chain Arc.
+	 *
+	 * @var array<string,string>
+	 */
+	const NETWORK_NAMES = array(
+		'eip155:5042'    => 'Arc',
+		'eip155:5042002' => 'Arc testnet',
+		'eip155:8453'    => 'Base',
+		'eip155:84532'   => 'Base Sepolia',
+		'eip155:1'       => 'Ethereum',
+		'eip155:42161'   => 'Arbitrum',
+		'eip155:10'      => 'Optimism',
+		'eip155:137'     => 'Polygon',
+		'eip155:43114'   => 'Avalanche',
+		'eip155:130'     => 'Unichain',
+		'eip155:1329'    => 'Sei',
+		'eip155:146'     => 'Sonic',
+		'eip155:999'     => 'HyperEVM',
+		'eip155:480'     => 'World Chain',
+	);
+
+	/**
+	 * The chain's name, for a person. Returns '' for an empty id so a caller can omit the row.
+	 *
+	 * @param string $network CAIP-2 chain id, e.g. `eip155:5042`.
+	 * @return string
+	 */
+	public static function network_name( $network ) {
+		$network = trim( (string) $network );
+		if ( '' === $network ) {
+			return '';
+		}
+		return isset( self::NETWORK_NAMES[ $network ] ) ? self::NETWORK_NAMES[ $network ] : $network;
+	}
+
+	/**
+	 * The label for one settlement leg. The role is in the data and was being thrown away, which
+	 * left a publisher reading a bare hex address next to a number and no way to tell naulon's
+	 * commission from one of their own authors.
+	 *
+	 * @param string $role Leg role as the 402 declared it.
+	 * @return string
+	 */
+	public static function role_label( $role ) {
+		switch ( strtolower( trim( (string) $role ) ) ) {
+			case 'author':
+				return __( 'author', 'naulon' );
+			case self::ROLE_OPERATOR:
+				return __( 'naulon fee', 'naulon' );
+			case '':
+				return '';
+			default:
+				return (string) $role;
+		}
+	}
+
+	/**
 	 * The table name, prefixed for this site (multisite gives each site its own).
 	 *
 	 * @return string
@@ -251,7 +331,11 @@ class Naulon_Ledger {
 	}
 
 	/**
-	 * Everything this site has been paid, in atomic USDC.
+	 * Everything the people on this site have been paid, in atomic USDC.
+	 *
+	 * The operator leg is excluded. It is money the BUYER paid naulon, it never belonged to this
+	 * site or to any author on it, and counting it inflates the headline figure by exactly our own
+	 * commission — on a screen whose whole job is telling a publisher what their writers earned.
 	 *
 	 * @param string $status Filter by leg status, or '' for all.
 	 * @return int
@@ -260,11 +344,45 @@ class Naulon_Ledger {
 		global $wpdb;
 		if ( '' === $status ) {
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-			return (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i', self::table() ) );
+			return (int) $wpdb->get_var(
+				$wpdb->prepare( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i WHERE role <> %s', self::table(), self::ROLE_OPERATOR )
+			);
 		}
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		return (int) $wpdb->get_var(
-			$wpdb->prepare( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i WHERE status = %s', self::table(), $status )
+			$wpdb->prepare(
+				'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i WHERE status = %s AND role <> %s',
+				self::table(),
+				$status,
+				self::ROLE_OPERATOR
+			)
+		);
+	}
+
+	/**
+	 * What naulon has taken in commission, in atomic USDC. The counterpart to `site_total()`:
+	 * the same rows, the other side of the line, so a publisher can see the fee rather than
+	 * having it silently removed from a figure they used to recognise.
+	 *
+	 * @param string $status Filter by leg status, or '' for all.
+	 * @return int
+	 */
+	public static function operator_total( $status = self::STATUS_SETTLED ) {
+		global $wpdb;
+		if ( '' === $status ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			return (int) $wpdb->get_var(
+				$wpdb->prepare( 'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i WHERE role = %s', self::table(), self::ROLE_OPERATOR )
+			);
+		}
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COALESCE(SUM(amount_atomic), 0) FROM %i WHERE role = %s AND status = %s',
+				self::table(),
+				self::ROLE_OPERATOR,
+				$status
+			)
 		);
 	}
 
@@ -304,6 +422,14 @@ class Naulon_Ledger {
 	 * @param int $limit Max rows.
 	 * @return array[] Each {pay_to, settled, pending}.
 	 */
+	/**
+	 * Per-payee totals for the Earnings table. Payee legs only: naulon's own fee wallet is not an
+	 * author, and listing it here put an unexplained address among this site's writers, sorted by
+	 * amount, labelled "not a user on this site".
+	 *
+	 * @param int $limit Row cap.
+	 * @return array
+	 */
 	public static function totals_by_wallet( $limit = 100 ) {
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -313,12 +439,14 @@ class Naulon_Ledger {
 					COALESCE(SUM(CASE WHEN status = %s THEN amount_atomic ELSE 0 END), 0) AS settled,
 					COALESCE(SUM(CASE WHEN status = %s THEN amount_atomic ELSE 0 END), 0) AS pending
 				FROM %i
+				WHERE role <> %s
 				GROUP BY pay_to
 				ORDER BY settled DESC
 				LIMIT %d',
 				self::STATUS_SETTLED,
 				self::STATUS_PENDING,
 				self::table(),
+				self::ROLE_OPERATOR,
 				(int) $limit
 			),
 			ARRAY_A
