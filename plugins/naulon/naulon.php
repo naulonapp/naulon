@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name:       naulon — citation toll
+ * Plugin Name:       naulon citation toll
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
- * Version:           0.5.4
+ * Version:           0.5.5
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
@@ -23,6 +23,10 @@
  * allocated, the Text Domain must equal THAT and not the display name, and Plugin Check reads a
  * header and readme that disagree as one plugin claiming two names.
  *
+ * The two spellings sit on opposite sides of the writing-voice em-dash ban, since readme.txt is
+ * a published-prose plane and this header is not, so a de-slop pass over one of them broke the
+ * pair silently. VersionTest reads both now.
+ *
  * Licensing note: the rest of this monorepo is MIT. wordpress.org requires GPLv2-or-later, and
  * we hold the copyright, so this directory ships GPL-2.0-or-later. MIT is GPL-compatible, so
  * nothing here is in tension — it is a deliberate per-directory relicense of our own work.
@@ -32,7 +36,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NAULON_VERSION', '0.5.4' );
+define( 'NAULON_VERSION', '0.5.5' );
 define( 'NAULON_PLUGIN_FILE', __FILE__ );
 define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 

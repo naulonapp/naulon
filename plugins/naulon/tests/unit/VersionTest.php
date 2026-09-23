@@ -36,6 +36,59 @@ class VersionTest extends TestCase {
 		$this->assertSame( $header, $stable, 'plugin header Version and readme.txt Stable tag disagree' );
 	}
 
+	/**
+	 * The display name is written twice and Plugin Check compares them: `Plugin Name:` in the
+	 * header and readme.txt's first line. A mismatch is reported as one plugin claiming two
+	 * names, which costs a review round.
+	 *
+	 * The two halves sit on opposite sides of the writing-voice em-dash ban -- readme.txt is a
+	 * published-prose plane and the PHP header is not -- so a de-slop pass over one of them
+	 * silently broke the pair once. Nothing but this test reads both.
+	 */
+	/**
+	 * An Upgrade Notice is what the Plugins screen shows a site before it takes an update, so a
+	 * release without one asks every publisher to install a change sight unseen.
+	 *
+	 * release.yml used to assert this, inside a manifest checker that was retired with the
+	 * self-updater. Asking it here runs it on every push instead of only at a tag, which is
+	 * where the original incident said the question belongs: before the irreversible step.
+	 */
+	public function test_the_shipping_version_has_an_upgrade_notice() {
+		$version = $this->match( 'naulon.php', '/^\s*\*\s*Version:\s*(\S+)/m' );
+		$readme  = file_get_contents( $this->plugin_dir() . '/readme.txt' );
+		$notices = strstr( $readme, '== Upgrade Notice ==' );
+
+		$this->assertNotFalse( $notices, 'readme.txt has no Upgrade Notice section' );
+		$this->assertStringContainsString(
+			"= {$version} =",
+			$notices,
+			"readme.txt has no Upgrade Notice for {$version} — the Plugins screen would offer the update with nothing to read"
+		);
+	}
+
+	public function test_the_display_name_is_spelled_the_same_in_both_places() {
+		$header = $this->match( 'naulon.php', '/^\s*\*\s*Plugin Name:\s*(.+?)\s*$/m' );
+		$readme = $this->match( 'readme.txt', '/^===\s*(.+?)\s*===/m' );
+
+		$this->assertSame(
+			$header,
+			$readme,
+			'the plugin header display name and readme.txt\'s first line disagree'
+		);
+	}
+
+	/**
+	 * wordpress.org requires the text domain to equal the slug, and translate.wordpress.org
+	 * serves nothing when they differ. The slug is `naulon`.
+	 */
+	public function test_the_text_domain_equals_the_slug() {
+		$this->assertSame(
+			'naulon',
+			$this->match( 'naulon.php', '/^\s*\*\s*Text Domain:\s*(\S+)/m' ),
+			'the Text Domain header is not the slug wordpress.org allocated'
+		);
+	}
+
 	public function test_the_changelog_documents_the_shipping_version() {
 		$version = $this->match( 'naulon.php', '/^\s*\*\s*Version:\s*(\S+)/m' );
 		$readme  = file_get_contents( $this->plugin_dir() . '/readme.txt' );

@@ -81,18 +81,32 @@ class Naulon_Admin_People {
 			// "reads free" is no longer knowable from this site alone: an author with a naulon
 			// payout account is paid to their own wallet even with none set here. So this counts
 			// what it can see — no wallet HERE, and the posts that depend on one.
+			// Two counts, so two plural decisions: one sentence driven by $without read the
+			// post clause off the AUTHOR count, which is the common single-author case and
+			// printed "1 author ... and 7 published post depends on one."
 			printf(
-				' %s',
+				' %s %s',
 				esc_html(
 					sprintf(
-						/* translators: 1: number of authors, 2: number of posts. */
+						/* translators: %d: number of authors. */
 						_n(
-							'%1$d author has no wallet here, and %2$d published post depends on one.',
-							'%1$d authors have no wallet here, and %2$d published posts depend on one.',
+							'%d author has no wallet here.',
+							'%d authors have no wallet here.',
 							$without,
 							'naulon'
 						),
-						$without,
+						$without
+					)
+				),
+				esc_html(
+					sprintf(
+						/* translators: %d: number of published posts. */
+						_n(
+							'%d published post depends on one.',
+							'%d published posts depend on one.',
+							$counts['no_wallet'],
+							'naulon'
+						),
 						$counts['no_wallet']
 					)
 				)
@@ -182,7 +196,13 @@ class Naulon_Admin_People {
 		foreach ( Naulon_Roles::map() as $role => $caps ) {
 			printf( '<tr><td><strong>%s</strong></td><td><div class="naulon-tags">', esc_html( $role ) );
 			foreach ( $caps as $cap ) {
-				printf( '<span class="naulon-tag">%s</span>', esc_html( $cap ) );
+				// The sentence is what a site owner is deciding on; the slug is what a developer
+				// passes to current_user_can(). Both, because the two readers are different people.
+				printf(
+					'<span class="naulon-tag" title="%s">%s</span>',
+					esc_attr( $cap ),
+					esc_html( Naulon_Roles::label( $cap ) )
+				);
 			}
 			echo '</div></td></tr>';
 		}

@@ -73,6 +73,23 @@ class Naulon_Admin_Earnings {
 		);
 		echo '</div>';
 		echo '<p class="naulon-muted">' . esc_html__( 'Money moves from the buyer to the author directly. This site never holds it, and neither does anybody else — there is no balance to withdraw, because there is no pot.', 'naulon' ) . '</p>';
+
+		// The figures above are what this site's people were paid. naulon's commission is a
+		// separate leg the BUYER paid us, so it is not in them — say so, with the number, rather
+		// than leaving a publisher to wonder why a total moved.
+		$fee = Naulon_Ledger::operator_total( Naulon_Ledger::STATUS_SETTLED );
+		if ( $fee > 0 ) {
+			printf(
+				'<p class="naulon-muted">%s</p>',
+				esc_html(
+					sprintf(
+						/* translators: %s: an amount of USDC, e.g. 0.003000. */
+						__( 'Agents also paid naulon %s USDC in fees on these reads. That is charged to the buyer on top of the price, never taken out of an author\'s share, so it is not counted above.', 'naulon' ),
+						Naulon_Ledger::format_usdc( $fee )
+					)
+				)
+			);
+		}
 		Naulon_Admin::card_close();
 	}
 
@@ -214,7 +231,14 @@ class Naulon_Admin_Earnings {
 					: esc_html( isset( $row['slug'] ) ? (string) $row['slug'] : '' )
 			);
 			printf( '<td>%s</td>', esc_html( isset( $row['kind'] ) ? (string) $row['kind'] : '' ) );
-			printf( '<td><code class="naulon-truncate">%s</code></td>', esc_html( isset( $row['pay_to'] ) ? (string) $row['pay_to'] : '' ) );
+			// The row's role, beside the address. Without it naulon's own commission reads as a
+			// payment to an unnamed stranger, sitting in a table of this site's authors.
+			$role_label = Naulon_Ledger::role_label( isset( $row['role'] ) ? $row['role'] : '' );
+			printf(
+				'<td><code class="naulon-truncate">%s</code>%s</td>',
+				esc_html( isset( $row['pay_to'] ) ? (string) $row['pay_to'] : '' ),
+				'' === $role_label ? '' : sprintf( ' <span class="naulon-muted">%s</span>', esc_html( $role_label ) )
+			);
 			printf( '<td class="naulon-num">%s</td>', esc_html( Naulon_Ledger::format_usdc( isset( $row['amount_atomic'] ) ? $row['amount_atomic'] : 0 ) ) );
 			printf(
 				'<td>%s</td>',

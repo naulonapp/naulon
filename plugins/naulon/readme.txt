@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.5.4
+Stable tag: 0.5.5
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -146,6 +146,12 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.5.5 =
+* Your earnings figures are what the people on this site were paid. naulon's fee is charged to the agent on top of an author's share, and it was being added into the totals, so every figure read high by the amount of that fee and the fee wallet appeared in your list of authors.
+* The fee is now stated on its own line beneath the totals, so you can see it rather than having a number quietly change.
+* The toll test tells you what the agent pays, what your author gets, and which chain the money lands on by name. Each side of the split says whose it is.
+* The table of who may do what describes each permission in a sentence. The capability name is still there if you need it for code.
+
 = 0.5.4 =
 * Your licence document is checked before it is published. A response that is not a licence, whether an interstitial from whatever sits in front of your site or an error page, is refused instead of being served as your terms, and the terms already published stay up.
 * The Diagnostics check that names an unwritable plugin folder now asks WordPress's own filesystem layer, so it answers correctly on hosts where WordPress does not write files directly.
@@ -195,6 +201,8 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.5.5 =
+Fixes your earnings totals. They included naulon's fee, which the agent pays on top of your author's share, so every figure read high and the fee wallet appeared among your authors.
 
 = 0.5.4 =
 Your published licence is now verified before it replaces what is already there, so a bad response from the network cannot become your site's terms.

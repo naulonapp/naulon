@@ -80,6 +80,11 @@ require_once __DIR__ . '/../includes/class-naulon-updater.php';
 // path that drops a table. UninstallGuardTest also reads uninstall.php as text, which needs no
 // WordPress either. The outcomes against a real database live in the wp-env suite.
 require_once __DIR__ . '/../includes/class-naulon-data.php';
+// The capability map and its sentences are pure arrays — `get_role()` is only touched by the
+// grant/revoke methods, which the wp-env suite covers. The sentences are what the People screen
+// prints instead of the raw slugs, so a capability added without one is a screen that speaks
+// machine again. See LabelsTest.
+require_once __DIR__ . '/../includes/class-naulon-roles.php';
 // Only `verdict_for` and `legs_total` are exercised here — a pure mapping and a pure sum over
 // integers. Everything else in the class talks to options and hooks and lives in the wp-env
 // suite. See ObserverReportTest for why these two are worth the fast suite.

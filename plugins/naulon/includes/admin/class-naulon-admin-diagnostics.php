@@ -206,7 +206,7 @@ class Naulon_Admin_Diagnostics {
 				'<td>%s</td>',
 				esc_html(
 					sprintf(
-						/* translators: %s: human time difference. */
+						/* translators: %s: human time difference, e.g. "2 hours". */
 						__( '%s ago', 'naulon' ),
 						human_time_diff( (int) $entry['at'], time() )
 					)
@@ -318,7 +318,7 @@ class Naulon_Admin_Diagnostics {
 		self::kv(
 			__( 'Next heartbeat', 'naulon' ),
 			false !== $next
-				/* translators: %s: human time difference. */
+				/* translators: %s: human time difference, e.g. "2 hours". */
 				? sprintf( __( 'in %s', 'naulon' ), human_time_diff( time(), (int) $next ) )
 				: __( 'not scheduled', 'naulon' )
 		);
