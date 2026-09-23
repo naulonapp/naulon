@@ -32,7 +32,7 @@ import type { X402Manifest } from "../discoverability.ts";
 /**
  * Exactly the fields the in-app `decide()` reads off a publisher before pricing.
  *
- * Deliberately a `Pick`, not a hand-listed interface: `decide()` reading a sixth field
+ * Deliberately a `Pick`, not a hand-listed interface: `decide()` reading another field
  * one day must not silently leave this behind, and the compiler is the only reviewer
  * that will notice. Every field stays optional — the control plane omits what a tenant
  * has not set, and an absent key must not overwrite a local default with `undefined`.
@@ -40,13 +40,13 @@ import type { X402Manifest } from "../discoverability.ts";
 export type PublisherEnforcementConfig = Partial<
   Pick<
     PublisherConfig,
-    "articlePrefixes" | "gateScope" | "licenseIdentity" | "seoAllowlist" | "crawlerPolicy"
+    "articlePrefixes" | "gateScope" | "licenseIdentity" | "seoAllowlist" | "crawlerPolicy" | "termsPolicy"
   >
 >;
 
 /** What the control plane hands an in-app runtime so it can speak for this publisher. */
 export interface PublisherConfigDocument {
-  /** The five decision inputs. */
+  /** The decision inputs a runtime needs to speak for this publisher. */
   enforcement: PublisherEnforcementConfig;
   /**
    * The publisher's `/.well-known/x402` manifest, built by the control plane from the
@@ -176,6 +176,11 @@ function narrow(body: unknown): PublisherConfigDocument | null {
       crawlerPolicy: (typeof e["crawlerPolicy"] === "object" && e["crawlerPolicy"] !== null
         ? e["crawlerPolicy"]
         : undefined) as CrawlerPolicy | undefined,
+      // The publisher's stated terms travel with the crawler policy, because `decide` refuses on
+      // both and a runtime that received one without the other would enforce half a position.
+      termsPolicy: (typeof e["termsPolicy"] === "object" && e["termsPolicy"] !== null
+        ? e["termsPolicy"]
+        : undefined) as PublisherEnforcementConfig["termsPolicy"],
     }),
     ...(typeof manifest === "object" && manifest !== null ? { manifest: manifest as X402Manifest } : {}),
   };

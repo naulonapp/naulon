@@ -328,3 +328,36 @@ test("deriveSlug carries the depth, so the crawler keys what the gate will ask f
   assert.equal(deriveSlug(url, ["blog"], { depth: "rest" }), "2026/09/post");
   assert.equal(deriveSlug(url, ["blog"], { depth: "rest" }), slugFromPath("/blog/2026/09/post", ["blog"], { depth: "rest" }));
 });
+
+/* ── a stored scope is configuration, so neither list is trusted to be a list ──── */
+
+test("site mode survives an exclusion list that is not an array", () => {
+  // A host whose stored scope names the mode and no exclusions. `.filter` on the missing value
+  // would throw out of the decision, which is a 5xx for every request to that host, human readers
+  // included, and the reason a page is served free is then invisible from the outside.
+  const missing = undefined as unknown as string[];
+  assert.equal(slugFromSitePath("/2026/08/a-post", missing), "/2026/08/a-post");
+  assert.equal(slugFromSitePath("/2026/08/a-post", "drafts" as unknown as string[]), "/2026/08/a-post");
+  assert.equal(slugFromSitePath("/2026/08/a-post", { drafts: true } as unknown as string[]), "/2026/08/a-post");
+});
+
+test("…and a STRING exclusion is never used as a substring matcher", () => {
+  // Read as characters, `"drafts"` would exclude `/d`, `/r`, `/a` and every path beneath them.
+  assert.equal(slugFromSitePath("/drafts/one", "drafts" as unknown as string[]), "/drafts/one");
+  assert.equal(slugFromSitePath("/a/post", "drafts" as unknown as string[]), "/a/post");
+  // A real array still excludes.
+  assert.equal(slugFromSitePath("/drafts/one", ["drafts"]), null);
+});
+
+test("a non-string member of either list is dropped rather than matched", () => {
+  assert.equal(slugFromSitePath("/drafts/one", ["drafts", 7 as unknown as string]), null);
+  assert.equal(
+    slugFromSitePath("/paper.pdf", [], { includeExtensions: ["pdf", null as unknown as string] }),
+    "/paper.pdf",
+  );
+});
+
+test("an extension allowlist that is not an array tolls no static file", () => {
+  assert.equal(slugFromSitePath("/paper.pdf", [], { includeExtensions: "pdf" as unknown as string[] }), null);
+  assert.equal(slugFromSitePath("/paper.pdf", [], { includeExtensions: ["pdf"] }), "/paper.pdf");
+});

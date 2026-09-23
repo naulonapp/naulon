@@ -12,7 +12,7 @@
  * case) — it maximizes total relevance bought per dollar without the overhead of
  * solving a knapsack for sub-cent items.
  */
-import type { RslTermsForUrl } from "@naulon/sdk/rsl";
+import type { RslTermsForUrl, RslUserClass } from "@naulon/sdk/rsl";
 
 /**
  * What the agent knows about one URL's published terms — the resolved terms, plus whether the
@@ -82,6 +82,20 @@ export interface DecisionPolicy {
    * promise the publisher made in public.
    */
   licenceOverchargeTolerance?: number;
+  /**
+   * What this buyer IS, in RSL 1.0's `<permits type="user">` vocabulary.
+   *
+   * Undeclared by default, and that has teeth: a document that restricts its grant to named
+   * classes has not granted anything to a buyer who cannot say which class they are, so the read
+   * is refused rather than paid for. Declaring it falsely is the operator's own exposure, which
+   * is exactly where that decision belongs.
+   */
+  userClass?: RslUserClass;
+  /**
+   * Where this buyer operates, ISO 3166-1 alpha-2. Same rule as {@link userClass}: a document
+   * naming permitted regions has granted nothing to a buyer with no region to check against.
+   */
+  region?: string;
 }
 
 /** Runtime state injected into `decide()` that can't be known from the candidates alone. */
@@ -211,11 +225,60 @@ export function spendGate(input: {
   const verdict = input.licence;
   const licence = verdict?.terms;
   if (verdict && licence) {
+    const scope = licence.scopes[0] ?? "/";
     if (licence.usage["ai-input"] === false) {
       return {
         ok: false,
         action: "skip",
-        reason: `publisher's licence prohibits ai-input for this url (RSL scope ${licence.scopes[0] ?? "/"})`,
+        reason: `publisher's licence prohibits ai-input for this url (RSL scope ${scope})`,
+      };
+    }
+    // Silence is not permission. A document that GOVERNS this url and never grants `ai-input` has
+    // not sold the read, so paying buys a receipt and no right. This is deliberately not the same
+    // as having no document at all: with nothing published, the 402 is the only term there is and
+    // it still governs, which is why `licences` carries null for those urls rather than an empty
+    // verdict.
+    if (licence.usage["ai-input"] !== true) {
+      return {
+        ok: false,
+        action: "skip",
+        reason: `publisher's licence covers this url (RSL scope ${scope}) and does not grant ai-input — silence is not permission`,
+      };
+    }
+    // WHO the grant is addressed to. The parser has always collected this and nothing read it, so
+    // "not for commercial use" resolved to an ordinary priced read.
+    const klass = policy.userClass;
+    if (klass !== undefined && licence.user[klass] === false) {
+      return {
+        ok: false,
+        action: "skip",
+        reason: `publisher's licence prohibits ${klass} use for this url (RSL scope ${scope})`,
+      };
+    }
+    const named = Object.entries(licence.user).filter(([, v]) => v === true).map(([k]) => k);
+    if (named.length > 0 && (klass === undefined || licence.user[klass] !== true)) {
+      return {
+        ok: false,
+        action: "skip",
+        reason:
+          klass === undefined
+            ? `publisher grants this url to ${named.join(", ")} only and no userClass is declared`
+            : `publisher grants this url to ${named.join(", ")} only, not to ${klass}`,
+      };
+    }
+    // WHERE. Deny first, for the same reason prohibition wins everywhere else here.
+    const region = policy.region?.trim().toUpperCase() || undefined;
+    if (region !== undefined && licence.geo.deny.includes(region)) {
+      return { ok: false, action: "skip", reason: `publisher's licence excludes ${region} for this url (RSL scope ${scope})` };
+    }
+    if (licence.geo.allow.length > 0 && (region === undefined || !licence.geo.allow.includes(region))) {
+      return {
+        ok: false,
+        action: "skip",
+        reason:
+          region === undefined
+            ? `publisher grants this url in ${licence.geo.allow.join(", ")} only and no region is declared`
+            : `publisher grants this url in ${licence.geo.allow.join(", ")} only, not ${region}`,
       };
     }
     // RSL: with `content@server` set, a client MUST obtain the licence from that server —

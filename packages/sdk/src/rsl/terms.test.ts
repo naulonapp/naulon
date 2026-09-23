@@ -156,3 +156,78 @@ test("the offer carries the licence's own source, for a licence server to be ask
   assert.ok(t.read?.licenseXml?.endsWith("</license>"));
   assert.equal(t.obligation, "license-server");
 });
+
+/* ── Who and where: the two axes the parser already collected and nobody could read ─────────── */
+
+test("a prohibited user class reaches the caller", () => {
+  const d = doc(`
+    <content url="/articles/*">
+      <license>
+        <permits type="usage">ai-input</permits>
+        <prohibits type="user">commercial</prohibits>
+        <payment type="crawl"><amount currency="USD">0.01</amount></payment>
+      </license>
+    </content>`);
+  const t = termsForUrl(d, "/articles/x")!;
+  assert.equal(t.user["commercial"], false);
+  assert.equal(t.usage["ai-input"], true, "the usage grant is unaffected by who it is withheld from");
+});
+
+test("silence about a class is not permission and not refusal — it is silence", () => {
+  const t = termsForUrl(NAULON, "/articles/x")!;
+  assert.equal(t.user["commercial"], undefined);
+  assert.deepEqual(t.geo, { allow: [], deny: [] });
+});
+
+test("a permitted class is reported, so a caller can tell a grant from an omission", () => {
+  const d = doc(`
+    <content url="/articles/*">
+      <license>
+        <permits type="usage">ai-input</permits>
+        <permits type="user">education non-commercial</permits>
+        <payment type="free"/>
+      </license>
+    </content>`);
+  const t = termsForUrl(d, "/articles/x")!;
+  assert.equal(t.user["education"], true);
+  assert.equal(t.user["non-commercial"], true);
+  assert.equal(t.user["commercial"], undefined);
+});
+
+test("prohibition beats permission on the user axis, exactly as it does on usage", () => {
+  const d = doc(`
+    <content url="/articles/*">
+      <license>
+        <permits type="usage">ai-input</permits>
+        <permits type="user">commercial</permits>
+        <prohibits type="user">commercial</prohibits>
+        <payment type="free"/>
+      </license>
+    </content>`);
+  assert.equal(termsForUrl(d, "/articles/x")!.user["commercial"], false);
+});
+
+test("geo comes back as two lists, upper-cased, so a caller never parses tokens again", () => {
+  const d = doc(`
+    <content url="/articles/*">
+      <license>
+        <permits type="usage">ai-input</permits>
+        <permits type="geo">gb ie</permits>
+        <prohibits type="geo">us</prohibits>
+        <payment type="free"/>
+      </license>
+    </content>`);
+  const t = termsForUrl(d, "/articles/x")!;
+  assert.deepEqual(t.geo.allow, ["GB", "IE"]);
+  assert.deepEqual(t.geo.deny, ["US"]);
+});
+
+test("a narrow scope's user verdict wins over a broader one, per question", () => {
+  const d = doc(`
+    <content url="/"><license><permits type="usage">ai-input</permits>
+      <permits type="user">commercial</permits><payment type="free"/></license></content>
+    <content url="/private/*"><license><permits type="usage">ai-input</permits>
+      <prohibits type="user">commercial</prohibits><payment type="free"/></license></content>`);
+  assert.equal(termsForUrl(d, "/private/x")!.user["commercial"], false);
+  assert.equal(termsForUrl(d, "/open/x")!.user["commercial"], true);
+});

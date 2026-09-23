@@ -227,16 +227,29 @@ export function slugFromSitePath(path: string, excludePrefixes: string[], opts?:
   if (isDiscovery(pathname)) return null;
   if (STATIC_EXT_RE.test(pathname)) {
     const ext = extensionOf(pathname);
-    // `gate_scope` is untyped jsonb with no CHECK, and both stores cast it rather than parse it.
-    // A string value would make `.includes` a SUBSTRING matcher (`"json"` tolls every `.js`), and
-    // an object or number throws a TypeError out of decide() — a 503 for every request on that
-    // tenant, humans included. Fail toward free instead.
-    const allow = Array.isArray(opts?.includeExtensions) ? opts.includeExtensions : [];
+    const allow = stringList(opts?.includeExtensions);
     if (ext === null || !allow.includes(ext)) return null;
   }
-  const clean = excludePrefixes.filter(Boolean);
+  const clean = stringList(excludePrefixes).filter(Boolean);
   if (clean.some((p) => pathname === `/${p}` || pathname.startsWith(`/${p}/`))) return null;
   return decodeSlug(pathname);
+}
+
+/**
+ * A list of strings, or an empty one.
+ *
+ * Both lists the site-mode matcher takes describe a host's stored scope, which is configuration a
+ * caller supplies rather than a value this package produced. A string where an array belongs turns
+ * `.includes` into a substring matcher, so `"json"` would toll every `.js`; anything else throws a
+ * TypeError out of the decision, which is a 5xx for every request to that host, human readers
+ * included. Neither fault is visible to the publisher from the outside, so both read as nothing
+ * listed: the matcher tolls nothing rather than tolling the wrong thing.
+ *
+ * The extension allowlist was guarded first and the exclusion list was not, two lines apart. One
+ * helper for both is what stops that happening a third time.
+ */
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
 /** The pathname of an absolute URL, or `null` when it will not parse. The crawler holds

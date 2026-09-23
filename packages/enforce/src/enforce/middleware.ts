@@ -408,6 +408,13 @@ export function naulonMiddleware(
         report(d.obs, "blocked", resource);
         return { response: new Response("This crawler is refused by the publisher.", { status: 403 }) };
 
+      // A use this site's published terms prohibit. Same verdict as a blocked crawler, because it
+      // is the same fact: refused outright, payment or not. The reason names the term, so a
+      // publisher reading their own log can see which stated position did the refusing.
+      case "prohibited":
+        report(d.obs, "blocked", resource);
+        return { response: new Response(`${d.reason}.`, { status: 403 }) };
+
       case "payment-required": {
         report(d.obs, "denied", resource, { kind: d.tollKind, priceUsdc: d.quote.price });
         const askMicro = totalChargedMicro(d.legs);

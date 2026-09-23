@@ -21,6 +21,7 @@ export * from "./gate-scope.ts";
 export * from "./price-rules.ts";
 export * from "./crawlerPolicyFile.ts";
 export * from "./crawlerRegistry.ts";
+export * from "./terms-enforcement.ts";
 export * from "./clientIdentity.ts";
 export * from "./externalScheme.ts";
 export * from "./rateLimitCore.ts";

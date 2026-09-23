@@ -11,6 +11,8 @@ const terms = (over: Partial<RslTermsForUrl> = {}, verdict: Partial<LicenceVerdi
   terms: {
     scopes: ["/"],
     usage: { "ai-input": true },
+    user: {},
+    geo: { allow: [], deny: [] },
     read: { paymentType: "crawl", amount: { value: 0.01, currency: "USD" }, accepts: [], scope: "/" },
     obligation: "inline",
     ...over,
@@ -181,4 +183,99 @@ test("a candidate with no resolvable pay url is never matched to someone else's 
   );
   assert.equal(decisions[0]!.action, "skip");
   assert.match(decisions[0]!.reason, /host unknown|no resolvable pay URL/);
+});
+
+/* ── Who and where the grant is addressed to ────────────────────────────────────────────────── */
+
+test("a licence that governs the url and never grants ai-input is not payable", () => {
+  // Different from having no document: with nothing published the 402 is the only term there is.
+  // A document that covers this url and stays silent has not sold the read, so paying it buys a
+  // receipt and no right.
+  const v = spendGate({
+    host: "pub.example",
+    priceUsdc: 0.01,
+    policy,
+    remainingUsdc: 1000,
+    licence: terms({ usage: { search: true } }),
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.ok === false ? v.reason : "", /silence is not permission/);
+});
+
+test("a prohibited user class refuses the pay for a buyer who declared it", () => {
+  const v = spendGate({
+    host: "pub.example",
+    priceUsdc: 0.01,
+    policy: { ...policy, userClass: "commercial" },
+    remainingUsdc: 1000,
+    licence: terms({ user: { commercial: false } }),
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.ok === false ? v.reason : "", /prohibits commercial use/);
+});
+
+test("a class restriction refuses a buyer who declared nothing, and names the fix", () => {
+  const v = spendGate({
+    host: "pub.example",
+    priceUsdc: 0.01,
+    policy,
+    remainingUsdc: 1000,
+    licence: terms({ user: { education: true } }),
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.ok === false ? v.reason : "", /education only and no userClass is declared/);
+});
+
+test("a buyer inside the named class still pays", () => {
+  const v = spendGate({
+    host: "pub.example",
+    priceUsdc: 0.01,
+    policy: { ...policy, userClass: "education" },
+    remainingUsdc: 1000,
+    licence: terms({ user: { education: true } }),
+  });
+  assert.deepEqual(v, { ok: true });
+});
+
+test("silence about classes leaves an ordinary priced read payable", () => {
+  const v = spendGate({
+    host: "pub.example",
+    priceUsdc: 0.01,
+    policy: { ...policy, userClass: "commercial" },
+    remainingUsdc: 1000,
+    licence: terms(),
+  });
+  assert.deepEqual(v, { ok: true });
+});
+
+test("an excluded region refuses, and deny wins over a permit naming the same region", () => {
+  const denied = spendGate({
+    host: "pub.example",
+    priceUsdc: 0.01,
+    policy: { ...policy, region: "us" },
+    remainingUsdc: 1000,
+    licence: terms({ geo: { allow: ["US"], deny: ["US"] } }),
+  });
+  assert.equal(denied.ok, false);
+  assert.match(denied.ok === false ? denied.reason : "", /excludes US/);
+});
+
+test("a region allowlist refuses a buyer outside it and one who declared nothing", () => {
+  const outside = spendGate({
+    host: "pub.example", priceUsdc: 0.01, policy: { ...policy, region: "FR" },
+    remainingUsdc: 1000, licence: terms({ geo: { allow: ["GB"], deny: [] } }),
+  });
+  assert.match(outside.ok === false ? outside.reason : "", /in GB only, not FR/);
+
+  const undeclared = spendGate({
+    host: "pub.example", priceUsdc: 0.01, policy,
+    remainingUsdc: 1000, licence: terms({ geo: { allow: ["GB"], deny: [] } }),
+  });
+  assert.match(undeclared.ok === false ? undeclared.reason : "", /no region is declared/);
+
+  const inside = spendGate({
+    host: "pub.example", priceUsdc: 0.01, policy: { ...policy, region: "gb" },
+    remainingUsdc: 1000, licence: terms({ geo: { allow: ["GB"], deny: [] } }),
+  });
+  assert.deepEqual(inside, { ok: true });
 });

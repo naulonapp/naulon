@@ -764,6 +764,15 @@ export function createApp(
         return stampGateCacheHeaders(res, { noStore: true });
       }
 
+      // A use the published terms prohibit: 403 before any content leaves, the same refusal a
+      // blocked crawler gets, because a prohibition is not a price.
+      case "prohibited": {
+        emitObs(d.obs, "blocked");
+        const res = c.text(`${d.reason}.`, 403);
+        res.headers.set("X-Naulon-Verdict", headerSafe(`prohibited (${d.term})`));
+        return stampGateCacheHeaders(res, { noStore: true });
+      }
+
       // Humans read free, forever. Set the verdict on the proxied Response itself
       // (a fresh Response from proxyToOrigin doesn't inherit c.header()).
       case "free": {

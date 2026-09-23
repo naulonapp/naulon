@@ -21,8 +21,16 @@
  */
 export type LicenseGrant = "read" | "none";
 
-/** RSL 1.0's usage vocabulary — the terms a licence executes. `ai-train` is never sold. */
-export type LicenseTerm = "ai-input" | "ai-index" | "search";
+/**
+ * RSL 1.0's usage vocabulary — the terms a licence executes.
+ *
+ * `ai-train` is in the vocabulary because a licence must be able to RECORD a negotiated training
+ * agreement: the permanent citation record's whole job is to say what a payment bought, and a
+ * term it cannot spell is a deal it cannot describe. It is still never on sale through the
+ * self-serve rail, which refuses it by name. A corpus is one negotiation, not a stream of
+ * per-fetch tolls, and the vocabulary saying the word does not put it in the till.
+ */
+export type LicenseTerm = "ai-input" | "ai-index" | "search" | "ai-train";
 
 /**
  * The scope a licence covers: RFC 9309 path patterns, the same grammar RSL borrows for
@@ -84,6 +92,13 @@ export function usageSentence(terms: readonly string[] | undefined): string {
   if (t.includes("ai-input")) may.push("read it, quote it, summarise it, reason over it, and show it to the person who paid");
   if (t.includes("search")) may.push("surface it in search results");
   if (t.includes("ai-index")) may.push("index it for retrieval");
+  if (t.includes("ai-train")) may.push("use it as training data");
   const allowed = may.length > 0 ? may.join("; ") : "use it as grounding for an answer you cite";
-  return `You may ${allowed}. You may NOT republish it publicly or use it as training data.`;
+  // The refusal is built from what was NOT granted. Stating a fixed denial beside a variable
+  // grant is how a licence ends up permitting training in one clause and forbidding it in the
+  // next, and a model reading that has no way to tell which half is the contract.
+  const denied = t.includes("ai-train")
+    ? "You may NOT republish it publicly."
+    : "You may NOT republish it publicly or use it as training data.";
+  return `You may ${allowed}. ${denied}`;
 }
