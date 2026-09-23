@@ -62,6 +62,29 @@ export interface CrawlerPolicy {
   charge?: string[];
 }
 
+/**
+ * What a publisher permits, in RSL 1.0's own usage vocabulary.
+ *
+ * Every axis is OPTIONAL and an absent one means NOT STATED. An unstated policy emits the licence
+ * document exactly as a gate with no policy at all emits it, because a default here would be the
+ * gate stating a position on the publisher's behalf. Two states are deliberately unrepresentable:
+ * `search` is never priced, since a publisher who tolls indexing disappears from search; and
+ * `ai-train` is never priced, since a training corpus is one negotiation rather than a stream of
+ * per-fetch tolls.
+ */
+export interface TermsPolicy {
+  search?: "free" | "prohibit";
+  "ai-input"?: "prohibit" | "free" | "priced";
+  "ai-index"?: "prohibit" | "free" | "priced";
+  "ai-train"?: "prohibit" | "free" | "by-agreement";
+  /**
+   * Where a licensee negotiates a term granted by AGREEMENT rather than by price. Emitted as
+   * `<legal type="contact">` on the `ai-train` licence and nowhere else, and required whenever
+   * that term is `by-agreement`: a negotiated grant with nobody to negotiate with is not a grant.
+   */
+  contact?: string;
+}
+
 export interface PublisherConfig {
   /**
    * Stable identifier for this publisher; tags attributed events and logs. The
@@ -139,6 +162,15 @@ export interface PublisherConfig {
    * effect, byte-identical to before this field existed.
    */
   crawlerPolicy?: CrawlerPolicy;
+  /**
+   * The usage terms the publisher DECLARED, carried into the RSL document.
+   *
+   * The sibling of `crawlerPolicy`, one axis over: that one decides who may read, this one
+   * decides what a reader may do with what they read. Absent means the publisher has not
+   * stated a position, and the document is emitted byte-for-byte as it was before the field
+   * existed. The gate never fills it in.
+   */
+  termsPolicy?: TermsPolicy;
   /**
    * What the toll covers. Absent / {mode:"prefixes"} → the stock articlePrefixes
    * matcher (byte-identical). {mode:"site"} → every path tolls, slug = the full
