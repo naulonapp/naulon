@@ -226,9 +226,50 @@ jobs:
       # first-time scoped publish. Each package's prepublishOnly re-runs its build
       # (harmless). A version already on the registry is skipped, not re-published —
       # so the run never fails on an unchanged package.
+      # Publishing in dependency order is necessary and NOT sufficient. `npm publish` returns
+      # when the registry ACCEPTS the write, and the read path can lag that by minutes. On
+      # v0.8.6 sdk@0.5.0 was published first and became resolvable last, so for several minutes
+      # `npm install @naulon/shared@0.5.0` died with ETARGET on its own dependency — a package
+      # we had just shipped, broken for anyone who installed it in that window, with every step
+      # of this job green. So each package must be VISIBLE before the one that depends on it
+      # goes out.
       - name: Publish changed @naulon packages
         run: |
           set -euo pipefail
+
+          # Is this exact version in the PACKUMENT, the document `npm install` resolves from?
+          # Deliberately not `npm view`: that reads through npm's own cache, which the
+          # pre-publish existence check below has just populated with a 404 for this version.
+          registry_has() {
+            local name="$1" ver="$2"
+            curl -fsS --max-time 20 -H 'Cache-Control: no-cache' \
+              "https://registry.npmjs.org/${name/\//%2F}" 2>/dev/null \
+              | node -e '
+                let s = "";
+                process.stdin.on("data", d => s += d);
+                process.stdin.on("end", () => {
+                  try { process.exit(JSON.parse(s).versions?.[process.argv[1]] ? 0 : 1); }
+                  catch { process.exit(1); }
+                });
+              ' "$ver"
+          }
+
+          # A publish is not done until the registry serves it. Five minutes is far past anything
+          # observed (v0.8.6 took about five), and timing out is the right answer: shipping the
+          # dependents anyway is what produced the broken window in the first place.
+          await_registry() {
+            local name="$1" ver="$2" waited=0
+            until registry_has "$name" "$ver"; do
+              if [ "$waited" -ge 300 ]; then
+                echo "::error::${name}@${ver} was accepted by npm but is still not resolvable after ${waited}s. Anything published after it would depend on a version nobody can install. Re-run this job once the registry catches up; the publish below is idempotent and will skip what already landed."
+                return 1
+              fi
+              sleep 10
+              waited=$((waited + 10))
+            done
+            echo "   ${name}@${ver} is resolvable after ${waited}s"
+          }
+
           publish() {
             local pkg="$1"
             local ver
@@ -237,10 +278,11 @@ jobs:
             name=$(node -p "require('./packages/${pkg}/package.json').name")
             if npm view "${name}@${ver}" version >/dev/null 2>&1; then
               echo "→ ${name}@${ver} already published, skipping"
-            else
-              echo "→ publishing ${name}@${ver}"
-              npm publish -w "${name}" --access public --provenance
+              return
             fi
+            echo "→ publishing ${name}@${ver}"
+            npm publish -w "${name}" --access public --provenance
+            await_registry "$name" "$ver"
           }
           publish sdk
           publish shared
