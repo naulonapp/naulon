@@ -94,6 +94,38 @@ list a naulon read even in principle. Every 402 now carries `extensions.bazaar` 
 service metadata on `resource`, with the HOST as `serviceName`, because a catalog full of
 identical `naulon` rows helps no agent.
 
+## v0.8.5
+
+A WordPress-plugin release. No `@naulon/*` package moved, so npm is unchanged and the
+`Unreleased` section above still describes work that is not published.
+
+**naulon for WordPress 0.5.5: the earnings figures are what the site's own people were paid.**
+The settlement ledger records a role per leg, and no publisher-facing read filtered on it. Our
+commission is a leg the agent pays on top of an author's share, so every figure a publisher read
+was high by the amount of that fee, the fee wallet appeared in their list of authors, and the
+plugin's data export carried the inflated total. The per-author figures were always correct; the
+site-wide ones were not.
+
+The filter is "not the operator leg" rather than "is the author leg", which keeps a co-author's
+share counted and keeps rows written before the fee existed, when every leg was an author leg.
+The fee is now stated on its own line rather than quietly removed from a number a publisher
+already recognised.
+
+Three screens also stopped speaking machine. The toll test names what the agent pays, what the
+author gets, the chain rather than its id, and each side of the split by role. The permissions
+table describes each capability in a sentence, keeping the capability name for whoever needs it
+in code.
+
+**This release cuts the last GitHub update channel.** `release.yml` no longer generates
+`naulon-update.json`, retired with the self-updater in #85 for wordpress.org Guideline 8, so from
+this tag the manifest URL a pre-0.5.4 install polls returns 404 and those sites are offered
+nothing further. The directory listing is the replacement and is not live yet; until it is, a
+site updates by installing the attached `naulon.zip` by hand.
+
+Also fixed: `release.yml` called that deleted generator as its last step before publishing, so
+every tag from #85 onward would have failed there. This is the first release that could be cut
+at all.
+
 ## v0.8.4
 
 Every chain settles through Circle Gateway. The Arc memo settle path, one self-relayed
