@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@naulon/shared": "^0.4.0",
+    "@naulon/shared": "^0.5.0",
     "viem": "^2.56.0"
   }
 }
