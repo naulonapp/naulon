@@ -440,3 +440,65 @@ test("W6: an unscoped licence still matches on slug alone, exactly as before", a
   });
   assert.equal(d.kind, "reread");
 });
+
+// A prohibition is not a price. These four cases are the whole contract: it refuses agents, it
+// refuses them whether or not the registry knows them, it cannot be bought past, and it never
+// touches a person.
+const prohibits = (policy: Record<string, string>) => ({ ...basePublisher, termsPolicy: policy });
+
+test("a prohibited ai-input refuses an agent that would otherwise be quoted", async () => {
+  const req = new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } });
+  const d = await decide({
+    raw: req, host: "h", path: "/essays/x",
+    publisher: prohibits({ "ai-input": "prohibit" }), now: 1, quote: quoteOf,
+  });
+  assert.equal(d.kind, "prohibited");
+  if (d.kind === "prohibited") {
+    assert.equal(d.term, "ai-input");
+    assert.equal(d.obs.classifiedAs, "agent");
+    assert.match(d.obs.classifyReason ?? "", /prohibits ai-input/);
+  }
+});
+
+test("a prohibited ai-input refuses an agent the registry has never heard of", async () => {
+  const req = new Request("http://h/essays/x", {
+    headers: { "user-agent": "Mozilla/5.0", "x-naulon-agent": "some-unlisted-agent" },
+  });
+  const d = await decide({
+    raw: req, host: "h", path: "/essays/x",
+    publisher: prohibits({ "ai-input": "prohibit" }), now: 1, quote: quoteOf,
+  });
+  assert.equal(d.kind, "prohibited");
+});
+
+test("payment cannot buy past a prohibition", async () => {
+  const req = new Request("http://h/essays/x", {
+    headers: { "user-agent": "GPTBot/1.0", [PAYMENT_SIGNATURE_HEADER]: "eyJ0ZXN0Ijp0cnVlfQ==" },
+  });
+  const d = await decide({
+    raw: req, host: "h", path: "/essays/x",
+    publisher: prohibits({ "ai-input": "prohibit" }), now: 1, quote: quoteOf,
+  });
+  assert.equal(d.kind, "prohibited");
+});
+
+test("a prohibition never refuses a person", async () => {
+  const req = new Request("http://h/essays/x", {
+    headers: { "user-agent": "Mozilla/5.0 (real browser)" },
+  });
+  const d = await decide({
+    raw: req, host: "h", path: "/essays/x",
+    publisher: prohibits({ "ai-input": "prohibit", "ai-train": "prohibit" }), now: 1, quote: quoteOf,
+  });
+  assert.equal(d.kind, "free");
+});
+
+test("a prohibited training corpus still sells the priced read it said it would", async () => {
+  const policy = { "ai-train": "prohibit", "ai-input": "priced" };
+  const corpus = new Request("http://h/essays/x", { headers: { "user-agent": "CCBot/2.0" } });
+  const read = new Request("http://h/essays/x", { headers: { "user-agent": "ChatGPT-User/1.0" } });
+  const a = await decide({ raw: corpus, host: "h", path: "/essays/x", publisher: prohibits(policy), now: 1, quote: quoteOf });
+  const b = await decide({ raw: read, host: "h", path: "/essays/x", publisher: prohibits(policy), now: 1, quote: quoteOf });
+  assert.equal(a.kind, "prohibited");
+  assert.equal(b.kind, "payment-required");
+});

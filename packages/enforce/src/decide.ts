@@ -34,6 +34,8 @@ import {
   licenseCoversPath,
   licenseGrant,
   popBoundAddress,
+  prohibitedUse,
+  type ProhibitedTerm,
   verifyLicense,
   type JwkSet,
   type PublisherConfig,
@@ -245,6 +247,7 @@ export type Decision =
   | { kind: "passthrough"; verdict: "non-article" | "unknown-article" }
   | { kind: "free"; verdict: string; obs: DecideObs }
   | { kind: "blocked"; frag: string; obs: DecideObs }
+  | { kind: "prohibited"; term: ProhibitedTerm; reason: string; obs: DecideObs }
   | { kind: "reread"; tollKind: TollKind; obs: DecideObs }
   | { kind: "payment-required"; legs: SettlementLegReq[]; header: string; quote: Quote; tollKind: TollKind; obs: DecideObs }
   | { kind: "payment-presented"; payment: string; legs: SettlementLegReq[]; header: string; quote: Quote; tollKind: TollKind; obs: DecideObs };
@@ -342,6 +345,24 @@ export async function decide(input: DecideInput): Promise<Decision> {
     verifiedAgent: verifiedAgent?.agent,
     sigInvalid,
   };
+
+  // A use the publisher prohibits: 403 before the free read and before any price, so neither a
+  // browser-shaped crawler nor a payment can reach a term that is not for sale. `prohibitedUse`
+  // never refuses a person, which is what keeps the oldest promise in the gate intact.
+  const refused = prohibitedUse({
+    policy: publisher.termsPolicy,
+    ua: uaRaw,
+    verifiedAgent: verifiedAgent?.agent,
+    classifiedAs: verdict.kind,
+  });
+  if (refused) {
+    return {
+      kind: "prohibited",
+      term: refused.term,
+      reason: refused.reason,
+      obs: { ...obs, classifiedAs: "agent", classifyReason: refused.reason },
+    };
+  }
 
   // Humans read free, forever.
   if (verdict.kind === "human") return { kind: "free", verdict: `human (${verdict.reason})`, obs };
