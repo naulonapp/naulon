@@ -23,7 +23,7 @@
  * publisher's work without paying them for it.
  */
 import { matchesPattern, specificity } from "./pattern.ts";
-import type { RslContent, RslDocument, RslPaymentType, RslUsage } from "./types.ts";
+import type { RslContent, RslDocument, RslPaymentType, RslUsage, RslUserClass } from "./types.ts";
 
 /** A priced (or explicitly free) offer that grants the usage asked for. */
 export interface RslOffer {
@@ -57,6 +57,24 @@ export interface RslTermsForUrl {
   scopes: string[];
   /** Per-usage verdict. `undefined` = the document says nothing, which is NOT permission. */
   usage: Partial<Record<RslUsage, boolean>>;
+  /**
+   * Per-user-class verdict, read the same way `usage` is: `false` is a stated prohibition, `true`
+   * a stated grant, `undefined` silence.
+   *
+   * The parser has always collected this axis and nothing could read it, so a licence saying
+   * "not for commercial use" resolved to terms that looked like an ordinary priced read. A
+   * commercial agent then paid for a grant addressed to somebody else.
+   */
+  user: Partial<Record<RslUserClass, boolean>>;
+  /**
+   * The regions the winning scopes name, ISO 3166-1 alpha-2 and upper-cased.
+   *
+   * Two lists rather than a per-region verdict, because the set is open: a document naming
+   * `GB` says nothing at all about `FR`, and a `Partial<Record<string, boolean>>` would invite a
+   * caller to read a missing key as a verdict. `deny` is checked first by anyone applying them,
+   * for the same reason prohibition wins everywhere else here.
+   */
+  geo: { allow: string[]; deny: string[] };
   /** The offer covering `ai-input` — a read the agent may ground an answer in. */
   read?: RslOffer;
   obligation: RslObligation;
@@ -64,6 +82,11 @@ export interface RslTermsForUrl {
   server?: string;
   /** `<legal type="contact">` from the winning scope, for a human follow-up. */
   contact?: string;
+}
+
+/** Order-preserving dedupe. The document's order is evidence; a Set round-trip keeps it. */
+function uniq(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 /** The applicable scopes, most specific first, ties broken by document order (later wins). */
@@ -104,6 +127,26 @@ export function grantsUsage(declared: readonly RslUsage[], token: RslUsage): boo
 function covers(declared: RslUsage[], token: RslUsage): boolean {
   if (declared.includes(token)) return true;
   return declared.some((d) => UMBRELLA[d]?.includes(token) ?? false);
+}
+
+/**
+ * The verdict on one user class, from the most specific scope that speaks to it.
+ *
+ * Deliberately a separate walk from {@link verdict} rather than a generic one over both axes:
+ * usage has umbrella tokens (`all`, `ai-all`) and this axis has none, so a shared implementation
+ * would need the umbrella table to be empty for `user` and would quietly acquire one the day
+ * somebody added a token.
+ */
+function userVerdict(scopes: RslContent[], token: RslUserClass): boolean | undefined {
+  for (const scope of scopes) {
+    let permitted: boolean | undefined;
+    for (const l of scope.licenses) {
+      if (l.prohibits.user.includes(token)) return false;
+      if (l.permits.user.includes(token)) permitted = true;
+    }
+    if (permitted !== undefined) return permitted;
+  }
+  return undefined;
 }
 
 /** The verdict on one usage token, from the most specific scope that speaks to it. */
@@ -182,11 +225,23 @@ export function termsForUrl(
     const v = verdict(scopes, token);
     if (v !== undefined) usage[token] = v;
   }
+  const user: Partial<Record<RslUserClass, boolean>> = {};
+  for (const token of ["commercial", "non-commercial", "education", "government", "personal"] as RslUserClass[]) {
+    const v = userVerdict(scopes, token);
+    if (v !== undefined) user[token] = v;
+  }
+  // Every matching scope contributes, most specific first, deduped. Unlike the two verdict axes
+  // there is nothing to resolve: a region named in one scope and not another is named, and a
+  // caller that must not read one page's allowlist as the site's already has `scopes` to say so.
+  const geo = { allow: uniq(scopes.flatMap((s) => s.licenses.flatMap((l) => l.permits.geo))),
+                deny: uniq(scopes.flatMap((s) => s.licenses.flatMap((l) => l.prohibits.geo))) };
   const contact = governing.licenses.find((l) => l.contact)?.contact;
 
   return {
     scopes: scopes.map((s) => s.url),
     usage,
+    user,
+    geo,
     ...(found ? { read: found.offer } : {}),
     obligation: governing.server ? "license-server" : "inline",
     ...(governing.server ? { server: governing.server } : {}),
