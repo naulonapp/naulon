@@ -16,7 +16,7 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
-Unpublished: the packages below are unbumped on npm until the next tag.
+Nothing unreleased.
 
 `@naulon/shared`: **Arc mainnet is a first-class chain, and the private-preview scaffolding
 around it is gone.** Arc opened publicly on 2026-09-16. `NETWORKS.arc` gains the explorer Arc
@@ -94,10 +94,23 @@ list a naulon read even in principle. Every 402 now carries `extensions.bazaar` 
 service metadata on `resource`, with the HOST as `serviceName`, because a catalog full of
 identical `naulon` rows helps no agent.
 
-## v0.8.5
+## v0.8.6
 
-A WordPress-plugin release. No `@naulon/*` package moved, so npm is unchanged and the
-`Unreleased` section above still describes work that is not published.
+Carries the WordPress plugin release that `v0.8.5` was cut for, plus the ten PRs of package
+work that had accumulated unpublished since `v0.8.4`.
+
+**`v0.8.5` is a tag with no release.** Its run failed on the guard that refuses a changed package
+whose version stood still, which is exactly what that guard is for: the publish is idempotent, so
+five packages would have been skipped as already published and nobody could have installed the
+change. Nothing was published under it and no GitHub Release exists. The versions are bumped here
+instead.
+
+**`@naulon/shared` 0.5.0 is breaking.** `ARC_PRIVATE_MAINNET_HEADER` and `arcPreviewHeaders` are
+gone, reachable until now through `export * from "./networks.ts"`. Arc's private-mainnet preview
+is over, so the header they set is a no-op.
+
+Also published: `@naulon/enforce` 0.5.0, `@naulon/sdk` 0.5.0 and `@naulon/wayfarer` 0.5.0, all
+additive, and `@naulon/wayfarer-mcp` 0.5.3, whose public surface did not change.
 
 **naulon for WordPress 0.5.5: the earnings figures are what the site's own people were paid.**
 The settlement ledger records a role per leg, and no publisher-facing read filtered on it. Our
