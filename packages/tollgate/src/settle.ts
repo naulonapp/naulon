@@ -119,7 +119,11 @@ export interface SettleArgs {
 export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult> {
   const { payment, legs, quote: q, publisher, host, now, licence } = args;
 
-  const result = await verifyAndSettle(payment, legs, now, publisher.id);
+  // A SALE IS ALL OR NOTHING; A TOLL IS NOT. Derived from `licence` rather than taken as its own
+  // argument, because they are the same fact: a sale is exactly the payment that buys one
+  // indivisible thing from many payees, and a caller able to pass one without the other could ship
+  // a sale that pays some of its authors and issues nothing. See `VerifyOptions.requireEveryLeg`.
+  const result = await verifyAndSettle(payment, legs, now, publisher.id, { requireEveryLeg: licence !== undefined });
   if (!result.ok) return { ok: false, error: result.error, ...(result.stage ? { stage: result.stage } : {}) };
 
   // Paid. Resolve the chain this settled on from the author leg the 402 advertised

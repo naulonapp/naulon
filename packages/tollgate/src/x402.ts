@@ -183,11 +183,33 @@ async function getFacilitator(net: SettlementNetwork = activeNetwork()): Promise
  * recorded unsettled (never a 402 — the author was paid, content served) for a
  * future drain to retry idempotently within `validBefore`.
  */
+/** How a payer who signed fewer legs than were advertised is treated. */
+export interface VerifyOptions {
+  /**
+   * REFUSE A PARTIAL AUTHORIZATION BEFORE ANY LEG SETTLES, instead of settling what was signed and
+   * handing the rest back as `forgoneLegs`.
+   *
+   * The accommodation below exists because a toll is one payment for one read: a stock x402 client
+   * signs `accepts[0]`, the author is paid, the content is served, and the buyer has what they paid
+   * for. Nobody is worse off.
+   *
+   * That reasoning does not survive a payment that buys ONE indivisible thing from many payees. The
+   * caller cannot issue what was bought while an author in its scope went unpaid, so it refuses,
+   * and by then the legs that did authorize are on chain. Settlement is custody-free, so there is
+   * nothing pooled to give back: the buyer is out the money with no goods and no remedy, multiplied
+   * by the number of payees in scope.
+   *
+   * Set this and a partial authorization is refused at the VERIFY stage, where refusing is free.
+   */
+  requireEveryLeg?: boolean;
+}
+
 export async function verifyAndSettle(
   paymentSignature: string,
   legs: PaymentRequirements | PaymentRequirements[] | SettlementLegReq[],
   now: number,
   publisherId?: string,
+  opts?: VerifyOptions,
 ): Promise<VerifyResult> {
   const legReqs = normalizeLegs(legs);
   if (legReqs.length === 0) return { ok: false, stage: "verify", error: "no settlement legs" };
@@ -220,6 +242,16 @@ export async function verifyAndSettle(
   // Note this is orthogonal to the control plane's drop-refusal on `/verify`: that one catches a
   // PUBLISHER who strips the fee from their own quote. This is a BUYER who was never offered it.
   const stockPayer = !Array.isArray(parsed) && legReqs.length > 1;
+  // ALL OR NOTHING, and refused HERE — before a signature is presented to the facilitator, so no
+  // money has moved and the payer can simply pay again with every leg. Refusing after the settle
+  // would leave the authorized legs on chain with nothing to show for them; see `requireEveryLeg`.
+  if (stockPayer && opts?.requireEveryLeg) {
+    return {
+      ok: false,
+      stage: "verify",
+      error: `this payment must authorize all ${legReqs.length} legs; ${legReqs.length - 1} were not signed`,
+    };
+  }
   const required = stockPayer ? [legReqs[0]!] : legReqs;
   const forgoneLegs: ForgoneLeg[] | undefined = stockPayer
     ? legReqs.slice(1).map((l) => ({ role: l.role, payTo: l.requirements.payTo, amount: l.requirements.amount }))
