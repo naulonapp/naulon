@@ -60,7 +60,7 @@ export { quote, tollPrice } from "./pricing.ts";
 // Licensing, revocation, discoverability manifest.
 export { licensing, type Licensing } from "./license.ts";
 export { revocations, type RevocationStore } from "./revocation.ts";
-export { X402_MANIFEST_PATH, buildX402Manifest, type X402Manifest } from "./discoverability.ts";
+export { X402_MANIFEST_PATH, buildX402Manifest, type X402Manifest, type PriceLeg, type BuyerTotal } from "./discoverability.ts";
 
 // In-app enforcement middleware (framework-agnostic). The Next adapter is `./next`.
 // `observation-sink` is the fourth of the four `./enforce/*` modules and was the one

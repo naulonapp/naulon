@@ -15,10 +15,11 @@
  * Everything here derives from the resolved `PublisherConfig` + the Arc network
  * constants — no new per-publisher seam.
  */
-import { activeNetwork, getConfig, issuerHost, toAtomicUsdc, type PublisherConfig, type SettlementNetwork } from "@naulon/shared";
+import { activeNetwork, getConfig, issuerHost, toAtomicUsdc, usdc, type PublisherConfig, type SettlementNetwork, type TollKind } from "@naulon/shared";
 // The manifest MUST advertise the same validity window the real 402 does, so import it rather than
 // re-declaring it (see the note at the old constant's site below).
 import { MAX_TIMEOUT_SECONDS } from "./build402.ts";
+import { toMicro } from "./crawlerPrice.ts";
 import { tollPriceUnder } from "./pricing.ts";
 
 /** Well-known path for the toll manifest. */
@@ -44,11 +45,52 @@ function proofTemplate(licenseIdentity: string): string {
 /** `Link` header value pointing an agent at the manifest (RFC 8288). */
 export const PAYMENT_LINK_HEADER = `<${X402_MANIFEST_PATH}>; rel="payment"; type="application/json"`;
 
-interface PriceLeg {
+/**
+ * The all-in figure for one toll, summed across every leg the 402 will carry.
+ *
+ * `atomic` is authoritative. `usdc` is for display and is derived from it, so the FEE is
+ * `buyerTotal.atomic - atomic`, never `buyerTotal.usdc - usdc`: a base price carrying sub-micro
+ * precision rounds into `atomic` and does not into `usdc`, so subtracting the display figures
+ * returns the fee plus that rounding. Integer units are exact here up to 2^53 micro-USDC, which is
+ * about nine billion dollars on one read.
+ */
+export interface BuyerTotal {
+  /** Atomic USDC (6 decimals), summed across every leg. */
+  atomic: string;
+  /** Human USDC, for display. Derived from `atomic`; do not do money math on it. */
+  usdc: number;
+}
+
+export interface PriceLeg {
   /** Atomic USDC (6 decimals) — what the on-chain leg moves. */
   atomic: string;
   /** Human USDC, for display. */
   usdc: number;
+  /**
+   * What the buyer must authorize IN TOTAL to complete this toll, when that is MORE than the leg
+   * above. Absent when the two are equal, which is every self-hosted gate and every publisher whose
+   * resolver declares no `extraLegs` — so a manifest without a secondary leg is byte-identical to
+   * before this field existed.
+   *
+   * It is a separate field rather than a bigger `atomic` because `atomic` names ONE transfer and
+   * has to keep naming it: x402's `accepts` is a list of ALTERNATIVES, not simultaneous transfers,
+   * so a gate with a secondary leg declares that leg in its own extension and the buyer signs one
+   * authorization per entry. Widening `atomic` would also import another fleet's operator fee as a
+   * publisher's own price wherever a manifest is read to onboard a self-hoster.
+   *
+   * What went wrong without it is a BUDGET, not a refusal. A stock client that signs `accepts[0]`
+   * is served and the remaining legs are recorded as forgone, so nothing here can cost a buyer
+   * their read; the `/verify` fee check is a publisher-integrity check and no buyer payment can
+   * trigger it. The cost is that an agent sizing a ceiling from this document under-provisions by
+   * the fee on every read, while the client debits the true total, and that the fee it was never
+   * offered goes uncollected.
+   *
+   * The spec defines no field for a cross-transfer total, so this name is naulon's own. It is NOT
+   * under an `extensions` key like the 402's `naulonLegs`, because this document has no extension
+   * envelope to put it in; a future spec field of the same name would collide, and moving it then
+   * is the cheaper direction than inventing an envelope now.
+   */
+  buyerTotal?: BuyerTotal;
 }
 
 export interface X402Manifest {
@@ -147,16 +189,47 @@ export function buildX402Manifest(
   // that here is precisely the second copy of a money formula this package refuses elsewhere.
   const readUsdc = tollPriceUnder(publisher, "read", undefined) as number;
   const citationUsdc = tollPriceUnder(publisher, "citation", undefined) as number;
-  const leg = (usd: number): PriceLeg => ({ atomic: toAtomicUsdc(usd), usdc: usd });
+  /**
+   * One leg, plus the total when a secondary leg makes them differ.
+   *
+   * Applied PER AMOUNT and with the amount's own KIND, never scaled from the base: a resolver's
+   * fee math may carry a floor and a cap (the naulon control plane's does), so it is not
+   * proportional and a citation total is not a read total times the multiplier. `extraLegs` is
+   * the publisher's own hook and the same one `build402.ts` assembles the wire from, so this
+   * document and the 402 cannot state different numbers.
+   */
+  const leg = (usd: number, kind: TollKind): PriceLeg => {
+    const base: PriceLeg = { atomic: toAtomicUsdc(usd), usdc: usd };
+    // A fee hook is code the GATE does not own, and until this field existed it ran only on the
+    // paid path, where a throw is a refused payment. This document is public and unauthenticated,
+    // and the SDK that consumes it resolves a failed fetch to null and then serves the read FREE.
+    // So a broken hook costs the TOTAL, never the document: omit `buyerTotal` and let the paid
+    // path fail loudly, where a failure is visible and costs nobody their content.
+    let micro: bigint;
+    try {
+      const extra = publisher.extraLegs?.(usdc(usd), kind) ?? [];
+      if (extra.length === 0) return base;
+      // `toMicro`, not a bare `BigInt`: it refuses anything that is not integer digits by name,
+      // so a hex or decimal amount is a named error rather than a silent 16x or a SyntaxError.
+      micro = extra.reduce((sum, l) => sum + toMicro(l.amount), toMicro(base.atomic));
+    } catch {
+      return base;
+    }
+    // `<=`, not `===`. A leg is additive by contract, so a total at or under the leg means a hook
+    // that returned something it should not have, and a `buyerTotal` BELOW `atomic` would
+    // under-fund a buyer who trusted it — the same failure this field exists to prevent, mirrored.
+    if (micro <= toMicro(base.atomic)) return base;
+    return { ...base, buyerTotal: { atomic: micro.toString(), usdc: Number(micro) / 1_000_000 } };
+  };
   const ruleLegs = (publisher.priceRules ?? []).map((rule) => {
     const read = tollPriceUnder(publisher, "read", rule) as number;
     const citation = tollPriceUnder(publisher, "citation", rule) as number;
     return {
       pattern: rule.pattern,
-      read: leg(read),
+      read: leg(read, "read"),
       // The multiplier is the rule's own when it names one, else the site's — stated per rule so an
       // agent never has to recompute which of the two fields the rule actually moved.
-      citation: { ...leg(citation), multiplier: rule.citationMultiplier ?? publisher.citationMultiplier },
+      citation: { ...leg(citation, "citation"), multiplier: rule.citationMultiplier ?? publisher.citationMultiplier },
     };
   });
   return {
@@ -189,8 +262,8 @@ export function buildX402Manifest(
       currency: "USDC",
       maxTimeoutSeconds: MAX_TIMEOUT_SECONDS,
       price: {
-        read: leg(readUsdc),
-        citation: { ...leg(citationUsdc), multiplier: publisher.citationMultiplier },
+        read: leg(readUsdc, "read"),
+        citation: { ...leg(citationUsdc, "citation"), multiplier: publisher.citationMultiplier },
         ...(ruleLegs.length > 0 ? { rules: ruleLegs } : {}),
       },
       payTo:

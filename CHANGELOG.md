@@ -16,7 +16,14 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
-Nothing unreleased.
+`@naulon/enforce`: **the discovery manifest states what a buyer authorizes in total.**
+`/.well-known/x402` declared the author leg on its own, so an agent sizing a budget from it
+under-provisioned by whatever secondary leg a publisher's resolver attaches, and a stock client
+that paid the advertised figure left that leg uncollected. Every price leg, base and per-path
+rule alike, now carries an optional `buyerTotal` beside it, summed through the same `extraLegs`
+hook the 402 is assembled from and held to it by a parity test. It is omitted when the two are
+equal, so a gate with no secondary leg emits exactly the document it always did, and a hook that
+throws or returns a malformed amount omits the total rather than failing the route.
 
 `@naulon/shared`: **Arc mainnet is a first-class chain, and the private-preview scaffolding
 around it is gone.** Arc opened publicly on 2026-09-16. `NETWORKS.arc` gains the explorer Arc
