@@ -186,6 +186,51 @@ test("a co-author's unpaid cut stays THEIRS — it is not folded in with naulon'
   assert.equal(ours.reduce((n, l) => n + Number(l.amount), 0), 500, "naulon is owed 500, not 2000");
 });
 
+// ── A SALE IS ALL OR NOTHING, and the rule is derived from `licence`, never passed beside it ──
+
+test("a SALE refuses a stock payer, and refuses it before anything settles", async () => {
+  // The defect: the accommodation above settled the author leg, the caller then refused to issue a
+  // licence naming an unpaid author, and custody-free settlement left nothing to give back. The
+  // buyer was out the money with no licence and no remedy, multiplied by the authors in scope.
+  const now = Date.now() + 8000;
+  const a = args("sale.example.com", now);
+  const res = await settleAndAttribute({
+    ...a,
+    payment: stockPayment(now),
+    legs: [authorLeg(), operatorLeg()] as never,
+    licence: { scope: { patterns: ["/blog/*"] }, period: { from: now, until: now + 86_400_000 }, subject: "acct:buyer-1" },
+  });
+
+  assert.equal(res.ok, false, "a partial authorization cannot buy an indivisible licence");
+  assert.equal(res.stage, "verify", "VERIFY is what says the refusal is free — no leg was presented");
+  assert.match(res.error!, /must authorize all 2 legs/);
+  // No ledger row, which is the only durable evidence that no money moved.
+  assert.equal((await readAll("pub-1")).find((e) => e.at === now), undefined, "nothing was booked");
+});
+
+test("a TOLL with the same partial payment still settles — the rule is the sale, not the shape", async () => {
+  const now = Date.now() + 9000;
+  const a = args("toll.example.com", now);
+  const res = await settleAndAttribute({ ...a, payment: stockPayment(now), legs: [authorLeg(), operatorLeg()] as never });
+  assert.equal(res.ok, true, res.error);
+  const written = (await readAll("pub-1")).find((e) => e.at === now);
+  assert.ok(written, "the author was paid and the read is served");
+  assert.deepEqual(written.forgoneLegs, [{ role: "operator", payTo: OPERATOR, amount: "500" }]);
+});
+
+test("a SALE whose payer signed every leg is unaffected", async () => {
+  const now = Date.now() + 10_000;
+  const a = args("fullsale.example.com", now);
+  const res = await settleAndAttribute({
+    ...a,
+    licence: { scope: { patterns: ["/blog/*"] }, period: { from: now, until: now + 86_400_000 }, subject: "acct:buyer-1" },
+  });
+  assert.equal(res.ok, true, res.error);
+  const written = (await readAll("pub-1")).find((e) => e.at === now);
+  assert.ok(written);
+  assert.equal("forgoneLegs" in written, false);
+});
+
 test("a normal settle leaves the key ABSENT, not zero", async () => {
   // "Absent" and "nothing was forgone" must be the same statement, or every historical row and
   // every multi-leg settle would have to carry a "0" describing something that did not happen.

@@ -397,6 +397,49 @@ test("a STOCK single-leg payment against a multi-leg quote settles the author an
   assert.deepEqual(result.forgoneLegs, [{ role: "operator", payTo: legReqs[1]!.payTo, amount: "500" }]);
 });
 
+// ── requireEveryLeg: the accommodation above must not reach a payment that buys one thing ──
+// A toll's partial settle leaves nobody worse off: the author is paid and the read is served. A
+// SALE's does not — the caller cannot issue a licence naming an author who went unpaid, so it
+// refuses, and settlement is custody-free, so the legs that did authorize cannot be given back.
+
+test("requireEveryLeg refuses a stock payer BEFORE anything settles", async () => {
+  resetPendingLegSink();
+  const now = 1_000_000;
+  const { legs, wireLegs } = issueMulti(now);
+  const result = await verifyAndSettle(mockStockSig(wireLegs[0]!), legs, now, "pub-sale", { requireEveryLeg: true });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.stage, "verify", "VERIFY, not settle — this is what says no money moved");
+  assert.match(result.error!, /must authorize all 2 legs/);
+  // The three places money would show up if any had moved. Asserting the refusal alone would pass
+  // whether it happened before or after the settle, which is the entire defect.
+  assert.equal(result.legSettlements, undefined, "nothing was settled");
+  assert.equal(result.settlementRef, undefined, "and there is no settlement to reference");
+  assert.equal(result.forgoneLegs, undefined, "a refusal forgoes nothing; it never began");
+  assert.equal((await getPendingLegSink().pending(now, "pub-sale")).length, 0);
+});
+
+test("requireEveryLeg accepts a payer who DID sign every leg", async () => {
+  resetPendingLegSink();
+  const now = 1_000_000;
+  const { legs, wireLegs } = issueMulti(now);
+  const result = await verifyAndSettle(mockMultiSig(wireLegs), legs, now, "pub-sale", { requireEveryLeg: true });
+
+  assert.equal(result.ok, true, "the option refuses PARTIAL authorization, not multi-leg payment");
+  assert.equal(result.legSettlements!.length, 2);
+  assert.equal(result.forgoneLegs, undefined);
+});
+
+test("without the option the toll path is untouched", async () => {
+  resetPendingLegSink();
+  const now = 1_000_000;
+  const { legs, legReqs, wireLegs } = issueMulti(now);
+  const result = await verifyAndSettle(mockStockSig(wireLegs[0]!), legs, now, "pub-stock");
+
+  assert.equal(result.ok, true, "a stock client must still be able to pay every tenant");
+  assert.deepEqual(result.forgoneLegs, [{ role: "operator", payTo: legReqs[1]!.payTo, amount: "500" }]);
+});
+
 test("a forgone leg is NEVER written to the pending sink — it could never be drained", async () => {
   resetPendingLegSink();
   const now = 1_000_000;
