@@ -14,8 +14,8 @@ process.env.LICENSES_ENABLED = "true";
 process.env.RATE_LIMIT_RPM = "0";
 
 const { app } = await import("./app.ts");
-const { buildX402Manifest, PAYMENT_LINK_HEADER } = await import("@naulon/enforce");
-const { usdc } = await import("@naulon/shared");
+const { buildX402Manifest, PAYMENT_LINK_HEADER, build402, totalChargedMicro, quote: priceQuote } = await import("@naulon/enforce");
+const { usdc, walletAddress } = await import("@naulon/shared");
 type PublisherConfig = import("@naulon/shared").PublisherConfig;
 
 const realFetch = globalThis.fetch;
@@ -52,6 +52,135 @@ test("buildX402Manifest derives both price legs from the publisher", () => {
   assert.equal(m.humansReadFree, true);
   assert.deepEqual(m.resources.pathPrefixes, ["essays", "articles"]);
   assert.equal(m.license.identity, "naulon:test.host");
+});
+
+/**
+ * A 10% fee with a floor, the shape the naulon control plane declares. Deliberately NOT
+ * proportional: a floor is what makes a citation total something other than a read total times
+ * the multiplier, and it is the case a manifest that scaled one figure would get wrong.
+ */
+function feeLegs(bps: number, floorMicro = 0): NonNullable<PublisherConfig["extraLegs"]> {
+  return (price) => {
+    const atomic = BigInt(Math.round((price as number) * 1_000_000));
+    let amount = (atomic * BigInt(bps)) / 10_000n;
+    if (amount < BigInt(floorMicro)) amount = BigInt(floorMicro);
+    return amount > 0n
+      ? [{ role: "operator" as const, payTo: walletAddress("0x00000000000000000000000000000000000fee01"), amount: amount.toString() }]
+      : [];
+  };
+}
+
+test("a publisher with no extra leg declares no total, byte-identical to before the field", () => {
+  const m = buildX402Manifest(fixturePublisher());
+  assert.equal(m.payment.price.read.buyerTotal, undefined, "nothing to add, so nothing is said");
+  assert.equal(m.payment.price.citation.buyerTotal, undefined);
+});
+
+test("a secondary leg is declared as the TOTAL, beside the leg the 402 carries", () => {
+  const m = buildX402Manifest({ ...fixturePublisher(), extraLegs: feeLegs(1000) });
+  // The leg keeps naming one transfer: `accepts[0]` on the 402 carries exactly this.
+  assert.equal(m.payment.price.read.usdc, 0.002);
+  assert.equal(m.payment.price.read.atomic, "2000");
+  // And the total the buyer must authorize across every leg.
+  assert.equal(m.payment.price.read.buyerTotal?.atomic, "2200");
+  assert.equal(m.payment.price.read.buyerTotal?.usdc, 0.0022);
+  assert.equal(m.payment.price.citation.buyerTotal?.atomic, "11000");
+  assert.equal(m.payment.price.citation.buyerTotal?.usdc, 0.011);
+});
+
+test("the total is computed per amount, not scaled from the read", () => {
+  // A floor of 1000 micro bites the read (200 -> 1000) and not the citation (1000 -> 1000).
+  const m = buildX402Manifest({ ...fixturePublisher(), extraLegs: feeLegs(1000, 1000) });
+  assert.equal(m.payment.price.read.buyerTotal?.atomic, "3000", "2000 + the floor");
+  assert.equal(m.payment.price.citation.buyerTotal?.atomic, "11000", "10000 + the percentage");
+  // Scaling the read total by the multiplier would have said 15000. That is the bug this shape
+  // exists to make impossible.
+  assert.notEqual(m.payment.price.citation.buyerTotal?.atomic, "15000");
+});
+
+/**
+ * A publisher's fee hook is third-party code on a public, unauthenticated route. The SDK that
+ * consumes this document resolves a failed fetch to null and then serves the read FREE, so a hook
+ * defect must never be able to take the document down.
+ */
+test("a fee hook that throws costs the total, not the document", () => {
+  const m = buildX402Manifest({
+    ...fixturePublisher(),
+    extraLegs: () => {
+      throw new Error("resolver unavailable");
+    },
+  });
+  assert.equal(m.payment.price.read.usdc, 0.002, "the document still serves");
+  assert.equal(m.payment.price.read.buyerTotal, undefined, "and says nothing it cannot stand behind");
+});
+
+test("a malformed leg amount is refused rather than silently reinterpreted", () => {
+  // A bare `BigInt("0x10")` is 16. Summing through the wire parser makes it a named error, and
+  // this document degrades to silence instead of advertising a total nobody will charge.
+  for (const amount of ["0x10", "1.5", "1e3"]) {
+    const m = buildX402Manifest({
+      ...fixturePublisher(),
+      extraLegs: () => [{ role: "operator" as const, payTo: walletAddress(`0x${"f".repeat(40)}`), amount }],
+    });
+    assert.equal(m.payment.price.read.buyerTotal, undefined, `${amount} must not reach buyerTotal`);
+  }
+});
+
+test("a total at or below the leg is never published", () => {
+  // `PayoutLeg` is additive by contract. A negative would make buyerTotal LESS than atomic, which
+  // under-funds a buyer who trusted it — this field's own failure, mirrored.
+  const m = buildX402Manifest({
+    ...fixturePublisher(),
+    extraLegs: () => [{ role: "operator" as const, payTo: walletAddress(`0x${"f".repeat(40)}`), amount: "-500" }],
+  });
+  assert.equal(m.payment.price.read.buyerTotal, undefined);
+});
+
+test("every per-path rule carries its own total", () => {
+  const m = buildX402Manifest({
+    ...fixturePublisher(),
+    priceRules: [{ pattern: "/papers/*", priceUsdc: 0.05 }],
+    extraLegs: feeLegs(1000),
+  });
+  const rule = m.payment.price.rules?.[0];
+  assert.equal(rule?.read.atomic, "50000");
+  assert.equal(rule?.read.buyerTotal?.atomic, "55000");
+  assert.equal(rule?.citation.buyerTotal?.atomic, "275000", "the rule price, its multiplier, then the fee");
+});
+
+/**
+ * The tripwire the arithmetic tests cannot be: this document exists to agree with the 402, and
+ * agreement is what nothing held before. The manifest sums the publisher's legs itself, `build402`
+ * assembles the wire from the same hook, and until this test they could drift apart silently.
+ *
+ * Driven through the REAL quote and the REAL builder rather than a hand-made leg list, so a change
+ * to either side has to keep them equal.
+ */
+test("the manifest's buyerTotal equals what the 402 actually asks for", async () => {
+  const publisher = {
+    ...fixturePublisher(),
+    extraLegs: feeLegs(1000, 1000),
+    credits: {
+      resolve: async (slug: string) => ({
+        slug,
+        title: "X",
+        contributors: [{ authorId: "a", wallet: walletAddress(`0x${"a".repeat(40)}`) }],
+      }),
+    },
+  } satisfies PublisherConfig;
+
+  for (const kind of ["read", "citation"] as const) {
+    const q = await priceQuote(publisher, "essays/x", kind, "/essays/x");
+    assert.ok(q, `no quote for ${kind}`);
+    const built = build402(q, "https://origin.test/essays/x", Date.now());
+    const m = buildX402Manifest(publisher);
+    const declared = m.payment.price[kind].buyerTotal?.atomic ?? m.payment.price[kind].atomic;
+    assert.equal(
+      declared,
+      totalChargedMicro(built.legs).toString(),
+      `the ${kind} figure this document advertises is not the ask the 402 carries`,
+    );
+  }
 });
 
 test("buildX402Manifest advertises catalogUrl when the publisher sets one", () => {

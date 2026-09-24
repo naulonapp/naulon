@@ -148,7 +148,10 @@ export function settledChargedMicro(
   return settled > 0n ? settled : 0n;
 }
 
-function toMicro(v: bigint | number | string): bigint {
+/** Atomic micro-USDC from a leg amount, refusing anything that is not integer digits BY NAME.
+ *  Exported because the discovery manifest sums the same publisher legs and a bare `BigInt()` there
+ *  would accept hex and throw a raw SyntaxError on a decimal. One parser for one wire format. */
+export function toMicro(v: bigint | number | string): bigint {
   if (typeof v === "bigint") return v;
   if (typeof v === "number") {
     if (!Number.isInteger(v)) throw new Error(`atomic USDC must be an integer: ${v}`);
