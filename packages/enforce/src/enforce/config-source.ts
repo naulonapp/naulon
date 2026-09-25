@@ -165,6 +165,7 @@ function narrow(body: unknown): PublisherConfigDocument | null {
   const raw = (body as { enforcement?: unknown }).enforcement;
   const e = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   const manifest = (body as { manifest?: unknown }).manifest;
+  const license = (body as { license?: unknown }).license;
   return {
     enforcement: defined({
       articlePrefixes: Array.isArray(e["articlePrefixes"]) ? (e["articlePrefixes"] as string[]) : undefined,
@@ -183,6 +184,11 @@ function narrow(body: unknown): PublisherConfigDocument | null {
         : undefined) as PublisherEnforcementConfig["termsPolicy"],
     }),
     ...(typeof manifest === "object" && manifest !== null ? { manifest: manifest as X402Manifest } : {}),
+    // The licence is listed here or it does not exist for anything downstream: both the
+    // middleware's `/license.xml` answer and `serveRslDocument` read `doc.license`, and a field
+    // this function does not name is dropped. An empty string is dropped too, so "no licence"
+    // has one spelling and the request passes through to the publisher's own route.
+    ...(typeof license === "string" && license.length > 0 ? { license } : {}),
   };
 }
 

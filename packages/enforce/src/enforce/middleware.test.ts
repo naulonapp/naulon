@@ -517,6 +517,26 @@ test("GET /license.xml is answered from the config the middleware already holds"
   assert.equal(await r.response.text(), "<rsl/>");
 });
 
+test("GET /license.xml is answered through the hosted config source, not only a static one", async () => {
+  // `httpPublisherConfigSource` narrows the wire document to the fields it names. A test that
+  // only ever used the static source could not see a narrow that dropped the licence, and a
+  // publisher's site always uses the hosted one.
+  const XML = '<?xml version="1.0"?><rsl xmlns="https://rslstandard.org/rsl"><content url="/"/></rsl>';
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({ enforcement: {}, license: XML }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+  const mw = naulonMiddleware({
+    ...opts,
+    config: httpPublisherConfigSource("http://cloud/_naulon/enforce-config", "nln_live_k", { fetchImpl }),
+  });
+  const r = await mw(new Request("https://pub.test/license.xml"));
+  assert.equal(r.response?.status, 200);
+  assert.equal(r.response?.headers.get("content-type"), "application/rsl+xml; charset=utf-8");
+  assert.equal(await r.response?.text(), XML);
+});
+
 test("it is served BEFORE any toll decision — a licence is never itself tolled", async () => {
   // Gating the document that states the price behind paying the price is circular. The request
   // carries an agent user-agent that would otherwise be charged.

@@ -35,6 +35,10 @@ The decision kernel and the framework-agnostic middleware core:
   (with `setHeaders` to attach to the app's response on a paid pass).
 - `withNaulon(handler, opts)` wraps a generic `fetch` handler.
 - `localQuoteSource(fn)` / `httpQuoteSource(url, key)`: pluggable price and payees.
+- `httpPublisherConfigSource(url, key)`: what is tolled and for whom, read from the
+  control plane and cached per host. It also carries your `/.well-known/x402` manifest
+  and your RSL licence, which `serveX402Manifest` and `serveRslDocument` turn into
+  routes if the middleware cannot reach those paths.
 - The classification, Web Bot Auth, nonce, and proof primitives (`classify`,
   `verifyBotAuth`, …) and the x402 build side (`build402`, `buildRequirements`).
 - Cloudflare pay-per-crawl interop: `formatCrawlerPrice`, `parseCrawlerPrice`,
@@ -60,20 +64,31 @@ The decision kernel and the framework-agnostic middleware core:
 // proxy.ts (Next.js App Router — `middleware.ts` on Next ≤ 15)
 import { NextResponse } from "next/server";
 import { createNaulonMiddleware } from "@naulon/enforce/next";
-import { httpQuoteSource } from "@naulon/enforce";
+import { httpPublisherConfigSource, httpQuoteSource } from "@naulon/enforce";
+
+const plane = "https://<your-control-plane>";
+const key = process.env.NAULON_API_KEY!;
 
 export const proxy = createNaulonMiddleware(
   {
     publisher: { id: "your-site", articlePrefixes: ["articles"] },
-    quote: httpQuoteSource("https://<your-control-plane>/_naulon/quote", process.env.NAULON_API_KEY!),
-    verifyUrl: "https://<your-control-plane>/_naulon/verify",
-    apiKey: process.env.NAULON_API_KEY!,
+    config: httpPublisherConfigSource(`${plane}/_naulon/enforce-config`, key),
+    quote: httpQuoteSource(`${plane}/_naulon/quote`, key),
+    verifyUrl: `${plane}/_naulon/verify`,
+    apiKey: key,
   },
   NextResponse,
 );
 
-export const config = { matcher: ["/articles/:path*"] };
+export const config = { matcher: ["/articles/:path*", "/license.xml"] };
 ```
+
+`config` is optional but worth passing. It makes the dashboard the source of what is
+tolled, so a scope or crawler-policy change reaches your site without a deploy, and it
+is what lets the middleware answer `GET /license.xml` with your RSL licence, before any
+toll decision. That only happens if the path is in your matcher, hence the second
+entry. With `config` omitted, or with `serveLicense: false`, the request passes through
+to your app.
 
 Next 16 renamed the file convention: `middleware.ts` still runs but warns
 (`The "middleware" file convention is deprecated. Please use "proxy" instead.`),
