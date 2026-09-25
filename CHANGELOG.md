@@ -16,6 +16,23 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.8.7
+
+`@naulon/enforce` 0.5.0 → **0.5.1**, `@naulon/shared` 0.5.0 → **0.5.1**, `@naulon/sdk` 0.5.0 →
+**0.5.1** and `@naulon/wayfarer` 0.5.0 → **0.5.1**. `@naulon/wayfarer-mcp` is unchanged and is not
+republished.
+
+`@naulon/enforce`: **`/license.xml` is served for a site that reads its config from the control
+plane.** 0.5.0 taught the middleware and `serveRslDocument` to answer `/license.xml` from the
+publisher config, but `httpPublisherConfigSource` narrows the control plane's response to the
+fields it names, and the licence was not one of them. Every site using the hosted config, which is
+every site, got a 404 at that path. The narrow now keeps the licence when it is a non-empty string,
+and the tests drive the hosted source rather than only the static one, which never passed through
+the narrow. The README's Next.js example now passes `config` and puts `/license.xml` in the
+matcher, since the middleware can only answer a path it sees.
+
 `@naulon/enforce`: **the discovery manifest states what a buyer authorizes in total.**
 `/.well-known/x402` declared the author leg on its own, so an agent sizing a budget from it
 under-provisioned by whatever secondary leg a publisher's resolver attaches, and a stock client
@@ -24,6 +41,36 @@ rule alike, now carries an optional `buyerTotal` beside it, summed through the s
 hook the 402 is assembled from and held to it by a parity test. It is omitted when the two are
 equal, so a gate with no secondary leg emits exactly the document it always did, and a hook that
 throws or returns a malformed amount omits the total rather than failing the route.
+
+`@naulon/shared`, `@naulon/sdk`, `@naulon/enforce`, `@naulon/wayfarer`: **the usage terms a
+publisher declares are carried and enforced.** `PublisherConfig.termsPolicy` states what a reader
+may do with a page. Every field is optional and an absent one means not stated, so a config without
+it behaves exactly as before. `decide` refuses a use the publisher prohibits. On the buyer side,
+`RslTermsForUrl` exposes the user-class and region constraints a licence states, and `spendGate`
+refuses a read the licence prohibits by class or region, or a read at a URL the licence governs
+without granting `ai-input`. `LicenseTerm` can name `ai-train`, so a citation record can describe a
+negotiated training grant; nothing here sells one. The site-mode scope matcher now reads both of its
+lists defensively, so a malformed stored value tolls nothing rather than the wrong paths.
+
+## v0.8.6
+
+Carries the WordPress plugin release that `v0.8.5` was cut for, plus the ten PRs of package
+work that had accumulated unpublished since `v0.8.4`.
+
+**`v0.8.5` is a tag with no release.** Its run failed on the guard that refuses a changed package
+whose version stood still, which is exactly what that guard is for: the publish is idempotent, so
+five packages would have been skipped as already published and nobody could have installed the
+change. Nothing was published under it and no GitHub Release exists. The versions are bumped here
+instead.
+
+**`@naulon/shared` 0.5.0 is breaking.** `ARC_PRIVATE_MAINNET_HEADER` and `arcPreviewHeaders` are
+gone, reachable until now through `export * from "./networks.ts"`. Arc's private-mainnet preview
+is over, so the header they set is a no-op.
+
+Also published: `@naulon/enforce` 0.5.0, `@naulon/sdk` 0.5.0 and `@naulon/wayfarer` 0.5.0, all
+additive, and `@naulon/wayfarer-mcp` 0.5.3, whose public surface did not change.
+
+What those versions contain sat under "Unreleased" until v0.8.7 and is listed here instead:
 
 `@naulon/shared`: **Arc mainnet is a first-class chain, and the private-preview scaffolding
 around it is gone.** Arc opened publicly on 2026-09-16. `NETWORKS.arc` gains the explorer Arc
@@ -100,24 +147,6 @@ facilitator catalogs what it sees; nothing here declared anything, so no catalog
 list a naulon read even in principle. Every 402 now carries `extensions.bazaar` and
 service metadata on `resource`, with the HOST as `serviceName`, because a catalog full of
 identical `naulon` rows helps no agent.
-
-## v0.8.6
-
-Carries the WordPress plugin release that `v0.8.5` was cut for, plus the ten PRs of package
-work that had accumulated unpublished since `v0.8.4`.
-
-**`v0.8.5` is a tag with no release.** Its run failed on the guard that refuses a changed package
-whose version stood still, which is exactly what that guard is for: the publish is idempotent, so
-five packages would have been skipped as already published and nobody could have installed the
-change. Nothing was published under it and no GitHub Release exists. The versions are bumped here
-instead.
-
-**`@naulon/shared` 0.5.0 is breaking.** `ARC_PRIVATE_MAINNET_HEADER` and `arcPreviewHeaders` are
-gone, reachable until now through `export * from "./networks.ts"`. Arc's private-mainnet preview
-is over, so the header they set is a no-op.
-
-Also published: `@naulon/enforce` 0.5.0, `@naulon/sdk` 0.5.0 and `@naulon/wayfarer` 0.5.0, all
-additive, and `@naulon/wayfarer-mcp` 0.5.3, whose public surface did not change.
 
 **naulon for WordPress 0.5.5: the earnings figures are what the site's own people were paid.**
 The settlement ledger records a role per leg, and no publisher-facing read filtered on it. Our
