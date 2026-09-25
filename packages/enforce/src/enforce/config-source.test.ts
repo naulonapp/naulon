@@ -218,6 +218,26 @@ test("no licence in the document ⇒ 404, never an empty <rsl>", async () => {
   }
 });
 
+test("the licence survives the narrow from the hosted document", async () => {
+  // Both readers of `doc.license`, the middleware and `serveRslDocument`, sit behind `narrow`.
+  const { fetchImpl } = planeReturning({ ...DOC, license: "<rsl/>" });
+  const src = httpPublisherConfigSource("http://cloud/_naulon/enforce-config", "k", { fetchImpl });
+  assert.equal((await src.load({ resource: RESOURCE }))?.license, "<rsl/>");
+  const res = await serveRslDocument(src)(new Request("https://site.test/license.xml"));
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), "<rsl/>");
+});
+
+test("a licence that is not a non-empty string is dropped, so the route passes through", async () => {
+  for (const license of ["", 42, { xml: "<rsl/>" }, null]) {
+    const { fetchImpl } = planeReturning({ ...DOC, license });
+    const src = httpPublisherConfigSource("http://cloud/c", "k", { fetchImpl });
+    const doc = await src.load({ resource: RESOURCE });
+    assert.ok(doc);
+    assert.equal("license" in doc, false, JSON.stringify(license));
+  }
+});
+
 test("a licence is public — any origin may read it", async () => {
   const res = await serveRslDocument(
     staticPublisherConfigSource({ enforcement: {}, license: "<rsl/>" }),
