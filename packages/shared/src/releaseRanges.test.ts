@@ -23,6 +23,14 @@ import { test } from "node:test";
  * including a future breaking minor it was never tested against. `@naulon/enforce` acquired exactly
  * that (`"@naulon/sdk": "*"`, added when the article-key rule moved into the SDK) and this guard
  * waved it through, because it only ever asked what the range said.
+ *
+ * Satisfiable is also not enough for a PUBLISHED dependent: its range must FLOOR at the version in
+ * this tree. The packages are released together and each is built and tested against the others as
+ * they stand here, so a dependent may import a symbol its dependency gained in this very release.
+ * `@naulon/enforce` 0.5.1 imports `prohibitedUse`, which `@naulon/shared` first exports in 0.5.1,
+ * while asking for `^0.5.0`. An installer holding shared 0.5.0 in a lockfile keeps it, the range is
+ * satisfied, and the build fails on the missing export. A floor below the tree's version admits
+ * exactly the pairs that were never built together.
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -91,6 +99,14 @@ export function rangeOffences(packages: Map<string, { pkg: Pkg; dir: string }>):
           `packages/${dir}/package.json: ${name} wants ${dep}@${range}, ` +
             `but ${dep} is ${target.pkg.version} in this tree`,
         );
+        continue;
+      }
+      if (!pkg.private && range !== `^${target.pkg.version}`) {
+        offences.push(
+          `packages/${dir}/package.json: ${name} is PUBLISHED and wants ${dep}@${range}, which ` +
+            `admits releases older than the ${target.pkg.version} it is built against here. ` +
+            `Floor it at ^${target.pkg.version}.`,
+        );
       }
     }
   }
@@ -135,6 +151,33 @@ test("a `*` range is exempt from a private package and an offence from a publish
   const published = rangeOffences(tree(false));
   assert.equal(published.length, 1);
   assert.match(published[0]!, /is PUBLISHED and wants @naulon\/sdk@\*/);
+});
+
+test("a published dependent floors at the version in this tree; a private one need not", () => {
+  const tree = (range: string, dependentIsPrivate = false) =>
+    new Map([
+      ["@naulon/shared", { pkg: { name: "@naulon/shared", version: "0.5.1" }, dir: "shared" }],
+      [
+        "@naulon/enforce",
+        {
+          pkg: {
+            name: "@naulon/enforce",
+            version: "0.5.1",
+            ...(dependentIsPrivate ? { private: true } : {}),
+            dependencies: { "@naulon/shared": range },
+          },
+          dir: "enforce",
+        },
+      ],
+    ]);
+
+  // The shape that shipped: satisfiable, and still able to resolve a shared without the export.
+  const low = rangeOffences(tree("^0.5.0"));
+  assert.equal(low.length, 1);
+  assert.match(low[0]!, /admits releases older than the 0\.5\.1/);
+
+  assert.deepEqual(rangeOffences(tree("^0.5.1")), []);
+  assert.deepEqual(rangeOffences(tree("^0.5.0", true)), [], "nothing installs a private package");
 });
 
 test("caretSatisfies pins the minor on a zero-major and floats it above", () => {

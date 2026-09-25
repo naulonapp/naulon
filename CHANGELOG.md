@@ -18,6 +18,20 @@ tags and the auto-generated notes on each GitHub Release.
 
 Nothing yet.
 
+## v0.8.8
+
+`@naulon/shared` 0.5.1 → **0.5.2**, `@naulon/enforce` 0.5.1 → **0.5.2**, `@naulon/wayfarer` 0.5.1 →
+**0.5.2** and `@naulon/wayfarer-mcp` 0.5.3 → **0.5.4**. `@naulon/sdk` is unchanged and is not
+republished. No code changed; only the ranges the packages ask of each other.
+
+**Internal ranges now floor at the version each package was built against.** The v0.8.7 packages
+asked for `^0.5.0` of each other while importing what their 0.5.1 dependencies added:
+`@naulon/enforce` 0.5.1 imports `prohibitedUse`, which `@naulon/shared` first exports in 0.5.1. An
+install that already held shared 0.5.0 kept it, since the range was satisfied, and the build failed
+on the missing export. Upgrade to 0.5.2, or update `@naulon/shared` to 0.5.1 beside enforce 0.5.1.
+`releaseRanges.test.ts` now refuses a published package whose internal range floors below the
+version in the tree.
+
 ## v0.8.7
 
 `@naulon/enforce` 0.5.0 → **0.5.1**, `@naulon/shared` 0.5.0 → **0.5.1**, `@naulon/sdk` 0.5.0 →
