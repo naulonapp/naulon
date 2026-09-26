@@ -244,3 +244,10 @@ test("a licence is public — any origin may read it", async () => {
   )(new Request("https://pub.test/license.xml"));
   assert.equal(res.headers.get("access-control-allow-origin"), "*");
 });
+
+test("serveRslDocument shows a browser the terms as XML and varies on Accept", async () => {
+  const handler = serveRslDocument(staticPublisherConfigSource({ enforcement: {}, license: "<rsl/>" }));
+  const res = await handler(new Request("https://pub.test/license.xml", { headers: { accept: "text/html" } }));
+  assert.equal(res.headers.get("content-type"), "application/xml; charset=utf-8");
+  assert.equal(res.headers.get("vary"), "Accept");
+});

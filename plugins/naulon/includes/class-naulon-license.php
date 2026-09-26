@@ -59,6 +59,29 @@ class Naulon_License {
 	/** @var Naulon_License|null */
 	private static $instance = null;
 
+	/**
+	 * The Content-Type for the licence, given the request's Accept header.
+	 *
+	 * A crawler is told `application/rsl+xml`, which names the document exactly. No browser knows
+	 * that type and would download the file, so a request that asks for HTML and does not name the
+	 * RSL type gets the same bytes as `application/xml`, which a browser shows. The rule is
+	 * `rslContentType` in `@naulon/shared`, and the control plane's parity test holds the two equal.
+	 *
+	 * @param string $accept Raw Accept header, or ''.
+	 * @return string
+	 */
+	public static function content_type( $accept ) {
+		$types = array();
+		foreach ( explode( ',', (string) $accept ) as $part ) {
+			$type = strtolower( trim( explode( ';', $part )[0] ) );
+			if ( '' !== $type ) {
+				$types[] = $type;
+			}
+		}
+		$browser = in_array( 'text/html', $types, true ) && ! in_array( 'application/rsl+xml', $types, true );
+		return ( $browser ? 'application/xml' : 'application/rsl+xml' ) . '; charset=utf-8';
+	}
+
 	public static function instance() {
 		if ( null === self::$instance ) {
 			self::$instance = new self();
@@ -146,7 +169,10 @@ class Naulon_License {
 		}
 
 		status_header( 200 );
-		header( 'Content-Type: application/rsl+xml; charset=utf-8' );
+		$accept = isset( $_SERVER['HTTP_ACCEPT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_ACCEPT'] ) ) : '';
+		header( 'Content-Type: ' . self::content_type( $accept ) );
+		// The label depends on Accept, so no cache may hand one audience the other's.
+		header( 'Vary: Accept' );
 		// Matches the document's own `max-age="1"` (days), so a crawler caching by HTTP and one
 		// honouring the RSL attribute do not end up with different ideas of freshness.
 		header( 'Cache-Control: public, max-age=86400' );

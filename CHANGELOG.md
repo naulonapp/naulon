@@ -18,6 +18,20 @@ tags and the auto-generated notes on each GitHub Release.
 
 Nothing yet.
 
+## v0.8.10
+
+`@naulon/shared` 0.5.3 → **0.5.4**, `@naulon/enforce` 0.5.3 → **0.5.4**, `@naulon/wayfarer` 0.5.3 →
+**0.5.4** and `@naulon/wayfarer-mcp` 0.5.5 → **0.5.6**. `@naulon/sdk` is unchanged and is not
+republished. wayfarer and wayfarer-mcp change only the ranges they ask of their dependencies. The
+WordPress plugin moves to 0.5.7.
+
+**A licence opened in a browser is shown, not downloaded.** `/license.xml` was always served as
+`application/rsl+xml`, a type no browser renders, so a person following the link got a file. A
+request that asks for HTML and does not name the RSL type now receives the same bytes as
+`application/xml`; every other request keeps `application/rsl+xml`. Every licence response carries
+`Vary: Accept`. The rule is `rslContentType` in `@naulon/shared`, used by the middleware and
+`serveRslDocument`, and the WordPress plugin applies the same rule.
+
 ## v0.8.9
 
 `@naulon/shared` 0.5.2 → **0.5.3**, `@naulon/enforce` 0.5.2 → **0.5.3**, `@naulon/wayfarer` 0.5.2 →
