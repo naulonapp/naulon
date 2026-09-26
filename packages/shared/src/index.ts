@@ -7,6 +7,7 @@ export * from "./eventsink.ts";
 export * from "./observationsink.ts";
 export * from "./supabase.ts";
 export * from "./license.ts";
+export * from "./rsl-media.ts";
 export * from "./networks.ts";
 export * from "./eip3009.ts";
 export * from "./credits.ts";

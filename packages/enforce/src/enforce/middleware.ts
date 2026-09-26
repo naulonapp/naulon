@@ -37,7 +37,7 @@ import {
 import { PAYMENT_BODY_CONTENT_TYPE, paymentRequiredBodyText } from "../paymentBody.ts";
 import { X402_MANIFEST_PATH } from "../discoverability.ts";
 import { headerSafe } from "../headerSafe.ts";
-import { externalUrl, getConfig, type JwkSet } from "@naulon/shared";
+import { externalUrl, getConfig, rslResponseHeaders, type JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
 import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
 import type { DecideObs } from "../decide.ts";
@@ -355,7 +355,8 @@ export function naulonMiddleware(
           response: new Response(req.method === "HEAD" ? null : doc.license, {
             status: 200,
             headers: {
-              "content-type": "application/rsl+xml; charset=utf-8",
+              // The RSL type for a crawler, plain XML for a browser, varying on Accept.
+              ...rslResponseHeaders(req.headers.get("accept")),
               // Matches the document's own `max-age="1"` (days), so a crawler caching by HTTP and one
               // honouring the RSL attribute do not end up with different ideas of freshness.
               "cache-control": "public, max-age=86400",

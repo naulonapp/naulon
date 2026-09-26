@@ -609,3 +609,16 @@ test("serveManifest: false lets the publisher's own route win", async () => {
   const r = await mw(new Request("http://h/.well-known/x402"));
   assert.equal(r.response, null);
 });
+
+test("a browser opening /license.xml is shown the terms, not handed a download", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({ enforcement: {}, license: "<rsl/>" }),
+  });
+  const browser = await mw(new Request("http://h/license.xml", { headers: { accept: "text/html,application/xhtml+xml,*/*;q=0.8" } }));
+  assert.equal(browser.response?.headers.get("content-type"), "application/xml; charset=utf-8");
+  assert.equal(browser.response?.headers.get("vary"), "Accept");
+  const crawler = await mw(new Request("http://h/license.xml", { headers: { accept: "application/rsl+xml" } }));
+  assert.equal(crawler.response?.headers.get("content-type"), "application/rsl+xml; charset=utf-8");
+  assert.equal(await browser.response?.text(), await crawler.response?.text(), "the same bytes either way");
+});

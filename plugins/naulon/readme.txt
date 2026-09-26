@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.5.6
+Stable tag: 0.5.7
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -146,6 +146,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.5.7 =
+* Opening your licence at /license.xml in a browser now shows the terms instead of downloading a file. Crawlers still receive it as an RSL document.
+
 = 0.5.6 =
 * The crawler choices you make on naulon.app now apply on this site. A crawler you block there is refused here, one you let read free reads free, and one you charge is charged. Before this they only applied to sites routed through naulon.
 * What AI may do, set on naulon.app, is enforced here too. Refusing training turns the training crawlers away, refusing AI reading turns every agent away, and making reads free stops charging agents. People always read free.
@@ -207,6 +210,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.5.7 =
+Your licence at /license.xml opens in a browser instead of downloading.
+
 = 0.5.6 =
 Your crawler blocks and your terms from naulon.app now apply on this site, so a crawler you refused there is refused here too.
 

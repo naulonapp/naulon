@@ -25,7 +25,7 @@
  *   - **Any secret.** The document is derived from the tenant record by the control
  *     plane and carries only what a 402 already tells the world anyway.
  */
-import { externalUrl, getConfig } from "@naulon/shared";
+import { externalUrl, getConfig, rslResponseHeaders } from "@naulon/shared";
 import type { CrawlerPolicy, PublisherConfig } from "@naulon/shared";
 import type { X402Manifest } from "../discoverability.ts";
 
@@ -335,7 +335,9 @@ export function serveRslDocument(
     return new Response(doc.license, {
       status: 200,
       headers: {
-        "content-type": "application/rsl+xml; charset=utf-8",
+        // The RSL type for a crawler, plain XML for a browser so a person sees the terms rather than
+        // a download, and `Vary: Accept` so no cache mixes the two. See `rslResponseHeaders`.
+        ...rslResponseHeaders(req.headers.get("accept")),
         "cache-control": "public, max-age=86400",
         // A licence is a public statement; a crawler may read it from any origin.
         "access-control-allow-origin": "*",
