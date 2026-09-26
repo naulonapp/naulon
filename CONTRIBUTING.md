@@ -29,7 +29,7 @@ packages/tollgate      x402 reverse proxy (the gate)
 packages/wayfarer      the paying research agent
 packages/attribution   batched settlement to authors
 packages/dashboard     live earnings view
-examples/meridian   reference publisher adapter — copy this to add your own
+examples/meridian   reference publisher adapter, copy this to add your own
 plugins/naulon         the WordPress plugin (PHP, not part of the Node workspace)
 ```
 

@@ -57,9 +57,9 @@ Every delivery is the same envelope; only `data` varies by event type.
 
 ```jsonc
 {
-  "id": "dlv_…",                    // delivery id — same as Naulon-Id
+  "id": "dlv_…",                    // delivery id, same as Naulon-Id
   "type": "settlement.completed",
-  "eventId": "…",                   // the SOURCE event id — stable across redeliveries. Dedupe on this.
+  "eventId": "…",                   // the SOURCE event id, stable across redeliveries. Dedupe on this.
   "createdAt": 1719000000000,       // unix MILLIseconds, when the event happened (not send time)
   "data": { }                       // see below
 }
@@ -79,7 +79,7 @@ A self-host gate reports the settled event directly:
   "eventId": "…",
   "slug": "on-stillness",
   "kind": "read",                   // or "citation"
-  "amountMicro": 5000,              // integer micro-USDC — the money source of truth
+  "amountMicro": 5000,              // integer micro-USDC, the money source of truth
   "settlementRef": "0x…",           // the on-chain reference
   "chainId": 5042002,
   "at": 1719000000000
@@ -185,7 +185,7 @@ unrecorded.
 import { createWebhookReceiver } from "@naulon/sdk/next";
 
 export const POST = createWebhookReceiver({
-  secrets: [process.env.NAULON_WEBHOOK_SECRET!],   // an array — see rotation above
+  secrets: [process.env.NAULON_WEBHOOK_SECRET!],   // an array, see rotation above
   idempotency: myDurableStore,                     // back claim(eventId) with a DB unique constraint
   onEvent: async (event) => {
     if (event.type !== "settlement.completed") return;

@@ -81,7 +81,7 @@ integer micro-USDC end to end.
 import { createCreditsRoute } from "@naulon/sdk/next";
 import { httpResolver } from "@naulon/sdk";
 
-// Resolve a slug however you like — here, your own CMS endpoint. Or pass a
+// Resolve a slug however you like: here, your own CMS endpoint. Or pass a
 // fixtureResolver(map) for static credits, or implement CreditsResolver yourself.
 export const GET = createCreditsRoute(httpResolver(process.env.MY_CMS_URL!), {
   token: process.env.CREDITS_API_TOKEN, // optional bearer gate

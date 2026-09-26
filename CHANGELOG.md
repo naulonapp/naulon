@@ -18,6 +18,20 @@ tags and the auto-generated notes on each GitHub Release.
 
 Nothing yet.
 
+## v0.8.11
+
+`@naulon/sdk` 0.5.1 → **0.5.2**, `@naulon/shared` 0.5.4 → **0.5.5**, `@naulon/enforce` 0.5.4 →
+**0.5.5**, `@naulon/wayfarer` 0.5.4 → **0.5.5** and `@naulon/wayfarer-mcp` 0.5.6 → **0.5.7**. No
+code changed. The WordPress plugin stays at 0.5.7.
+
+This release carries documentation to npm, which shows the README of the published version:
+
+- `@naulon/sdk` lists all eight entry points; it listed three.
+- `@naulon/enforce` documents `termsPolicy`, which `decide()` already honours.
+- `@naulon/wayfarer-mcp` lists the `naulon_status` tool.
+
+Every internal range moves with it, because ranges floor at the version they were built against.
+
 ## v0.8.10
 
 `@naulon/shared` 0.5.3 → **0.5.4**, `@naulon/enforce` 0.5.3 → **0.5.4**, `@naulon/wayfarer` 0.5.3 →
