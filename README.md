@@ -34,8 +34,8 @@ and still settle.
 
 ```mermaid
 flowchart TD
-    Req([Incoming request]) --> Cls{"agentDetect —<br/>human or machine?"}
-    Cls -->|human| Free[["Proxied through, untouched — free read"]]
+    Req([Incoming request]) --> Cls{"agentDetect:<br/>human or machine?"}
+    Cls -->|human| Free[["Proxied through, untouched: free read"]]
     Cls -->|machine| Bill["402 Payment Required<br/>price · author wallet(s) · signed nonce"]
     Bill --> Sign["Agent signs a USDC payment,<br/>echoes the nonce, retries with payment-signature"]
     Sign --> Verify{"Verify via Circle Gateway"}
@@ -59,7 +59,7 @@ resolved by the split algorithm in `@naulon/shared`:
 
 ```mermaid
 flowchart TD
-    Toll["Toll paid — $0.006"]
+    Toll["Toll paid: $0.006"]
     Toll -->|weight 3| Desk["the-immunology-desk<br/><i>collective</i> · $0.0045"]
     Toll -->|weight 1| Mira["mira · $0.0015"]
     Desk -->|weight 1| Oko["okonkwo · $0.0015"]
@@ -194,11 +194,11 @@ npm run wayfarer -- "payment and passage"            # in another
 
 ```text
 appraisal:
-  · the-naulon: relevance 1.00 — shares 2/2 topic terms (payment, passage)
-  · on-stillness: relevance 0.00 — no topic-term overlap
+  · the-naulon: relevance 1.00, shares 2/2 topic terms (payment, passage)
+  · on-stillness: relevance 0.00, no topic-term overlap
 decisions:
-  [PAY]  the-naulon — relevance 1.00 @ $0.005 (density 200); $0.095 left
-  [SKIP] on-stillness — relevance 0.00 below floor 0.35
+  [PAY]  the-naulon, relevance 1.00 @ $0.005 (density 200); $0.095 left
+  [SKIP] on-stillness, relevance 0.00 below floor 0.35
   ✓ paid $0.005000 for the-naulon
 → earnings: ava 0.00333 / guest 0.00167   (the 2:1 co-author split, settled)
 ```
@@ -346,8 +346,8 @@ packages/
   attribution/  settlement + payouts
   dashboard/    operator console
 examples/
-  meridian/     worked example — a fictional publisher adapter
-  cascade/      second adapter — proves the core is publisher-agnostic
+  meridian/     worked example: a fictional publisher adapter
+  cascade/      second adapter: proves the core is publisher-agnostic
 scripts/        dev stack runner · self-contained demo · wallet generator
 Makefile · Dockerfile · docker-compose.yml
 ```
@@ -401,7 +401,7 @@ sequenceDiagram
     A->>G: GET /essays/the-naulon
     G-->>A: 402 · price · payTo · nonce · Link: /.well-known/x402
     Note over A: appraise relevance-per-dollar, decide to pay under budget
-    A->>C: GatewayClient.pay() — deposit-backed, gasless
+    A->>C: GatewayClient.pay(): deposit-backed, gasless
     A->>G: retry + payment-signature (signature, nonce)
     G->>C: BatchFacilitatorClient.verify + settle
     C->>Au: USDC settles buyer → author (custody-free)
@@ -443,7 +443,7 @@ nothing here is held back to push you toward it.
 ## Design notes
 
 - **Custody-free.** Payments go agent → author. The toll never pools USDC in a
-  wallet we control, which keeps the operator clear of money-transmission rules.
+  wallet the operator controls, which keeps them clear of money-transmission rules.
 - **Conservative classifier.** Mistaking a human for a machine paywalls a reader
   and breaks the whole promise; mistaking a machine for a human just misses a
   fraction of a cent. So [`agentDetect`](./packages/enforce/src/agentDetect.ts)

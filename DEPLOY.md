@@ -18,13 +18,13 @@ Two small services and one database, wired to the live site by DNS only, with no
 coupling to the publisher (the gate talks to it purely over HTTP):
 
 ```
-   agent  ──▶  naulon.<site>     (Vercel project A — the tollgate)
+   agent  ──▶  naulon.<site>     (Vercel project A: the tollgate)
                   │  402 → pay USDC (Arc by default) → settles to the author
                   │  on success, proxies upstream to:
                   ▼
                <site>            (the publisher's own site, untouched)
 
-   author ──▶  dash.<site>       (Vercel project B — the earnings dashboard)
+   author ──▶  dash.<site>       (Vercel project B: the earnings dashboard)
                   ▲
                   └─ both read/write one ledger in:
                Supabase          (naulon_events + naulon_nonces + naulon_revocations)

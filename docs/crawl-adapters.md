@@ -18,7 +18,7 @@ export const myAdapter: SourceAdapter<"my-cms"> = {
   curated: true,     // this source lists real articles, not every URL on the site
 
   async detect(ctx) {
-    // Cheap probe. Returns false on a normal "no" — never throws.
+    // Cheap probe. Returns false on a normal "no"; never throws.
     const res = await ctx.fetch(new URL("/api/posts?limit=1", ctx.origin).toString());
     return res.ok;
   },

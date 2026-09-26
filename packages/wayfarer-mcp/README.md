@@ -195,6 +195,7 @@ spend within the envelope but can't widen it.
 
 | Tool | Cost | Does |
 |------|------|------|
+| `naulon_status` | free | Run this first. Reports the buyer wallet, where discovery is configured to look, and plain-language guidance for what to do next. |
 | `naulon_discover` | free | Candidate teasers for a topic (slug, title, summary). Start here. |
 | `naulon_appraise` | free | Relevance + rationale for teasers already held. |
 | `naulon_quote` | free | The x402 `402` probe: real price and terms, **no spend**. |

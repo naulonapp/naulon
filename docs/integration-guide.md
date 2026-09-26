@@ -25,7 +25,7 @@ sequenceDiagram
     participant Hook as Your webhook endpoint
 
     Ag->>Gate: request an article
-    Gate->>Cr: GET /credits/:slug — who to pay?
+    Gate->>Cr: GET /credits/:slug: who to pay?
     Cr-->>Gate: ArticleCredits (or 404 = free)
     Gate-->>Ag: 402 · price · payees
     Ag->>Gate: sign USDC, retry
@@ -87,8 +87,8 @@ and secret rotation: [settlement-notifications.md](./settlement-notifications.md
 import { createWebhookReceiver } from "@naulon/sdk/next";
 
 export const POST = createWebhookReceiver({
-  secrets: [process.env.NAULON_WEBHOOK_SECRET!],  // an array — see rotation in the contract doc
-  idempotency: myDurableStore,                    // REQUIRED, durable — see below
+  secrets: [process.env.NAULON_WEBHOOK_SECRET!],  // an array, see rotation in the contract doc
+  idempotency: myDurableStore,                    // REQUIRED, durable (see below)
   onEvent: async (event) => {
     if (event.type !== "settlement.completed") return;
     await savePayout(event.data);

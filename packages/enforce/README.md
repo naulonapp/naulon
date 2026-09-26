@@ -29,7 +29,12 @@ Both build a byte-identical `402`, because they share this code.
 
 The decision kernel and the framework-agnostic middleware core:
 
-- `decide(input)`: the pure verdict function.
+- `decide(input)`: the pure verdict function. It also honors `PublisherConfig.termsPolicy`
+  (`@naulon/shared`): a publisher who declares `ai-input: "free"` gets every agent read served
+  free, and `"prohibit"` refuses a recognized AI crawler outright, both ahead of pricing. The
+  `/.well-known/x402` manifest reflects the same declaration through `agentReads`. Absent
+  `termsPolicy` behaves exactly as before; the single-tenant `envPublisherResolver` never sets
+  it; a `PublisherResolver` you write is how you would.
 - `naulonMiddleware(opts)` takes a `Request` and returns `{ response, setHeaders }`:
   a `Response` to short-circuit (`402`/`403`), or `null` to let the app render
   (with `setHeaders` to attach to the app's response on a paid pass).
@@ -61,7 +66,7 @@ The decision kernel and the framework-agnostic middleware core:
 ## Usage
 
 ```ts
-// proxy.ts (Next.js App Router — `middleware.ts` on Next ≤ 15)
+// proxy.ts (Next.js App Router; `middleware.ts` on Next ≤ 15)
 import { NextResponse } from "next/server";
 import { createNaulonMiddleware } from "@naulon/enforce/next";
 import { httpPublisherConfigSource, httpQuoteSource } from "@naulon/enforce";
@@ -107,8 +112,8 @@ Arrows point to what a package depends on:
 
 ```mermaid
 flowchart TD
-    tollgate["@naulon/tollgate<br/><i>gate shell — runs decide() in its reverse proxy</i>"] --> enforce
-    enforce["@naulon/enforce<br/><i>this package — decision kernel + middleware</i>"] --> shared["@naulon/shared"]
+    tollgate["@naulon/tollgate<br/><i>gate shell: runs decide() in its reverse proxy</i>"] --> enforce
+    enforce["@naulon/enforce<br/><i>this package: decision kernel + middleware</i>"] --> shared["@naulon/shared"]
 ```
 
 A publisher vendors `@naulon/enforce` directly (it builds to its own `dist/`

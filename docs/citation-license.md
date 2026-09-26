@@ -29,7 +29,7 @@ sequenceDiagram
     participant V as Any verifier (jose / pyjwt)
 
     Ag->>G: pay the x402 toll
-    Note over G: mint CLT — EdDSA over the AttributedEvent (jti = event.id)
+    Note over G: mint CLT: EdDSA over the AttributedEvent (jti = event.id)
     G-->>Ag: 200 content + Citation License Token
     Note over Ag: capture, surface downstream as provenance
     Ag->>G: re-present CLT within TTL
@@ -201,7 +201,7 @@ const { payload } = await jwtVerify(token, JWKS, {
   issuer: "naulon:naulon.example.com",
   audience: "naulon:naulon.example.com",
 });
-// payload.naulon.{ slug, kind, amount, settlementRef, payees } — the attribution.
+// payload.naulon.{ slug, kind, amount, settlementRef, payees }: the attribution.
 ```
 
 **Python, using [`pyjwt`](https://pyjwt.readthedocs.io)** (`pip install "pyjwt[crypto]"`):

@@ -18,8 +18,8 @@ npm run -w @naulon/wayfarer start -- "payment and passage" # the agent
 
 ```text
 decisions:
-  [PAY]  the-naulon — relevance 1.00 @ $0.005; $0.095 left
-  [SKIP] on-stillness — relevance 0.00 below floor 0.35
+  [PAY]  the-naulon, relevance 1.00 @ $0.005; $0.095 left
+  [SKIP] on-stillness, relevance 0.00 below floor 0.35
   ✓ paid $0.005000 for the-naulon
 ```
 
