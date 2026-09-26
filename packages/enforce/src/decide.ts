@@ -367,6 +367,13 @@ export async function decide(input: DecideInput): Promise<Decision> {
   // Humans read free, forever.
   if (verdict.kind === "human") return { kind: "free", verdict: `human (${verdict.reason})`, obs };
 
+  // The publisher gave `ai-input` away. A per-read toll sells exactly that term, so an agent reading
+  // under it pays nothing: the licence says free and the wire must not say otherwise. Checked after
+  // the prohibition, so a refused training crawler stays refused on a site that gives reads away.
+  if (publisher.termsPolicy?.["ai-input"] === "free") {
+    return { kind: "free", verdict: "agent (ai-input free by the site's terms)", obs };
+  }
+
   // Machine. What's it asking for?
   const tollKind: TollKind = raw.headers.get("x-naulon-kind") === "citation" ? "citation" : "read";
 

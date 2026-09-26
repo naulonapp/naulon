@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.5.5
+Stable tag: 0.5.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -146,6 +146,12 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.5.6 =
+* The crawler choices you make on naulon.app now apply on this site. A crawler you block there is refused here, one you let read free reads free, and one you charge is charged. Before this they only applied to sites routed through naulon.
+* What AI may do, set on naulon.app, is enforced here too. Refusing training turns the training crawlers away, refusing AI reading turns every agent away, and making reads free stops charging agents. People always read free.
+* A refusal is answered with a 403 that says why, on the article and through the REST API alike.
+* A reader never waits on this: the rules are refreshed by a crawler request or the hourly check, and a person's page view only reads the copy already stored.
+
 = 0.5.5 =
 * Your earnings figures are what the people on this site were paid. naulon's fee is charged to the agent on top of an author's share, and it was being added into the totals, so every figure read high by the amount of that fee and the fee wallet appeared in your list of authors.
 * The fee is now stated on its own line beneath the totals, so you can see it rather than having a number quietly change.
@@ -201,6 +207,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.5.6 =
+Your crawler blocks and your terms from naulon.app now apply on this site, so a crawler you refused there is refused here too.
+
 = 0.5.5 =
 Fixes your earnings totals. They included naulon's fee, which the agent pays on top of your author's share, so every figure read high and the fee wallet appeared among your authors.
 

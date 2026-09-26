@@ -89,11 +89,11 @@ class Naulon_Observer {
 	/**
 	 * What a plugin decision is called on the wire.
 	 *
-	 * `settled` is absent deliberately and `blocked` is unreachable: the enforcer has no
-	 * outright-refusal path — an agent that will not pay gets the price again, never a door
-	 * slammed — so nothing here can honestly report it.
+	 * `settled` is absent deliberately. `blocked` covers both refusals the enforcer makes: a
+	 * crawler the publisher blocked, and a use their stated terms refuse. The gate reports both
+	 * the same way, because they are the same fact: refused outright, paid or not.
 	 *
-	 * @param string $action free|pay|reread|settled.
+	 * @param string $action free|pay|reread|settled|blocked.
 	 * @return string|null The verdict, or null when there is nothing for us to report.
 	 */
 	public static function verdict_for( $action ) {
@@ -104,6 +104,8 @@ class Naulon_Observer {
 				return 'denied';
 			case 'reread':
 				return 'agent-reread';
+			case 'blocked':
+				return 'blocked';
 			default:
 				// 'settled' — /verify wrote `paid` from the settle outcome. Reporting it here
 				// would be a second, unbacked claim about money.

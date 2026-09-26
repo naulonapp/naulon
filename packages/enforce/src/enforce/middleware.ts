@@ -35,6 +35,7 @@ import {
   totalChargedMicro,
 } from "../crawlerPrice.ts";
 import { PAYMENT_BODY_CONTENT_TYPE, paymentRequiredBodyText } from "../paymentBody.ts";
+import { X402_MANIFEST_PATH } from "../discoverability.ts";
 import { headerSafe } from "../headerSafe.ts";
 import { externalUrl, getConfig, type JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
@@ -76,6 +77,15 @@ export interface NaulonMiddlewareOptionsBase {
    * rewrite keeps it.
    */
   serveLicense?: boolean;
+  /**
+   * Answer `GET /.well-known/x402` from the config this middleware already holds. Default **on**.
+   *
+   * Every 402 this middleware emits links there (`rel="payment"`), so an agent trying to pay follows
+   * it at the one moment it matters, and a publisher should not have to mount a route for it. Same
+   * shape as `serveLicense`: with no manifest in the config the request passes through untouched,
+   * and `false` lets a publisher's own route win.
+   */
+  serveManifest?: boolean;
   /** Price + payees source: `localQuoteSource` (own data) or `httpQuoteSource` (cloud). */
   quote: QuoteSource;
   /** The hosted `POST /verify` URL (settles the presented payment, custody-free). */
@@ -135,6 +145,10 @@ function isLicenseRequest(req: Request, url: URL): boolean {
 
 /** The path RSL examples use and every naulon pointer names. */
 const RSL_DOCUMENT_PATH = "/license.xml";
+
+function isManifestRequest(req: Request, url: URL): boolean {
+  return (req.method === "GET" || req.method === "HEAD") && url.pathname === X402_MANIFEST_PATH;
+}
 
 export interface MiddlewareResult {
   /** A Response to send (short-circuit), or `null` to pass to the app. */
@@ -346,6 +360,24 @@ export function naulonMiddleware(
               // honouring the RSL attribute do not end up with different ideas of freshness.
               "cache-control": "public, max-age=86400",
               // A licence is a public statement; a crawler may read it from any origin.
+              "access-control-allow-origin": "*",
+            },
+          }),
+        };
+      }
+    }
+    // `/.well-known/x402`, for the reason the licence is answered above: every 402 below links to it.
+    if (opts.serveManifest !== false && isManifestRequest(req, url)) {
+      const doc = await opts.config?.load({
+        resource: externalUrl(req, { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS }),
+      });
+      if (doc?.manifest) {
+        return {
+          response: new Response(req.method === "HEAD" ? null : JSON.stringify(doc.manifest), {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              "cache-control": "public, max-age=60, s-maxage=300",
               "access-control-allow-origin": "*",
             },
           }),

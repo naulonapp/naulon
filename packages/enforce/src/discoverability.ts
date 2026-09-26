@@ -97,6 +97,13 @@ export interface X402Manifest {
   x402Version: number;
   /** The product's contract, machine-readable: humans read free, machines pay. */
   humansReadFree: true;
+  /**
+   * What an agent read costs under the publisher's stated `ai-input` term. `"free"` means the gate
+   * serves agents without a 402 and every price below is zero; `"refused"` means the gate answers
+   * 403 whatever is paid. Present only when the publisher stated the term, so a manifest without
+   * terms is byte-identical to before this field existed.
+   */
+  agentReads?: "priced" | "free" | "refused";
   resources: {
     /**
      * What the toll covers — the manifest's spelling of `PublisherConfig.gateScope`.
@@ -187,8 +194,13 @@ export function buildX402Manifest(
   // Through `tollPriceUnder` — the ONE price formula — never `publisher.price` and a local
   // multiply. A rule overrides the read price and the multiplier independently, and re-deriving
   // that here is precisely the second copy of a money formula this package refuses elsewhere.
-  const readUsdc = tollPriceUnder(publisher, "read", undefined) as number;
-  const citationUsdc = tollPriceUnder(publisher, "citation", undefined) as number;
+  // A read the terms give away is priced at zero here too, so the document an agent budgets from
+  // and the gate it then meets cannot disagree.
+  const aiInput = publisher.termsPolicy?.["ai-input"];
+  const agentReads = aiInput === "free" ? "free" : aiInput === "prohibit" ? "refused" : aiInput === "priced" ? "priced" : undefined;
+  const free = agentReads === "free";
+  const readUsdc = free ? 0 : (tollPriceUnder(publisher, "read", undefined) as number);
+  const citationUsdc = free ? 0 : (tollPriceUnder(publisher, "citation", undefined) as number);
   /**
    * One leg, plus the total when a secondary leg makes them differ.
    *
@@ -200,6 +212,7 @@ export function buildX402Manifest(
    */
   const leg = (usd: number, kind: TollKind): PriceLeg => {
     const base: PriceLeg = { atomic: toAtomicUsdc(usd), usdc: usd };
+    if (free) return base;
     // A fee hook is code the GATE does not own, and until this field existed it ran only on the
     // paid path, where a throw is a refused payment. This document is public and unauthenticated,
     // and the SDK that consumes it resolves a failed fetch to null and then serves the read FREE.
@@ -221,7 +234,7 @@ export function buildX402Manifest(
     if (micro <= toMicro(base.atomic)) return base;
     return { ...base, buyerTotal: { atomic: micro.toString(), usdc: Number(micro) / 1_000_000 } };
   };
-  const ruleLegs = (publisher.priceRules ?? []).map((rule) => {
+  const ruleLegs = (free ? [] : (publisher.priceRules ?? [])).map((rule) => {
     const read = tollPriceUnder(publisher, "read", rule) as number;
     const citation = tollPriceUnder(publisher, "citation", rule) as number;
     return {
@@ -235,6 +248,7 @@ export function buildX402Manifest(
   return {
     x402Version: 2,
     humansReadFree: true,
+    ...(agentReads ? { agentReads } : {}),
     resources:
       publisher.gateScope?.mode === "site"
         ? {

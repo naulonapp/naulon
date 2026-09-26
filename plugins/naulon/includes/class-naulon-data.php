@@ -192,6 +192,9 @@ class Naulon_Data {
 		// plugin that fetched it would state terms nothing is enforcing.
 		delete_option( Naulon_License::OPTION );
 		delete_transient( Naulon_License::RETRY_TRANSIENT );
+		// Same for the dashboard rules: a cached block list outliving its plugin enforces nothing.
+		delete_option( Naulon_Rules::LAST_GOOD );
+		delete_transient( Naulon_Rules::TRANSIENT );
 	}
 
 	/**
