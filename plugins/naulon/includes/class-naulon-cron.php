@@ -98,6 +98,9 @@ class Naulon_Cron {
 		// max-age. A crawler can trigger the same refresh from `/license.xml`, but a site with no
 		// machine traffic still keeps current terms on the shelf.
 		Naulon_License::instance()->refresh();
+		// The dashboard's rules, for the same reason: a human request reads only the stored copy,
+		// so a quiet site still picks up a new block or a changed term within the hour.
+		Naulon_Rules::instance()->refresh();
 		// Last, and only ever a drain of what a crawler request could not deliver. A site with a
 		// trickle of machine traffic would otherwise hold a failed batch until the next crawl,
 		// which on a quiet site can be days. Nothing is recorded here — see Naulon_Observer.

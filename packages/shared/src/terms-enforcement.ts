@@ -82,7 +82,11 @@ export function prohibitedUse(input: ProhibitionInput): Prohibition | null {
     return { term: "ai-train", reason: `${crawler.name} is refused: this site prohibits AI training` };
   }
 
-  if (classifiedAs === "agent" && policy["ai-input"] === "prohibit") {
+  // A recognised AI crawler is refused even when a per-crawler allow made the classifier call it a
+  // person. The allow is an exception to the PRICE, and a refused term is not for sale at any price,
+  // so a per-bot rule can tighten a refusal but never undo one.
+  const aiCrawler = crawler?.category === "ai-assistant" || crawler?.category === "ai-training";
+  if ((classifiedAs === "agent" || aiCrawler) && policy["ai-input"] === "prohibit") {
     const who = crawler ? crawler.name : "this agent";
     return { term: "ai-input", reason: `${who} is refused: this site prohibits ai-input, so agent reads are not for sale` };
   }

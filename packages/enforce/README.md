@@ -80,15 +80,16 @@ export const proxy = createNaulonMiddleware(
   NextResponse,
 );
 
-export const config = { matcher: ["/articles/:path*", "/license.xml"] };
+export const config = { matcher: ["/articles/:path*", "/license.xml", "/.well-known/x402"] };
 ```
 
 `config` is optional but worth passing. It makes the dashboard the source of what is
 tolled, so a scope or crawler-policy change reaches your site without a deploy, and it
-is what lets the middleware answer `GET /license.xml` with your RSL licence, before any
-toll decision. That only happens if the path is in your matcher, hence the second
-entry. With `config` omitted, or with `serveLicense: false`, the request passes through
-to your app.
+is what lets the middleware answer `GET /license.xml` with your RSL licence and
+`GET /.well-known/x402` with your payment manifest, before any toll decision. Every 402
+links an agent to that manifest, so keep both paths in your matcher when you narrow it.
+With `config` omitted, or with `serveLicense: false` / `serveManifest: false`, the
+request passes through to your app.
 
 Next 16 renamed the file convention: `middleware.ts` still runs but warns
 (`The "middleware" file convention is deprecated. Please use "proxy" instead.`),

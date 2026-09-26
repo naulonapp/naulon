@@ -319,3 +319,22 @@ test("the proof template follows VERIFY_PAGE_URL, and keeps a query the page alr
     resetConfig();
   }
 });
+
+test("a site whose terms give ai-input away advertises no price", () => {
+  const m = buildX402Manifest({
+    ...fixturePublisher(),
+    termsPolicy: { "ai-input": "free" },
+    extraLegs: feeLegs(1000),
+    priceRules: [{ pattern: "/essays/*", priceUsdc: 0.1 }],
+  });
+  assert.equal(m.agentReads, "free");
+  assert.equal(m.payment.price.read.atomic, "0");
+  assert.equal(m.payment.price.citation.atomic, "0");
+  assert.equal(m.payment.price.read.buyerTotal, undefined);
+  assert.equal(m.payment.price.rules, undefined);
+});
+
+test("a manifest without stated terms carries no agentReads field", () => {
+  assert.equal("agentReads" in buildX402Manifest(fixturePublisher()), false);
+  assert.equal(buildX402Manifest({ ...fixturePublisher(), termsPolicy: { "ai-input": "prohibit" } }).agentReads, "refused");
+});

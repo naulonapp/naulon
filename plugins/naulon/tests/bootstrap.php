@@ -58,6 +58,7 @@ require_once __DIR__ . '/../includes/class-naulon-slug.php';
 require_once __DIR__ . '/../includes/class-naulon-wallet.php';
 require_once __DIR__ . '/../includes/class-naulon-key.php';
 require_once __DIR__ . '/../includes/class-naulon-agent.php';
+require_once __DIR__ . '/../includes/class-naulon-rules.php';
 // Money formatting and the settlement-mode read are pure functions over integers and a header
 // string, so they belong in the fast suite — the parts of the ledger that touch a database are
 // covered by the wp-env suite instead.

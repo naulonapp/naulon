@@ -69,3 +69,11 @@ test("the refusal names the crawler when one was identified", () => {
   const anon = prohibitedUse({ policy: { "ai-input": "prohibit" }, ua: "whatever/1", ...agent });
   assert.match(anon?.reason ?? "", /ai-input/);
 });
+
+test("a per-crawler allow cannot undo a prohibited read for an AI crawler", () => {
+  // The allowlist makes the classifier call the crawler a person, which must not be a way past a
+  // refused term. A search crawler is not an AI reader and stays under its own term.
+  const policy = { "ai-input": "prohibit" } as const;
+  assert.equal(prohibitedUse({ policy, ua: "ChatGPT-User/1.0", ...human })?.term, "ai-input");
+  assert.equal(prohibitedUse({ policy, ua: "Mozilla/5.0 (compatible; OAI-SearchBot/1.0)", ...human }), null);
+});

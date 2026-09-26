@@ -18,6 +18,32 @@ tags and the auto-generated notes on each GitHub Release.
 
 Nothing yet.
 
+## v0.8.9
+
+`@naulon/shared` 0.5.2 → **0.5.3**, `@naulon/enforce` 0.5.2 → **0.5.3**, `@naulon/wayfarer` 0.5.2 →
+**0.5.3** and `@naulon/wayfarer-mcp` 0.5.4 → **0.5.5**. `@naulon/sdk` is unchanged and is not
+republished. wayfarer and wayfarer-mcp change only the ranges they ask of their dependencies. The
+WordPress plugin moves to 0.5.6; its own changelog is in `plugins/naulon/readme.txt`.
+
+`@naulon/enforce`: **a free `ai-input` term makes agent reads free.** A publisher whose terms say
+`ai-input: free` published a free licence while `decide()` still answered agents with a 402. It now
+returns `free` for an agent under that term, after any refusal, so a refused training crawler stays
+refused. The discovery manifest follows it: `/.well-known/x402` gains an `agentReads` field
+(`priced`, `free` or `refused`, present only when the term is stated) and prices a free site at
+zero rather than advertising a toll it will not charge.
+
+`@naulon/enforce`: **the middleware answers `/.well-known/x402`.** Every 402 links there with
+`rel="payment"`, and an in-app site answered 404 unless it mounted `serveX402Manifest` itself. The
+middleware now serves the manifest from the config it already holds, before any toll decision, the
+way it serves `/license.xml`. Pass `serveManifest: false` to let your own route win, and keep the
+path in your matcher if you narrow it.
+
+`@naulon/shared`: **a per-crawler allow no longer lifts a refused `ai-input`.** `prohibitedUse`
+refused an agent only when the classifier called it one, and an allowlisted AI crawler is classified
+as a person, so allowing ChatGPT-User let it read a site whose terms refused AI reading. A recognised
+AI assistant or training crawler is now refused under a prohibited `ai-input` whatever the
+allowlist says. Search crawlers are unaffected.
+
 ## v0.8.8
 
 `@naulon/shared` 0.5.1 → **0.5.2**, `@naulon/enforce` 0.5.1 → **0.5.2**, `@naulon/wayfarer` 0.5.1 →

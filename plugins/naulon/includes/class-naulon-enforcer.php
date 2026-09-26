@@ -157,6 +157,20 @@ class Naulon_Enforcer {
 		}
 
 		$decision = $this->decide( $post );
+		if ( 'blocked' === $decision['action'] ) {
+			// The REST door refuses what the article door refuses; otherwise a blocked crawler reads
+			// the same post through /wp-json.
+			$response = new WP_REST_Response(
+				array(
+					'code'    => 'naulon_refused',
+					'message' => $decision['reason'],
+				),
+				403
+			);
+			$response->header( 'Cache-Control', 'private, no-store' );
+			$response->header( 'Vary', 'User-Agent' );
+			return $response;
+		}
 		if ( 'pay' !== $decision['action'] ) {
 			return $result;
 		}
@@ -184,6 +198,10 @@ class Naulon_Enforcer {
 
 		if ( 'pay' === $decision['action'] ) {
 			$this->send_402( $decision );
+			return;
+		}
+		if ( 'blocked' === $decision['action'] ) {
+			$this->send_403( $decision );
 			return;
 		}
 		if ( 'settled' === $decision['action'] ) {
@@ -288,10 +306,25 @@ class Naulon_Enforcer {
 		// and having written nothing — which is the promise. And everything past this line is
 		// known to be a machine, so it can be recorded in the diagnostics window without ever
 		// logging a reader.
-		$verdict = Naulon_Agent::classify( Naulon_Agent::signals_from_request(), $this->policy() );
-		$this->agent_verdict = $verdict;
-		if ( 'human' === $verdict['kind'] ) {
-			return $this->free( 'human (' . $verdict['reason'] . ')' );
+		// The dashboard's rules, in the gate's own order (Naulon_Rules::access). Null rules, when the
+		// control plane could not be read, leave every step exactly as it was before they existed.
+		// A request the plugin's own classifier calls a person reads the stored rules without a
+		// fetch, so a reader never waits on the control plane; a machine may refresh them.
+		$signals             = Naulon_Agent::signals_from_request();
+		$looks_human         = 'human' === Naulon_Agent::classify( $signals, $this->policy() )['kind'];
+		$access              = Naulon_Rules::access( $signals, Naulon_Rules::instance()->get( ! $looks_human ), $this->policy() );
+		$this->agent_verdict = null !== $access['verdict'] ? $access['verdict'] : array( 'kind' => 'agent', 'reason' => $access['reason'], 'confidence' => 1.0 );
+		if ( 'blocked' === $access['action'] ) {
+			// The logged reason is the refusal, not the classifier's verdict.
+			$this->agent_verdict = array( 'kind' => 'agent', 'reason' => $access['reason'], 'confidence' => 1.0 );
+			return $this->logged( $this->blocked( ucfirst( $access['reason'] ) . '.' ), $post, Naulon_Credits::instance()->canonical_slug_for( $post ) );
+		}
+		if ( 'free' === $access['action'] ) {
+			// A person is never logged, anywhere. An agent reading free under the terms is.
+			if ( null !== $access['verdict'] && 'human' === $access['verdict']['kind'] ) {
+				return $this->free( $access['reason'] );
+			}
+			return $this->logged( $this->free( $access['reason'] ), $post, Naulon_Credits::instance()->canonical_slug_for( $post ) );
 		}
 
 		// Only a tollable article is ever gated, and "is anyone NAMED" is the question — not "can
@@ -545,6 +578,8 @@ class Naulon_Enforcer {
 	 */
 	private function policy() {
 		$settings = Naulon_Settings::all();
+		// The plugin's own lists. The dashboard's crawler exceptions are joined to these inside
+		// Naulon_Rules::access.
 		return array(
 			'seo_allowlist' => isset( $settings['seo_allowlist'] ) && is_array( $settings['seo_allowlist'] ) ? $settings['seo_allowlist'] : array(),
 			'charge_list'   => isset( $settings['charge_list'] ) && is_array( $settings['charge_list'] ) ? $settings['charge_list'] : array(),
@@ -664,6 +699,35 @@ class Naulon_Enforcer {
 	 * @param string $reason Why this read is free.
 	 * @return array
 	 */
+	private function blocked( $reason ) {
+		return array(
+			'action'  => 'blocked',
+			'header'  => '',
+			'receipt' => '',
+			'license' => '',
+			'reason'  => $reason,
+		);
+	}
+
+	/**
+	 * Send the 403 for a blocked crawler or a use the terms refuse. Never cached: the same URL
+	 * is a free read for a person.
+	 *
+	 * @param array $decision The decision.
+	 * @return void
+	 */
+	private function send_403( array $decision ) {
+		$this->no_store();
+		status_header( 403 );
+		$license_link = Naulon_License::instance()->link_header();
+		if ( '' !== $license_link ) {
+			header( 'Link: ' . $license_link, false );
+		}
+		header( 'Content-Type: text/plain; charset=utf-8' );
+		echo esc_html( $decision['reason'] );
+		exit;
+	}
+
 	private function free( $reason ) {
 		return array(
 			'action'  => 'free',

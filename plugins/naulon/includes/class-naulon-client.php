@@ -102,6 +102,18 @@ class Naulon_Client {
 	 * @param string $kind     read|citation.
 	 * @return array
 	 */
+	/**
+	 * The publisher's enforcement config for this site, including `rules`: the dashboard's
+	 * crawler blocks and stated terms, pre-resolved so this plugin applies them without
+	 * re-deriving any rule. See Naulon_Rules.
+	 *
+	 * @param string $resource Any absolute URL on this site; the control plane resolves the host.
+	 * @return array
+	 */
+	public function enforce_config( $resource ) {
+		return $this->request( 'GET', '/_naulon/enforce-config?' . http_build_query( array( 'resource' => $resource ) ), null, self::TIMEOUT_REQUEST );
+	}
+
 	public function quote( $resource, $slug, $kind = 'read', $build_402 = false ) {
 		$args = array(
 			'resource' => $resource,

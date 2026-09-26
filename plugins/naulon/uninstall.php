@@ -36,6 +36,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-license.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-wallet.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-agent.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-rules.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-log.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-observer.php';

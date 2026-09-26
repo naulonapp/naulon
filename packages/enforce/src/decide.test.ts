@@ -502,3 +502,25 @@ test("a prohibited training corpus still sells the priced read it said it would"
   assert.equal(a.kind, "prohibited");
   assert.equal(b.kind, "payment-required");
 });
+
+test("a free ai-input serves an agent without a quote", async () => {
+  let quoted = false;
+  const req = new Request("http://h/essays/x", { headers: { "user-agent": "ChatGPT-User/1.0" } });
+  const d = await decide({
+    raw: req, host: "h", path: "/essays/x",
+    publisher: prohibits({ "ai-input": "free" }), now: 1,
+    quote: async () => { quoted = true; return quoteOf(); },
+  });
+  assert.equal(d.kind, "free");
+  if (d.kind === "free") assert.equal(d.obs.classifiedAs, "agent");
+  assert.equal(quoted, false, "a free term must never reach the price");
+});
+
+test("a free ai-input does not reopen a prohibited training corpus", async () => {
+  const req = new Request("http://h/essays/x", { headers: { "user-agent": "CCBot/2.0" } });
+  const d = await decide({
+    raw: req, host: "h", path: "/essays/x",
+    publisher: prohibits({ "ai-input": "free", "ai-train": "prohibit" }), now: 1, quote: quoteOf,
+  });
+  assert.equal(d.kind, "prohibited");
+});

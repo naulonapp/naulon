@@ -578,3 +578,34 @@ test("a HEAD carries the headers and no body; a POST to that path is not ours", 
   const post = await mw(new Request("http://h/license.xml", { method: "POST" }));
   assert.notEqual(post.response?.status, 200);
 });
+
+/* ── the middleware answers /.well-known/x402 itself ─────────────────────────────────────────────
+ * Every 402 links there with rel="payment", so the path must answer without a route of its own. */
+
+test("GET /.well-known/x402 is answered from the config's manifest, before any toll decision", async () => {
+  const manifest = { x402Version: 2, humansReadFree: true } as never;
+  const mw = naulonMiddleware({
+    ...opts,
+    config: staticPublisherConfigSource({ enforcement: {}, manifest }),
+  });
+  const r = await mw(new Request("http://h/.well-known/x402", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(r.response?.status, 200);
+  assert.equal(r.response?.headers.get("content-type"), "application/json");
+  assert.deepEqual(await r.response?.json(), { x402Version: 2, humansReadFree: true });
+});
+
+test("with no manifest in the config, /.well-known/x402 is left to the app", async () => {
+  const mw = naulonMiddleware({ ...opts, config: staticPublisherConfigSource({ enforcement: {} }) });
+  const r = await mw(new Request("http://h/.well-known/x402"));
+  assert.equal(r.response, null);
+});
+
+test("serveManifest: false lets the publisher's own route win", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    serveManifest: false,
+    config: staticPublisherConfigSource({ enforcement: {}, manifest: { x402Version: 2 } as never }),
+  });
+  const r = await mw(new Request("http://h/.well-known/x402"));
+  assert.equal(r.response, null);
+});
