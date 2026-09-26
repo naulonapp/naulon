@@ -384,7 +384,7 @@ class Naulon_Enforcer {
 					'header'      => $built['header'],
 					'receipt'     => '',
 					'license'     => '',
-					'reason'      => 'agent (' . $verdict['reason'] . ')',
+					'reason'      => 'agent (' . $this->agent_verdict['reason'] . ')',
 					'price_micro' => Naulon_Observer::legs_total( $built['legs'] ),
 				),
 				$post,

@@ -16,8 +16,12 @@ class EnforcerTest extends WP_UnitTestCase {
 	const WALLET = '0x1111111111111111111111111111111111111111';
 	const CHROME = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0 Safari/537.36';
 
-	/** @var array[] Every outbound request the plugin attempted. */
+	/** @var array[] Every outbound request the plugin attempted, except the rules fetch. */
 	private $requests = array();
+
+	/** @var array[] Rules fetches (`/_naulon/enforce-config`), kept apart so the quote counts above
+	 *  keep meaning exactly what they assert. */
+	private $rule_requests = array();
 
 	/** @var array<string, array> Canned responses, keyed by a path fragment. */
 	private $responses = array();
@@ -77,6 +81,7 @@ class EnforcerTest extends WP_UnitTestCase {
 			unset( $_SERVER[ $k ] );
 		}
 		delete_transient( 'naulon_402_' . md5( 'blog/tolled-post|read' ) );
+		Naulon_Rules::instance()->reset();
 		Naulon_Enforcer::instance()->reset();
 		update_option( 'permalink_structure', '' );
 		parent::tear_down();
@@ -91,7 +96,11 @@ class EnforcerTest extends WP_UnitTestCase {
 	 * @return array
 	 */
 	public function intercept( $pre, $args, $url ) {
-		$this->requests[] = array( 'url' => $url, 'args' => $args );
+		if ( false !== strpos( $url, '/_naulon/enforce-config' ) ) {
+			$this->rule_requests[] = array( 'url' => $url, 'args' => $args );
+		} else {
+			$this->requests[] = array( 'url' => $url, 'args' => $args );
+		}
 		foreach ( $this->responses as $fragment => $canned ) {
 			if ( false !== strpos( $url, $fragment ) ) {
 				if ( isset( $canned['error'] ) ) {
@@ -433,5 +442,79 @@ class EnforcerTest extends WP_UnitTestCase {
 			return false !== strpos( $u, '/_naulon/quote' );
 		} );
 		$this->assertCount( 2, $quote_calls, 'a nonced 402 must be fetched fresh every time' );
+	}
+
+	/* ── the dashboard's rules (Naulon_Rules) ──────────────────────────────────────────────────── */
+
+	private function with_rules( array $rules ) {
+		Naulon_Rules::instance()->reset();
+		$this->responses['/_naulon/enforce-config'] = array(
+			'code' => 200,
+			'body' => array(
+				'enforcement' => array(),
+				'rules'       => array_merge(
+					array(
+						'block'          => array(),
+						'allow'          => array(),
+						'charge'         => array(),
+						'refuse'         => array(
+							'crawlers' => array(),
+							'agents'   => false,
+						),
+						'agentReadsFree' => false,
+					),
+					$rules
+				),
+			),
+		);
+	}
+
+	private function asked( $fragment ) {
+		return count( array_filter( array_merge( $this->requests, $this->rule_requests ), static function ( $r ) use ( $fragment ) {
+			return false !== strpos( $r['url'], $fragment );
+		} ) );
+	}
+
+	public function test_a_crawler_blocked_on_the_dashboard_is_refused_here() {
+		$this->with_rules( array( 'block' => array( 'gptbot' ) ) );
+		$this->as_agent();
+		$decision = $this->decide();
+		$this->assertSame( 'blocked', $decision['action'] );
+		$this->assertSame( 0, $this->asked( '/_naulon/quote' ), 'a refusal never asks for a price' );
+	}
+
+	public function test_a_use_the_terms_refuse_is_refused_even_under_an_allow() {
+		$this->with_rules(
+			array(
+				'allow'  => array( 'gptbot' ),
+				'refuse' => array(
+					'crawlers' => array( array( 'gptbot', true ) ),
+					'agents'   => true,
+				),
+			)
+		);
+		$this->as_agent();
+		$this->assertSame( 'blocked', $this->decide()['action'] );
+	}
+
+	public function test_free_terms_serve_an_agent_without_a_quote() {
+		$this->with_rules( array( 'agentReadsFree' => true ) );
+		$this->as_agent();
+		$this->assertSame( 'free', $this->decide()['action'] );
+		$this->assertSame( 0, $this->asked( '/_naulon/quote' ) );
+	}
+
+	public function test_a_human_request_never_fetches_the_rules() {
+		$this->with_rules( array( 'block' => array( 'gptbot' ) ) );
+		$this->as_human();
+		$this->assertSame( 'free', $this->decide()['action'] );
+		$this->assertSame( 0, $this->asked( '/_naulon/enforce-config' ), 'a reader never waits on the control plane' );
+	}
+
+	public function test_an_unreachable_control_plane_leaves_the_toll_as_it_was() {
+		Naulon_Rules::instance()->reset();
+		$this->responses['/_naulon/enforce-config'] = array( 'error' => 'timed out' );
+		$this->as_agent();
+		$this->assertSame( 'pay', $this->decide()['action'] );
 	}
 }

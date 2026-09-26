@@ -104,6 +104,14 @@ class Naulon_Rules {
 	/** Forget the cached copy, so the next read asks the control plane. */
 	public static function flush() {
 		delete_transient( self::TRANSIENT );
+		self::instance()->memo = false;
+	}
+
+	/** Test seam: forget this request's memo, and every stored copy. */
+	public function reset() {
+		$this->memo = false;
+		delete_transient( self::TRANSIENT );
+		delete_option( self::LAST_GOOD );
 	}
 
 	/**
@@ -171,7 +179,7 @@ class Naulon_Rules {
 			if ( null !== $fragment ) {
 				return array(
 					'action'  => 'blocked',
-					'reason'  => sprintf( 'crawler blocked by publisher ("%s")', $fragment ),
+					'reason'  => sprintf( 'crawler blocked by publisher (%s)', $fragment ),
 					'verdict' => null,
 				);
 			}
