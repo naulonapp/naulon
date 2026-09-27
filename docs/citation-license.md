@@ -78,16 +78,49 @@ A record is a second projection of the **same ledger row**, with the same `jti`,
 no `exp`. It is safe to be permanent *because* presenting one buys nothing.
 
 `GET /licenses/:jti/record` mints it on demand, host-scoped and publisher-checked
-exactly like `GET /licenses/:jti`, so minting discloses no more than reading did. It
-names the resource by **`slug`, never a title**: the ledger row carries no title, and
-an unverifiable string inside a document whose whole value is that a stranger can
-check it is worse than none.
+exactly like `GET /licenses/:jti`, so minting discloses no more than reading did. Its
+`iat` is the moment of sale, not the moment of the fetch, and Ed25519 signing is
+deterministic, so a copy saved today and one fetched next year are the same bytes.
+
+It names the work by the title the credits contract gave at the moment of sale, stored
+on the ledger row; a row written before titles were stored falls back to the slug.
+
+### What a record lets a stranger check
+
+A record also carries four facts from the ledger row, each absent when the gate could
+not state it:
+
+| Claim | What it pins | How to check it |
+|---|---|---|
+| `resource` | the URL that was bought | open it |
+| `contentSha256` | the exact body the gate served | hash your copy and compare |
+| `termsDocument` | the RSL document in force at the sale, as `{ url, sha256 }` | fetch the URL and hash it; a later change of terms stops matching, which is the point |
+| `evidence` | the buyer's own EIP-3009 authorization for the author leg, with its signature and EIP-712 domain | see below |
+
+`evidence` is the part the operator did not write. Recover the signer from `signature`
+over `domain` and `authorization` (`TransferWithAuthorization`, the same typed data the
+buyer signed) and compare it with `sub`. Then ask the settlement rail what became of the
+payment: the nonce is unique per payment, and Circle's Gateway API answers by nonce with
+no key,
+
+```
+GET https://gateway-api.circle.com/v1/x402/transfers?network=eip155:<chainId>&nonce=<authorization.nonce>
+```
+
+(`gateway-api-testnet.circle.com` for a testnet), returning the transfer's `status` and,
+once settled, the `txHash` of the batch it settled in. Neither check involves the gate
+that issued the record. The mock rail carries no signature, so its records carry no
+`evidence`.
+
+Retired signing keys stay in the key set (`LICENSE_RETIRED_PUBLIC_KEYS`), so rotating a
+key never orphans the records it signed. They verify records only: an access licence is
+checked against the live key alone.
 
 ## Resolved design decisions
 
 | Question | Decision | Why |
 |---|---|---|
-| Token binding & TTL | Bind to **slug + kind + iss + aud** (all mandatory-equal); `kind` is equal-or-greater privilege (a citation license entitles a read, never the reverse). `sub`=payer is a **provenance claim only**, not a re-read security boundary in v1. TTL default **600s**, hard cap 3600s. | slug-only = a public free-read coupon; slug+`sub` is illusory over plain HTTP (no proof-of-possession on a GET). The honest model is a short-TTL bearer entitlement; TTL is the only offline kill switch. Matches the nonce's existing amount+payTo+network binding bar. |
+| Token binding & TTL | Bind to **slug + kind + iss + aud** (all mandatory-equal); `kind` is equal-or-greater privilege (a citation license entitles a read, never the reverse). `sub`=payer is a **provenance claim only**, not a re-read security boundary in v1. TTL default **3600s**, which is also the hard cap. | slug-only = a public free-read coupon; slug+`sub` is illusory over plain HTTP (no proof-of-possession on a GET). The honest model is a short-TTL bearer entitlement; TTL is the only offline kill switch. Matches the nonce's existing amount+payTo+network binding bar. |
 | Claim surface | Embed **full `payees[]`** by default (`LICENSE_PAYEES_MODE=full`); `hashed` mode emits `payeesHash` + primary `payTo` only. | The recursive co-author split is the thing the token exists to prove, and wallets are already public on-chain via `settlementRef`. Hashed is a first-class option for publishers who don't want the full graph cached. |
 | Key management | **Stable key required** off the mock path (zod superRefine, mirrors the supabase-creds check). Ephemeral only single-instance mock. JWKS always carries a `kid = base64url(SHA-256(rawPublicKey))[:16]`. | Ephemeral keys on Vercel fan-out make JWKS + paid re-read non-deterministic and void licenses on every cold start. `kid` makes rotation/revocation possible. |
 | Revocation | **Seam in v1**, enforced on the **online tier + the gate's own re-read path** (a `jti` denylist reusing the ConsumedStore/Supabase pattern) + **kid-based** key revocation. The **offline JWKS tier stays exp-only** by nature (documented limit, bounded by short TTL). | Strongest middle: a remedy for leak/key-compromise exists without forcing shared state onto the offline/mock/no-creds path. |
@@ -133,7 +166,18 @@ No `crit`, `jku`, `x5u` or `jwk`: a verifier MUST reject if present.
     "grant": "read" | "none",        // absent => "read". "none" is a citation record.
     "scope": { "patterns": ["/essays/*"] },   // RFC 9309 paths, matched against the REQUEST PATH
     "terms": ["ai-input", "ai-index"],        // RSL 1.0 usage vocabulary; "ai-train" is never sold
-    "period": { "from": <epoch s>, "until": <epoch s> | null }   // null = permanent
+    "period": { "from": <epoch s>, "until": <epoch s> | null },  // null = permanent
+
+    // --- stamped by the settle tail when it can state them; absent otherwise ---
+    "resource": "https://<host>/<path>",
+    "contentSha256": "<hex>",                                    // body the gate served
+    "termsDocument": { "url": "https://<host>/license.xml", "sha256": "<hex>" },
+    "evidence": {                                                // the buyer's signature
+      "scheme": "eip3009",
+      "domain": { "name", "version", "chainId", "verifyingContract" },
+      "authorization": { "from", "to", "value", "validAfter", "validBefore", "nonce" },
+      "signature": "0x.."
+    }
   }
 }
 ```
@@ -299,13 +343,13 @@ The mock wayfarer derives a deterministic, non-secret **dev wallet** from a fixe
 
 ## Residual risks (accepted, documented)
 
-1. **Offline tier is unrevocable by construction**: a JWKS-only verifier can't see the `jti` denylist; a leaked token is valid offline until `exp` (≤600s default). Bounded by short TTL + `kid` rotation.
+1. **Offline tier is unrevocable by construction**: a JWKS-only verifier can't see the `jti` denylist; a leaked token is valid offline until `exp` (at most an hour). Bounded by short TTL + `kid` rotation.
 2. **A v1 (bearer) license is a bearer credential**: anyone who captures it within TTL gets a free re-read of that slug. Closed by enabling holder-of-key (`LICENSE_POP`): a captured token is then useless without the payer wallet key. Off by default, so the bearer caveat still applies to the default deployment (bounded by the short TTL).
 3. **Zero-address mint guard is a guard, not a structural impossibility**: a future code path that forgets it could mint a bearer token. Enforced by one guard + test.
 4. **Online revocation adds a per-verify round-trip and a shared-state dependency**: if Supabase is down, the online tier degrades to offline-only (can't see revocations).
 5. **jsonl `get(id)` still scans** (short-circuiting): fine for single-box dev, O(n) worst case for a missing `jti`; indexed path is Supabase-only.
 6. **Clock skew beyond 60s** across instances can prematurely reject a near-`exp` license, mitigated by keeping TTL ≫ skew, not eliminated.
-7. **Key rotation is operational and manual in v1**: a mis-sequenced rotation can invalidate outstanding licenses early.
+7. **Key rotation is operational and manual**: a mis-sequenced rotation can invalidate outstanding access licences early. Records survive it, because the retired key stays published through `LICENSE_RETIRED_PUBLIC_KEYS`.
 
 ## The demo
 

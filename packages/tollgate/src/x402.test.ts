@@ -487,3 +487,38 @@ test("a stock payment against a SINGLE-leg quote is unchanged — no forgoneLegs
   assert.equal(result.ok, true);
   assert.equal("forgoneLegs" in result, false, "the stock single-author toll must stay byte-identical");
 });
+
+// ── paymentEvidence: the buyer's own signature, lifted whole or not at all ──
+test("paymentEvidence lifts a complete gateway authorization with its EIP-712 domain", async () => {
+  const { paymentEvidence } = await import("./x402.ts");
+  const requirements = {
+    scheme: "exact",
+    network: "eip155:5042002",
+    asset: "0x3600000000000000000000000000000000000000",
+    amount: "30000",
+    payTo: "0x1111111111111111111111111111111111111111",
+    maxTimeoutSeconds: 345600,
+    extra: { name: "GatewayWalletBatched", version: "1", verifyingContract: "0x0077777d7eba4688bdef3e311b846f25870a19b9" },
+  };
+  const auth = {
+    from: "0x2222222222222222222222222222222222222222",
+    to: "0x1111111111111111111111111111111111111111",
+    value: "30000",
+    validAfter: 0,
+    validBefore: 1790000000,
+    nonce: "0x" + "ab".repeat(32),
+  };
+  const good = { x402Version: 2, payload: { authorization: auth, signature: "0x" + "cd".repeat(65) } };
+  const ev = paymentEvidence(good, requirements as never, 5042002);
+  assert.deepEqual(ev, {
+    scheme: "eip3009",
+    domain: { name: "GatewayWalletBatched", version: "1", chainId: 5042002, verifyingContract: "0x0077777d7eba4688bdef3e311b846f25870a19b9" },
+    authorization: { ...auth, validAfter: "0", validBefore: "1790000000" },
+    signature: "0x" + "cd".repeat(65),
+  });
+  // Any missing or malformed part → null. A partial copy is a check nobody could complete.
+  assert.equal(paymentEvidence({ payload: { authorization: auth } }, requirements as never, 5042002), null, "no signature");
+  assert.equal(paymentEvidence({ payload: { authorization: { ...auth, nonce: "0x12" }, signature: good.payload.signature } }, requirements as never, 5042002), null, "short nonce");
+  assert.equal(paymentEvidence(good, { ...requirements, extra: {} } as never, 5042002), null, "no domain");
+  assert.equal(paymentEvidence({ payer: "0x2222222222222222222222222222222222222222", amount: "1", nonce: "n" }, requirements as never, 5042002), null, "mock shape");
+});

@@ -128,7 +128,8 @@ TTL. Full spec: [citation-license.md](./citation-license.md).
 |---|---|---|
 | `LICENSES_ENABLED` | `true` | On by default, since a license is additive (one extra response header), and the offline path mints with an ephemeral key. |
 | `LICENSE_SIGNING_KEY` | unset | Ed25519 private key (PKCS8 PEM or base64 DER) that signs licenses. Leave it unset only for single-instance mock development; it is **required** once payments are real or any Supabase backend is on, because verification has to hold across instances. |
-| `LICENSE_TTL_SECONDS` | `600` | Re-read window. A license is an unrevocable bearer credential on the offline tier, so the TTL is the kill switch, capped at 3600. |
+| `LICENSE_RETIRED_PUBLIC_KEYS` | unset | Public keys you rotated out, comma-separated, each the `x` value of the old key's JWK. They are published in the key set so a citation record signed before the rotation keeps verifying. They never authorize a re-read: an access licence verifies against the live key only. |
+| `LICENSE_TTL_SECONDS` | `3600` | Re-read window. A license is an unrevocable bearer credential on the offline tier, so the TTL is the kill switch, capped at 3600. |
 | `LICENSE_ISSUER` | derived | Issuer and audience string. Defaults to `naulon:<gate host>` at runtime. |
 | `LICENSE_PAYEES_MODE` | `full` | Embed the whole payees graph (transparent) or `hashed` for a hash plus the primary payee. |
 | `LICENSE_ONLINE_CHECK` | `false` | Consult the revocation seam on the online verify tier. Needs shared state. |

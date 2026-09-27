@@ -80,6 +80,18 @@ test("pay → 200 + a verifiable X-Naulon-License", async () => {
   assert.ok(v.ok && v.claims.sub === PAYER);
 });
 
+test("the licence names the URL bought and the hash of the exact bytes served", async () => {
+  const res = await pay("on-stillness", "read");
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  const n = payload(res.headers.get("x-naulon-license")!).naulon as Record<string, unknown>;
+  assert.equal(n.resource, "http://localhost/essays/on-stillness", "loopback is the one host named over http");
+  const { createHash } = await import("node:crypto");
+  assert.equal(n.contentSha256, createHash("sha256").update(body).digest("hex"), "the hash is of what the buyer received");
+  // The mock rail carries no signature, so it states no evidence rather than a half-filled one.
+  assert.equal(n.evidence, undefined);
+});
+
 test("a valid license re-reads the same slug FREE", async () => {
   const jws = (await pay("on-stillness", "read")).headers.get("x-naulon-license")!;
   const reread = await app.request("/essays/on-stillness", {
@@ -288,7 +300,7 @@ test("N-leg: a payment missing the operator leg is rejected — content stays ga
 });
 
 // ── W6: the citation record — permanent, and it entitles nothing ────────────────
-// The CLT's 10-minute window is the kill switch for an unrevocable bearer credential.
+// The CLT's short window is the kill switch for an unrevocable bearer credential.
 // A citation is the opposite job: a reader checks it years later. So the record is a
 // SECOND object minted from the same ledger row, permanent precisely because presenting
 // one buys nothing.

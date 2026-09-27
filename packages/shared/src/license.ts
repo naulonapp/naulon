@@ -35,7 +35,7 @@ import {
 import { toAtomicUsdc } from "./networks.ts";
 import { matchesPattern } from "@naulon/sdk/rsl";
 import { primaryPayee, type TieBreak } from "./attribution.ts";
-import type { AttributedEvent, AuthorShare } from "./types.ts";
+import type { AttributedEvent, AuthorShare, PaymentEvidence, TermsDocument } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -111,6 +111,14 @@ export interface NaulonClaim {
   terms?: LicenseTerm[];
   /** The purchased period, independent of the token's own re-read window. */
   period?: LicensePeriod;
+  /** The canonical URL that was bought. */
+  resource?: string;
+  /** sha256 (hex) of the exact body the gate served, so a held copy can be matched to the sale. */
+  contentSha256?: string;
+  /** The terms document in force at the moment of sale, pinned by hash. */
+  termsDocument?: TermsDocument;
+  /** The buyer's signed authorization for the author leg: the part of this record naulon did not write. */
+  evidence?: PaymentEvidence;
 }
 
 /**
@@ -215,6 +223,26 @@ export function jwksOf(keys: SigningKey[]): JwkSet {
 }
 
 /**
+ * Public JWKs for keys that no longer sign but must keep verifying what they signed.
+ *
+ * A citation record is permanent, so the key that signed it has to stay resolvable for as long as
+ * anyone might check it. Each entry is an Ed25519 public key as its raw 32 bytes in base64url (the
+ * JWK `x` of the key being retired); the `kid` is derived exactly as for a live key, so a record
+ * signed before the rotation still names a key the set contains. Throws on a malformed entry, at
+ * boot, rather than publishing a set that silently lacks it.
+ */
+export function retiredJwks(xs: string[]): Jwk[] {
+  return xs.map((x) => {
+    const raw = Buffer.from(x, "base64url");
+    if (raw.length !== 32 || raw.toString("base64url") !== x) {
+      throw new Error(`retired licence key is not a 32-byte base64url Ed25519 public key: ${x.slice(0, 12)}…`);
+    }
+    const publicKey = createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x }, format: "jwk" });
+    return { kty: "OKP", crv: "Ed25519", x, kid: kidFor(publicKey), use: "sig", alg: "EdDSA" };
+  });
+}
+
+/**
  * Resolve the signing key from a config secret, or generate an EPHEMERAL one.
  *
  * `secret` may be a PKCS8 PEM or base64-encoded PKCS8 DER Ed25519 private key.
@@ -282,7 +310,7 @@ export function mintLicense(input: MintInput, key: SigningKey, now: number): str
  * Mint a CITATION RECORD: permanent, and it grants nothing.
  *
  * The access licence and the citation record are two objects because they are two jobs.
- * A CLT's 10-minute window is a security property — it is the only kill switch an
+ * A CLT's short window (an hour at most) is a security property — it is the only kill switch an
  * unrevocable bearer credential has — and it is exactly wrong for a citation, which a
  * reader may check years after the paper was published. A record carries no `exp`
  * because it entitles no read: there is nothing to revoke.
@@ -320,6 +348,12 @@ function baseClaims(input: MintInput, iat: number): CitationLicenseClaims {
   if (input.scope) naulon.scope = input.scope;
   if (input.terms) naulon.terms = input.terms;
   if (input.period) naulon.period = input.period;
+  // Facts the settle tail stamped on the row, copied as stored. Absent on older rows and on the
+  // mock rail, and omitted rather than nulled so those tokens stay byte-identical.
+  if (event.resource) naulon.resource = event.resource;
+  if (event.contentSha256) naulon.contentSha256 = event.contentSha256;
+  if (event.termsDocument) naulon.termsDocument = event.termsDocument;
+  if (event.evidence) naulon.evidence = event.evidence;
 
   return {
     iss: input.issuer,

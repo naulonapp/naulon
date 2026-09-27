@@ -22,6 +22,7 @@ import {
   networkByCaip2,
   type ForgoneLeg,
   type MemoAuthorization,
+  type PaymentEvidence,
   type SettlementNetwork,
 } from "@naulon/shared";
 
@@ -77,6 +78,13 @@ export interface VerifyResult {
   error?: string;
   /** Per-leg settlement outcomes (author first), present on a successful N-leg settle. */
   legSettlements?: LegSettlement[];
+  /**
+   * The buyer's signed authorization for the author leg, lifted verbatim from the payment. Present
+   * on the gateway rail whenever the payload carries a complete EIP-3009 authorization; the mock
+   * rail has no signature and never sets it. The settle tail stamps it onto the ledger row, which
+   * is how a citation record carries something the operator did not write.
+   */
+  evidence?: PaymentEvidence;
   /**
    * Legs the quote required that the buyer never authorized, because they paid with a STOCK
    * x402 client — one that reads `accepts[0]` as the offer, signs that one alternative, and
@@ -374,7 +382,48 @@ async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: numb
   const responseHeader = Buffer.from(
     JSON.stringify({ success: true, transaction: authorSettle.transaction, network: author.requirements.network, payer }),
   ).toString("base64");
-  return { ok: true, payer, settlementRef: authorSettle.transaction, responseHeader, legSettlements };
+  const evidence = paymentEvidence(author.payload, author.requirements, net.chainId);
+  return { ok: true, payer, settlementRef: authorSettle.transaction, responseHeader, legSettlements, ...(evidence ? { evidence } : {}) };
+}
+
+const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const HEX_32 = /^0x[0-9a-fA-F]{64}$/;
+const HEX_SIG = /^0x[0-9a-fA-F]{130}$/;
+const UINT = /^[0-9]+$/;
+
+/**
+ * The author leg's EIP-3009 authorization, signature and EIP-712 domain, or null when any part is
+ * missing or malformed. All or nothing: a partial copy would put a check in the record that no
+ * verifier could complete, which reads as a failed payment rather than an absent proof.
+ */
+export function paymentEvidence(payload: unknown, requirements: PaymentRequirements, chainId: number): PaymentEvidence | null {
+  const p = (payload as { payload?: { authorization?: Record<string, unknown>; signature?: unknown } } | null)?.payload;
+  const a = p?.authorization;
+  const extra = (requirements as { extra?: Record<string, unknown> }).extra;
+  if (!a || typeof p?.signature !== "string" || !HEX_SIG.test(p.signature)) return null;
+  const str = (v: unknown) => (typeof v === "number" && Number.isSafeInteger(v) ? String(v) : typeof v === "string" ? v : "");
+  const authorization = {
+    from: str(a.from),
+    to: str(a.to),
+    value: str(a.value),
+    validAfter: str(a.validAfter),
+    validBefore: str(a.validBefore),
+    nonce: str(a.nonce),
+  };
+  if (!HEX_ADDRESS.test(authorization.from) || !HEX_ADDRESS.test(authorization.to)) return null;
+  if (!UINT.test(authorization.value) || !UINT.test(authorization.validAfter) || !UINT.test(authorization.validBefore)) return null;
+  if (!HEX_32.test(authorization.nonce)) return null;
+  const name = extra?.name;
+  const version = extra?.version;
+  const verifyingContract = extra?.verifyingContract;
+  if (typeof name !== "string" || typeof version !== "string" || typeof verifyingContract !== "string") return null;
+  if (!HEX_ADDRESS.test(verifyingContract)) return null;
+  return {
+    scheme: "eip3009",
+    domain: { name, version, chainId, verifyingContract },
+    authorization,
+    signature: p.signature,
+  };
 }
 
 /** Mock mode: offline { payer, amount, nonce } per leg. Verify all (no mutation),

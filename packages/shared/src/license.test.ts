@@ -10,6 +10,8 @@ import {
   jwksOf,
   loadSigningKey,
   mintLicense,
+  publicJwk,
+  retiredJwks,
   popBoundAddress,
   popMessage,
   verifyLicense,
@@ -242,4 +244,16 @@ test("popMessage is deterministic and binds every field in a fixed framing", () 
   assert.notEqual(m, popMessage({ ...c, slug: "other" }));
   assert.notEqual(m, popMessage({ ...c, aud: "naulon:other" }));
   assert.notEqual(m, popMessage({ ...c, jti: "j2" }));
+});
+
+test("retiredJwks derives the same kid a live key would, and refuses a malformed entry", async () => {
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const pem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+  const live = loadSigningKey(pem);
+  const x = publicJwk(live).x;
+  const [retired] = retiredJwks([x]);
+  assert.equal(retired!.kid, live.kid, "a record signed before the rotation must still find its key");
+  assert.equal(retired!.x, x);
+  assert.throws(() => retiredJwks(["not-a-key"]), /32-byte base64url/);
 });
