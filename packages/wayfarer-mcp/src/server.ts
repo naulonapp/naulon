@@ -1088,7 +1088,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "It checks your held licences FIRST: if you already hold a live one for this source it serves " +
         "the read free and returns reused:true with paidUsdc:0, so calling this twice in a session does " +
         "not pay twice. The licence it mints is kept for later free re-reads via naulon_read_held, but " +
-        "it EXPIRES — `expiresAt`/`expiresInSec` in the result say when, typically 10 minutes. " +
+        "it EXPIRES — `expiresAt`/`expiresInSec` in the result say when, typically an hour. " +
         "The toll is quoted first: if it would exceed the remaining session budget the call is REFUSED " +
         "and spends nothing (the budget ceiling is server-configured and cannot be raised from a tool). " +
         "If the source is not gated, or payment is rejected, it returns ok:false and spends nothing.",
@@ -1481,7 +1481,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       title: "Re-read a source you already licensed (free)",
       description:
         "Re-read a source you previously paid for, FREE, using the held Citation License — no second " +
-        "payment. Held licences are SHORT-LIVED (typically 10 minutes from purchase); `expiresAt` on " +
+        "payment. Held licences are SHORT-LIVED (typically an hour from purchase); `expiresAt` on " +
         "the original pay tells you when. This also covers a source inside a SCOPE licence you bought " +
         "up front: pass the url and any live licence whose scope covers that path is used. If the " +
         "license is holder-of-key bound, a fresh wallet proof-of-possession is signed automatically. " +

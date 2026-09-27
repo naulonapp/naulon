@@ -27,7 +27,7 @@ test("mock mode with zero creds parses — the offline loop stays unbroken", () 
   const r = configSchema.safeParse({});
   assert.equal(r.success, true);
   assert.ok(r.success && r.data.LICENSES_ENABLED === true); // default on
-  assert.ok(r.success && r.data.LICENSE_TTL_SECONDS === 600);
+  assert.ok(r.success && r.data.LICENSE_TTL_SECONDS === 3600);
 });
 
 test("a stable LICENSE_SIGNING_KEY is required once real money moves (gateway)", () => {

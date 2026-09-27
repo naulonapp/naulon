@@ -213,3 +213,27 @@ test("a TOLL's ledger row has no licence key at all — absent, not an empty obj
   assert.equal(res.ok, true);
   assert.equal("licence" in (await rowFor(res.eventId!)), false);
 });
+
+test("the row carries the title, the resource, the hash and the publisher's terms document", async () => {
+  const termsDocument = { url: "https://example.test/license.xml", sha256: "ab".repeat(32) };
+  const base = args(Date.now());
+  const res = await settleAndAttribute({
+    ...base,
+    publisher: { ...(base.publisher as object), termsDocument } as never,
+    resource: "https://example.test/essays/a",
+    contentSha256: "cd".repeat(32),
+  });
+  const c = await claimsOf(res);
+  assert.equal(c.naulon.title, "An essay");
+  assert.equal(c.naulon.resource, "https://example.test/essays/a");
+  assert.equal(c.naulon.contentSha256, "cd".repeat(32));
+  assert.deepEqual(c.naulon.termsDocument, termsDocument);
+  // The permanent record is minted later, from the STORED row, so the row must hold them too.
+  const { readFile } = await import("node:fs/promises");
+  const rows = (await readFile(process.env.EVENTS_PATH!, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+  const row = rows.find((r) => r.id === (res as { eventId?: string }).eventId)!;
+  assert.equal(row.title, "An essay");
+  assert.equal(row.resource, "https://example.test/essays/a");
+  assert.equal(row.contentSha256, "cd".repeat(32));
+  assert.deepEqual(row.termsDocument, termsDocument);
+});

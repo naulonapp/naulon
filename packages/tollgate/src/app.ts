@@ -20,7 +20,7 @@
  * (= `createApp()`). Keeping the app free of any server boot is what lets every
  * entry import it without one of them starting a listener.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -62,7 +62,7 @@ import {
 import { get as getEvent } from "./eventLog.ts";
 import { observe } from "./observationLog.ts";
 import { rateLimit } from "./rateLimit.ts";
-import { settleAndAttribute } from "./settle.ts";
+import { DEFAULT_TOLL_TERMS, settleAndAttribute } from "./settle.ts";
 import { envPublisherResolver } from "./publisher.ts";
 
 // The origin-mirror seams (`drainSettlements`/`DrainScope` and the whole
@@ -494,7 +494,7 @@ export function createApp(
     "cache-control": "public, max-age=3600",
   } as const;
   app.get("/.well-known/naulon-jwks.json", (c) =>
-    c.json(licensing ? licensing.jwks : { keys: [] }, 200, { ...JWKS_CORS }),
+    c.json(licensing ? licensing.publishedJwks : { keys: [] }, 200, { ...JWKS_CORS }),
   );
   app.options("/.well-known/naulon-jwks.json", (c) => c.body(null, 204, { ...JWKS_CORS }));
 
@@ -602,7 +602,7 @@ export function createApp(
    * grants nothing.
    *
    * The Citation License a payment mints is an ACCESS token — `LICENSE_TTL_SECONDS`
-   * defaults to 600s and is capped at 3600 because it is an unrevocable bearer credential
+   * defaults to 3600s and is capped there because it is an unrevocable bearer credential
    * on the offline tier, so its expiry is the only kill switch it has. That is the wrong
    * object for a citation: a researcher cites a source and a reader checks it months
    * later, long after any access window closed. This route mints the other object from
@@ -660,7 +660,7 @@ export function createApp(
         ttlSeconds: cfg.LICENSE_TTL_SECONDS,
         payeesMode: cfg.LICENSE_PAYEES_MODE,
         tieBreak: cfg.PRIMARY_PAYEE_TIEBREAK,
-        title: event.slug,
+        title: event.title ?? event.slug,
         network: { chainId: net.chainId, usdc: net.usdc, gateway: net.gatewayWallet },
         // What a SALE bought, replayed from the row rather than re-derived. Absent on a toll, so
         // its record is byte-identical to what this route emitted before sales existed.
@@ -670,15 +670,20 @@ export function createApp(
         // checkable. Passing the row's facts through unchanged is what makes the record and the
         // access licence two projections of one row instead of two documents that agree by habit.
         ...(event.licence?.scope ? { scope: event.licence.scope } : {}),
-        ...(event.licence?.terms ? { terms: event.licence.terms } : {}),
+        // A toll's access token states `DEFAULT_TOLL_TERMS`, so its permanent record must too: the
+        // two are projections of one row and may not disagree about what was bought.
+        terms: event.licence?.terms ?? DEFAULT_TOLL_TERMS,
         ...(event.licence?.period ? { period: event.licence.period } : {}),
         ...(event.licence?.subject ? { subject: event.licence.subject } : {}),
       },
       licensing.key,
-      Date.now(),
+      // Issued at the moment of sale, not the moment of this fetch. Ed25519 signing is
+      // deterministic, so the same row and key yield the same bytes on every fetch: a copy saved
+      // today and one fetched next year compare equal, and a verifier can tell them apart only by
+      // the key that signed them.
+      event.at,
     );
-    // The record is permanent, so anyone may cache it; each mint carries a fresh `iat` and a
-    // fresh signature, and every one of them is valid.
+    // The record is permanent and byte-stable for a given signing key, so anyone may cache it.
     return c.json({ jti, found: true, record }, 200, { ...RECORD_CORS, "cache-control": "public, max-age=3600" });
   });
 
@@ -848,6 +853,7 @@ export function createApp(
         // this defect lives on; anything else keeps the original settle-then-proxy order.
         const safeMethod = c.req.method === "GET" || c.req.method === "HEAD";
         let prefetched: Response | undefined;
+        let contentSha256: string | undefined;
         if (safeMethod) {
           prefetched = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
           // The bytes must be IN HAND before the money moves, and until now "prefetched" only ever
@@ -885,6 +891,13 @@ export function createApp(
               );
             }
             prefetched = materialized;
+            // Hash what is about to be served, from the same in-memory bytes the buyer receives. A
+            // HEAD carries no body to sell, so it states no hash rather than the hash of nothing.
+            if (c.req.method === "GET") {
+              contentSha256 = createHash("sha256")
+                .update(new Uint8Array(await materialized.clone().arrayBuffer()))
+                .digest("hex");
+            }
           }
           // Anything outside 2xx, not just 404 — and each non-2xx family is correct to refuse on:
           // a 3xx means the content moved and the agent should pay at wherever it went; a 304 means
@@ -907,7 +920,16 @@ export function createApp(
         }
 
         // The settlement tail — the exact same code path the hosted /verify runs.
-        const settled = await settleAndAttribute({ payment: d.payment, legs: d.legs, quote: d.quote, publisher, host, now });
+        const settled = await settleAndAttribute({
+          payment: d.payment,
+          legs: d.legs,
+          quote: d.quote,
+          publisher,
+          host,
+          now,
+          resource: canonicalResource(host, new URL(c.req.url).pathname),
+          ...(contentSha256 ? { contentSha256 } : {}),
+        });
         if (!settled.ok) {
           // Let the origin's body go. This is the ONE branch that prefetches and then does not
           // serve what it fetched: the success path below hands `prefetched` to the client, and the
@@ -975,6 +997,17 @@ export const app = createApp();
  * path or a query is refused outright (never "cleaned" into a host), because the value becomes
  * the `iss` of a document a stranger is told to trust.
  */
+/**
+ * The URL a buyer paid for, as the citation record names it: the Host that was tolled plus the
+ * path exactly as requested, with no query string (a query does not change what was priced; the slug is
+ * derived from the path alone). `https` everywhere except a loopback host, which is only ever a
+ * local rig and would otherwise name a URL nobody can open.
+ */
+export function canonicalResource(host: string, pathname: string): string {
+  const scheme = /^(localhost|127\.|\[::1\])/i.test(host) ? "http" : "https";
+  return `${scheme}://${host.toLowerCase()}${pathname}`;
+}
+
 function publisherHostHint(raw: string | undefined): string | undefined {
   const h = raw?.trim().toLowerCase();
   return h && /^[a-z0-9.-]+(:\d+)?$/.test(h) ? h : undefined;

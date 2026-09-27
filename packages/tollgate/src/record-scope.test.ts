@@ -5,7 +5,7 @@
  * W8 then sold scopes — and the row carried no scope, terms, period or subject, so the projection
  * that matters most (permanent, public, checkable without asking naulon) could name the payment
  * and nothing about what it bought. These tests pin the projection in both directions: a sale's
- * facts survive to the record, and a toll's record is unchanged.
+ * facts survive to the record, and a toll's record states exactly what its access licence states.
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -30,7 +30,7 @@ function payload(jws: string): Record<string, unknown> {
 }
 
 /** Append a settled event straight to the ledger — the same shape the settle tail writes. */
-async function seed(licence?: LicenceFacts): Promise<string> {
+async function seed(licence?: LicenceFacts, extra: Record<string, unknown> = {}): Promise<string> {
   const id = randomUUID();
   await appendFile(
     EVENTS,
@@ -43,6 +43,7 @@ async function seed(licence?: LicenceFacts): Promise<string> {
       payerAddress: walletAddress("0x2222222222222222222222222222222222222222"),
       settlementRef: "mock-ref",
       ...(licence ? { licence } : {}),
+      ...extra,
       at: Date.now(),
     }) + "\n",
   );
@@ -76,13 +77,58 @@ test("a sale's record carries the scope, terms, period and subject the row store
   assert.equal("exp" in claims, false);
 });
 
-test("a toll's record is unchanged — no scope, no terms, no period, sub = the payer", async () => {
+test("a toll's record states the toll's terms, and no scope, period or subject", async () => {
+  // The access licence a toll mints states `ai-input` (settle.ts, DEFAULT_TOLL_TERMS). The record
+  // is the same row's other projection, so it must say the same thing: a permanent proof that
+  // omits the rights its own access token granted is a record of less than was sold.
   const claims = await recordFor(await seed());
   const n = claims.naulon as Record<string, unknown>;
+  assert.deepEqual(n.terms, ["ai-input"]);
   assert.equal(n.scope, undefined);
-  assert.equal(n.terms, undefined);
   assert.equal(n.period, undefined);
   assert.equal(String(claims.sub).toLowerCase(), "0x2222222222222222222222222222222222222222");
+});
+
+test("the record names the work by title, and falls back to the slug on an older row", async () => {
+  const titled = await recordFor(await seed(undefined, { title: "On Passage" }));
+  assert.equal((titled.naulon as Record<string, unknown>).title, "On Passage");
+  const untitled = await recordFor(await seed());
+  assert.equal((untitled.naulon as Record<string, unknown>).title, "scope:/essays/*");
+});
+
+test("the record carries the resource, the content hash, the terms document and the buyer's evidence", async () => {
+  const evidence = {
+    scheme: "eip3009",
+    domain: { name: "GatewayWalletBatched", version: "1", chainId: 5042002, verifyingContract: "0x0077777d7eba4688bdef3e311b846f25870a19b9" },
+    authorization: {
+      from: "0x2222222222222222222222222222222222222222",
+      to: "0x1111111111111111111111111111111111111111",
+      value: "30000",
+      validAfter: "0",
+      validBefore: "1790000000",
+      nonce: "0x" + "ab".repeat(32),
+    },
+    signature: "0x" + "cd".repeat(65),
+  };
+  const termsDocument = { url: "https://example.com/license.xml", sha256: "ef".repeat(32) };
+  const claims = await recordFor(
+    await seed(undefined, { resource: "https://example.com/essays/a", contentSha256: "12".repeat(32), termsDocument, evidence }),
+  );
+  const n = claims.naulon as Record<string, unknown>;
+  assert.equal(n.resource, "https://example.com/essays/a");
+  assert.equal(n.contentSha256, "12".repeat(32));
+  assert.deepEqual(n.termsDocument, termsDocument);
+  assert.deepEqual(n.evidence, evidence);
+});
+
+test("the record is byte-stable: issued at the sale, not at the fetch", async () => {
+  const jti = await seed();
+  const a = await app.request(`/licenses/${jti}/record`);
+  await new Promise((r) => setTimeout(r, 1100)); // across a second boundary, where a fetch-time iat would move
+  const b = await app.request(`/licenses/${jti}/record`);
+  const ra = ((await a.json()) as { record: string }).record;
+  const rb = ((await b.json()) as { record: string }).record;
+  assert.equal(ra, rb, "a saved copy and a later fetch must compare equal");
 });
 
 test("the record's period survives a scope that the ACCESS licence could never outlive", async () => {

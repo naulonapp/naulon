@@ -172,8 +172,65 @@ export interface AttributedEvent {
    * the whole product — could name the payment but not what was bought.
    */
   licence?: LicenceFacts;
+  /**
+   * The title of what was bought, as the credits contract named it at the moment of sale. The
+   * citation record carries it so a record names a work, not a URL slug. Absent on older rows,
+   * where the record falls back to the slug.
+   */
+  title?: string;
+  /** The canonical URL that was bought: `https://<host><path>`, query string excluded. */
+  resource?: string;
+  /**
+   * sha256 (lowercase hex) of the exact response body the gate served for this read. Lets anyone
+   * holding a copy prove it is the text that was paid for. Absent when the gate did not serve the
+   * bytes itself (a hosted `/verify`, where the publisher's own site serves them) and on a HEAD.
+   */
+  contentSha256?: string;
+  /** The terms document in force at the moment of sale, pinned by hash. See `TermsDocument`. */
+  termsDocument?: TermsDocument;
+  /**
+   * The buyer's own signature over the author leg. Present when the payment carried a real signed
+   * authorization; absent on the mock rail, which has none. See `PaymentEvidence`.
+   */
+  evidence?: PaymentEvidence;
   /** epoch ms — passed in by the caller (no ambient clock in shared code). */
   at: number;
+}
+
+/**
+ * A publisher's machine-readable terms (an RSL document), pinned at the moment of sale.
+ *
+ * `sha256` is over the document BYTES as served at `url`, so a reader can fetch the URL today and
+ * compare. When the publisher later changes their terms, the hash stops matching, and that is the
+ * point: the record keeps the terms that were in force, not the ones in force now.
+ */
+export interface TermsDocument {
+  url: string;
+  /** sha256 of the document bytes, lowercase hex. */
+  sha256: string;
+}
+
+/**
+ * The buyer's signed EIP-3009 `TransferWithAuthorization` for the author leg, with the EIP-712
+ * domain it was signed against.
+ *
+ * This is the part of a citation record the operator did not write. Anyone can recover the signer
+ * from `signature` over (`domain`, `authorization`) and compare it with the record's payer, and can
+ * ask the settlement rail for the transfer by `authorization.nonce`, which is unique per payment.
+ * Neither check involves the gate that issued the record.
+ */
+export interface PaymentEvidence {
+  scheme: "eip3009";
+  domain: { name: string; version: string; chainId: number; verifyingContract: string };
+  authorization: {
+    from: string;
+    to: string;
+    value: string;
+    validAfter: string;
+    validBefore: string;
+    nonce: string;
+  };
+  signature: string;
 }
 
 /**

@@ -114,10 +114,20 @@ export interface SettleArgs {
    * re-read window and stays capped. A licence that entitles a read still expires.
    */
   licence?: LicenceFacts;
+  /**
+   * The canonical URL being bought, `https://<host><path>` with no query string. Optional because
+   * a caller settling on behalf of a publisher's own site may know only the slug.
+   */
+  resource?: string;
+  /**
+   * sha256 (hex) of the body about to be served. Only a caller holding the bytes BEFORE the money
+   * moves can state it, which on the gate is the safe-method prefetch path.
+   */
+  contentSha256?: string;
 }
 
 export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult> {
-  const { payment, legs, quote: q, publisher, host, now, licence } = args;
+  const { payment, legs, quote: q, publisher, host, now, licence, resource, contentSha256 } = args;
 
   // A SALE IS ALL OR NOTHING; A TOLL IS NOT. Derived from `licence` rather than taken as its own
   // argument, because they are the same fact: a sale is exactly the payment that buys one
@@ -174,6 +184,14 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     // after this function's `licence` argument is gone, so anything absent here can never appear
     // in the object a stranger verifies.
     ...(licence ? { licence } : {}),
+    // The facts a stranger checks the permanent record against. Each is spread so a row that
+    // cannot state one leaves it absent rather than empty, and all of them have to be on the ROW
+    // for the same reason `licence` does: the record is minted from the stored event.
+    ...(q.title ? { title: q.title } : {}),
+    ...(resource ? { resource } : {}),
+    ...(contentSha256 ? { contentSha256 } : {}),
+    ...(publisher.termsDocument ? { termsDocument: publisher.termsDocument } : {}),
+    ...(result.evidence ? { evidence: result.evidence } : {}),
     at: now,
   };
 

@@ -7,18 +7,23 @@
  * Minting + the re-read entitlement (which use `licensing.key`) land in P2; P1
  * publishes the public key so verifiers can be wired up first.
  */
-import { getConfig, jwksOf, loadSigningKey, type JwkSet, type SigningKey } from "@naulon/shared";
+import { getConfig, jwksOf, loadSigningKey, retiredJwks, type JwkSet, type SigningKey } from "@naulon/shared";
 
 const cfg = getConfig();
 
 export interface Licensing {
   key: SigningKey;
+  /** The LIVE key only. What a re-read is verified against. */
   jwks: JwkSet;
+  /** The live key plus every retired one: what the gate publishes, so old records keep verifying. */
+  publishedJwks: JwkSet;
 }
 
 export const licensing: Licensing | null = cfg.LICENSES_ENABLED
   ? (() => {
       const key = loadSigningKey(cfg.LICENSE_SIGNING_KEY);
-      return { key, jwks: jwksOf([key]) };
+      const jwks = jwksOf([key]);
+      const retired = retiredJwks(cfg.LICENSE_RETIRED_PUBLIC_KEYS).filter((k) => k.kid !== key.kid);
+      return { key, jwks, publishedJwks: { keys: [...jwks.keys, ...retired] } };
     })()
   : null;

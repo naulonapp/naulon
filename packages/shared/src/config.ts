@@ -388,9 +388,20 @@ export const configSchema = z.object({
   // Ed25519 private key (PKCS8 PEM or base64 DER) that signs licenses. SECRET.
   // Leave unset only for single-instance mock/dev (ephemeral key + boot warning).
   LICENSE_SIGNING_KEY: z.string().optional(),
+  // Public keys of RETIRED signing keys, comma-separated, each the raw Ed25519 key in base64url
+  // (the `x` of its JWK). Published beside the live key so a permanent citation record signed
+  // before a rotation keeps verifying. Never trusted for a re-read: an access licence verifies
+  // against the live key only, because a key is usually retired for a reason.
+  LICENSE_RETIRED_PUBLIC_KEYS: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "").split(",").map((k) => k.trim()).filter(Boolean)),
   // Re-read window for a license, seconds. A CLT is an unrevocable bearer
-  // credential on the offline tier, so the TTL is the kill switch — kept short.
-  LICENSE_TTL_SECONDS: z.coerce.number().int().positive().default(600),
+  // credential on the offline tier, so the TTL is the kill switch, capped at 3600.
+  // The default sits AT the cap: a leaked token re-reads one article it already paid
+  // for, while a shorter window expires inside a single research thread and charges
+  // the same buyer twice for the same source.
+  LICENSE_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   // Issuer/audience string; defaults to `naulon:<gate host>` derived at runtime.
   LICENSE_ISSUER: z.string().optional(),
   // Embed the full payees graph (transparent, default) or just a hash + primary.

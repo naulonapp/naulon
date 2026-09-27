@@ -15,7 +15,7 @@
  */
 import type { NetworkName } from "./networks.ts";
 import type { PriceRule } from "./price-rules.ts";
-import type { CreditsResolver, TollKind, Usdc, WalletAddress } from "./types.ts";
+import type { CreditsResolver, TermsDocument, TollKind, Usdc, WalletAddress } from "./types.ts";
 
 /**
  * A settlement leg beyond the primary author payment — a secondary, direct
@@ -171,6 +171,13 @@ export interface PublisherConfig {
    * existed. The gate never fills it in.
    */
   termsPolicy?: TermsPolicy;
+  /**
+   * Where the publisher's RSL document is served, pinned by the hash of its current bytes. Stamped
+   * onto every ledger row at settle, so the citation record binds the terms in force at the moment
+   * of sale. The resolver supplies it; the gate never fetches or hashes a document itself. Absent
+   * means the record names no terms document.
+   */
+  termsDocument?: TermsDocument;
   /**
    * What the toll covers. Absent / {mode:"prefixes"} → the stock articlePrefixes
    * matcher (byte-identical). {mode:"site"} → every path tolls, slug = the full
