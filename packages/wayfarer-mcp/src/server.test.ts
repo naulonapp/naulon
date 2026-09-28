@@ -21,10 +21,10 @@ import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
+import { ARC_TESTNET, FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
 import { DEFAULT_POLICY, licenseIdentityFor, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
-import { buildServer, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
+import { buildServer, SERVER_VERSION, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
 
 /** Stand up an isolated server + connected client over a linked in-memory pair. */
 async function connectedClient(): Promise<Client> {
@@ -351,6 +351,61 @@ test("naulon_status reports wallet, discovery source, and a plain next step", as
     assert.equal(s.discovery, "https://gate.naulon.app/directory", "zero-config discovery defaults to the fleet directory");
     assert.ok(typeof s.nextStep === "string" && s.nextStep.length > 0);
   });
+});
+
+// A hosted balance is funded through its owner, so status must say whether it can pay rather than
+// hand out the signer address to fund. `readHostedFunds` is the host's view of that money.
+for (const [balance, hostRemaining, ready, says] of [
+  [0, undefined, false, /empty.*https:\/\/portal\.test\/buyer\/wallet, where a Test balance gets free test USDC with one press\..*Do not send USDC/s],
+  [2.5, undefined, true, /2\.5 USDC available, 1 USDC left/],
+  [2.5, 0.4, true, /0\.4 USDC left/],
+  [2.5, 0, false, /budget is used up/],
+  [null, undefined, false, /could not be read/],
+] as const) {
+  test(`naulon_status with host balance ${balance} and remaining ${hostRemaining} reports ready=${ready}`, async () => {
+    // The process default is a different chain, so the settlement assertion below can only pass
+    // when status reads the host's network.
+    await withEnv({ BUYER_PRIVATE_KEY: undefined, SETTLEMENT_NETWORK: "base" }, async () => {
+      const signer: MemoSigner = {
+        address: "0x000000000000000000000000000000000000BEEF",
+        async signTypedData() { return `0x${"11".repeat(65)}` as `0x${string}`; },
+      };
+      const client = await connectedClientWith({
+        signer, budgetUsdc: 1, buyerWalletUrl: "https://portal.test/buyer/wallet",
+        readHostedFunds: async () => ({
+          balanceUsdc: balance,
+          ...(hostRemaining !== undefined ? { remainingUsdc: hostRemaining } : {}),
+        }),
+        sessionNetwork: ARC_TESTNET,
+      });
+      const res = await client.callTool({ name: "naulon_status", arguments: {} });
+      const s = res.structuredContent as { ready: boolean; balanceUsdc: number | null; remainingUsdc: number; nextStep: string };
+      assert.equal(s.ready, ready);
+      assert.equal(s.balanceUsdc, balance);
+      assert.equal(s.remainingUsdc, hostRemaining ?? 1);
+      assert.equal((res.structuredContent as { settlement: { chainId: number } }).settlement.chainId, 5042002, "the wallet's chain, not the process default");
+      assert.match(s.nextStep, says);
+      assert.doesNotMatch(s.nextStep, /Fund this wallet/);
+    });
+  });
+}
+
+// A refusal settles nothing, so its `settlement` is the session's chain: the wallet's, not the
+// process default. A testnet session on a mainnet-default host must never be told "real money".
+test("a refusal names the session wallet's chain, not the process default", async () => {
+  await withEnv({ BUYER_PRIVATE_KEY: undefined, SETTLEMENT_NETWORK: "base", TOLLGATE_URL: "http://127.0.0.1:9" }, async () => {
+    const client = await connectedClientWith({ sessionNetwork: ARC_TESTNET, tollgateUrl: "http://127.0.0.1:9" });
+    const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "s", url: "https://elsewhere.example/s" } });
+    const s = res.structuredContent as { settlement?: { chainId: number; testnet: boolean } };
+    assert.equal(s.settlement?.chainId, ARC_TESTNET.chainId);
+    assert.equal(s.settlement?.testnet, true);
+  });
+});
+
+test("the handshake reports this package's own version", async () => {
+  const { createRequire } = await import("node:module");
+  const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
+  assert.equal(SERVER_VERSION, pkg.version);
 });
 
 // PROD 2026-08-03 — the "fund the wrong wallet" trap. `naulon_status` is documented as the run-FIRST
