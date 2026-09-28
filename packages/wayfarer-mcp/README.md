@@ -147,8 +147,10 @@ endpoint also adds the hosted-only `naulon_ask` tool + its `ask` prompt.
 Clients that support remote/HTTP MCP with headers:
 
 ```bash
-# Claude Code
-claude mcp add --transport http naulon \
+# Claude Code. `claude mcp add` refuses a name that exists, so clear it first;
+# the same two lines then work again after you rotate the token.
+claude mcp remove naulon -s local 2>/dev/null; claude mcp remove naulon -s user 2>/dev/null
+claude mcp add --scope user --transport http naulon \
   https://<your-naulon-host>/_naulon/mcp \
   --header "Authorization: Bearer <AGENT_TOKEN>"
 ```
@@ -195,7 +197,7 @@ spend within the envelope but can't widen it.
 
 | Tool | Cost | Does |
 |------|------|------|
-| `naulon_status` | free | Run this first. Reports the buyer wallet, where discovery is configured to look, and plain-language guidance for what to do next. |
+| `naulon_status` | free | Run this first. Reports the buyer wallet, where discovery is configured to look, and plain-language guidance for what to do next. On a hosted endpoint it also reports the spendable balance and the budget left, and `ready` is false when either is empty. |
 | `naulon_discover` | free | Candidate teasers for a topic (slug, title, summary). Start here. |
 | `naulon_appraise` | free | Relevance + rationale for teasers already held. |
 | `naulon_quote` | free | The x402 `402` probe: real price and terms, **no spend**. |

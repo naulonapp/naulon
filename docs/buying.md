@@ -21,7 +21,7 @@ npx -y @naulon/wayfarer-mcp        # the stdio MCP server
 
 | Tool | Cost | What it does |
 |---|---|---|
-| `naulon_status` | free | Run this first: reports the buyer wallet, where discovery is configured to look, and plain-language guidance for what to do next. |
+| `naulon_status` | free | Run this first: reports the buyer wallet, where discovery is configured to look, and plain-language guidance for what to do next. A hosted endpoint adds the spendable balance and the budget left. |
 | `naulon_discover` | free | Candidate teasers for a topic: slug, title, summary. Start here. |
 | `naulon_appraise` | free | Relevance and rationale for teasers already held. |
 | `naulon_quote` | free | The x402 402 probe: real price and terms, no spend. |

@@ -73,11 +73,12 @@ import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner,
 import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, networkByCaip2, settlementRefKind, usageSentence, usdc } from "@naulon/shared";
 import type { SettlementNetwork } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
+import { createRequire } from "node:module";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
-/** Keep in step with this package's package.json `version` — it is what the MCP
- *  handshake reports as `serverInfo.version`. */
-export const SERVER_VERSION = "0.2.1";
+/** What the MCP handshake reports as `serverInfo.version`. Read from this package's own
+ *  package.json (one level up from both `src/` and `dist/`), so a release can never leave it behind. */
+export const SERVER_VERSION: string = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 
 /** Every MCP toll is a citation license — the agent gathers citable sources. */
 const KIND = "citation" as const;
@@ -348,6 +349,28 @@ export interface BuildServerOptions {
    * this owns payee identity. Absent (every stdio/self-host caller) ⇒ no payee check, unchanged.
    */
   authorizePayee?: (input: { url: string; payTo: string }) => boolean | Promise<boolean>;
+  /**
+   * What the host knows about the money behind the hosted signer, for `naulon_status`. A hosted
+   * mount spends a managed wallet and meters spend in places this server never sees (a host-side
+   * tool can pay outside this server's own counter), so without this seam status could only say
+   * "fund this wallet" to an agent that may be fully funded, report a budget that ignores what was
+   * spent, and name the process's chain rather than the wallet's.
+   *
+   * - `balanceUsdc`: spendable now. `null` = the read failed, so status says unknown rather than 0.
+   * - `remainingUsdc`: what this caller may still spend, when the host meters it. Absent = this
+   *   server's own session counter.
+   *
+   * Absent (every stdio/self-host caller) ⇒ status is unchanged.
+   */
+  readHostedFunds?: () => Promise<{ balanceUsdc: number | null; remainingUsdc?: number }>;
+  /**
+   * The chain this session's wallet holds its money on. Every answer about a result where nothing
+   * settled (status, a refusal, a free re-read) describes this chain; a paid result still describes
+   * the publisher's chain, off its own 402. Without it those answers name the process default, so
+   * an agent spending a testnet balance on a mainnet-default host is told it is spending real money.
+   * Absent ⇒ the process's `SETTLEMENT_NETWORK`.
+   */
+  sessionNetwork?: SettlementNetwork;
   /**
    * Restrict which tools and prompts this server registers. An **allowlist**, deliberately: a
    * denylist silently exposes every tool added after it was written, and the tools most worth
@@ -625,7 +648,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
    *  told testnet — and `instructions` tells the model to report testnet as play-money with no
    *  fiat value, which inverts this file's only honesty control. Every caller that HAS a quote
    *  passes that quote's network. */
-  const networkInfo = (net: SettlementNetwork = activeNetwork()): NetworkInfo => {
+  const sessionNetwork = (): SettlementNetwork => opts.sessionNetwork ?? activeNetwork();
+  const networkInfo = (net: SettlementNetwork = sessionNetwork()): NetworkInfo => {
     return {
       network: net.network,
       chainId: net.chainId,
@@ -650,7 +674,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
    *  requirements. Falls back to the session default only when the CAIP-2 id names a chain this
    *  build does not know, which is a fleet-config problem rather than something to guess about. */
   const quotedNetwork = (caip2: string | undefined): SettlementNetwork =>
-    (caip2 ? networkByCaip2(caip2) : undefined) ?? activeNetwork();
+    (caip2 ? networkByCaip2(caip2) : undefined) ?? sessionNetwork();
   // BUY-4.4: hand each buyer decision to the injected audit sink (the cloud writes it to
   // its org audit plane). Best-effort — a misbehaving sink must never break a paid read,
   // mirroring the cloud's own fire-and-forget AuditTrail. No-op when no sink is injected
@@ -815,7 +839,21 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               "default — there is NO universal fleet pay-gate; each discovered publisher tolls at its own origin.",
           ),
         discovery: z.string().describe("Where naulon_discover looks for candidates (RSS_URL > PUBLISHER_URL/rss.xml > CATALOG_URL)."),
-        ready: z.boolean().describe("True once a wallet address is resolvable — does NOT mean it is funded."),
+        ready: z
+          .boolean()
+          .describe(
+            "True once a wallet address is resolvable. When `balanceUsdc` is present it also requires a " +
+              "balance above zero; without it, ready does NOT mean funded.",
+          ),
+        balanceUsdc: z
+          .number()
+          .nullable()
+          .optional()
+          .describe(
+            "What the paying wallet can spend right now, in USDC, when the host can read it. null = the read " +
+              "failed (unknown, not zero). Absent = this server cannot see the balance.",
+          ),
+        remainingUsdc: z.number().describe("Budget left for this session: the most it will spend from here."),
         nextStep: z.string().describe("Plain-language guidance for what to do next, given the current config."),
         settlement: z
           .object(networkOutputSchema)
@@ -849,7 +887,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       const fleetDefault = isFleetDefaultDiscovery(cfg);
       // The funding phrase is network-aware: a testnet gate is faucet-funded play-money, a
       // mainnet gate is real USDC — never tell an operator to "fund with testnet USDC" on mainnet.
-      const net = activeNetwork();
+      const net = sessionNetwork();
       const fundHint = net.testnet
         ? `with testnet USDC (play-money, no fiat value) — e.g. faucet.circle.com/Arc-Testnet — or connect a token`
         : `with real USDC on ${net.chainName} (mainnet — real money) — or connect a funded token`;
@@ -857,7 +895,30 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // WHO PAYS: an address to fund, or — when there is none — how to get one, with no address
       // printed at all. A model relays whatever hex string this field contains, so printing the
       // dev key here IS the vulnerability; saying nothing is the only safe answer.
-      const fundClause = wallet
+      // A hosted balance is funded by its owner through the host, never by sending USDC to the signer:
+      // money sent straight to that address is credited to nothing a toll can spend.
+      const funds = opts.readHostedFunds
+        ? await opts.readHostedFunds().catch(() => ({ balanceUsdc: null }) as { balanceUsdc: null; remainingUsdc?: number })
+        : undefined;
+      const balanceUsdc = funds?.balanceUsdc;
+      const remaining = funds?.remainingUsdc ?? remainingUsdc();
+      const hostedFundClause =
+        balanceUsdc === undefined
+          ? undefined
+          : balanceUsdc === null
+            ? `The balance could not be read just now, so whether a paid read will go through is unknown. ` +
+              `Free tools (discover, survey, quote) work meanwhile.`
+            : balanceUsdc > 0 && remaining <= 0
+              ? `This agent's budget is used up, so every paid read will be refused although the balance ` +
+                `holds ${balanceUsdc} USDC. Its owner raises the cap or mints a new token. Free tools work meanwhile.`
+            : balanceUsdc > 0
+              ? `This agent can spend: ${balanceUsdc} USDC available, ${remaining} USDC left in its budget.`
+              : `The balance behind this agent is empty, so every paid read will be refused. Its owner adds funds at ${buyerWalletUrl}` +
+                (net.testnet ? `, where a Test balance gets free test USDC with one press. ` : `. `) +
+                `Do not send USDC to the wallet address yourself: it is not credited to the balance. Free tools work meanwhile.`;
+      const fundClause = hostedFundClause !== undefined && wallet
+        ? hostedFundClause
+        : wallet
         ? `Fund this wallet (${wallet}) ${fundHint}.`
         : `No buyer wallet is resolvable here yet — nothing can be paid, and this server has no address ` +
           `to give you, so do not fund one on its word. If you reached this through a hosted naulon mount, ` +
@@ -877,7 +938,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ...(wallet ? { wallet } : {}),
         ...(cfg.TOLLGATE_URL ? { tollgate: cfg.TOLLGATE_URL } : {}),
         discovery: resolvedDiscoverySourceUrl(),
-        ready: Boolean(wallet),
+        ready: Boolean(wallet) && (balanceUsdc === undefined || (balanceUsdc !== null && balanceUsdc > 0 && remaining > 0)),
+        ...(balanceUsdc !== undefined ? { balanceUsdc } : {}),
+        remainingUsdc: remaining,
         nextStep,
         settlement: networkInfo(),
       });
