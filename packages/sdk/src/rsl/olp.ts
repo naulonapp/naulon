@@ -311,7 +311,9 @@ async function jsonObject(res: { json(): Promise<unknown> }): Promise<Record<str
 export async function introspectLicence(input: IntrospectInput): Promise<IntrospectResult> {
   const endpoint = introspectEndpoint(input.server);
   if (endpoint === null) {
-    return { ok: false, status: 0, description: "server is not an https URL (plain http is accepted only on a loopback host)" };
+    // No request was made. `status: 0` means the network, which a retry can fix; a configured URL a
+    // licence may never be sent to is not that, so it reads as the client error it is.
+    return { ok: false, status: 400, description: "server is not an https URL (plain http is accepted only on a loopback host)" };
   }
   const form = new URLSearchParams({ token: input.token, resource: input.resource, slug: input.slug, kind: input.kind });
   if (input.userAgent) form.set("user_agent", input.userAgent);

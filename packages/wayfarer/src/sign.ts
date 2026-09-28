@@ -61,8 +61,9 @@ export async function agentFetch(url: string, init?: RequestInit): Promise<Respo
   return fetchHop(url, init, 0);
 }
 
-/** Same-origin redirects a licensed read follows, re-signing each hop. */
-const MAX_LICENCE_HOPS = 5;
+/** Redirects a licensed read follows, re-signing each hop: fetch's own limit. */
+const MAX_LICENCE_HOPS = 20;
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 let warnedUnsigned = false;
 
 /** A refusal that says the token itself is unusable, from the hosted gate or a self-hosted site. */
@@ -94,18 +95,19 @@ async function fetchHop(url: string, init: RequestInit | undefined, hop: number)
   if (!presenting) return fetch(url, { ...init, headers });
 
   // The signature covers this URL's path, so a redirect is followed here and signed again: fetch
-  // would carry this signature onto the next path, where it witnesses nothing.
+  // would carry this signature onto the next path, where it witnesses nothing. The caller's own
+  // redirect mode and fetch's method rules are kept, so this reads like the fetch it replaces.
   const res = await fetch(url, { ...init, headers, redirect: "manual" });
   if (licenseToken && refusedAsInvalid(res)) forgetLicenseToken(url, licenseToken);
+  const mode = init?.redirect ?? "follow";
   const location = res.headers.get("location");
-  if (res.status >= 300 && res.status < 400 && location && hop < MAX_LICENCE_HOPS && init?.redirect !== "manual") {
-    const next = new URL(location, url);
-    if (next.origin === new URL(url).origin) {
-      const method = res.status === 303 ? "GET" : (init?.method ?? "GET");
-      return fetchHop(next.toString(), { ...init, method, ...(method === "GET" ? { body: undefined } : {}) }, hop + 1);
-    }
-    // Another origin: its own token, if any, and its own signature. Never this one.
-    return fetchHop(next.toString(), init, hop + 1);
-  }
-  return res;
+  if (!REDIRECTS.has(res.status) || !location || mode === "manual") return res;
+  await res.body?.cancel().catch(() => {});
+  if (mode === "error") throw new TypeError(`fetch failed: redirect from ${url} was not allowed`);
+  if (hop >= MAX_LICENCE_HOPS) throw new TypeError(`fetch failed: more than ${MAX_LICENCE_HOPS} redirects from ${url}`);
+  const method = (init?.method ?? "GET").toUpperCase();
+  const toGet = (res.status === 303 && method !== "HEAD") || ((res.status === 301 || res.status === 302) && method === "POST");
+  const next = new URL(location, url).toString();
+  // Another origin gets its own token, if any, and its own signature: `fetchHop` looks both up again.
+  return fetchHop(next, toGet ? { ...init, method: "GET", body: undefined } : init, hop + 1);
 }

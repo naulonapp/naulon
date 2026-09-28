@@ -548,7 +548,12 @@ export function naulonMiddleware(
           if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
           return { response: null, setHeaders };
         }
-        const why = checked.ok ? (checked.error ?? (checked.active ? "not_permitted" : "invalid_token")) : "licence_server_unavailable";
+        // Only a check nobody could complete (no answer, or a 5xx) is worth a retry. A licence server
+        // that answered 4xx or nonsense will answer it again, so that read is simply for sale.
+        const transient = !checked.ok && (checked.status === 0 || checked.status >= 500);
+        const why = checked.ok
+          ? (checked.error ?? (checked.active ? "not_permitted" : "invalid_token"))
+          : transient ? "licence_server_unavailable" : "licence_check_failed";
         const description = checked.ok ? checked.reason : checked.description;
         // A charge already running for this URL (`in_flight`), or one whose outcome nobody could
         // confirm (`server_error`): retry, and never an x402 offer, which would invite a second

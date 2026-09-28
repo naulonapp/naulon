@@ -176,7 +176,7 @@ test("a signed licence read hands the authority the verified signature bytes, it
   const headers = { ...signedHeaders("chargedsigner.test", "/essays/wba-lic"), authorization: "License tok-s" };
   await licApp.request("/essays/wba-lic", { headers });
   assert.equal(seen.length, 1);
-  const sigB64 = headers.signature.slice("sig1=:".length, -1);
+  const sigB64 = String((headers as Record<string, string>)["signature"]).slice("sig1=:".length, -1);
   assert.equal(seen[0]!.signer?.keyid, SIGNER_KEYID);
   assert.equal(seen[0]!.signer?.signature, sigB64, "the bytes that verified, not the header's text");
 });

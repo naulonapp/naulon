@@ -642,7 +642,7 @@ function licenceRig(reply: { json?: unknown; status?: number; throws?: boolean }
   const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
     calls.push({ url: String(url), body: String(init?.body ?? ""), headers: (init?.headers ?? {}) as Record<string, string> });
     if (reply.throws) throw new Error("ECONNREFUSED");
-    return new Response(JSON.stringify(reply.json ?? {}), { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
+    return new Response(("json" in reply ? JSON.stringify(reply.json) : "{}"), { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
   }) as unknown as typeof fetch;
   const mw = naulonMiddleware({
     ...opts,
@@ -706,6 +706,16 @@ test("a licence server that cannot be reached is a retryable 503 that still sell
   assert.ok(out.response?.headers.get("PAYMENT-REQUIRED"), "the read is still for sale over x402");
   assert.match(out.response?.headers.get("X-Naulon-Verdict") ?? "", /licence refused \(licence_server_unavailable\)/);
   assert.equal(((await out.response!.json()) as Record<string, unknown>).licence_error, "licence_server_unavailable");
+});
+
+test("a licence server that answers 4xx or nonsense is not a retry: the read is simply for sale", async () => {
+  for (const reply of [{ status: 401, json: { error: "invalid_client" } }, { status: 200, json: null }]) {
+    const { mw } = licenceRig(reply);
+    const out = await mw(licensedGet());
+    assert.equal(out.response?.status, 402);
+    assert.equal(out.response?.headers.get("retry-after"), null);
+    assert.equal(((await out.response!.json()) as Record<string, unknown>).licence_error, "licence_check_failed");
+  }
 });
 
 test("a charge already running, or one nobody could confirm, is a 503 with no x402 offer", async () => {

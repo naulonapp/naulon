@@ -77,6 +77,7 @@ A few rules are enforced across variables rather than on one of them:
 | `BOT_AUTH_SIGNING_KEY` | unset | Base64url 32-byte Ed25519 seed (`scripts/wba-keygen.mjs`). When set, the gate serves and self-signs its Web Bot Auth key directory at `/.well-known/http-message-signatures-directory`, and the buying agent signs its outbound requests. Unset, both surfaces are dark and the traffic is byte-identical. |
 | `BOT_AUTH_SIGNATURE_AGENT` | unset | The directory host the agent advertises in `Signature-Agent`. It has to actually serve your directory. |
 | `NAULON_AGENT_TOKEN_ID` | unset | The wayfarer's naulon agent token id, shown at naulon.app/buyer/agents. With `NAULON_AGENT_TOKEN`, it is how the wayfarer gets an RSL licence from naulon's own licence server. Sent to that server and nowhere else. |
+| `NAULON_LICENCE_ORIGIN` | `https://gate.naulon.app` | Where naulon's licence server runs. The agent token goes to this origin and nowhere else, and only for the site being read. Change it only to point the wayfarer at a naulon plane under test. |
 | `NAULON_AGENT_TOKEN` | unset | That agent token. A secret. Without the pair, a page whose licence server is naulon's is bought over x402 instead, which licenses it through the same gate. |
 | `BOT_AUTH_ALLOW_HTTP` | `false` | Allow `http://` and loopback key directories so a local signer fixture can serve one. Test walks only, because the directory URL is attacker-supplied, so never enable this in production. |
 

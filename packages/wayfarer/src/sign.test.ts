@@ -165,6 +165,27 @@ test("a licensed read that redirects on its own origin is signed again for the n
   }
 });
 
+test("redirects keep fetch's rules: 302 turns a POST into a GET, and a caller's redirect: error is honoured", async () => {
+  configure(true);
+  clearLicenseTokens();
+  rememberLicenseToken({ origin: "https://pub.example", resource: "/essays/*", token: "tok-m", expiresAt: null });
+  try {
+    const posted = await withScript(
+      [new Response(null, { status: 302, headers: { location: "/essays/y" } }), new Response("ok")],
+      () => agentFetch("https://pub.example/essays/x", { method: "POST", body: "b" }),
+    );
+    assert.equal(posted.sent.length, 2);
+    await assert.rejects(
+      withScript([new Response(null, { status: 301, headers: { location: "/essays/z" } })], () =>
+        agentFetch("https://pub.example/essays/x", { redirect: "error" }),
+      ),
+      /not allowed/,
+    );
+  } finally {
+    clearLicenseTokens();
+  }
+});
+
 test("a token the server calls invalid is dropped, so it is not presented again", async () => {
   configure(true);
   clearLicenseTokens();

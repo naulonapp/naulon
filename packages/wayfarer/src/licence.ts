@@ -105,28 +105,20 @@ export interface LicenceResolver {
   originsSeen(): number;
 }
 
-/** Where naulon's licence server may be: its public gate, and the gate this agent is pointed at. */
-function naulonOrigins(): Set<string> {
-  const out = new Set(["https://gate.naulon.app"]);
-  const own = getConfig().TOLLGATE_URL;
-  if (own) {
-    try {
-      out.add(new URL(own).origin);
-    } catch {
-      // A malformed TOLLGATE_URL adds nothing; the agent reports it where it is used.
-    }
-  }
-  return out;
-}
-
 /**
- * Is `server` naulon's own licence server? Origin AND path, because credentials go to it: a
- * document can name any URL, and one that merely looks like ours must not receive an agent token.
+ * Is `server` naulon's own licence server FOR THE SITE BEING READ? Credentials go to it, so all of it
+ * is checked: naulon's licence origin (`NAULON_LICENCE_ORIGIN`, never the gate this agent pays, which
+ * may be anyone's), the licence-server path, and the site segment. A document can name any URL, and
+ * one naming another site's server would otherwise get a licence the agent then presents here.
  */
-export function isNaulonLicenceServer(server: string): boolean {
+export function isNaulonLicenceServer(server: string, pageUrl: string): boolean {
   try {
     const u = new URL(server);
-    return naulonOrigins().has(u.origin) && u.pathname.startsWith("/_naulon/olp/");
+    const page = new URL(pageUrl);
+    return (
+      u.origin === new URL(getConfig().NAULON_LICENCE_ORIGIN).origin &&
+      u.pathname.replace(/\/+$/, "") === `/_naulon/olp/${page.host.toLowerCase()}`
+    );
   } catch {
     return false;
   }
@@ -185,7 +177,7 @@ export function makeLicenceResolver(opts: LicenceResolverOptions = {}): LicenceR
     // The obligation is real: the spec requires a licence from that server before access, whatever
     // the inline price says. Discharge it if we can, and report precisely why not if we cannot.
     if (licenseTokenFor(url)) return { ...base, tokenHeld: true };
-    const ours = isNaulonLicenceServer(terms.server);
+    const ours = isNaulonLicenceServer(terms.server, url);
     const unheld = (tokenFailure: string): LicenceLookup => ({ ...base, tokenHeld: false, tokenFailure, ...(ours ? { x402Discharges: true } : {}) });
     if (terms.read?.scope === "") {
       // RSL: a `server` requires a non-empty `url`. There is no resource to ask about.

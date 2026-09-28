@@ -307,9 +307,39 @@ test("a server that only looks like naulon's never receives the agent token and 
   }
 });
 
-test("isNaulonLicenceServer needs naulon's origin AND the licence-server path", () => {
-  assert.equal(isNaulonLicenceServer("https://gate.naulon.app/_naulon/olp/x.example"), true);
-  assert.equal(isNaulonLicenceServer("https://gate.naulon.app/other"), false);
-  assert.equal(isNaulonLicenceServer("http://gate.naulon.app/_naulon/olp/x.example"), false);
-  assert.equal(isNaulonLicenceServer("not a url"), false);
+test("isNaulonLicenceServer needs naulon's origin, the licence-server path AND the page's own site", () => {
+  const page = "https://x.example/essays/a";
+  assert.equal(isNaulonLicenceServer("https://gate.naulon.app/_naulon/olp/x.example", page), true);
+  assert.equal(isNaulonLicenceServer("https://gate.naulon.app/_naulon/olp/other.example", page), false, "another site's server");
+  assert.equal(isNaulonLicenceServer("https://gate.naulon.app/other", page), false);
+  assert.equal(isNaulonLicenceServer("http://gate.naulon.app/_naulon/olp/x.example", page), false);
+  assert.equal(isNaulonLicenceServer("not a url", page), false);
+});
+
+test("a document naming ANOTHER site's naulon licence server gets no agent token and no x402 pass", async () => {
+  clearLicenseTokens();
+  agentToken(true);
+  try {
+    const net = namedServerSite("https://gate.naulon.app/_naulon/olp/other.example");
+    const got = await makeLicenceResolver({ fetcherFor: net.fetcherFor }).forUrl("https://pub.example/a");
+    assert.equal(got.x402Discharges, undefined);
+    assert.ok(!net.asked.some((a) => a.line.includes("/token")));
+  } finally {
+    agentToken(false);
+  }
+});
+
+test("the gate this agent pays is not trusted with the agent token", async () => {
+  clearLicenseTokens();
+  agentToken(true);
+  process.env.TOLLGATE_URL = "https://someones-gate.example";
+  resetConfig();
+  try {
+    const net = namedServerSite("https://someones-gate.example/_naulon/olp/pub.example");
+    await makeLicenceResolver({ fetcherFor: net.fetcherFor }).forUrl("https://pub.example/a");
+    assert.ok(!net.asked.some((a) => a.line.includes("/token")));
+  } finally {
+    delete process.env.TOLLGATE_URL;
+    agentToken(false);
+  }
 });
