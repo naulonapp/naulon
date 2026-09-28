@@ -49,6 +49,7 @@ import {
   type Usdc,
   type EventMandate,
   type LicenceAuthority,
+  type LicenceVerdict,
 } from "@naulon/shared";
 import {
   decide,
@@ -962,28 +963,44 @@ export function createApp(
       return stampGateCacheHeaders(res, { noStore: true });
     };
 
-    // An RSL licence token the authority is asked to charge. Returns null when there is no
-    // authority, so the caller answers the ordinary 402.
-    const serveLicence = async (p: Extract<Decision, { kind: "licence-presented" }>): Promise<Response> => {
-      const authority = licenceAuthority!;
-      const verdict = await authority.authorize({
-        token: p.token,
-        publisherId: publisher.id,
-        host,
-        resource: canonicalResource(host, new URL(c.req.url).pathname),
-        slug: p.obs.slug,
-        tollKind: p.tollKind,
-        header: p.header,
-        legs: p.legs,
-        ...(p.signer ? { signer: p.signer } : {}),
-      });
+    // An RSL licence token the authority is asked to charge. The caller answers the ordinary 402
+    // itself when no authority is configured.
+    const serveLicence = async (
+      p: Extract<Decision, { kind: "licence-presented" }>,
+      authority: LicenceAuthority,
+    ): Promise<Response> => {
+      let verdict: LicenceVerdict;
+      try {
+        verdict = await authority.authorize({
+          token: p.token,
+          publisherId: publisher.id,
+          host,
+          resource: canonicalResource(host, new URL(c.req.url).pathname),
+          slug: p.obs.slug,
+          tollKind: p.tollKind,
+          header: p.header,
+          legs: p.legs,
+          ...(p.signer ? { signer: p.signer } : {}),
+        });
+      } catch {
+        // An authority that cannot answer charges nothing. The crawler is told to come back, and
+        // can still buy this read over x402 meanwhile.
+        verdict = {
+          ok: false,
+          status: 503,
+          error: "licence_server_unavailable",
+          description: "the licence server could not check this licence; retry, or buy the read over x402",
+        };
+      }
       if (!verdict.ok) {
         const headers: Record<string, string> = {
           "X-Naulon-Verdict": headerSafe(`licence refused (${verdict.error})`),
         };
         if (verdict.status === 401) headers["WWW-Authenticate"] = `License error="${verdict.error}"`;
-        if (verdict.status === 402) {
-          // Still buyable over x402: the refusal carries the same advertisement a 402 does.
+        // Still buyable over x402 when the licence cannot be used: the refusal carries the same
+        // advertisement a 402 does. Never on `in_flight`, where a charge for this URL is running and
+        // an x402 offer would invite a second payment for the same read.
+        if (verdict.status === 402 || verdict.error === "licence_server_unavailable") {
           headers[PAYMENT_REQUIRED_HEADER] = p.header;
           headers[CRAWLER_PRICE_HEADER] = formatCrawlerPrice(totalChargedMicro(p.legs));
           headers.Link = PAYMENT_LINK_HEADER;
@@ -1061,7 +1078,7 @@ export function createApp(
       case "licence-presented":
         // GET only. A HEAD carries no body to sell, and a standing licence must not be charged for a
         // probe the buyer never saw; anything else is not a read at all.
-        if (licenceAuthority && c.req.method === "GET") return serveLicence(d);
+        if (licenceAuthority && c.req.method === "GET") return serveLicence(d, licenceAuthority);
       // falls through
       // Machine, no payment: 402 with the requirement in the PAYMENT-REQUIRED
       // header. Link points an agent at the toll manifest (discoverability).

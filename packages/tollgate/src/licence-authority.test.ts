@@ -165,6 +165,8 @@ test("authority 503: retry-after tells the crawler when to come back", async () 
   const res = await app.request("/essays/a", { headers: AGENT });
   assert.equal(res.status, 503);
   assert.equal(res.headers.get("retry-after"), "2");
+  // A charge for this URL is already running: advertising x402 here would invite a second payment.
+  assert.equal(res.headers.get(PAYMENT_REQUIRED_HEADER), null);
 });
 
 test("authority says held: served as a re-read, no settle, no report", async () => {
@@ -251,4 +253,18 @@ test("a HEAD with a licence token is never charged: the authority is not asked, 
   assert.equal(res.status, 402);
   assert.ok(res.headers.get(PAYMENT_REQUIRED_HEADER));
   assert.equal(f.calls.length, 0);
+});
+
+test("an authority that throws answers 503 with retry-after, still buyable over x402, nothing proxied", async () => {
+  const f = fakeAuthority(() => {
+    throw new Error("store down");
+  });
+  const app = createApp(resolver, { licenceAuthority: f.authority });
+  const res = await app.request("/essays/i", { headers: AGENT });
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get("retry-after"), "2");
+  assert.ok(res.headers.get(PAYMENT_REQUIRED_HEADER));
+  assert.equal(((await res.json()) as { error: string }).error, "licence_server_unavailable");
+  assert.equal(originHits, 0);
+  assert.equal(f.reports.length, 0);
 });

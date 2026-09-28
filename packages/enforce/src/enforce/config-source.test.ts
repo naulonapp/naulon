@@ -251,3 +251,15 @@ test("serveRslDocument shows a browser the terms as XML and varies on Accept", a
   assert.equal(res.headers.get("content-type"), "application/xml; charset=utf-8");
   assert.equal(res.headers.get("vary"), "Accept");
 });
+
+test("the licence server travels to the runtime when it is a URL a client may send a token to", async () => {
+  const load = async (licenceServer: unknown) => {
+    const { fetchImpl } = planeReturning({ ...DOC, enforcement: { ...DOC.enforcement, licenceServer } });
+    return (await httpPublisherConfigSource("http://cloud/_naulon/enforce-config", "nln_live_k", { fetchImpl }).load({ resource: RESOURCE }))
+      ?.enforcement.licenceServer;
+  };
+  assert.equal(await load("https://ls.example/olp"), "https://ls.example/olp");
+  assert.equal(await load("http://127.0.0.1:11100/_naulon/olp"), "http://127.0.0.1:11100/_naulon/olp", "a local licence server");
+  assert.equal(await load("http://ls.example/olp"), undefined, "never a licence token over plain http to a real host");
+  assert.equal(await load(42), undefined);
+});

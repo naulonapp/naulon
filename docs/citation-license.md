@@ -119,6 +119,12 @@ signed at request time. `witness` says what saw the read: `gate` (the gate serve
 or `crawler-signed` (the crawler signed that request with the Web Bot Auth key bound to
 the token, covering its `@authority` and `@path`).
 
+On a self-hosted origin the gate never sees the bytes, so the only witness is the crawler's
+signature. When the publisher's configuration names a licence server, the SDK middleware
+forwards a presented licence and the request's signature to that server's `/introspect`,
+serves the page only when it answers `permitted`, and otherwise answers the ordinary 402.
+Its records carry `witness: crawler-signed`.
+
 Retired signing keys stay in the key set (`LICENSE_RETIRED_PUBLIC_KEYS`), so rotating a
 key never orphans the records it signed. They verify records only: an access licence is
 checked against the live key alone.

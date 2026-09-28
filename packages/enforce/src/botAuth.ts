@@ -467,6 +467,12 @@ export interface VerifiedAgent {
   keyid: string;
   /** The covered component names, in signature order (e.g. `["@authority", "@path"]`). */
   covers: string[];
+  /**
+   * The signature bytes that verified, base64. Ed25519 signatures are deterministic and
+   * non-malleable, so this identifies the signed request whatever label or neighbouring members
+   * the header carried: anything that must count a signature once keys on this, never on the header.
+   */
+  signature: string;
   created?: number;
   expires?: number;
 }
@@ -690,6 +696,13 @@ export async function verifyBotAuth(facts: RequestFacts, opts: BotAuthOptions = 
   if (!verifyEd25519(base, sig, x)) return { status: "invalid", reason: "signature verification failed" };
   return {
     status: "verified",
-    agent: { agent: dir.agentHost, keyid, covers: entry.components.map((c) => c.name), created, expires },
+    agent: {
+      agent: dir.agentHost,
+      keyid,
+      covers: entry.components.map((c) => c.name),
+      created,
+      expires,
+      signature: Buffer.from(sig).toString("base64"),
+    },
   };
 }
