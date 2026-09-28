@@ -86,27 +86,50 @@ const CODES = new Set<string>([
   "server_error",
 ]);
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 /**
- * The `/token` URL for a server.
+ * Whether a licence server URL may be sent a credential or a licence token.
  *
- * `server` may already carry a path (`https://example-server.org/api`), so the endpoint is JOINED
- * rather than substituted — `new URL("/token", base)` would silently discard `/api` and POST our
- * credentials at the wrong path.
+ * A licence server carries client secrets and licence tokens, so plain http is refused outright
+ * rather than downgraded with a warning. The one exception is a loopback host, which never leaves
+ * the machine and is the only way to run a licence server locally.
  */
-export function tokenEndpoint(server: string): string | null {
+export function licenceServerUrlOk(server: string): boolean {
   let u: URL;
   try {
     u = new URL(server);
   } catch {
-    return null;
+    return false;
   }
-  // A licence server is an authorization endpoint carrying client secrets. http:// is refused
-  // outright rather than downgraded-with-a-warning.
-  if (u.protocol !== "https:") return null;
-  u.pathname = `${u.pathname.replace(/\/+$/, "")}/token`;
+  if (u.protocol === "https:") return true;
+  return u.protocol === "http:" && LOOPBACK_HOSTS.has(u.hostname);
+}
+
+/**
+ * `server` joined with an OLP endpoint name.
+ *
+ * `server` may already carry a path (`https://example-server.org/api`), so the endpoint is JOINED
+ * rather than substituted: `new URL("/token", base)` would silently discard `/api` and POST our
+ * credentials at the wrong path.
+ */
+function olpEndpoint(server: string, name: "token" | "introspect"): string | null {
+  if (!licenceServerUrlOk(server)) return null;
+  const u = new URL(server);
+  u.pathname = `${u.pathname.replace(/\/+$/, "")}/${name}`;
   u.search = "";
   u.hash = "";
   return u.toString();
+}
+
+/** The `/token` URL for a server, or null when the server URL may not carry a credential. */
+export function tokenEndpoint(server: string): string | null {
+  return olpEndpoint(server, "token");
+}
+
+/** The `/introspect` URL for a server, or null when the server URL may not carry a credential. */
+export function introspectEndpoint(server: string): string | null {
+  return olpEndpoint(server, "introspect");
 }
 
 const basic = (c: OlpCredentials): string =>
@@ -119,6 +142,14 @@ const basic = (c: OlpCredentials): string =>
  * it sat under — both are what the spec asks for, and both must come from the document we actually
  * read rather than being reconstructed, or the server is being asked about a licence nobody offered.
  */
+const RESERVED_HEADERS = new Set(["authorization", "content-type", "accept"]);
+
+function withoutReserved(headers: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers ?? {})) if (!RESERVED_HEADERS.has(k.toLowerCase())) out[k] = v;
+  return out;
+}
+
 export async function acquireLicenseToken(input: {
   server: string;
   licenseXml: string;
@@ -128,10 +159,15 @@ export async function acquireLicenseToken(input: {
   fetcherFor?: (origin: string) => Fetcher;
   /** Clock seam, so an expiry test does not have to sleep. */
   now?: () => number;
+  /**
+   * Extra request headers, e.g. a Web Bot Auth signature so the server can bind the token to the
+   * signing key. They can never replace the credentials or the content type.
+   */
+  extraHeaders?: Record<string, string>;
 }): Promise<OlpResult> {
   const endpoint = tokenEndpoint(input.server);
   if (endpoint === null) {
-    return { ok: false, failure: { code: "unreachable", status: 0, description: "server is not an https URL" } };
+    return { ok: false, failure: { code: "unreachable", status: 0, description: "server is not an https URL (plain http is accepted only on a loopback host)" } };
   }
   const fetcherFor = input.fetcherFor ?? ((origin: string) => makeGuardedFetcher({ origin, timeoutMs: 10_000 }));
   const body = new URLSearchParams({
@@ -146,6 +182,7 @@ export async function acquireLicenseToken(input: {
       method: "POST",
       body,
       headers: {
+        ...withoutReserved(input.extraHeaders),
         authorization: basic(input.credentials),
         "content-type": "application/x-www-form-urlencoded",
         accept: "application/json",
@@ -208,4 +245,101 @@ export async function acquireLicenseToken(input: {
  */
 export function olpRetryable(failure: OlpFailure): boolean {
   return failure.code === "server_error" || failure.code === "unreachable";
+}
+
+/* ── /introspect: the resource server's question ─────────────────────────────── */
+
+export interface IntrospectInput {
+  /** The licence server base (`<content server>`); `/introspect` is joined to it. */
+  server: string;
+  /** The licence token the crawler presented. */
+  token: string;
+  /** The absolute URL being read. */
+  resource: string;
+  /** The article the read is priced as, from the runtime's own `decide()`. */
+  slug: string;
+  kind: "read" | "citation";
+  /** The publisher's own API key: the resource server authenticates, not the crawler. */
+  apiKey: string;
+  /** The crawler's Web Bot Auth signature on this request, forwarded verbatim so the server can
+   *  check it against the key the licence is bound to. The publisher cannot forge it. */
+  signature?: { input: string; signature: string; agent?: string };
+  /** The crawler's User-Agent, for the publisher's audit row. Telemetry, never authorization. */
+  userAgent?: string;
+  fetcher: Fetcher;
+}
+
+export type IntrospectResult =
+  | {
+      ok: true;
+      active: boolean;
+      /** True only when the server answered both `active` and `permitted`. */
+      permitted: boolean;
+      error?: string;
+      reason?: string;
+      /** The record the read was charged under, when it was. */
+      licenseJws?: string;
+      /** What the buyer was charged, integer micro-USDC as a string. */
+      chargedMicro?: string;
+    }
+  | { ok: false; status: number; description: string };
+
+/**
+ * Ask a licence server whether a presented licence permits reading `resource`.
+ *
+ * Every failure (unreachable, non-2xx, not JSON, a server URL a token may not be sent to) is
+ * `ok: false`, which a caller must treat as "not permitted": a licence nobody could check is not a
+ * licence.
+ */
+export async function introspectLicence(input: IntrospectInput): Promise<IntrospectResult> {
+  const endpoint = introspectEndpoint(input.server);
+  if (endpoint === null) {
+    return { ok: false, status: 0, description: "server is not an https URL (plain http is accepted only on a loopback host)" };
+  }
+  const form = new URLSearchParams({ token: input.token, resource: input.resource, slug: input.slug, kind: input.kind });
+  if (input.userAgent) form.set("user_agent", input.userAgent);
+  if (input.signature) {
+    form.set("signature_input", input.signature.input);
+    form.set("signature", input.signature.signature);
+    if (input.signature.agent !== undefined) form.set("signature_agent", input.signature.agent);
+  }
+  let res;
+  try {
+    res = await input.fetcher(endpoint, {
+      method: "POST",
+      body: form.toString(),
+      headers: {
+        authorization: `Bearer ${input.apiKey}`,
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+      },
+    });
+  } catch (err) {
+    return { ok: false, status: 0, description: (err as Error).message };
+  }
+  let payload: Record<string, unknown>;
+  try {
+    payload = (await res.json()) as Record<string, unknown>;
+  } catch {
+    return { ok: false, status: res.status, description: "response was not JSON" };
+  }
+  if (!res.ok) {
+    const error = typeof payload["error"] === "string" ? payload["error"] : `HTTP ${res.status}`;
+    return { ok: false, status: res.status, description: error };
+  }
+  const str = (k: string): string | undefined => (typeof payload[k] === "string" ? (payload[k] as string) : undefined);
+  const active = payload["active"] === true;
+  const error = str("error");
+  const reason = str("reason");
+  const licenseJws = str("license_jws");
+  const chargedMicro = str("charged_micro");
+  return {
+    ok: true,
+    active,
+    permitted: active && payload["permitted"] === true,
+    ...(error ? { error } : {}),
+    ...(reason ? { reason } : {}),
+    ...(licenseJws ? { licenseJws } : {}),
+    ...(chargedMicro && /^\d+$/.test(chargedMicro) ? { chargedMicro } : {}),
+  };
 }

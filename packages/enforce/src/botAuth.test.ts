@@ -354,10 +354,26 @@ test("verifyBotAuth: happy path verifies and caches the directory", async () => 
   const cache = new DirectoryCache();
   const opts = { fetchFn: directoryFetch(counter), cache };
   const out1 = await verifyBotAuth(signedFacts(), opts);
-  assert.deepEqual(out1, { status: "verified", agent: { agent: AGENT_HOST, keyid: SIGNER_KEYID } });
+  assert.equal(out1.status, "verified");
+  if (out1.status === "verified") {
+    assert.equal(out1.agent.agent, AGENT_HOST);
+    assert.equal(out1.agent.keyid, SIGNER_KEYID);
+    assert.deepEqual(out1.agent.covers, ["@authority"]);
+    assert.equal(typeof out1.agent.created, "number");
+    assert.equal(typeof out1.agent.expires, "number");
+  }
   const out2 = await verifyBotAuth(signedFacts(), opts);
   assert.equal(out2.status, "verified");
   assert.equal(counter.n, 1); // second verify served from cache
+});
+
+test("verifyBotAuth: a signature covering @path reports both components, in order", async () => {
+  const out = await verifyBotAuth(signedFacts({ components: `("@authority" "@path")` }), {
+    fetchFn: directoryFetch({ n: 0 }),
+    cache: new DirectoryCache(),
+  });
+  assert.equal(out.status, "verified");
+  if (out.status === "verified") assert.deepEqual(out.agent.covers, ["@authority", "@path"]);
 });
 
 test("verifyBotAuth: expired signature → invalid", async () => {
@@ -468,4 +484,30 @@ test("verifyBotAuth: validity window over the draft's 24h max → invalid (repla
   const out = await verifyBotAuth(facts, { fetchFn: directoryFetch({ n: 0 }) });
   assert.equal(out.status, "invalid");
   assert.match((out as { reason: string }).reason, /window/);
+});
+
+test("verifyBotAuth: the verified signature bytes are reported, and a relabelled or padded header yields the same ones", async () => {
+  const opts = () => ({ fetchFn: directoryFetch({ n: 0 }), cache: new DirectoryCache() });
+  const base = signedFacts({ components: `("@authority" "@path")` });
+  const out = await verifyBotAuth(base, opts());
+  assert.equal(out.status, "verified");
+  if (out.status !== "verified") return;
+  const raw = base.headers["signature"]!.slice("sig1=:".length, -1);
+  assert.equal(out.agent.signature, raw, "the base64 of the bytes that verified");
+  // The same signature under another label, or with an unrelated member beside it, is the same
+  // signature: anything keyed on it must see one value, not a header's spelling.
+  const relabelled = {
+    ...base,
+    headers: {
+      ...base.headers,
+      "signature-input": base.headers["signature-input"]!.replace(/^sig1=/, "sig2="),
+      signature: base.headers["signature"]!.replace(/^sig1=/, "sig2="),
+    },
+  };
+  const padded = { ...base, headers: { ...base.headers, signature: `${base.headers["signature"]!}, z=:AAAA:` } };
+  for (const facts of [relabelled, padded]) {
+    const again = await verifyBotAuth(facts, opts());
+    assert.equal(again.status, "verified");
+    if (again.status === "verified") assert.equal(again.agent.signature, raw);
+  }
 });

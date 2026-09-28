@@ -172,6 +172,12 @@ export interface PublisherConfig {
    */
   termsPolicy?: TermsPolicy;
   /**
+   * The RSL licence server that issues licences for this publisher's paid content, declared as
+   * `<content server>`. A self-hosted origin asks its `/introspect` whether a presented licence
+   * permits a read. Absent ⇒ no licence server: a presented licence token gets the ordinary 402.
+   */
+  licenceServer?: string;
+  /**
    * Where the publisher's RSL document is served, pinned by the hash of its current bytes. Stamped
    * onto every ledger row at settle, so the citation record binds the terms in force at the moment
    * of sale. The resolver supplies it; the gate never fetches or hashes a document itself. Absent

@@ -68,3 +68,25 @@ test("directory body is a minimal Ed25519 JWKS; directory signature omits Signat
   assert.match(h["signature-input"], /tag="http-message-signatures-directory"/);
   assert.equal(h["signature-agent"], undefined);
 });
+
+test("path covers @authority and @path, in that order", () => {
+  const key = botAuthKeyFromSeed(SEED);
+  const h = signBotAuth({ key, authority: "a.example", path: "/essays/x", tag: "web-bot-auth" });
+  assert.match(h["signature-input"], /^sig1=\("@authority" "@path"\);created=\d+;expires=\d+;/);
+});
+
+test("the path signature verifies over a base that includes @path", () => {
+  const key = botAuthKeyFromSeed(SEED);
+  const h = signBotAuth({ key, authority: "A.example", path: "/essays/x?q=1", tag: "web-bot-auth", createdSec: 100 });
+  const member = h["signature-input"].slice("sig1=".length);
+  const base = `"@authority": a.example\n"@path": /essays/x?q=1\n"@signature-params": ${member}`;
+  const sig = Buffer.from(h.signature.slice("sig1=:".length, -1), "base64");
+  const pub = createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: key.x }, format: "jwk" });
+  assert.equal(cryptoVerify(null, Buffer.from(base), pub, sig), true);
+});
+
+test("no path keeps the authority-only member byte-identical", () => {
+  const key = botAuthKeyFromSeed(SEED);
+  const h = signBotAuth({ key, authority: "a.example", tag: "web-bot-auth", createdSec: 100 });
+  assert.equal(h["signature-input"], `sig1=("@authority");created=100;expires=160;keyid="${key.keyid}";tag="web-bot-auth"`);
+});

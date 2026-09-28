@@ -622,3 +622,103 @@ test("a browser opening /license.xml is shown the terms, not handed a download",
   assert.equal(crawler.response?.headers.get("content-type"), "application/rsl+xml; charset=utf-8");
   assert.equal(await browser.response?.text(), await crawler.response?.text(), "the same bytes either way");
 });
+
+test("a licence token on a self-hosted origin answers exactly the ordinary 402", async () => {
+  const mw = naulonMiddleware(opts);
+  const plain = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  const lic = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", authorization: "License tok123" } }),
+  );
+  assert.equal(lic.response?.status, 402);
+  assert.equal(lic.response?.status, plain.response?.status);
+  assert.ok(lic.response?.headers.get("PAYMENT-REQUIRED"));
+  assert.equal(await lic.response?.text(), await plain.response?.text());
+});
+
+/* ── a presented RSL licence on a self-hosted origin ── */
+
+function licenceRig(reply: { json?: unknown; status?: number; throws?: boolean }, observe?: (r: Record<string, unknown>) => void) {
+  const calls: Array<{ url: string; body: string; headers: Record<string, string> }> = [];
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), body: String(init?.body ?? ""), headers: (init?.headers ?? {}) as Record<string, string> });
+    if (reply.throws) throw new Error("ECONNREFUSED");
+    return new Response(JSON.stringify(reply.json ?? {}), { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+  const mw = naulonMiddleware({
+    ...opts,
+    publisher: { ...opts.publisher, licenceServer: "https://ls.example/olp" },
+    fetchImpl,
+    ...(observe ? { observe } : {}),
+  } as never);
+  return { mw, calls };
+}
+const licensedGet = (method = "GET") =>
+  new Request("http://h/essays/x", {
+    method,
+    headers: {
+      "user-agent": "GPTBot/1.0",
+      authorization: "License olp_t",
+      "signature-input": 'sig1=("@authority" "@path");created=1;expires=61;keyid="k";tag="web-bot-auth"',
+      signature: "sig1=:c2ln:",
+      "signature-agent": '"agent.example"',
+    },
+  });
+
+test("a licence the server charged is served, carrying the record and what was charged", async () => {
+  const { mw, calls } = licenceRig({ json: { active: true, permitted: true, license_jws: "jws-1", charged_micro: "5500" } });
+  const out = await mw(licensedGet());
+  assert.equal(out.response, null);
+  assert.equal(out.setHeaders?.["X-Naulon-License"], "jws-1");
+  assert.equal(out.setHeaders?.["crawler-charged"], "USD 0.0055");
+  assert.match(out.setHeaders?.["X-Naulon-Verdict"] ?? "", /agent paid \(licence\)/);
+  const call = calls.find((c) => c.url === "https://ls.example/olp/introspect")!;
+  assert.ok(call, "the licence server was asked");
+  assert.equal(call.headers["authorization"], "Bearer nln_live_test");
+  const form = new URLSearchParams(call.body);
+  assert.equal(form.get("token"), "olp_t");
+  // The slug `decide()` prices with, which is the one this runtime already sends `/quote`.
+  assert.equal(form.get("slug"), "x");
+  assert.equal(form.get("kind"), "read");
+  assert.equal(form.get("signature"), "sig1=:c2ln:");
+  assert.equal(form.get("signature_agent"), '"agent.example"');
+  assert.equal(form.get("user_agent"), "GPTBot/1.0", "the UA rides along for the publisher's audit row");
+});
+
+test("a licence the server refused gets the ordinary 402, naming why", async () => {
+  const { mw } = licenceRig({ json: { active: true, permitted: false, error: "signature_required" } });
+  const out = await mw(licensedGet());
+  assert.equal(out.response?.status, 402);
+  assert.ok(out.response?.headers.get("PAYMENT-REQUIRED"));
+  assert.match(out.response?.headers.get("X-Naulon-Verdict") ?? "", /licence refused \(signature_required\)/);
+});
+
+test("a licence server that cannot be reached means the ordinary 402, never a free read", async () => {
+  const { mw } = licenceRig({ throws: true });
+  const out = await mw(licensedGet());
+  assert.equal(out.response?.status, 402);
+  assert.match(out.response?.headers.get("X-Naulon-Verdict") ?? "", /licence refused \(unreachable\)/);
+});
+
+test("a HEAD with a licence is never sent to the licence server", async () => {
+  const { mw, calls } = licenceRig({ json: { active: true, permitted: true } });
+  const out = await mw(licensedGet("HEAD"));
+  assert.equal(out.response?.status, 402);
+  assert.equal(calls.filter((c) => c.url.includes("/introspect")).length, 0);
+});
+
+test("a licence re-read the server did not charge says so, and claims no charge", async () => {
+  const { mw } = licenceRig({ json: { active: true, permitted: true } });
+  const out = await mw(licensedGet());
+  assert.equal(out.response, null);
+  assert.equal(out.setHeaders?.["crawler-charged"], undefined);
+  assert.equal(out.setHeaders?.["X-Naulon-Verdict"], "agent reread (licence)");
+});
+
+test("a licence re-read is reported like the gate reports one; a charged read is left to the cloud", async () => {
+  const reread = reporter();
+  await licenceRig({ json: { active: true, permitted: true } }, reread.observe).mw(licensedGet());
+  assert.deepEqual(reread.seen.map((r) => r["verdict"]), ["agent-reread"]);
+  const paid = reporter();
+  await licenceRig({ json: { active: true, permitted: true, charged_micro: "5500" } }, paid.observe).mw(licensedGet());
+  assert.deepEqual(paid.seen, [], "the cloud writes `paid` from the settle it owns; writing it here too would double-count");
+});

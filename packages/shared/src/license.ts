@@ -36,6 +36,7 @@ import { toAtomicUsdc } from "./networks.ts";
 import { matchesPattern } from "@naulon/sdk/rsl";
 import { primaryPayee, type TieBreak } from "./attribution.ts";
 import type { AttributedEvent, AuthorShare, PaymentEvidence, TermsDocument } from "./types.ts";
+import type { EventMandate } from "./licence-authority.ts";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -119,6 +120,8 @@ export interface NaulonClaim {
   termsDocument?: TermsDocument;
   /** The buyer's signed authorization for the author leg: the part of this record naulon did not write. */
   evidence?: PaymentEvidence;
+  /** Present when the read was charged under a standing authorization rather than signed at request time. */
+  mandate?: EventMandate;
 }
 
 /**
@@ -354,6 +357,7 @@ function baseClaims(input: MintInput, iat: number): CitationLicenseClaims {
   if (event.contentSha256) naulon.contentSha256 = event.contentSha256;
   if (event.termsDocument) naulon.termsDocument = event.termsDocument;
   if (event.evidence) naulon.evidence = event.evidence;
+  if (event.mandate) naulon.mandate = event.mandate;
 
   return {
     iss: input.issuer,

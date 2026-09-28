@@ -199,6 +199,14 @@ test("a record still records who paid, what, and how it settled", () => {
   assert.deepEqual(naulon["payees"], [{ authorId: "mira", wallet: payees[0]!.wallet, share: 1 }]);
 });
 
+test("a record charged under a mandate says so, and a signed one carries no mandate", () => {
+  const mandate = { kind: "olp" as const, tokenId: "olp-1", witness: "gate" as const };
+  const withMandate = payloadOf(mintCitationRecord({ ...mintInput, event: { ...event, mandate } }, KEY, NOW));
+  assert.deepEqual((withMandate["naulon"] as Record<string, unknown>)["mandate"], mandate);
+  const plain = payloadOf(mintCitationRecord(mintInput, KEY, NOW))["naulon"] as Record<string, unknown>;
+  assert.equal("mandate" in plain, false);
+});
+
 test("a record is not yet valid before its nbf", () => {
   const r = verifyLicense(mintCitationRecord(mintInput, KEY, NOW), { ...verifyOpts, now: NOW - 120_000 });
   assert.equal(r.ok, false);

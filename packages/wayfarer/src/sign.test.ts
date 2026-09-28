@@ -9,6 +9,7 @@ import { test, afterEach } from "node:test";
 import { createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { botAuthKeyFromSeed, resetConfig } from "@naulon/shared";
 import { agentFetch, botAuthHeadersFor, resetAgentIdentity } from "./sign.ts";
+import { clearLicenseTokens, rememberLicenseToken } from "./license-token.ts";
 
 const SEED = Buffer.alloc(32, 11).toString("base64url");
 
@@ -78,4 +79,53 @@ test("unconfigured: no signing — the init reaches fetch untouched (regression 
   }
   // The exact same object — not a copy, not augmented.
   assert.equal(seenInit, init);
+});
+
+async function headersSentBy(url: string): Promise<Record<string, string>> {
+  let seen: Record<string, string> = {};
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    seen = (init?.headers as Record<string, string>) ?? {};
+    return new Response("ok");
+  }) as typeof fetch;
+  try {
+    await agentFetch(url);
+  } finally {
+    globalThis.fetch = real;
+  }
+  return seen;
+}
+
+test("presenting a licence token: the signature also covers @path, so it cannot be replayed on another URL", async () => {
+  configure(true);
+  clearLicenseTokens();
+  rememberLicenseToken({ origin: "http://gate.example", resource: "/essays/*", token: "tok-9", expiresAt: null });
+  try {
+    const seen = await headersSentBy("http://gate.example/essays/x?page=2");
+    assert.equal(seen["authorization"], "License tok-9");
+    assert.match(seen["signature-input"]!, /^sig1=\("@authority" "@path"\);/);
+    const key = botAuthKeyFromSeed(SEED);
+    const member = seen["signature-input"]!.slice("sig1=".length);
+    // `@path` is the path alone (RFC 9421 §2.2.6): the gate's verifier rebuilds it from the pathname,
+    // so a query in the signed value would fail every read of a URL that carries one.
+    const base = `"@authority": gate.example\n"@path": /essays/x\n"@signature-params": ${member}`;
+    const sig = Buffer.from(seen["signature"]!.slice("sig1=:".length, -1), "base64");
+    const pub = createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: key.x }, format: "jwk" });
+    assert.equal(cryptoVerify(null, Buffer.from(base), pub, sig), true);
+  } finally {
+    clearLicenseTokens();
+  }
+});
+
+test("no licence token: the signature stays authority-only", async () => {
+  configure(true);
+  clearLicenseTokens();
+  const seen = await headersSentBy("http://gate.example/essays/x");
+  assert.match(seen["signature-input"]!, /^sig1=\("@authority"\);/);
+});
+
+test("botAuthHeadersFor can cover the path when asked", () => {
+  configure(true);
+  const h = botAuthHeadersFor("https://gate.example/_naulon/olp/token", { coverPath: true });
+  assert.match(h!["signature-input"]!, /^sig1=\("@authority" "@path"\);/);
 });

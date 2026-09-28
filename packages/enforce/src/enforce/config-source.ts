@@ -28,6 +28,7 @@
 import { externalUrl, getConfig, rslResponseHeaders } from "@naulon/shared";
 import type { CrawlerPolicy, PublisherConfig } from "@naulon/shared";
 import type { X402Manifest } from "../discoverability.ts";
+import { licenceServerUrlOk } from "@naulon/sdk/rsl";
 
 /**
  * Exactly the fields the in-app `decide()` reads off a publisher before pricing.
@@ -40,7 +41,13 @@ import type { X402Manifest } from "../discoverability.ts";
 export type PublisherEnforcementConfig = Partial<
   Pick<
     PublisherConfig,
-    "articlePrefixes" | "gateScope" | "licenseIdentity" | "seoAllowlist" | "crawlerPolicy" | "termsPolicy"
+    | "articlePrefixes"
+    | "gateScope"
+    | "licenseIdentity"
+    | "seoAllowlist"
+    | "crawlerPolicy"
+    | "termsPolicy"
+    | "licenceServer"
   >
 >;
 
@@ -182,6 +189,10 @@ function narrow(body: unknown): PublisherConfigDocument | null {
       termsPolicy: (typeof e["termsPolicy"] === "object" && e["termsPolicy"] !== null
         ? e["termsPolicy"]
         : undefined) as PublisherEnforcementConfig["termsPolicy"],
+      // Where a presented licence is checked. Only a URL a licence token may be sent to survives:
+      // a plain-http licence server on a real host would leak every token on the wire.
+      licenceServer:
+        typeof e["licenceServer"] === "string" && licenceServerUrlOk(e["licenceServer"]) ? e["licenceServer"] : undefined,
     }),
     ...(typeof manifest === "object" && manifest !== null ? { manifest: manifest as X402Manifest } : {}),
     // The licence is listed here or it does not exist for anything downstream: both the

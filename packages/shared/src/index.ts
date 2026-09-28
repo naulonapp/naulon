@@ -27,3 +27,4 @@ export * from "./clientIdentity.ts";
 export * from "./externalScheme.ts";
 export * from "./rateLimitCore.ts";
 export * from "./untrusted.ts";
+export * from "./licence-authority.ts";

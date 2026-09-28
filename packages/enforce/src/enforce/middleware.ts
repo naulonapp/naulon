@@ -39,6 +39,7 @@ import { X402_MANIFEST_PATH } from "../discoverability.ts";
 import { headerSafe } from "../headerSafe.ts";
 import { externalUrl, getConfig, rslResponseHeaders, type JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
+import { introspectLicence } from "@naulon/sdk/rsl";
 import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
 import type { DecideObs } from "../decide.ts";
 import type { ObservationReport, ObservationReporter, ReportableVerdict } from "./observation-sink.ts";
@@ -190,6 +191,18 @@ interface VerifyResponse {
  * header is absent instead of wrong. A magnitude cap keeps the value exactly representable.
  */
 const MAX_REPORTED_MICRO_DIGITS = 15;
+/**
+ * The crawler's Web Bot Auth signature on this request, forwarded to the licence server verbatim.
+ * All three headers or none: a partial set cannot verify and would only be noise.
+ */
+function signatureOf(req: Request): { signature?: { input: string; signature: string; agent?: string } } {
+  const input = req.headers.get("signature-input");
+  const signature = req.headers.get("signature");
+  if (!input || !signature) return {};
+  const agent = req.headers.get("signature-agent");
+  return { signature: { input, signature, ...(agent ? { agent } : {}) } };
+}
+
 function chargedMicroOf(raw: string | undefined): bigint | null {
   if (raw === undefined) return null;
   if (!/^\d+$/.test(raw) || raw.length > MAX_REPORTED_MICRO_DIGITS) return null;
@@ -421,6 +434,43 @@ export function naulonMiddleware(
       ...(licenseVerification ? { licenseVerification } : {}),
     });
 
+    // The 402 advertisement, shared by a read with no payment and a licence that did not permit it.
+    type Unpaid = Extract<typeof d, { kind: "payment-required" | "licence-presented" }>;
+    const paymentRequired = (unpaid: Unpaid, verdict?: string): MiddlewareResult => {
+      report(unpaid.obs, "denied", resource, { kind: unpaid.tollKind, priceUsdc: unpaid.quote.price });
+      const askMicro = totalChargedMicro(unpaid.legs);
+      // The SAME advertisement the hosted gate emits (`tollgate/app.ts`, the
+      // payment-required branch): the Cloudflare pay-per-crawl price vocabulary a
+      // crawler already speaks, and a body for every buyer that does not decode
+      // PAYMENT-REQUIRED. Until now this path emitted neither, so a publisher who
+      // installed the SDK instead of routing through the fleet was silent to exactly
+      // the crawlers the fleet talks to — the same toll, two different wires.
+      const budget = crawlerBudgetVerdict(
+        declaredCrawlerBudget({
+          maxPrice: req.headers.get(CRAWLER_MAX_PRICE_HEADER),
+          exactPrice: req.headers.get(CRAWLER_EXACT_PRICE_HEADER),
+        }),
+        askMicro,
+      );
+      return {
+        response: new Response(
+          paymentRequiredBodyText({ askMicro, publisher: url.host, endpoint: url.pathname, tollKind: unpaid.tollKind }),
+          {
+            status: 402,
+            headers: {
+              [PAYMENT_REQUIRED_HEADER]: unpaid.header,
+              [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
+              "content-type": PAYMENT_BODY_CONTENT_TYPE,
+              Link: PAYMENT_LINK_HEADER,
+              "X-Naulon-Verdict": headerSafe(
+                verdict ?? `agent (${unpaid.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,
+              ),
+            },
+          },
+        ),
+      };
+    };
+
     switch (d.kind) {
       // Not a gated route at all (non-article / unknown article) — the gate emits no
       // observation here either, and inventing one would put every asset request into
@@ -448,40 +498,45 @@ export function naulonMiddleware(
         report(d.obs, "blocked", resource);
         return { response: new Response(`${d.reason}.`, { status: 403 }) };
 
-      case "payment-required": {
-        report(d.obs, "denied", resource, { kind: d.tollKind, priceUsdc: d.quote.price });
-        const askMicro = totalChargedMicro(d.legs);
-        // The SAME advertisement the hosted gate emits (`tollgate/app.ts`, the
-        // payment-required branch): the Cloudflare pay-per-crawl price vocabulary a
-        // crawler already speaks, and a body for every buyer that does not decode
-        // PAYMENT-REQUIRED. Until now this path emitted neither, so a publisher who
-        // installed the SDK instead of routing through the fleet was silent to exactly
-        // the crawlers the fleet talks to — the same toll, two different wires.
-        const budget = crawlerBudgetVerdict(
-          declaredCrawlerBudget({
-            maxPrice: req.headers.get(CRAWLER_MAX_PRICE_HEADER),
-            exactPrice: req.headers.get(CRAWLER_EXACT_PRICE_HEADER),
-          }),
-          askMicro,
-        );
-        return {
-          response: new Response(
-            paymentRequiredBodyText({ askMicro, publisher: url.host, endpoint: url.pathname, tollKind: d.tollKind }),
-            {
-              status: 402,
-              headers: {
-                [PAYMENT_REQUIRED_HEADER]: d.header,
-                [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
-                "content-type": PAYMENT_BODY_CONTENT_TYPE,
-                Link: PAYMENT_LINK_HEADER,
-                "X-Naulon-Verdict": headerSafe(
-                  `agent (${d.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,
-                ),
-              },
-            },
-          ),
-        };
+      // A presented RSL licence. This origin cannot witness a charge on its own word, so it asks
+      // the licence server, which charges only on the crawler's own signature by the key the licence
+      // is bound to (`witness: crawler-signed`). Anything short of `permitted` is the ordinary 402:
+      // a licence nobody could check is not a licence, and the read still sells over x402. GET only:
+      // a HEAD has no body to sell.
+      case "licence-presented": {
+        const server = (publisher as { licenceServer?: string }).licenceServer;
+        if (!server || req.method !== "GET") return paymentRequired(d);
+        const checked = await introspectLicence({
+          server,
+          token: d.token,
+          resource,
+          slug: d.obs.slug,
+          kind: d.tollKind,
+          apiKey: opts.apiKey,
+          ...(d.obs.agentUa ? { userAgent: d.obs.agentUa } : {}),
+          ...signatureOf(req),
+          fetcher: (u, init) => doFetch(u, init as RequestInit),
+        });
+        if (checked.ok && checked.permitted) {
+          // A charged read: the cloud wrote the `paid` observation from the settle it owns, exactly
+          // as on /verify. An uncharged one is a re-read on a licence already paid for, reported here
+          // as the gate reports its own, so both planes show the same row for the same read.
+          const charged = chargedMicroOf(checked.chargedMicro);
+          if (charged === null) report(d.obs, "agent-reread", resource, { kind: d.tollKind });
+          const setHeaders: Record<string, string> = {
+            // No figure from the server means nothing moved: a licence already paid for re-read free.
+            "X-Naulon-Verdict": charged !== null ? "agent paid (licence)" : "agent reread (licence)",
+          };
+          if (checked.licenseJws) setHeaders[LICENSE_HEADER] = checked.licenseJws;
+          if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
+          return { response: null, setHeaders };
+        }
+        const why = checked.ok ? (checked.error ?? (checked.active ? "not_permitted" : "invalid_token")) : "unreachable";
+        return paymentRequired(d, `licence refused (${why})`);
       }
+
+      case "payment-required":
+        return paymentRequired(d);
 
       case "payment-presented": {
         // No `report(...)` on this branch, deliberately: the hosted /verify writes the

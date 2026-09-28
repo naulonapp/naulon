@@ -39,11 +39,17 @@ export function resetAgentIdentity(): void {
 /** The three Web Bot Auth headers for a request to `url`, or null when the
  *  signing identity isn't configured. Signed per call — the ~1-minute validity
  *  window means a signature is never reusable across a slow run. */
-export function botAuthHeadersFor(url: string): Record<string, string> | null {
+export function botAuthHeadersFor(url: string, opts: { coverPath?: boolean } = {}): Record<string, string> | null {
   const id = resolveIdentity();
   if (!id) return null;
-  const authority = new URL(url).host;
-  return { ...signBotAuth({ key: id.key, authority, tag: "web-bot-auth", agent: id.agent }) };
+  const u = new URL(url);
+  // Covering the path makes the signature a witness of THIS request: it cannot be lifted onto
+  // another URL of the same host. Required whenever the signature is what a charge rests on.
+  // `@path` is the path alone (RFC 9421), which is how the verifier rebuilds it.
+  const path = opts.coverPath ? u.pathname : undefined;
+  return {
+    ...signBotAuth({ key: id.key, authority: u.host, tag: "web-bot-auth", agent: id.agent, ...(path !== undefined ? { path } : {}) }),
+  };
 }
 
 /**
@@ -52,7 +58,6 @@ export function botAuthHeadersFor(url: string): Record<string, string> | null {
  * unconfigured agent falls through to the exact fetch it always made.
  */
 export async function agentFetch(url: string, init?: RequestInit): Promise<Response> {
-  const signed = botAuthHeadersFor(url);
   // An OLP licence token, if we hold one for this URL. Attached HERE because every request the
   // agent makes passes through this function, and four separate places in buyer.ts build headers of
   // their own — a token remembered at each is a token forgotten at one. A caller that set its own
@@ -61,6 +66,8 @@ export async function agentFetch(url: string, init?: RequestInit): Promise<Respo
   const caller = (init?.headers as Record<string, string> | undefined) ?? {};
   const hasOwnAuth = Object.keys(caller).some((k) => k.toLowerCase() === "authorization");
   const license = licenseToken && !hasOwnAuth ? { authorization: `License ${licenseToken}` } : {};
+  // A licence read can be charged on the strength of this signature, so it covers the path too.
+  const signed = botAuthHeadersFor(url, { coverPath: Boolean(licenseToken && !hasOwnAuth) });
   if (!signed && !licenseToken) return fetch(url, init);
   const headers = { ...signed, ...license, ...caller };
   return fetch(url, { ...init, headers });

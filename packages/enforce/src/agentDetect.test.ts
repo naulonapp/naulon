@@ -92,7 +92,7 @@ test("dropped stale fragments no longer classify — claude-web / anthropic-ai a
  * payment intent → verified allow → verified agent → (unsigned) UA path.
  * ------------------------------------------------------------------ */
 
-const VERIFIED = { agent: "chatgpt.com", keyid: "thumb" };
+const VERIFIED = { agent: "chatgpt.com", keyid: "thumb", covers: ["@authority"], signature: "c2ln" };
 
 test("verified agent is charged even with a browser-shaped request (dodge hole closed)", () => {
   const v = classify(

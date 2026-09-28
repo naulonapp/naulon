@@ -41,9 +41,9 @@ function directoryFetch(over: { unsignedResponse?: boolean; wrongKeyBody?: boole
   }) as typeof fetch;
 }
 
-function signedFacts(over: { authority?: string; tamper?: boolean } = {}): RequestFacts {
+function signedFacts(over: { authority?: string; tamper?: boolean; path?: string } = {}): RequestFacts {
   const authority = over.authority ?? "gate.example";
-  const h = signBotAuth({ key: KEY, authority, tag: "web-bot-auth", agent: AGENT });
+  const h = signBotAuth({ key: KEY, authority, tag: "web-bot-auth", agent: AGENT, ...(over.path !== undefined ? { path: over.path } : {}) });
   let sig = h.signature;
   if (over.tamper) sig = sig.replace(/:.{4}/, ":AAAA");
   return {
@@ -69,7 +69,21 @@ test("a signed request round-trips: our signer → our verifier → verified ide
     fetchFn: directoryFetch(),
     cache: new DirectoryCache(),
   });
-  assert.deepEqual(outcome, { status: "verified", agent: { agent: AGENT, keyid: KEY.keyid } });
+  assert.equal(outcome.status, "verified");
+  if (outcome.status === "verified") {
+    assert.equal(outcome.agent.agent, AGENT);
+    assert.equal(outcome.agent.keyid, KEY.keyid);
+    assert.deepEqual(outcome.agent.covers, ["@authority"]);
+  }
+});
+
+test("a path-covering signature round-trips only on the path it signed", async () => {
+  const opts = () => ({ fetchFn: directoryFetch(), cache: new DirectoryCache() });
+  const ok = await verifyBotAuth(signedFacts({ path: "/essays/on-stillness" }), opts());
+  assert.equal(ok.status, "verified");
+  if (ok.status === "verified") assert.deepEqual(ok.agent.covers, ["@authority", "@path"]);
+  const moved = await verifyBotAuth(signedFacts({ path: "/essays/another" }), opts());
+  assert.equal(moved.status, "invalid");
 });
 
 test("the round-trip verifies the directory's own response signature (unsigned still accepted, wrong keys rejected)", async () => {
