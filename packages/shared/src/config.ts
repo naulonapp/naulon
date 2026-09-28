@@ -184,6 +184,14 @@ export const configSchema = z.object({
   // actually serve OUR directory (e.g. "naulon.app"). An http://127.0.0.1:port
   // form is a local-walk fixture (needs the verifying gate's BOT_AUTH_ALLOW_HTTP).
   BOT_AUTH_SIGNATURE_AGENT: z.string().optional(),
+  // A naulon agent token, for the wayfarer to get RSL licences from naulon's own licence server
+  // (`/_naulon/olp/<host>/token`). Both or neither. Sent only to naulon's licence-server origin;
+  // without them a page whose licence server is naulon's is bought over x402 instead.
+  NAULON_AGENT_TOKEN_ID: z.string().optional(),
+  NAULON_AGENT_TOKEN: z.string().optional(),
+  // The origin naulon's licence server runs on. The agent token is sent there and nowhere else, so
+  // this is set only to point the wayfarer at a naulon plane under test.
+  NAULON_LICENCE_ORIGIN: z.string().url().default("https://gate.naulon.app"),
 
   // Credits resolution — how the gate maps an article to its author(s).
   // If CREDITS_API_URL is set, the gate fetches `${url}/credits/:slug`.

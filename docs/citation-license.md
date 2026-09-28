@@ -122,8 +122,11 @@ the token, covering its `@authority` and `@path`).
 On a self-hosted origin the gate never sees the bytes, so the only witness is the crawler's
 signature. When the publisher's configuration names a licence server, the SDK middleware
 forwards a presented licence and the request's signature to that server's `/introspect`,
-serves the page only when it answers `permitted`, and otherwise answers the ordinary 402.
-Its records carry `witness: crawler-signed`.
+serves the page only when it answers `permitted`, and otherwise answers the ordinary 402
+with the reason in `licence_error`. A charge already running for that read, or one nobody
+could confirm, is a 503 with no x402 offer instead, so the read is never sold twice. The
+licence and the site's API key go only to a server on the same origin as the site's
+`verifyUrl`. Its records carry `witness: crawler-signed`.
 
 Retired signing keys stay in the key set (`LICENSE_RETIRED_PUBLIC_KEYS`), so rotating a
 key never orphans the records it signed. They verify records only: an access licence is

@@ -44,6 +44,9 @@ export interface LicenceSigner {
   covers: string[];
   created?: number;
   expires?: number;
+  /** The verified signature bytes, base64. What an authority keys one charge per signature on: the
+   *  header's text can be relabelled and still verify, these bytes cannot. */
+  signature?: string;
 }
 
 export interface LicenceAuthorizeRequest {

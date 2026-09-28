@@ -9,7 +9,7 @@ import { test, afterEach } from "node:test";
 import { createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { botAuthKeyFromSeed, resetConfig } from "@naulon/shared";
 import { agentFetch, botAuthHeadersFor, resetAgentIdentity } from "./sign.ts";
-import { clearLicenseTokens, rememberLicenseToken } from "./license-token.ts";
+import { clearLicenseTokens, licenseTokenFor, rememberLicenseToken } from "./license-token.ts";
 
 const SEED = Buffer.alloc(32, 11).toString("base64url");
 
@@ -128,4 +128,89 @@ test("botAuthHeadersFor can cover the path when asked", () => {
   configure(true);
   const h = botAuthHeadersFor("https://gate.example/_naulon/olp/token", { coverPath: true });
   assert.match(h!["signature-input"]!, /^sig1=\("@authority" "@path"\);/);
+});
+
+/** Stub fetch with a scripted sequence of responses; records each request's url and headers. */
+async function withScript(responses: Response[], run: () => Promise<Response>): Promise<{ sent: Array<{ url: string; headers: Record<string, string>; redirect?: string }>; out: Response }> {
+  const sent: Array<{ url: string; headers: Record<string, string>; redirect?: string }> = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    sent.push({ url: String(url), headers: (init?.headers as Record<string, string>) ?? {}, ...(init?.redirect ? { redirect: init.redirect } : {}) });
+    return responses.shift() ?? new Response("ok");
+  }) as typeof fetch;
+  try {
+    return { sent, out: await run() };
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+test("a licensed read that redirects on its own origin is signed again for the new path", async () => {
+  configure(true);
+  clearLicenseTokens();
+  rememberLicenseToken({ origin: "https://pub.example", resource: "/essays/*", token: "tok-r", expiresAt: null });
+  try {
+    const { sent, out } = await withScript(
+      [new Response(null, { status: 301, headers: { location: "/essays/x/" } }), new Response("page")],
+      () => agentFetch("https://pub.example/essays/x"),
+    );
+    assert.equal(await out.text(), "page");
+    assert.equal(sent.length, 2);
+    assert.equal(sent[0]!.redirect, "manual", "fetch must not carry the first signature onto the next path");
+    assert.equal(sent[1]!.url, "https://pub.example/essays/x/");
+    assert.equal(sent[1]!.headers["authorization"], "License tok-r");
+    assert.notEqual(sent[1]!.headers["signature"], sent[0]!.headers["signature"], "each hop carries its own signature");
+  } finally {
+    clearLicenseTokens();
+  }
+});
+
+test("redirects keep fetch's rules: 302 turns a POST into a GET, and a caller's redirect: error is honoured", async () => {
+  configure(true);
+  clearLicenseTokens();
+  rememberLicenseToken({ origin: "https://pub.example", resource: "/essays/*", token: "tok-m", expiresAt: null });
+  try {
+    const posted = await withScript(
+      [new Response(null, { status: 302, headers: { location: "/essays/y" } }), new Response("ok")],
+      () => agentFetch("https://pub.example/essays/x", { method: "POST", body: "b" }),
+    );
+    assert.equal(posted.sent.length, 2);
+    await assert.rejects(
+      withScript([new Response(null, { status: 301, headers: { location: "/essays/z" } })], () =>
+        agentFetch("https://pub.example/essays/x", { redirect: "error" }),
+      ),
+      /not allowed/,
+    );
+  } finally {
+    clearLicenseTokens();
+  }
+});
+
+test("a token the server calls invalid is dropped, so it is not presented again", async () => {
+  configure(true);
+  clearLicenseTokens();
+  rememberLicenseToken({ origin: "https://pub.example", resource: "/essays/*", token: "tok-dead", expiresAt: null });
+  try {
+    await withScript(
+      [new Response("{}", { status: 401, headers: { "www-authenticate": 'License error="invalid_token"' } })],
+      () => agentFetch("https://pub.example/essays/x"),
+    );
+    assert.equal(licenseTokenFor("https://pub.example/essays/x"), null);
+    // The self-hosted form of the same refusal: a 402 whose verdict names it.
+    rememberLicenseToken({ origin: "https://pub.example", resource: "/essays/*", token: "tok-dead2", expiresAt: null });
+    await withScript(
+      [new Response("{}", { status: 402, headers: { "x-naulon-verdict": "licence refused (invalid_token)" } })],
+      () => agentFetch("https://pub.example/essays/x"),
+    );
+    assert.equal(licenseTokenFor("https://pub.example/essays/x"), null);
+    // Any other refusal keeps the token: it is still a good licence.
+    rememberLicenseToken({ origin: "https://pub.example", resource: "/essays/*", token: "tok-live", expiresAt: null });
+    await withScript(
+      [new Response("{}", { status: 402, headers: { "x-naulon-verdict": "licence refused (price_rose)" } })],
+      () => agentFetch("https://pub.example/essays/x"),
+    );
+    assert.equal(licenseTokenFor("https://pub.example/essays/x"), "tok-live");
+  } finally {
+    clearLicenseTokens();
+  }
 });

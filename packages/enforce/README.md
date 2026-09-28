@@ -42,7 +42,9 @@ The decision kernel and the framework-agnostic middleware core:
   (`PublisherConfig.licenceServer`), a crawler presenting `Authorization: License` is checked
   there: the middleware forwards the licence and the crawler's Web Bot Auth signature to the
   server's `/introspect` and passes only when it answers `permitted`. Anything else is the
-  ordinary 402.
+  ordinary 402, with the reason in the body's `licence_error`, except a charge already in
+  flight or unconfirmed, which is a 503 with no x402 offer. The server must share an origin
+  with `verifyUrl`, because the check carries your API key.
 - `withNaulon(handler, opts)` wraps a generic `fetch` handler.
 - `localQuoteSource(fn)` / `httpQuoteSource(url, key)`: pluggable price and payees.
 - `httpPublisherConfigSource(url, key)`: what is tolled and for whom, read from the

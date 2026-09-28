@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Fetcher } from "../crawl/types.ts";
-import { acquireLicenseToken, introspectLicence, licenceServerUrlOk, olpRetryable, tokenEndpoint } from "./olp.ts";
+import { acquireLicenseToken, introspectLicence, licenceServerUrlOk, olpRetryable, tokenEndpoint, UNSTATED_EXPIRY_SEC } from "./olp.ts";
 
 const CREDS = { clientId: "agent-1", clientSecret: "s3cret" };
 
@@ -60,7 +60,7 @@ test("the request is exactly what the spec asks for", async () => {
   assert.equal(form.get("license"), '<license><permits type="usage">ai-input</permits></license>');
 });
 
-test("expires_in becomes a deadline; 0 and absent both mean it never expires", async () => {
+test("expires_in becomes a deadline; 0 never expires; absent or unusable is held for UNSTATED_EXPIRY_SEC", async () => {
   const at = async (expires_in: unknown) => {
     const net = fakeServer({ json: { access_token: "t", token_type: "License", expires_in } });
     const r = await acquireLicenseToken({
@@ -76,8 +76,10 @@ test("expires_in becomes a deadline; 0 and absent both mean it never expires", a
   };
   assert.equal((await at(3600))!.expiresAt, 1_000_000 + 3_600_000);
   assert.equal((await at(0))!.expiresAt, null);
-  assert.equal((await at(undefined))!.expiresAt, null);
-  assert.equal((await at(-5))!.expiresAt, null, "a negative lifetime is not a token that expired in the past");
+  // OLP defines 0 as non-expiring and says nothing of an absent value, so absent is not 0: it is held
+  // for a bounded time and then asked for again.
+  assert.equal((await at(undefined))!.expiresAt, 1_000_000 + UNSTATED_EXPIRY_SEC * 1000);
+  assert.equal((await at(-5))!.expiresAt, 1_000_000 + UNSTATED_EXPIRY_SEC * 1000, "a negative lifetime is not a token that expired in the past");
 });
 
 test("each spec error code survives, because they call for different actions", async () => {
@@ -116,7 +118,7 @@ test("an error code the spec does not define is `malformed`, not trusted", async
 
 test("a 200 with no access_token is malformed — never a token of empty string", async () => {
   for (const json of [{}, { access_token: "", token_type: "License" }, { access_token: "t" }]) {
-    const net = fakeServer({ json });
+    const net = fakeServer({ text: JSON.stringify(json) });
     const r = await acquireLicenseToken({
       server: "https://olp.example", licenseXml: "<license/>", resource: "/", credentials: CREDS, fetcherFor: net.fetcherFor,
     });
@@ -131,7 +133,32 @@ test("HTML from a licence server is reported as malformed, not as a parse crash"
     server: "https://olp.example", licenseXml: "<license/>", resource: "/", credentials: CREDS, fetcherFor: net.fetcherFor,
   });
   assert.equal(r.ok === false && r.failure.code, "malformed");
-  assert.equal(r.ok === false && r.failure.description, "response was not JSON");
+  assert.equal(r.ok === false && r.failure.description, "response was not a JSON object");
+});
+
+test("a JSON body that is not an object is malformed, on /token and /introspect alike", async () => {
+  for (const json of [null, [1], "x"]) {
+    const net = fakeServer({ json });
+    const r = await acquireLicenseToken({
+      server: "https://olp.example", licenseXml: "<license/>", resource: "/", credentials: CREDS, fetcherFor: net.fetcherFor,
+    });
+    assert.equal(r.ok === false && r.failure.code, "malformed");
+    const i = await introspectLicence({
+      server: "https://olp.example", token: "t", resource: "https://s.example/a", slug: "a", kind: "read", apiKey: "k",
+      fetcher: async () => ({ ok: true, status: 200, json: async () => json, text: async () => JSON.stringify(json) }) as never,
+    });
+    assert.equal(i.ok, false);
+  }
+});
+
+test("introspect gives up on a licence server that does not answer, and says so", async () => {
+  const i = await introspectLicence({
+    server: "https://olp.example", token: "t", resource: "https://s.example/a", slug: "a", kind: "read", apiKey: "k",
+    timeoutMs: 20,
+    fetcher: () => new Promise(() => {}),
+  });
+  assert.equal(i.ok, false);
+  assert.match(!i.ok ? i.description : "", /did not answer within 20 ms/);
 });
 
 test("an unreachable server is a distinct outcome from a refusal", async () => {

@@ -69,3 +69,20 @@ export function licenseTokenFor(url: string, now: number = Date.now()): string |
   }
   return best?.token ?? null;
 }
+
+/**
+ * Drop the token held for this URL, because the server refused it as unusable (`invalid_token`):
+ * expired, revoked, or never valid here. Held on, it would be presented and refused on every read
+ * until its stated expiry. The next lookup asks `/token` again.
+ */
+export function forgetLicenseToken(url: string, token: string): void {
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    return;
+  }
+  for (let i = held.length - 1; i >= 0; i--) {
+    if (held[i]!.origin === origin && held[i]!.token === token) held.splice(i, 1);
+  }
+}
