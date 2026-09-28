@@ -1313,7 +1313,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // composite run uses, in the same order.
       const lookup = await licences.forUrl(target);
       const licence = lookup.terms
-        ? { terms: lookup.terms, tokenHeld: lookup.tokenHeld, ...(lookup.tokenFailure ? { tokenFailure: lookup.tokenFailure } : {}) }
+        ? { terms: lookup.terms, tokenHeld: lookup.tokenHeld, ...(lookup.tokenFailure ? { tokenFailure: lookup.tokenFailure } : {}), ...(lookup.x402Discharges ? { x402Discharges: true } : {}) }
         : null;
       const verdict = spendGate({
         host: payHost ?? undefined,

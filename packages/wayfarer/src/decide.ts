@@ -28,6 +28,8 @@ export interface LicenceVerdict {
   /** Why not, in the caller's words — a missing credential and a refused one are different problems
    *  for different people, and collapsing them costs somebody an afternoon. */
   tokenFailure?: string;
+  /** The server is naulon's own, so buying this read over x402 discharges the obligation. */
+  x402Discharges?: boolean;
 }
 import { authorizeOrigin } from "./origin-policy.ts";
 import type { AppraisedCandidate, Decision } from "./types.ts";
@@ -285,7 +287,9 @@ export function spendGate(input: {
     // "regardless of the payment type, including when type='free'". Paying the inline price without
     // one transfers money and licenses nothing. We DO speak OLP now, so this refuses only when the
     // obligation is genuinely undischarged — and says which of the two reasons it is.
-    if (licence.obligation === "license-server" && !verdict.tokenHeld) {
+    // The one exception is a server that is naulon's own: the same gate sells this read over x402
+    // and mints its licence, so the purchase IS the licence from that authority.
+    if (licence.obligation === "license-server" && !verdict.tokenHeld && !verdict.x402Discharges) {
       return {
         ok: false,
         action: "skip",

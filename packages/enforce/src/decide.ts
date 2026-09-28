@@ -452,6 +452,7 @@ export async function decide(input: DecideInput): Promise<Decision> {
               covers: verifiedAgent.covers,
               ...(verifiedAgent.created !== undefined ? { created: verifiedAgent.created } : {}),
               ...(verifiedAgent.expires !== undefined ? { expires: verifiedAgent.expires } : {}),
+              signature: verifiedAgent.signature,
             },
           }
         : {}),

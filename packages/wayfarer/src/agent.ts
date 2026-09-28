@@ -420,7 +420,7 @@ export async function run(
     ];
     const looked = await Promise.all(payUrls.map(async (u) => [u, await licenceResolver.forUrl(u)] as const));
     for (const [u, l] of looked) {
-      licences[u] = l.terms ? { terms: l.terms, tokenHeld: l.tokenHeld, ...(l.tokenFailure ? { tokenFailure: l.tokenFailure } : {}) } : null;
+      licences[u] = l.terms ? { terms: l.terms, tokenHeld: l.tokenHeld, ...(l.tokenFailure ? { tokenFailure: l.tokenFailure } : {}), ...(l.x402Discharges ? { x402Discharges: true } : {}) } : null;
       if (l.terms) log(`  § ${u} — terms via ${l.source}${l.terms.read?.amount ? ` @ ${l.terms.read.amount.value} ${l.terms.read.amount.currency}` : ""}`);
     }
   }

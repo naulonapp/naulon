@@ -637,7 +637,7 @@ test("a licence token on a self-hosted origin answers exactly the ordinary 402",
 
 /* ── a presented RSL licence on a self-hosted origin ── */
 
-function licenceRig(reply: { json?: unknown; status?: number; throws?: boolean }, observe?: (r: Record<string, unknown>) => void) {
+function licenceRig(reply: { json?: unknown; status?: number; throws?: boolean }, observe?: (r: Record<string, unknown>) => void, server = "https://ls.example/olp") {
   const calls: Array<{ url: string; body: string; headers: Record<string, string> }> = [];
   const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
     calls.push({ url: String(url), body: String(init?.body ?? ""), headers: (init?.headers ?? {}) as Record<string, string> });
@@ -646,7 +646,9 @@ function licenceRig(reply: { json?: unknown; status?: number; throws?: boolean }
   }) as unknown as typeof fetch;
   const mw = naulonMiddleware({
     ...opts,
-    publisher: { ...opts.publisher, licenceServer: "https://ls.example/olp" },
+    // The licence server is this runtime's own control plane, the one origin its API key may reach.
+    verifyUrl: "https://ls.example/_naulon/verify",
+    publisher: { ...opts.publisher, licenceServer: server },
     fetchImpl,
     ...(observe ? { observe } : {}),
   } as never);
@@ -684,19 +686,45 @@ test("a licence the server charged is served, carrying the record and what was c
   assert.equal(form.get("user_agent"), "GPTBot/1.0", "the UA rides along for the publisher's audit row");
 });
 
-test("a licence the server refused gets the ordinary 402, naming why", async () => {
-  const { mw } = licenceRig({ json: { active: true, permitted: false, error: "signature_required" } });
+test("a licence the server refused gets the ordinary 402, naming why in the header and the body", async () => {
+  const { mw } = licenceRig({ json: { active: true, permitted: false, error: "signature_required", reason: "sign it" } });
   const out = await mw(licensedGet());
   assert.equal(out.response?.status, 402);
   assert.ok(out.response?.headers.get("PAYMENT-REQUIRED"));
   assert.match(out.response?.headers.get("X-Naulon-Verdict") ?? "", /licence refused \(signature_required\)/);
+  const body = (await out.response!.json()) as Record<string, unknown>;
+  assert.equal(body.error, "payment_required");
+  assert.equal(body.licence_error, "signature_required");
+  assert.equal(body.licence_error_description, "sign it");
 });
 
-test("a licence server that cannot be reached means the ordinary 402, never a free read", async () => {
+test("a licence server that cannot be reached is a retryable 503 that still sells the read, never a free one", async () => {
   const { mw } = licenceRig({ throws: true });
   const out = await mw(licensedGet());
+  assert.equal(out.response?.status, 503);
+  assert.equal(out.response?.headers.get("retry-after"), "2");
+  assert.ok(out.response?.headers.get("PAYMENT-REQUIRED"), "the read is still for sale over x402");
+  assert.match(out.response?.headers.get("X-Naulon-Verdict") ?? "", /licence refused \(licence_server_unavailable\)/);
+  assert.equal(((await out.response!.json()) as Record<string, unknown>).licence_error, "licence_server_unavailable");
+});
+
+test("a charge already running, or one nobody could confirm, is a 503 with no x402 offer", async () => {
+  for (const error of ["in_flight", "server_error"]) {
+    const { mw } = licenceRig({ json: { active: true, permitted: false, error } });
+    const out = await mw(licensedGet());
+    assert.equal(out.response?.status, 503, error);
+    assert.equal(out.response?.headers.get("PAYMENT-REQUIRED"), null, "an offer here would sell the same read twice");
+    assert.equal(out.response?.headers.get("retry-after"), "2");
+    assert.equal(((await out.response!.json()) as Record<string, unknown>).error, error);
+  }
+});
+
+test("a licence server that is not this site's control plane never receives its API key", async () => {
+  const { mw, calls } = licenceRig({ json: { active: true, permitted: true } }, undefined, "https://elsewhere.example/olp");
+  const out = await mw(licensedGet());
   assert.equal(out.response?.status, 402);
-  assert.match(out.response?.headers.get("X-Naulon-Verdict") ?? "", /licence refused \(unreachable\)/);
+  assert.equal(calls.filter((c) => c.url.includes("/introspect")).length, 0);
+  assert.equal(((await out.response!.json()) as Record<string, unknown>).licence_error, "untrusted_licence_server");
 });
 
 test("a HEAD with a licence is never sent to the licence server", async () => {

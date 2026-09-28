@@ -97,3 +97,12 @@ test("no BOT_AUTH identity → the pull carries no RFC 9421 signature headers", 
   assert.equal(captured[0]!.get("signature-input"), null);
   assert.equal(captured[0]!.get("signature-agent"), null);
 });
+
+test("a buyer's licence token never reaches the origin, which is the payee; other Authorization does", async () => {
+  current = pub("https://origin.example", undefined);
+  await app.request("/about", { headers: { host: "p.example", authorization: "License olp_secret" } });
+  assert.equal(captured[0]!.get("authorization"), null);
+  captured = [];
+  await app.request("/about", { headers: { host: "p.example", authorization: "Basic dTpw" } });
+  assert.equal(captured[0]!.get("authorization"), "Basic dTpw");
+});

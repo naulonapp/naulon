@@ -150,6 +150,9 @@ function withoutReserved(headers: Record<string, string> | undefined): Record<st
   return out;
 }
 
+/** How long a token whose server stated no `expires_in` is held before it is asked for again. */
+export const UNSTATED_EXPIRY_SEC = 3600;
+
 export async function acquireLicenseToken(input: {
   server: string;
   licenseXml: string;
@@ -192,13 +195,11 @@ export async function acquireLicenseToken(input: {
     return { ok: false, failure: { code: "unreachable", status: 0, description: (err as Error).message } };
   }
 
-  let payload: Record<string, unknown>;
-  try {
-    payload = (await res.json()) as Record<string, unknown>;
-  } catch {
-    // A licence server that answers with HTML is a licence server we cannot use; saying so is more
-    // useful than a JSON parse error surfacing three layers up.
-    return { ok: false, failure: { code: "malformed", status: res.status, description: "response was not JSON" } };
+  // A licence server that answers with HTML, or with JSON that is not an object (`null`, a list),
+  // is one we cannot use; saying so is more useful than a TypeError surfacing three layers up.
+  const payload = await jsonObject(res);
+  if (payload === null) {
+    return { ok: false, failure: { code: "malformed", status: res.status, description: "response was not a JSON object" } };
   }
 
   if (!res.ok) {
@@ -220,10 +221,11 @@ export async function acquireLicenseToken(input: {
   if (typeof accessToken !== "string" || accessToken === "" || typeof tokenType !== "string") {
     return { ok: false, failure: { code: "malformed", status: res.status, description: "no access_token" } };
   }
-  // `expires_in` absent is treated as non-expiring, like an explicit 0: a token we keep for a
-  // shorter time than the server intended costs a round trip; one we keep too long is a 401 on the
-  // asset, and only the server's own number can prevent that.
-  const seconds = typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0 ? Math.floor(expiresIn) : 0;
+  // OLP: `0` is a non-expiring licence. An ABSENT `expires_in` says nothing, so it is held for
+  // `UNSTATED_EXPIRY_SEC` and then asked for again: a token kept too long is refused on every read,
+  // and one kept too briefly costs a single round trip.
+  const stated = typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn >= 0 ? Math.floor(expiresIn) : null;
+  const seconds = stated ?? UNSTATED_EXPIRY_SEC;
   const now = input.now ?? Date.now;
   return {
     ok: true,
@@ -267,6 +269,8 @@ export interface IntrospectInput {
   /** The crawler's User-Agent, for the publisher's audit row. Telemetry, never authorization. */
   userAgent?: string;
   fetcher: Fetcher;
+  /** Defaults to `INTROSPECT_TIMEOUT_MS`. */
+  timeoutMs?: number;
 }
 
 export type IntrospectResult =
@@ -291,6 +295,19 @@ export type IntrospectResult =
  * `ok: false`, which a caller must treat as "not permitted": a licence nobody could check is not a
  * licence.
  */
+/** How long `introspectLicence` waits for a licence server before refusing the read. */
+export const INTROSPECT_TIMEOUT_MS = 10_000;
+
+/** The body as a JSON object, or null when it is not JSON or not an object. */
+async function jsonObject(res: { json(): Promise<unknown> }): Promise<Record<string, unknown> | null> {
+  try {
+    const v: unknown = await res.json();
+    return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function introspectLicence(input: IntrospectInput): Promise<IntrospectResult> {
   const endpoint = introspectEndpoint(input.server);
   if (endpoint === null) {
@@ -305,24 +322,34 @@ export async function introspectLicence(input: IntrospectInput): Promise<Introsp
   }
   let res;
   try {
-    res = await input.fetcher(endpoint, {
-      method: "POST",
-      body: form.toString(),
-      headers: {
-        authorization: `Bearer ${input.apiKey}`,
-        "content-type": "application/x-www-form-urlencoded",
-        accept: "application/json",
-      },
-    });
+    // A read is waiting on this answer. A licence server that hangs must turn into a refusal the
+    // agent can act on, not a request held open until the platform kills it. `Fetcher` carries no
+    // signal, so the wait is raced rather than aborted.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutMs = input.timeoutMs ?? INTROSPECT_TIMEOUT_MS;
+    try {
+      res = await Promise.race([
+        input.fetcher(endpoint, {
+          method: "POST",
+          body: form.toString(),
+          headers: {
+            authorization: `Bearer ${input.apiKey}`,
+            "content-type": "application/x-www-form-urlencoded",
+            accept: "application/json",
+          },
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`the licence server did not answer within ${timeoutMs} ms`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (err) {
     return { ok: false, status: 0, description: (err as Error).message };
   }
-  let payload: Record<string, unknown>;
-  try {
-    payload = (await res.json()) as Record<string, unknown>;
-  } catch {
-    return { ok: false, status: res.status, description: "response was not JSON" };
-  }
+  const payload = await jsonObject(res);
+  if (payload === null) return { ok: false, status: res.status, description: "response was not a JSON object" };
   if (!res.ok) {
     const error = typeof payload["error"] === "string" ? payload["error"] : `HTTP ${res.status}`;
     return { ok: false, status: res.status, description: error };

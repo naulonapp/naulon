@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Fetcher } from "@naulon/sdk/crawl";
-import { makeLicenceResolver } from "./licence.ts";
+import { isNaulonLicenceServer, makeLicenceResolver } from "./licence.ts";
 import { clearLicenseTokens, licenseTokenFor } from "./license-token.ts";
 import { resetConfig } from "@naulon/shared";
 import { resetAgentIdentity } from "./sign.ts";
@@ -236,4 +236,80 @@ test("with a signing identity, the /token request is signed over its own path so
     resetAgentIdentity();
     clearLicenseTokens();
   }
+});
+
+/* ── naulon's own licence server ─────────────────────────────────────────────────────────────── */
+
+/** A site whose document names `server`, answering /token with a token. Records what was posted. */
+function namedServerSite(server: string) {
+  const asked: Array<{ line: string; headers: Record<string, string> }> = [];
+  const doc = SERVER_DOC.replace('server="https://olp.example/api"', `server="${server}"`);
+  const ok = (body: string) => ({ ok: true, status: 200, async text() { return body; }, async json() { return JSON.parse(body) as unknown; } });
+  const fetcherFor = (_origin: string): Fetcher => async (url, init) => {
+    asked.push({ line: `${init?.method ?? "GET"} ${url}`, headers: (init?.headers as Record<string, string>) ?? {} });
+    if (url.endsWith("/robots.txt")) return ok("License: https://pub.example/license.xml");
+    if (url.endsWith("/license.xml")) return ok(doc);
+    if (url.endsWith("/token")) return ok(JSON.stringify({ access_token: "tok-n", token_type: "License", expires_in: 600 }));
+    return { ok: false, status: 404, async text() { return ""; }, async json() { return null; } };
+  };
+  return { fetcherFor, asked };
+}
+const NAULON_SERVER = "https://gate.naulon.app/_naulon/olp/pub.example";
+
+function agentToken(on: boolean): void {
+  if (on) {
+    process.env.NAULON_AGENT_TOKEN_ID = "agent-id-1";
+    process.env.NAULON_AGENT_TOKEN = "nln_agent_secret";
+  } else {
+    delete process.env.NAULON_AGENT_TOKEN_ID;
+    delete process.env.NAULON_AGENT_TOKEN;
+  }
+  resetConfig();
+}
+
+test("naulon's own licence server with no agent token: the page's x402 sale discharges it, and nothing is posted", async () => {
+  clearLicenseTokens();
+  agentToken(false);
+  const net = namedServerSite(NAULON_SERVER);
+  const got = await makeLicenceResolver({ fetcherFor: net.fetcherFor }).forUrl("https://pub.example/a");
+  assert.equal(got.tokenHeld, false);
+  assert.equal(got.x402Discharges, true);
+  assert.ok(!net.asked.some((a) => a.line.includes("/token")));
+});
+
+test("naulon's own licence server with an agent token configured: the licence is got with it", async () => {
+  clearLicenseTokens();
+  agentToken(true);
+  try {
+    const net = namedServerSite(NAULON_SERVER);
+    const got = await makeLicenceResolver({ fetcherFor: net.fetcherFor }).forUrl("https://pub.example/a");
+    assert.equal(got.tokenHeld, true);
+    const post = net.asked.find((a) => a.line === `POST ${NAULON_SERVER}/token`);
+    assert.ok(post, "the per-site token endpoint was asked");
+    assert.equal(post.headers["authorization"], `Basic ${Buffer.from("agent-id-1:nln_agent_secret").toString("base64")}`);
+  } finally {
+    agentToken(false);
+    clearLicenseTokens();
+  }
+});
+
+test("a server that only looks like naulon's never receives the agent token and gets no x402 pass", async () => {
+  clearLicenseTokens();
+  agentToken(true);
+  try {
+    const net = namedServerSite("https://gate.naulon.app.evil.example/_naulon/olp/pub.example");
+    const got = await makeLicenceResolver({ fetcherFor: net.fetcherFor }).forUrl("https://pub.example/a");
+    assert.equal(got.tokenHeld, false);
+    assert.equal(got.x402Discharges, undefined);
+    assert.ok(!net.asked.some((a) => a.line.includes("/token")), "credentials go to naulon's origin and nowhere else");
+  } finally {
+    agentToken(false);
+  }
+});
+
+test("isNaulonLicenceServer needs naulon's origin AND the licence-server path", () => {
+  assert.equal(isNaulonLicenceServer("https://gate.naulon.app/_naulon/olp/x.example"), true);
+  assert.equal(isNaulonLicenceServer("https://gate.naulon.app/other"), false);
+  assert.equal(isNaulonLicenceServer("http://gate.naulon.app/_naulon/olp/x.example"), false);
+  assert.equal(isNaulonLicenceServer("not a url"), false);
 });

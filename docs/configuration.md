@@ -76,6 +76,8 @@ A few rules are enforced across variables rather than on one of them:
 | `TRUST_PROXY_HOPS` | `1` | How many trusted hops sit in front, counted outward. `1` is a single reverse proxy or one serverless edge; `2` is a CDN in front of that proxy. Only read when `TRUST_PROXY=true`. Adding a hop is an env change, never a code change. |
 | `BOT_AUTH_SIGNING_KEY` | unset | Base64url 32-byte Ed25519 seed (`scripts/wba-keygen.mjs`). When set, the gate serves and self-signs its Web Bot Auth key directory at `/.well-known/http-message-signatures-directory`, and the buying agent signs its outbound requests. Unset, both surfaces are dark and the traffic is byte-identical. |
 | `BOT_AUTH_SIGNATURE_AGENT` | unset | The directory host the agent advertises in `Signature-Agent`. It has to actually serve your directory. |
+| `NAULON_AGENT_TOKEN_ID` | unset | The wayfarer's naulon agent token id, shown at naulon.app/buyer/agents. With `NAULON_AGENT_TOKEN`, it is how the wayfarer gets an RSL licence from naulon's own licence server. Sent to that server and nowhere else. |
+| `NAULON_AGENT_TOKEN` | unset | That agent token. A secret. Without the pair, a page whose licence server is naulon's is bought over x402 instead, which licenses it through the same gate. |
 | `BOT_AUTH_ALLOW_HTTP` | `false` | Allow `http://` and loopback key directories so a local signer fixture can serve one. Test walks only, because the directory URL is attacker-supplied, so never enable this in production. |
 
 ## Reporting earnings to the publisher (webhooks)

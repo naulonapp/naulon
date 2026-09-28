@@ -33,6 +33,7 @@ import {
   type RslTermsForUrl,
 } from "@naulon/sdk/rsl";
 import type { Fetcher } from "@naulon/sdk/crawl";
+import { getConfig } from "@naulon/shared";
 import { licenseTokenFor, rememberLicenseToken } from "./license-token.ts";
 import { botAuthHeadersFor } from "./sign.ts";
 
@@ -57,6 +58,12 @@ export interface LicenceLookup {
   /** Why the token could not be obtained, when it could not. Never invented — either the OLP error
    *  code the server returned, or the fact that nobody configured credentials for it. */
   tokenFailure?: string;
+  /**
+   * The licence server is naulon's own, so the page's x402 sale discharges the obligation: the same
+   * gate that runs the licence server sells the read and mints its licence. Set only when no token
+   * is held. A third-party server gets no such pass.
+   */
+  x402Discharges?: boolean;
   /** Which association mechanism the document came from — evidence for the decision log. */
   source?: RslSource;
   documentUrl?: string;
@@ -96,6 +103,39 @@ export interface LicenceResolver {
   forUrl(url: string, observed?: ObservedResponse): Promise<LicenceLookup>;
   /** Origins resolved this session, for a run summary. */
   originsSeen(): number;
+}
+
+/** Where naulon's licence server may be: its public gate, and the gate this agent is pointed at. */
+function naulonOrigins(): Set<string> {
+  const out = new Set(["https://gate.naulon.app"]);
+  const own = getConfig().TOLLGATE_URL;
+  if (own) {
+    try {
+      out.add(new URL(own).origin);
+    } catch {
+      // A malformed TOLLGATE_URL adds nothing; the agent reports it where it is used.
+    }
+  }
+  return out;
+}
+
+/**
+ * Is `server` naulon's own licence server? Origin AND path, because credentials go to it: a
+ * document can name any URL, and one that merely looks like ours must not receive an agent token.
+ */
+export function isNaulonLicenceServer(server: string): boolean {
+  try {
+    const u = new URL(server);
+    return naulonOrigins().has(u.origin) && u.pathname.startsWith("/_naulon/olp/");
+  } catch {
+    return false;
+  }
+}
+
+/** The configured naulon agent token as OLP client credentials, or null. */
+function naulonCredentials(): OlpCredentials | null {
+  const cfg = getConfig();
+  return cfg.NAULON_AGENT_TOKEN_ID && cfg.NAULON_AGENT_TOKEN ? { clientId: cfg.NAULON_AGENT_TOKEN_ID, clientSecret: cfg.NAULON_AGENT_TOKEN } : null;
 }
 
 export function makeLicenceResolver(opts: LicenceResolverOptions = {}): LicenceResolver {
@@ -145,14 +185,18 @@ export function makeLicenceResolver(opts: LicenceResolverOptions = {}): LicenceR
     // The obligation is real: the spec requires a licence from that server before access, whatever
     // the inline price says. Discharge it if we can, and report precisely why not if we cannot.
     if (licenseTokenFor(url)) return { ...base, tokenHeld: true };
-    const credentials = opts.licenseServers?.(terms.server) ?? null;
-    if (!credentials) {
-      return { ...base, tokenHeld: false, tokenFailure: `no client credentials are configured for ${terms.server}` };
+    const ours = isNaulonLicenceServer(terms.server);
+    const unheld = (tokenFailure: string): LicenceLookup => ({ ...base, tokenHeld: false, tokenFailure, ...(ours ? { x402Discharges: true } : {}) });
+    if (terms.read?.scope === "") {
+      // RSL: a `server` requires a non-empty `url`. There is no resource to ask about.
+      return unheld("the document names a licence server on a content block with no url");
     }
+    const credentials = opts.licenseServers?.(terms.server) ?? (ours ? naulonCredentials() : null);
+    if (!credentials) return unheld(`no client credentials are configured for ${terms.server}`);
     if (!terms.read?.licenseXml) {
       // We cannot ask about a licence we could not recover the source of; inventing one would ask
       // the server about terms the publisher never published.
-      return { ...base, tokenHeld: false, tokenFailure: "the licence element could not be read from the document" };
+      return unheld("the licence element could not be read from the document");
     }
     const acquired = await acquireLicenseToken({
       server: terms.server,
@@ -163,7 +207,7 @@ export function makeLicenceResolver(opts: LicenceResolverOptions = {}): LicenceR
       ...(tokenSignature(terms.server) ?? {}),
     });
     if (!acquired.ok) {
-      return { ...base, tokenHeld: false, tokenFailure: `the licence server answered ${acquired.failure.code}` };
+      return unheld(`the licence server answered ${acquired.failure.code}`);
     }
     rememberLicenseToken({
       origin: new URL(url).origin,

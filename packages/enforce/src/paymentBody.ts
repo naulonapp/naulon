@@ -66,6 +66,10 @@ export interface PaymentRequiredBody {
   error: "payment_required";
   message: string;
   offer: PaymentOffer;
+  /** Why a presented RSL licence did not pay for this read (`signature_required`, `price_rose`…),
+   *  when one was presented. The read is still for sale over x402, which is why this is a 402. */
+  licence_error?: string;
+  licence_error_description?: string;
 }
 
 export interface PaymentBodyInput {
@@ -76,6 +80,7 @@ export interface PaymentBodyInput {
   /** The path being tolled. */
   endpoint: string;
   tollKind: TollKind;
+  licence?: { error: string; description?: string };
 }
 
 /** Content type for every 402 body this builds. */
@@ -115,6 +120,12 @@ export function paymentRequiredBody(input: PaymentBodyInput): PaymentRequiredBod
         humansReadFree: true,
       },
     },
+    ...(input.licence
+      ? {
+          licence_error: input.licence.error,
+          ...(input.licence.description ? { licence_error_description: input.licence.description } : {}),
+        }
+      : {}),
   };
 }
 

@@ -10,7 +10,7 @@
  * verifier holds for unsigned traffic.
  */
 import { botAuthKeyFromSeed, getConfig, signBotAuth, type BotAuthKey } from "@naulon/shared";
-import { licenseTokenFor } from "./license-token.ts";
+import { forgetLicenseToken, licenseTokenFor } from "./license-token.ts";
 
 interface AgentIdentity {
   key: BotAuthKey;
@@ -58,6 +58,20 @@ export function botAuthHeadersFor(url: string, opts: { coverPath?: boolean } = {
  * unconfigured agent falls through to the exact fetch it always made.
  */
 export async function agentFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetchHop(url, init, 0);
+}
+
+/** Same-origin redirects a licensed read follows, re-signing each hop. */
+const MAX_LICENCE_HOPS = 5;
+let warnedUnsigned = false;
+
+/** A refusal that says the token itself is unusable, from the hosted gate or a self-hosted site. */
+function refusedAsInvalid(res: Response): boolean {
+  if (/error="invalid_token"/.test(res.headers.get("www-authenticate") ?? "")) return true;
+  return /licence refused \(invalid_token\)/.test(res.headers.get("x-naulon-verdict") ?? "");
+}
+
+async function fetchHop(url: string, init: RequestInit | undefined, hop: number): Promise<Response> {
   // An OLP licence token, if we hold one for this URL. Attached HERE because every request the
   // agent makes passes through this function, and four separate places in buyer.ts build headers of
   // their own — a token remembered at each is a token forgotten at one. A caller that set its own
@@ -65,10 +79,33 @@ export async function agentFetch(url: string, init?: RequestInit): Promise<Respo
   const licenseToken = licenseTokenFor(url);
   const caller = (init?.headers as Record<string, string> | undefined) ?? {};
   const hasOwnAuth = Object.keys(caller).some((k) => k.toLowerCase() === "authorization");
-  const license = licenseToken && !hasOwnAuth ? { authorization: `License ${licenseToken}` } : {};
+  const presenting = Boolean(licenseToken && !hasOwnAuth);
+  const license = presenting ? { authorization: `License ${licenseToken}` } : {};
   // A licence read can be charged on the strength of this signature, so it covers the path too.
-  const signed = botAuthHeadersFor(url, { coverPath: Boolean(licenseToken && !hasOwnAuth) });
+  const signed = botAuthHeadersFor(url, { coverPath: presenting });
+  if (presenting && !signed && !warnedUnsigned) {
+    warnedUnsigned = true;
+    console.warn(
+      "[wayfarer] presenting an RSL licence unsigned: a site that serves its own pages charges a licence only on a Web Bot Auth signature, so set BOT_AUTH_SIGNING_KEY and BOT_AUTH_SIGNATURE_AGENT",
+    );
+  }
   if (!signed && !licenseToken) return fetch(url, init);
   const headers = { ...signed, ...license, ...caller };
-  return fetch(url, { ...init, headers });
+  if (!presenting) return fetch(url, { ...init, headers });
+
+  // The signature covers this URL's path, so a redirect is followed here and signed again: fetch
+  // would carry this signature onto the next path, where it witnesses nothing.
+  const res = await fetch(url, { ...init, headers, redirect: "manual" });
+  if (licenseToken && refusedAsInvalid(res)) forgetLicenseToken(url, licenseToken);
+  const location = res.headers.get("location");
+  if (res.status >= 300 && res.status < 400 && location && hop < MAX_LICENCE_HOPS && init?.redirect !== "manual") {
+    const next = new URL(location, url);
+    if (next.origin === new URL(url).origin) {
+      const method = res.status === 303 ? "GET" : (init?.method ?? "GET");
+      return fetchHop(next.toString(), { ...init, method, ...(method === "GET" ? { body: undefined } : {}) }, hop + 1);
+    }
+    // Another origin: its own token, if any, and its own signature. Never this one.
+    return fetchHop(next.toString(), init, hop + 1);
+  }
+  return res;
 }

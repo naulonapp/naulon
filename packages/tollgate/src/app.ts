@@ -50,6 +50,7 @@ import {
   type EventMandate,
   type LicenceAuthority,
   type LicenceVerdict,
+  parseLicenceAuthorization,
 } from "@naulon/shared";
 import {
   decide,
@@ -264,7 +265,13 @@ async function materializeBody(res: Response): Promise<Response | null> {
 function forwardHeaders(req: Request, clientIp: string, originHost: string): Headers {
   const out = new Headers();
   for (const [k, v] of req.headers) {
-    if (!STRIP_HEADERS.has(k.toLowerCase())) out.set(k, v);
+    const name = k.toLowerCase();
+    if (STRIP_HEADERS.has(name)) continue;
+    // A licence token is the buyer's bearer credential, and the origin is the payee. Handing it over
+    // would let the origin present it here on URLs the buyer never read. Any other Authorization
+    // scheme is the origin's own business and passes through.
+    if (name === "authorization" && parseLicenceAuthorization(v) !== null) continue;
+    out.set(k, v);
   }
   // The scheme the BUYER used, not the one this socket saw. The inbound header is
   // stripped above as untrusted, then re-derived here — but "what the socket saw" is

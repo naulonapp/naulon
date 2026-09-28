@@ -279,3 +279,16 @@ test("a region allowlist refuses a buyer outside it and one who declared nothing
   });
   assert.deepEqual(inside, { ok: true });
 });
+
+test("an undischarged obligation to naulon's OWN licence server pays over x402: that sale is the licence", () => {
+  const v = spendGate({
+    host: "pub.example",
+    priceUsdc: 0.01,
+    policy,
+    licence: terms(
+      { obligation: "license-server", server: "https://gate.naulon.app/_naulon/olp/pub.example" },
+      { tokenHeld: false, tokenFailure: "no client credentials are configured", x402Discharges: true },
+    ),
+  });
+  assert.equal(v.ok, true);
+});

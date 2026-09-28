@@ -86,7 +86,10 @@ the URL and checks it against a shared spend gate. The read is refused when the
 licence governing the URL does not grant `ai-input`, prohibits the agent's user
 class or region, or names an OLP licence server whose token the agent does not yet
 hold. Silence in a published licence is not permission, and no budget or approval
-setting overrides the refusal. A publisher with no licence at all is not refused:
+setting overrides the refusal. When that server is naulon's own, the agent gets the
+licence with its agent token (`NAULON_AGENT_TOKEN_ID` and `NAULON_AGENT_TOKEN`), and
+without one it buys the read over x402 instead: the same gate sells it and mints its
+licence, so the purchase is the licence from that server's authority. A publisher with no licence at all is not refused:
 ordinary 402 pricing applies.
 
 ## What you keep after paying

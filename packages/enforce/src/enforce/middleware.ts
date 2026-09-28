@@ -242,6 +242,15 @@ export function resolvePublisher(
   return { ...(hasLocal ? (local as object) : {}), ...remote };
 }
 
+/** Same scheme, host and port. A URL that does not parse is never the same origin. */
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
 export function naulonMiddleware(
   opts: NaulonMiddlewareOptions,
 ): (req: Request) => Promise<MiddlewareResult> {
@@ -436,7 +445,7 @@ export function naulonMiddleware(
 
     // The 402 advertisement, shared by a read with no payment and a licence that did not permit it.
     type Unpaid = Extract<typeof d, { kind: "payment-required" | "licence-presented" }>;
-    const paymentRequired = (unpaid: Unpaid, verdict?: string): MiddlewareResult => {
+    const paymentRequired = (unpaid: Unpaid, verdict?: string, licence?: { error: string; description?: string }): MiddlewareResult => {
       report(unpaid.obs, "denied", resource, { kind: unpaid.tollKind, priceUsdc: unpaid.quote.price });
       const askMicro = totalChargedMicro(unpaid.legs);
       // The SAME advertisement the hosted gate emits (`tollgate/app.ts`, the
@@ -454,7 +463,7 @@ export function naulonMiddleware(
       );
       return {
         response: new Response(
-          paymentRequiredBodyText({ askMicro, publisher: url.host, endpoint: url.pathname, tollKind: unpaid.tollKind }),
+          paymentRequiredBodyText({ askMicro, publisher: url.host, endpoint: url.pathname, tollKind: unpaid.tollKind, ...(licence ? { licence } : {}) }),
           {
             status: 402,
             headers: {
@@ -506,6 +515,14 @@ export function naulonMiddleware(
       case "licence-presented": {
         const server = (publisher as { licenceServer?: string }).licenceServer;
         if (!server || req.method !== "GET") return paymentRequired(d);
+        // The check carries this site's API key, so it goes only to the control plane this runtime
+        // already settles through. A licence server anywhere else is not one this key may be sent to.
+        if (!sameOrigin(server, opts.verifyUrl)) {
+          return paymentRequired(d, "licence refused (untrusted_licence_server)", {
+            error: "untrusted_licence_server",
+            description: "this site's licence server is not its naulon control plane",
+          });
+        }
         const checked = await introspectLicence({
           server,
           token: d.token,
@@ -531,8 +548,34 @@ export function naulonMiddleware(
           if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
           return { response: null, setHeaders };
         }
-        const why = checked.ok ? (checked.error ?? (checked.active ? "not_permitted" : "invalid_token")) : "unreachable";
-        return paymentRequired(d, `licence refused (${why})`);
+        const why = checked.ok ? (checked.error ?? (checked.active ? "not_permitted" : "invalid_token")) : "licence_server_unavailable";
+        const description = checked.ok ? checked.reason : checked.description;
+        // A charge already running for this URL (`in_flight`), or one whose outcome nobody could
+        // confirm (`server_error`): retry, and never an x402 offer, which would invite a second
+        // payment for the same read. The hosted gate answers these the same way.
+        if (why === "in_flight" || why === "server_error") {
+          report(d.obs, "denied", resource, { kind: d.tollKind, priceUsdc: d.quote.price });
+          return {
+            response: new Response(JSON.stringify({ error: why, ...(description ? { error_description: description } : {}) }), {
+              status: 503,
+              headers: {
+                "content-type": PAYMENT_BODY_CONTENT_TYPE,
+                "retry-after": "2",
+                "cache-control": "no-store",
+                "X-Naulon-Verdict": headerSafe(`licence refused (${why})`),
+              },
+            }),
+          };
+        }
+        // Anything else leaves the read for sale: the ordinary 402, carrying why the licence did not
+        // pay. A licence server nobody could reach is a retry as well, so it says so.
+        const refused = paymentRequired(d, `licence refused (${why})`, { error: why, ...(description ? { description } : {}) });
+        if (why === "licence_server_unavailable" && refused.response) {
+          const headers = new Headers(refused.response.headers);
+          headers.set("retry-after", "2");
+          return { response: new Response(refused.response.body, { status: 503, headers }) };
+        }
+        return refused;
       }
 
       case "payment-required":
