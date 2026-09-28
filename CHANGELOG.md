@@ -16,11 +16,43 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.9.1
+
+`@naulon/sdk` 0.6.0 → **0.6.1**, `@naulon/shared` 0.6.0 → **0.6.1**, `@naulon/enforce` 0.6.0 →
+**0.6.1**, `@naulon/wayfarer` 0.6.0 → **0.6.1** and `@naulon/wayfarer-mcp` 0.6.0 → **0.6.1**. The
+WordPress plugin is unchanged.
+
+RSL licence reads, hardened on both ends:
+
+- The gate no longer forwards a presented `Authorization: License` token to the origin. Other
+  `Authorization` schemes still pass through.
+- `LicenceSigner.signature` carries the verified signature bytes, so a `LicenceAuthority` can charge
+  one signed request once.
+- `naulonMiddleware` sends a presented licence, with the site's API key, only to a licence server on
+  the same origin as `verifyUrl`. A refusal is the ordinary 402 with `licence_error` and
+  `licence_error_description` in its body. A charge already in flight or unconfirmed is a 503 with
+  `retry-after` and no x402 offer. A licence server that cannot be reached is a 503 that keeps the
+  offer.
+- `introspectLicence` gives up after `INTROSPECT_TIMEOUT_MS` (10 s, `timeoutMs` to change it). Both
+  OLP calls treat a body that is not a JSON object as malformed.
+- `acquireLicenseToken` holds a token whose server stated no `expires_in` for `UNSTATED_EXPIRY_SEC`
+  (an hour) rather than forever. `0` still means it never expires.
+- The wayfarer gets licences from naulon's own licence server with `NAULON_AGENT_TOKEN_ID` and
+  `NAULON_AGENT_TOKEN`, and without them buys the read over x402, which the same gate licenses. It
+  drops a token the server calls `invalid_token`, signs each same-origin redirect hop again, and
+  warns once when it presents a licence unsigned.
+
+Also in this release:
+
 - `@naulon/wayfarer-mcp`: `naulon_status` can report the spendable balance, the budget left and
   the wallet's own chain when the host supplies them (`readHostedFunds`, `sessionNetwork`). A
   hosted agent is no longer told to fund its signer address, and an agent on a testnet balance is
   no longer told a refusal concerns a mainnet. The handshake reports the package version instead
   of a hardcoded `0.2.1`.
+
+Every internal range moves with it.
 
 ## v0.9.0
 
