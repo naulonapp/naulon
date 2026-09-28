@@ -524,3 +524,36 @@ test("a free ai-input does not reopen a prohibited training corpus", async () =>
   });
   assert.equal(d.kind, "prohibited");
 });
+
+// ---- RSL licence tokens (Authorization: License) ----
+const tolledReq = (headers: Record<string, string>) =>
+  new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", ...headers } });
+const decideOn = (req: Request) =>
+  decide({ raw: req, host: "h", path: "/essays/x", publisher: basePublisher, now: 1, quote: quoteOf });
+
+test("a machine presenting Authorization: License on a tolled path is licence-presented", async () => {
+  const d = await decideOn(tolledReq({ authorization: "License tok123" }));
+  assert.equal(d.kind, "licence-presented");
+  if (d.kind === "licence-presented") {
+    assert.equal(d.token, "tok123");
+    assert.ok(d.header.length > 0 && d.legs.length >= 1);
+    assert.equal(d.signer, undefined);
+  }
+});
+
+test("a payment beats a licence token", async () => {
+  const d = await decideOn(tolledReq({ authorization: "License tok123", [PAYMENT_SIGNATURE_HEADER]: "x" }));
+  assert.equal(d.kind, "payment-presented");
+});
+
+test("a human with a licence header still reads free", async () => {
+  const req = new Request("http://h/essays/x", {
+    headers: { "user-agent": "Mozilla/5.0 (real browser)", authorization: "License tok123" },
+  });
+  assert.equal((await decideOn(req)).kind, "free");
+});
+
+test("Bearer is not a licence: 402 as today", async () => {
+  const d = await decideOn(tolledReq({ authorization: "Bearer tok123" }));
+  assert.equal(d.kind, "payment-required");
+});

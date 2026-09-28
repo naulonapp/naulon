@@ -154,3 +154,27 @@ test("only a server error or an unreachable server is worth retrying", () => {
     assert.equal(olpRetryable({ code, status: 400 }), false, code);
   }
 });
+
+test("extraHeaders reach the POST, and can never replace the credentials or the content type", async () => {
+  const net = fakeServer({ json: { access_token: "tok-1", token_type: "License", expires_in: 60 } });
+  await acquireLicenseToken({
+    server: "https://olp.example/api",
+    licenseXml: "<license/>",
+    resource: "https://pub.example/a",
+    credentials: CREDS,
+    fetcherFor: net.fetcherFor,
+    extraHeaders: {
+      "signature-input": "sig1=x",
+      signature: "sig1=:y:",
+      Authorization: "Bearer stolen",
+      "content-type": "text/plain",
+    },
+  });
+  const init = net.sent[0]!.init as { headers: Record<string, string> };
+  assert.equal(init.headers["signature-input"], "sig1=x");
+  assert.equal(init.headers["signature"], "sig1=:y:");
+  assert.equal(init.headers["authorization"], `Basic ${Buffer.from("agent-1:s3cret").toString("base64")}`);
+  assert.equal(init.headers["content-type"], "application/x-www-form-urlencoded");
+  assert.equal(Object.keys(init.headers).filter((k) => k.toLowerCase() === "authorization").length, 1);
+  assert.equal(Object.keys(init.headers).filter((k) => k.toLowerCase() === "content-type").length, 1);
+});

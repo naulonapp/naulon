@@ -47,10 +47,13 @@ import {
   type PublisherResolver,
   type TollKind,
   type Usdc,
+  type EventMandate,
+  type LicenceAuthority,
 } from "@naulon/shared";
 import {
   decide,
   LICENSE_HEADER,
+  type Decision,
   type DecideObs,
   buildX402Manifest,
   PAYMENT_LINK_HEADER,
@@ -445,6 +448,16 @@ export interface CreateAppOptions {
    * `publisherId` is not the resolved publisher's.
    */
   resolveInAppConfig?: (host: string) => Promise<PublisherConfig | undefined>;
+
+  /**
+   * Optional licence seam: who charges a read presented with `Authorization: License <token>`.
+   *
+   * The gate hands it the 402 it would have answered with and settles whatever payment it returns,
+   * through the same prefetch, hash and settle path a buyer-signed payment takes, then reports the
+   * outcome back. Omitting it answers such a request with the ordinary 402, byte-identical to before
+   * the option existed.
+   */
+  licenceAuthority?: LicenceAuthority;
 }
 
 export function createApp(
@@ -453,6 +466,7 @@ export function createApp(
 ): Hono {
   const onUpstreamOutcome = opts?.onUpstreamOutcome;
   const resolveInAppConfig = opts?.resolveInAppConfig;
+  const licenceAuthority = opts?.licenceAuthority;
   const app = new Hono();
   app.use("*", logger());
   app.use("*", rateLimit());
@@ -756,6 +770,253 @@ export function createApp(
         at: Date.now(),
       });
 
+    // The paid tail, shared by a buyer-signed payment and one a licence authority returned. `extra`
+    // is empty for the former, which keeps that path byte-identical to what it was.
+    type Priced = Extract<Decision, { kind: "payment-presented" | "licence-presented" }>;
+    type SettleOutcome = "settled" | "unpaid" | "ambiguous";
+    const settleAndServe = async (
+      p: Priced,
+      payment: string,
+      extra: {
+        mandate?: EventMandate;
+        onOutcome?: (o: SettleOutcome, s?: { licenseJws?: string; eventId?: string }) => Promise<void>;
+      },
+    ): Promise<Response> => {
+      const outcome = async (o: SettleOutcome, st?: { licenseJws?: string; eventId?: string }): Promise<void> => {
+        if (!extra.onOutcome) return;
+        try {
+          await extra.onOutcome(o, st);
+        } catch {
+          // Reporting never changes what the buyer is told.
+        }
+      };
+      // A throw still has to be reported: before the settle nothing moved and the reserve is owed
+      // back; during it, money may have moved. The throw itself carries on to the error boundary.
+      const reportingThrow = async <T>(o: SettleOutcome, f: () => Promise<T>): Promise<T> => {
+        try {
+          return await f();
+        } catch (err) {
+          await outcome(o);
+          throw err;
+        }
+      };
+      // FETCH BEFORE SETTLE — never move money for a read the origin will not deliver.
+      //
+      // This used to settle first and proxy afterwards, so an origin that answered 404 left the
+      // buyer charged with nothing to show for it, and custody-free means there is no refund
+      // path: the money went buyer → author directly. Found live on 2026-08-04 —
+      // `fleetorigin.naulon.app` had moved its articles to `.html` suffixes while the catalog
+      // still declared the extensionless slugs (slug extraction strips the suffix, so BOTH URLs
+      // priced, and only one was servable). GPTBot was quoted 5000 micro-USDC on a URL the origin
+      // could not serve, and "GPTBot gets a 402" — the fleet walk's own success criterion —
+      // passed the whole time.
+      //
+      // Ordering, not an extra request: the proxy fetch already happened on this path, one line
+      // below the settle. Doing it first costs nothing and makes "money moved" imply "content was
+      // in hand". The unread body is held across the settle; article payloads are small and the
+      // settle is ~1s, so the upstream connection is not meaningfully strained.
+      //
+      // SAFE METHODS ONLY. The gated route is `app.all("*")`, so a non-GET could reach here, and
+      // reordering would let the origin perform a side effect for a request that never pays. A
+      // GET/HEAD is idempotent and side-effect-free, which is the entire article-read surface
+      // this defect lives on; anything else keeps the original settle-then-proxy order.
+      const safeMethod = c.req.method === "GET" || c.req.method === "HEAD";
+      let prefetched: Response | undefined;
+      let contentSha256: string | undefined;
+      if (safeMethod) {
+        prefetched = await reportingThrow("unpaid", () =>
+          proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning),
+        );
+        // The bytes must be IN HAND before the money moves, and until now "prefetched" only ever
+        // meant the HEADERS arrived. `proxyToOrigin` hands back a STREAMING response, and an
+        // article origin answers chunked (no content-length), so nothing is necessarily buffered
+        // at this point. Holding that unread stream across `settleAndAttribute` below — an
+        // on-chain settle, ~1s and sometimes several — lets the upstream connection be recycled,
+        // closed, or time out inside the window, and the body then reads as ZERO BYTES on the
+        // client: status 200, a minted license, a real settlementRef, and nothing to read.
+        //
+        // Measured on the local rig 2026-08-11 — roughly 40% of paid reads returned
+        // `ok=true license=true contentLen=0`, and the /ask agent above cited those empty sources
+        // as though it had read them. Money moved, no content, nobody told.
+        //
+        // Reading the body here is what makes the ordering note above true as written: "money
+        // moved" now implies the bytes were in hand, not merely promised. The cost is one article
+        // body held in memory per in-flight paid read — precisely what that note already assumed
+        // when it said article payloads are small.
+        if (prefetched.ok) {
+          const fetched = prefetched;
+          const materialized = await reportingThrow("unpaid", () => materializeBody(fetched));
+          if (!materialized) {
+            // The read failed BEFORE anything settled, which is the whole point of doing it here:
+            // the buyer's signed authorization is untouched and reusable, exactly as in the
+            // non-2xx branch below. An origin that cannot deliver its own bytes is an origin that
+            // could not serve, and we bill only for delivered content.
+            emitObs(p.obs, "unservable", { kind: p.tollKind, price: usdc(p.quote.price) });
+            await outcome("unpaid");
+            return stampGateCacheHeaders(
+              new Response("origin body could not be read", {
+                status: 502,
+                headers: {
+                  "X-Naulon-Verdict": headerSafe("agent not charged: origin body could not be read"),
+                },
+              }),
+              { noStore: true },
+            );
+          }
+          prefetched = materialized;
+          // Hash what is about to be served, from the same in-memory bytes the buyer receives. A
+          // HEAD carries no body to sell, so it states no hash rather than the hash of nothing.
+          if (c.req.method === "GET") {
+            contentSha256 = createHash("sha256")
+              .update(new Uint8Array(await materialized.clone().arrayBuffer()))
+              .digest("hex");
+          }
+        }
+        // Anything outside 2xx, not just 404 — and each non-2xx family is correct to refuse on:
+        // a 3xx means the content moved and the agent should pay at wherever it went; a 304 means
+        // they already hold it and there is no body to sell; a 5xx means the origin is broken,
+        // which is the publisher's outage to fix and not a sale. The rule is simply that we bill
+        // for delivered content, so "did the origin deliver" is the only question asked.
+        //
+        // The body an unpaid agent sees here is the origin's own error page — the same bytes a
+        // human reading free would get on that URL, so refusing the charge exposes nothing new.
+        if (!prefetched.ok) {
+          // The payment is untouched — no nonce consumed, no leg settled — so the buyer's signed
+          // authorization stays valid and reusable. They get the origin's own status, unpaid.
+          emitObs(p.obs, "unservable", { kind: p.tollKind, price: usdc(p.quote.price) });
+          await outcome("unpaid");
+          prefetched.headers.set(
+            "X-Naulon-Verdict",
+            headerSafe(`agent not charged: origin could not serve (${prefetched.status})`),
+          );
+          return stampGateCacheHeaders(prefetched, { noStore: true });
+        }
+      }
+
+      // The settlement tail — the exact same code path the hosted /verify runs.
+      const settled = await reportingThrow("ambiguous", () => settleAndAttribute({
+        payment: payment,
+        legs: p.legs,
+        quote: p.quote,
+        publisher,
+        host,
+        now,
+        resource: canonicalResource(host, new URL(c.req.url).pathname),
+        ...(contentSha256 ? { contentSha256 } : {}),
+        ...(extra.mandate ? { mandate: extra.mandate } : {}),
+      }));
+      if (!settled.ok) {
+        // Let the origin's body go. This is the ONE branch that prefetches and then does not
+        // serve what it fetched: the success path below hands `prefetched` to the client, and the
+        // `!prefetched.ok` branch above returns the response itself. Here we return a fresh 402
+        // and the fetched body would simply fall out of scope — and an unread undici body holds
+        // its socket out of the pool until GC finalises it, so a run of failing payments leaks one
+        // connection each against the publisher's own origin.
+        //
+        // Failure is ignored on purpose: the body may already be errored or the peer gone, and
+        // nothing about releasing it should change what the buyer is told about their payment.
+        await prefetched?.body?.cancel().catch(() => {});
+        // Refused at verify means nothing was broadcast; any later failure may have moved money.
+        await outcome(settled.stage === "verify" ? "unpaid" : "ambiguous");
+        // Carry WHY, classified. `settled.error` goes to the buyer in the 402 body below (they are
+        // entitled to the detail); the publisher's audit row gets the closed-set reason, so a
+        // counterparty address or leg amount can never reach it.
+        emitObs(p.obs, "payment-failed", {
+          kind: p.tollKind,
+          price: usdc(p.quote.price),
+          failureReason: classifyPaymentFailure(settled.error),
+        });
+        return stampGateCacheHeaders(
+          c.json({ error: settled.error }, 402, {
+            [PAYMENT_REQUIRED_HEADER]: p.header,
+            // Still the ASK, not a charge — settlement failed, so nothing was taken.
+            [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(totalChargedMicro(p.legs)),
+            Link: PAYMENT_LINK_HEADER,
+          }),
+          { noStore: true },
+        );
+      }
+
+      await outcome("settled", {
+        ...(settled.licenseJws ? { licenseJws: settled.licenseJws } : {}),
+        ...(settled.eventId ? { eventId: settled.eventId } : {}),
+      });
+
+      // Audit plane: the paid outcome on the same timeline as denials/free reads.
+      emitObs(p.obs, "paid", { kind: p.quote.kind, price: usdc(p.quote.price) });
+
+      // Reuse the response we already hold on the safe-method path; only a non-GET reaches the
+      // origin here (see the ordering note above).
+      const res =
+        prefetched ??
+        (await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning));
+      if (settled.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, settled.responseHeader);
+      if (settled.licenseJws) res.headers.set(LICENSE_HEADER, settled.licenseJws);
+      // Only on the settled path: `crawler-charged` is a claim that money moved, so
+      // it is set after settleAndAttribute succeeded and never on a 402. It is the SETTLED
+      // total, not the ask: a stock x402 payer (naulon#73) signs `accepts[0]` alone, so the
+      // operator fee and any co-author cut never left their wallet and must not be billed to
+      // them here. `crawler-price` on the 402 above still carries the full ask.
+      res.headers.set(CRAWLER_CHARGED_HEADER, formatCrawlerPrice(settledChargedMicro(p.legs, settled.forgoneLegs)));
+      res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${p.obs.classifyReason})`));
+      return stampGateCacheHeaders(res, { noStore: true });
+    };
+
+    // An RSL licence token the authority is asked to charge. Returns null when there is no
+    // authority, so the caller answers the ordinary 402.
+    const serveLicence = async (p: Extract<Decision, { kind: "licence-presented" }>): Promise<Response> => {
+      const authority = licenceAuthority!;
+      const verdict = await authority.authorize({
+        token: p.token,
+        publisherId: publisher.id,
+        host,
+        resource: canonicalResource(host, new URL(c.req.url).pathname),
+        slug: p.obs.slug,
+        tollKind: p.tollKind,
+        header: p.header,
+        legs: p.legs,
+        ...(p.signer ? { signer: p.signer } : {}),
+      });
+      if (!verdict.ok) {
+        const headers: Record<string, string> = {
+          "X-Naulon-Verdict": headerSafe(`licence refused (${verdict.error})`),
+        };
+        if (verdict.status === 401) headers["WWW-Authenticate"] = `License error="${verdict.error}"`;
+        if (verdict.status === 402) {
+          // Still buyable over x402: the refusal carries the same advertisement a 402 does.
+          headers[PAYMENT_REQUIRED_HEADER] = p.header;
+          headers[CRAWLER_PRICE_HEADER] = formatCrawlerPrice(totalChargedMicro(p.legs));
+          headers.Link = PAYMENT_LINK_HEADER;
+        }
+        if (verdict.status === 503) headers["retry-after"] = "2";
+        emitObs(p.obs, "denied", { kind: p.tollKind, price: usdc(p.quote.price) });
+        return stampGateCacheHeaders(
+          c.json(
+            { error: verdict.error, ...(verdict.description ? { error_description: verdict.description } : {}) },
+            verdict.status,
+            headers,
+          ),
+          { noStore: true },
+        );
+      }
+      if (verdict.kind === "held") {
+        emitObs(p.obs, "agent-reread", { kind: p.tollKind });
+        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+        res.headers.set("X-Naulon-Verdict", "agent reread (licence)");
+        return stampGateCacheHeaders(res, { noStore: true });
+      }
+      const { grantId } = verdict;
+      return settleAndServe(p, verdict.payment, {
+        mandate: verdict.mandate,
+        onOutcome: (o, st) =>
+          authority.report(
+            o === "settled"
+              ? { grantId, outcome: "settled", eventId: st?.eventId ?? "", ...(st?.licenseJws ? { licenseJws: st.licenseJws } : {}) }
+              : { grantId, outcome: o },
+          ),
+      });
+    };
+
     switch (d.kind) {
       // Non-article OR unknown-article: pure passthrough, no observation.
       case "passthrough":
@@ -795,6 +1056,13 @@ export function createApp(
         return stampGateCacheHeaders(res, { noStore: true });
       }
 
+      // Machine presenting an RSL licence token. With no licence authority configured it is
+      // answered exactly as a request with no payment.
+      case "licence-presented":
+        // GET only. A HEAD carries no body to sell, and a standing licence must not be charged for a
+        // probe the buyer never saw; anything else is not a read at all.
+        if (licenceAuthority && c.req.method === "GET") return serveLicence(d);
+      // falls through
       // Machine, no payment: 402 with the requirement in the PAYMENT-REQUIRED
       // header. Link points an agent at the toll manifest (discoverability).
       case "payment-required": {
@@ -830,155 +1098,8 @@ export function createApp(
       }
 
       // Machine WITH a payment: fetch what we sold, verify + settle (custody-free), then serve.
-      case "payment-presented": {
-        // FETCH BEFORE SETTLE — never move money for a read the origin will not deliver.
-        //
-        // This used to settle first and proxy afterwards, so an origin that answered 404 left the
-        // buyer charged with nothing to show for it, and custody-free means there is no refund
-        // path: the money went buyer → author directly. Found live on 2026-08-04 —
-        // `fleetorigin.naulon.app` had moved its articles to `.html` suffixes while the catalog
-        // still declared the extensionless slugs (slug extraction strips the suffix, so BOTH URLs
-        // priced, and only one was servable). GPTBot was quoted 5000 micro-USDC on a URL the origin
-        // could not serve, and "GPTBot gets a 402" — the fleet walk's own success criterion —
-        // passed the whole time.
-        //
-        // Ordering, not an extra request: the proxy fetch already happened on this path, one line
-        // below the settle. Doing it first costs nothing and makes "money moved" imply "content was
-        // in hand". The unread body is held across the settle; article payloads are small and the
-        // settle is ~1s, so the upstream connection is not meaningfully strained.
-        //
-        // SAFE METHODS ONLY. The gated route is `app.all("*")`, so a non-GET could reach here, and
-        // reordering would let the origin perform a side effect for a request that never pays. A
-        // GET/HEAD is idempotent and side-effect-free, which is the entire article-read surface
-        // this defect lives on; anything else keeps the original settle-then-proxy order.
-        const safeMethod = c.req.method === "GET" || c.req.method === "HEAD";
-        let prefetched: Response | undefined;
-        let contentSha256: string | undefined;
-        if (safeMethod) {
-          prefetched = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
-          // The bytes must be IN HAND before the money moves, and until now "prefetched" only ever
-          // meant the HEADERS arrived. `proxyToOrigin` hands back a STREAMING response, and an
-          // article origin answers chunked (no content-length), so nothing is necessarily buffered
-          // at this point. Holding that unread stream across `settleAndAttribute` below — an
-          // on-chain settle, ~1s and sometimes several — lets the upstream connection be recycled,
-          // closed, or time out inside the window, and the body then reads as ZERO BYTES on the
-          // client: status 200, a minted license, a real settlementRef, and nothing to read.
-          //
-          // Measured on the local rig 2026-08-11 — roughly 40% of paid reads returned
-          // `ok=true license=true contentLen=0`, and the /ask agent above cited those empty sources
-          // as though it had read them. Money moved, no content, nobody told.
-          //
-          // Reading the body here is what makes the ordering note above true as written: "money
-          // moved" now implies the bytes were in hand, not merely promised. The cost is one article
-          // body held in memory per in-flight paid read — precisely what that note already assumed
-          // when it said article payloads are small.
-          if (prefetched.ok) {
-            const materialized = await materializeBody(prefetched);
-            if (!materialized) {
-              // The read failed BEFORE anything settled, which is the whole point of doing it here:
-              // the buyer's signed authorization is untouched and reusable, exactly as in the
-              // non-2xx branch below. An origin that cannot deliver its own bytes is an origin that
-              // could not serve, and we bill only for delivered content.
-              emitObs(d.obs, "unservable", { kind: d.tollKind, price: usdc(d.quote.price) });
-              return stampGateCacheHeaders(
-                new Response("origin body could not be read", {
-                  status: 502,
-                  headers: {
-                    "X-Naulon-Verdict": headerSafe("agent not charged: origin body could not be read"),
-                  },
-                }),
-                { noStore: true },
-              );
-            }
-            prefetched = materialized;
-            // Hash what is about to be served, from the same in-memory bytes the buyer receives. A
-            // HEAD carries no body to sell, so it states no hash rather than the hash of nothing.
-            if (c.req.method === "GET") {
-              contentSha256 = createHash("sha256")
-                .update(new Uint8Array(await materialized.clone().arrayBuffer()))
-                .digest("hex");
-            }
-          }
-          // Anything outside 2xx, not just 404 — and each non-2xx family is correct to refuse on:
-          // a 3xx means the content moved and the agent should pay at wherever it went; a 304 means
-          // they already hold it and there is no body to sell; a 5xx means the origin is broken,
-          // which is the publisher's outage to fix and not a sale. The rule is simply that we bill
-          // for delivered content, so "did the origin deliver" is the only question asked.
-          //
-          // The body an unpaid agent sees here is the origin's own error page — the same bytes a
-          // human reading free would get on that URL, so refusing the charge exposes nothing new.
-          if (!prefetched.ok) {
-            // The payment is untouched — no nonce consumed, no leg settled — so the buyer's signed
-            // authorization stays valid and reusable. They get the origin's own status, unpaid.
-            emitObs(d.obs, "unservable", { kind: d.tollKind, price: usdc(d.quote.price) });
-            prefetched.headers.set(
-              "X-Naulon-Verdict",
-              headerSafe(`agent not charged: origin could not serve (${prefetched.status})`),
-            );
-            return stampGateCacheHeaders(prefetched, { noStore: true });
-          }
-        }
-
-        // The settlement tail — the exact same code path the hosted /verify runs.
-        const settled = await settleAndAttribute({
-          payment: d.payment,
-          legs: d.legs,
-          quote: d.quote,
-          publisher,
-          host,
-          now,
-          resource: canonicalResource(host, new URL(c.req.url).pathname),
-          ...(contentSha256 ? { contentSha256 } : {}),
-        });
-        if (!settled.ok) {
-          // Let the origin's body go. This is the ONE branch that prefetches and then does not
-          // serve what it fetched: the success path below hands `prefetched` to the client, and the
-          // `!prefetched.ok` branch above returns the response itself. Here we return a fresh 402
-          // and the fetched body would simply fall out of scope — and an unread undici body holds
-          // its socket out of the pool until GC finalises it, so a run of failing payments leaks one
-          // connection each against the publisher's own origin.
-          //
-          // Failure is ignored on purpose: the body may already be errored or the peer gone, and
-          // nothing about releasing it should change what the buyer is told about their payment.
-          await prefetched?.body?.cancel().catch(() => {});
-          // Carry WHY, classified. `settled.error` goes to the buyer in the 402 body below (they are
-          // entitled to the detail); the publisher's audit row gets the closed-set reason, so a
-          // counterparty address or leg amount can never reach it.
-          emitObs(d.obs, "payment-failed", {
-            kind: d.tollKind,
-            price: usdc(d.quote.price),
-            failureReason: classifyPaymentFailure(settled.error),
-          });
-          return stampGateCacheHeaders(
-            c.json({ error: settled.error }, 402, {
-              [PAYMENT_REQUIRED_HEADER]: d.header,
-              // Still the ASK, not a charge — settlement failed, so nothing was taken.
-              [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(totalChargedMicro(d.legs)),
-              Link: PAYMENT_LINK_HEADER,
-            }),
-            { noStore: true },
-          );
-        }
-
-        // Audit plane: the paid outcome on the same timeline as denials/free reads.
-        emitObs(d.obs, "paid", { kind: d.quote.kind, price: usdc(d.quote.price) });
-
-        // Reuse the response we already hold on the safe-method path; only a non-GET reaches the
-        // origin here (see the ordering note above).
-        const res =
-          prefetched ??
-          (await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning));
-        if (settled.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, settled.responseHeader);
-        if (settled.licenseJws) res.headers.set(LICENSE_HEADER, settled.licenseJws);
-        // Only on the settled path: `crawler-charged` is a claim that money moved, so
-        // it is set after settleAndAttribute succeeded and never on a 402. It is the SETTLED
-        // total, not the ask: a stock x402 payer (naulon#73) signs `accepts[0]` alone, so the
-        // operator fee and any co-author cut never left their wallet and must not be billed to
-        // them here. `crawler-price` on the 402 above still carries the full ask.
-        res.headers.set(CRAWLER_CHARGED_HEADER, formatCrawlerPrice(settledChargedMicro(d.legs, settled.forgoneLegs)));
-        res.headers.set("X-Naulon-Verdict", headerSafe(`agent paid (${d.obs.classifyReason})`));
-        return stampGateCacheHeaders(res, { noStore: true });
-      }
+      case "payment-presented":
+        return settleAndServe(d, d.payment, {});
     }
   });
 

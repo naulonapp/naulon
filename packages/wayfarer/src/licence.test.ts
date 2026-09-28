@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import type { Fetcher } from "@naulon/sdk/crawl";
 import { makeLicenceResolver } from "./licence.ts";
 import { clearLicenseTokens, licenseTokenFor } from "./license-token.ts";
+import { resetConfig } from "@naulon/shared";
+import { resetAgentIdentity } from "./sign.ts";
 
 const DOC = (price: string, extra = "") => `<rsl xmlns="https://rslstandard.org/rsl">
   <content url="/"${extra}><license><permits type="usage">ai-input</permits>
@@ -140,8 +142,10 @@ const SERVER_DOC = `<rsl xmlns="https://rslstandard.org/rsl">
 /** robots → a licence naming a server, plus whatever the OLP token endpoint should answer. */
 function serverSite(tokenReply: { status?: number; json?: unknown }) {
   const asked: string[] = [];
+  const tokenHeaders: Array<Record<string, string>> = [];
   const fetcherFor = (_origin: string): Fetcher => async (url, init) => {
     asked.push(`${init?.method ?? "GET"} ${url}`);
+    if (url.endsWith("/token")) tokenHeaders.push((init?.headers as Record<string, string>) ?? {});
     if (url.endsWith("/robots.txt")) return ok("License: https://pub.example/license.xml");
     if (url.endsWith("/license.xml")) return ok(SERVER_DOC);
     if (url.endsWith("/token")) {
@@ -152,7 +156,7 @@ function serverSite(tokenReply: { status?: number; json?: unknown }) {
     return { ok: false, status: 404, async text() { return ""; }, async json() { return null; } };
   };
   const ok = (body: string) => ({ ok: true, status: 200, async text() { return body; }, async json() { return null; } });
-  return { fetcherFor, asked };
+  return { fetcherFor, asked, tokenHeaders };
 }
 
 test("a licence server with no configured credentials is reported, not paid around", async () => {
@@ -210,4 +214,26 @@ test("terms with no server have nothing to discharge and say so", async () => {
   const got = await r.forUrl("https://pub.example/a");
   assert.equal(got.terms?.obligation, "inline");
   assert.equal(got.tokenHeld, true);
+});
+
+test("with a signing identity, the /token request is signed over its own path so the key can be bound", async () => {
+  clearLicenseTokens();
+  process.env.BOT_AUTH_SIGNING_KEY = Buffer.alloc(32, 11).toString("base64url");
+  process.env.BOT_AUTH_SIGNATURE_AGENT = "naulon.app";
+  resetConfig();
+  resetAgentIdentity();
+  try {
+    const net = serverSite({ json: { access_token: "tok-s", token_type: "License", expires_in: 60 } });
+    const r = makeLicenceResolver({ fetcherFor: net.fetcherFor, licenseServers: () => ({ clientId: "i", clientSecret: "s" }) });
+    await r.forUrl("https://pub.example/a");
+    const h = net.tokenHeaders[0]!;
+    assert.match(h["signature-input"] ?? "", /^sig1=\("@authority" "@path"\);/);
+    assert.match(h["authorization"] ?? "", /^Basic /);
+  } finally {
+    delete process.env.BOT_AUTH_SIGNING_KEY;
+    delete process.env.BOT_AUTH_SIGNATURE_AGENT;
+    resetConfig();
+    resetAgentIdentity();
+    clearLicenseTokens();
+  }
 });

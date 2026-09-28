@@ -622,3 +622,15 @@ test("a browser opening /license.xml is shown the terms, not handed a download",
   assert.equal(crawler.response?.headers.get("content-type"), "application/rsl+xml; charset=utf-8");
   assert.equal(await browser.response?.text(), await crawler.response?.text(), "the same bytes either way");
 });
+
+test("a licence token on a self-hosted origin answers exactly the ordinary 402", async () => {
+  const mw = naulonMiddleware(opts);
+  const plain = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  const lic = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", authorization: "License tok123" } }),
+  );
+  assert.equal(lic.response?.status, 402);
+  assert.equal(lic.response?.status, plain.response?.status);
+  assert.ok(lic.response?.headers.get("PAYMENT-REQUIRED"));
+  assert.equal(await lic.response?.text(), await plain.response?.text());
+});

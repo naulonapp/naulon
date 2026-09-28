@@ -33,6 +33,8 @@ import {
   getConfig,
   licenseCoversPath,
   licenseGrant,
+  type LicenceSigner,
+  parseLicenceAuthorization,
   popBoundAddress,
   prohibitedUse,
   type ProhibitedTerm,
@@ -250,7 +252,13 @@ export type Decision =
   | { kind: "prohibited"; term: ProhibitedTerm; reason: string; obs: DecideObs }
   | { kind: "reread"; tollKind: TollKind; obs: DecideObs }
   | { kind: "payment-required"; legs: SettlementLegReq[]; header: string; quote: Quote; tollKind: TollKind; obs: DecideObs }
-  | { kind: "payment-presented"; payment: string; legs: SettlementLegReq[]; header: string; quote: Quote; tollKind: TollKind; obs: DecideObs };
+  | { kind: "payment-presented"; payment: string; legs: SettlementLegReq[]; header: string; quote: Quote; tollKind: TollKind; obs: DecideObs }
+  /**
+   * An RSL licence token (`Authorization: License`) with no payment. The hosted gate asks its
+   * licence authority to charge it; anything without one answers the ordinary 402. `signer` is
+   * the verified Web Bot Auth signature on this request, when there is one.
+   */
+  | { kind: "licence-presented"; token: string; legs: SettlementLegReq[]; header: string; quote: Quote; tollKind: TollKind; obs: DecideObs; signer?: LicenceSigner };
 
 export interface DecideInput {
   /** The raw web request being decided. */
@@ -426,7 +434,28 @@ export async function decide(input: DecideInput): Promise<Decision> {
   );
 
   const payment = raw.headers.get(PAYMENT_SIGNATURE_HEADER);
-  return payment
-    ? { kind: "payment-presented", payment, legs, header, quote: q, tollKind, obs }
-    : { kind: "payment-required", legs, header, quote: q, tollKind, obs };
+  if (payment) return { kind: "payment-presented", payment, legs, header, quote: q, tollKind, obs };
+  const licenceToken = parseLicenceAuthorization(raw.headers.get("authorization"));
+  if (licenceToken) {
+    return {
+      kind: "licence-presented",
+      token: licenceToken,
+      legs,
+      header,
+      quote: q,
+      tollKind,
+      obs,
+      ...(verifiedAgent
+        ? {
+            signer: {
+              keyid: verifiedAgent.keyid,
+              covers: verifiedAgent.covers,
+              ...(verifiedAgent.created !== undefined ? { created: verifiedAgent.created } : {}),
+              ...(verifiedAgent.expires !== undefined ? { expires: verifiedAgent.expires } : {}),
+            },
+          }
+        : {}),
+    };
+  }
+  return { kind: "payment-required", legs, header, quote: q, tollKind, obs };
 }

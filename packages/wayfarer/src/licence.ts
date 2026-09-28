@@ -22,6 +22,7 @@
  */
 import {
   acquireLicenseToken,
+  tokenEndpoint,
   locateFromObserved,
   locateFromRobots,
   termsForUrl,
@@ -33,6 +34,17 @@ import {
 } from "@naulon/sdk/rsl";
 import type { Fetcher } from "@naulon/sdk/crawl";
 import { licenseTokenFor, rememberLicenseToken } from "./license-token.ts";
+import { botAuthHeadersFor } from "./sign.ts";
+
+/**
+ * Our Web Bot Auth signature over the `/token` request itself, when a signing identity is
+ * configured. A server that verifies it can bind the token to our key and refuse it bare later.
+ */
+function tokenSignature(server: string): { extraHeaders: Record<string, string> } | null {
+  const endpoint = tokenEndpoint(server);
+  const signed = endpoint ? botAuthHeadersFor(endpoint, { coverPath: true }) : null;
+  return signed ? { extraHeaders: signed } : null;
+}
 
 /** What the agent learned about one URL. `terms: null` = nothing published that covers it. */
 export interface LicenceLookup {
@@ -148,6 +160,7 @@ export function makeLicenceResolver(opts: LicenceResolverOptions = {}): LicenceR
       resource: terms.read.scope,
       credentials,
       ...(opts.fetcherFor ? { fetcherFor: opts.fetcherFor } : {}),
+      ...(tokenSignature(terms.server) ?? {}),
     });
     if (!acquired.ok) {
       return { ...base, tokenHeld: false, tokenFailure: `the licence server answered ${acquired.failure.code}` };

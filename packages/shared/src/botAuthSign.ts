@@ -78,6 +78,10 @@ interface SignParams {
   key: BotAuthKey;
   /** The `@authority` the signature covers — the host:port the request targets. */
   authority: string;
+  /** The `@path` the signature also covers. Set it whenever the signature is
+   *  the witness of a charge, so it cannot be replayed on another URL of the
+   *  same host. */
+  path?: string;
   tag: "web-bot-auth" | "http-message-signatures-directory";
   /** Signature-Agent value (request profile only): the directory host, e.g.
    *  "naulon.app", or an http://127.0.0.1:port fixture under the gate's
@@ -91,7 +95,8 @@ interface SignParams {
 /**
  * Build + sign the RFC 9421 headers for one request (or directory response).
  * Covered components: `("@authority")` — the CF operational profile's minimum,
- * which is also what deployed signers (chatgpt.com) cover. The signature base
+ * which is also what deployed signers (chatgpt.com) cover — plus `"@path"` when
+ * `path` is given. The signature base
  * reuses the exact Signature-Input member text, so signer and verifier agree
  * byte-for-byte by construction.
  */
@@ -99,8 +104,13 @@ export function signBotAuth(params: SignParams): BotAuthSignedHeaders {
   const created = params.createdSec ?? Math.floor(Date.now() / 1000);
   const expires = created + (params.validitySec ?? DEFAULT_VALIDITY_SEC);
   const label = params.label ?? "sig1";
-  const member = `("@authority");created=${created};expires=${expires};keyid="${params.key.keyid}";tag="${params.tag}"`;
-  const base = `"@authority": ${params.authority.toLowerCase()}\n"@signature-params": ${member}`;
+  const covered = params.path !== undefined ? `("@authority" "@path")` : `("@authority")`;
+  const member = `${covered};created=${created};expires=${expires};keyid="${params.key.keyid}";tag="${params.tag}"`;
+  const base = [
+    `"@authority": ${params.authority.toLowerCase()}`,
+    ...(params.path !== undefined ? [`"@path": ${params.path}`] : []),
+    `"@signature-params": ${member}`,
+  ].join("\n");
   const sig = cryptoSign(null, Buffer.from(base, "utf8"), params.key.privateKey).toString("base64");
   const headers: BotAuthSignedHeaders = {
     "signature-input": `${label}=${member}`,

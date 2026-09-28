@@ -354,10 +354,26 @@ test("verifyBotAuth: happy path verifies and caches the directory", async () => 
   const cache = new DirectoryCache();
   const opts = { fetchFn: directoryFetch(counter), cache };
   const out1 = await verifyBotAuth(signedFacts(), opts);
-  assert.deepEqual(out1, { status: "verified", agent: { agent: AGENT_HOST, keyid: SIGNER_KEYID } });
+  assert.equal(out1.status, "verified");
+  if (out1.status === "verified") {
+    assert.equal(out1.agent.agent, AGENT_HOST);
+    assert.equal(out1.agent.keyid, SIGNER_KEYID);
+    assert.deepEqual(out1.agent.covers, ["@authority"]);
+    assert.equal(typeof out1.agent.created, "number");
+    assert.equal(typeof out1.agent.expires, "number");
+  }
   const out2 = await verifyBotAuth(signedFacts(), opts);
   assert.equal(out2.status, "verified");
   assert.equal(counter.n, 1); // second verify served from cache
+});
+
+test("verifyBotAuth: a signature covering @path reports both components, in order", async () => {
+  const out = await verifyBotAuth(signedFacts({ components: `("@authority" "@path")` }), {
+    fetchFn: directoryFetch({ n: 0 }),
+    cache: new DirectoryCache(),
+  });
+  assert.equal(out.status, "verified");
+  if (out.status === "verified") assert.deepEqual(out.agent.covers, ["@authority", "@path"]);
 });
 
 test("verifyBotAuth: expired signature → invalid", async () => {

@@ -448,6 +448,9 @@ export function naulonMiddleware(
         report(d.obs, "blocked", resource);
         return { response: new Response(`${d.reason}.`, { status: 403 }) };
 
+      // A self-hosted origin cannot witness a charge on its own word; it answers 402 and the read
+      // sells over x402.
+      case "licence-presented":
       case "payment-required": {
         report(d.obs, "denied", resource, { kind: d.tollKind, priceUsdc: d.quote.price });
         const askMicro = totalChargedMicro(d.legs);

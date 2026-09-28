@@ -87,7 +87,7 @@ on the ledger row; a row written before titles were stored falls back to the slu
 
 ### What a record lets a stranger check
 
-A record also carries four facts from the ledger row, each absent when the gate could
+A record also carries these facts from the ledger row, each absent when the gate could
 not state it:
 
 | Claim | What it pins | How to check it |
@@ -96,6 +96,7 @@ not state it:
 | `contentSha256` | the exact body the gate served | hash your copy and compare |
 | `termsDocument` | the RSL document in force at the sale, as `{ url, sha256 }` | fetch the URL and hash it; a later change of terms stops matching, which is the point |
 | `evidence` | the buyer's own EIP-3009 authorization for the author leg, with its signature and EIP-712 domain | see below |
+| `mandate` | that the read was charged under a standing authorization, as `{ kind, tokenId, witness }` | see below |
 
 `evidence` is the part the operator did not write. Recover the signer from `signature`
 over `domain` and `authorization` (`TransferWithAuthorization`, the same typed data the
@@ -111,6 +112,12 @@ GET https://gateway-api.circle.com/v1/x402/transfers?network=eip155:<chainId>&no
 once settled, the `txHash` of the batch it settled in. Neither check involves the gate
 that issued the record. The mock rail carries no signature, so its records carry no
 `evidence`.
+
+A record whose `mandate` is set was charged under a standing authorization the buyer
+granted in advance (an RSL licence token presented as `Authorization: License`), not
+signed at request time. `witness` says what saw the read: `gate` (the gate served it)
+or `crawler-signed` (the crawler signed that request with the Web Bot Auth key bound to
+the token, covering its `@authority` and `@path`).
 
 Retired signing keys stay in the key set (`LICENSE_RETIRED_PUBLIC_KEYS`), so rotating a
 key never orphans the records it signed. They verify records only: an access licence is

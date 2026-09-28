@@ -119,6 +119,14 @@ const basic = (c: OlpCredentials): string =>
  * it sat under — both are what the spec asks for, and both must come from the document we actually
  * read rather than being reconstructed, or the server is being asked about a licence nobody offered.
  */
+const RESERVED_HEADERS = new Set(["authorization", "content-type", "accept"]);
+
+function withoutReserved(headers: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers ?? {})) if (!RESERVED_HEADERS.has(k.toLowerCase())) out[k] = v;
+  return out;
+}
+
 export async function acquireLicenseToken(input: {
   server: string;
   licenseXml: string;
@@ -128,6 +136,11 @@ export async function acquireLicenseToken(input: {
   fetcherFor?: (origin: string) => Fetcher;
   /** Clock seam, so an expiry test does not have to sleep. */
   now?: () => number;
+  /**
+   * Extra request headers, e.g. a Web Bot Auth signature so the server can bind the token to the
+   * signing key. They can never replace the credentials or the content type.
+   */
+  extraHeaders?: Record<string, string>;
 }): Promise<OlpResult> {
   const endpoint = tokenEndpoint(input.server);
   if (endpoint === null) {
@@ -146,6 +159,7 @@ export async function acquireLicenseToken(input: {
       method: "POST",
       body,
       headers: {
+        ...withoutReserved(input.extraHeaders),
         authorization: basic(input.credentials),
         "content-type": "application/x-www-form-urlencoded",
         accept: "application/json",

@@ -465,6 +465,10 @@ export interface VerifiedAgent {
   /** The operator's directory host — the identity policy fragments match on. */
   agent: string;
   keyid: string;
+  /** The covered component names, in signature order (e.g. `["@authority", "@path"]`). */
+  covers: string[];
+  created?: number;
+  expires?: number;
 }
 
 export type BotAuthOutcome =
@@ -684,5 +688,8 @@ export async function verifyBotAuth(facts: RequestFacts, opts: BotAuthOptions = 
   if (x === undefined) return { status: "invalid", reason: "keyid not in the operator's directory" };
 
   if (!verifyEd25519(base, sig, x)) return { status: "invalid", reason: "signature verification failed" };
-  return { status: "verified", agent: { agent: dir.agentHost, keyid } };
+  return {
+    status: "verified",
+    agent: { agent: dir.agentHost, keyid, covers: entry.components.map((c) => c.name), created, expires },
+  };
 }

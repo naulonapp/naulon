@@ -22,6 +22,7 @@ import {
   usdc,
   walletAddress,
   type AttributedEvent,
+  type EventMandate,
   type ForgoneLeg,
   type LicenceFacts,
   type LicenseTerm,
@@ -124,6 +125,12 @@ export interface SettleArgs {
    * moves can state it, which on the gate is the safe-method prefetch path.
    */
   contentSha256?: string;
+  /**
+   * The standing authorization this read was charged under, when a licence authority returned the
+   * payment rather than the buyer signing it at request time. Stamped on the row so the permanent
+   * record can say so.
+   */
+  mandate?: EventMandate;
 }
 
 export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult> {
@@ -192,6 +199,7 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     ...(contentSha256 ? { contentSha256 } : {}),
     ...(publisher.termsDocument ? { termsDocument: publisher.termsDocument } : {}),
     ...(result.evidence ? { evidence: result.evidence } : {}),
+    ...(args.mandate ? { mandate: args.mandate } : {}),
     at: now,
   };
 

@@ -14,6 +14,7 @@ import { walletAddress } from "@naulon/sdk";
 import type { WalletAddress, ArticleCredits, Contributor, CreditsResolver } from "@naulon/sdk";
 import type { PaymentFailureReason } from "./paymentfailure.ts";
 import type { LicenceFacts } from "./licence-facts.ts";
+import type { EventMandate } from "./licence-authority.ts";
 export { walletAddress };
 export type { WalletAddress, ArticleCredits, Contributor, CreditsResolver };
 
@@ -193,6 +194,11 @@ export interface AttributedEvent {
    * authorization; absent on the mock rail, which has none. See `PaymentEvidence`.
    */
   evidence?: PaymentEvidence;
+  /**
+   * Present when the read was charged under a standing mandate rather than signed by the buyer at
+   * request time. See `EventMandate`.
+   */
+  mandate?: EventMandate;
   /** epoch ms — passed in by the caller (no ambient clock in shared code). */
   at: number;
 }
