@@ -18,6 +18,41 @@ tags and the auto-generated notes on each GitHub Release.
 
 Nothing yet.
 
+## v0.9.0
+
+`@naulon/sdk` 0.5.2 → **0.6.0**, `@naulon/shared` 0.5.5 → **0.6.0**, `@naulon/enforce` 0.5.5 →
+**0.6.0**, `@naulon/wayfarer` 0.5.5 → **0.6.0** and `@naulon/wayfarer-mcp` 0.5.7 → **0.6.0**. The
+WordPress plugin is unchanged.
+
+A citation record a stranger can check without the issuer:
+
+- The record carries the resource bought, a sha256 of the body served, the terms document in
+  force at the sale (pinned by hash) and the buyer's own EIP-3009 authorization with its
+  signature and EIP-712 domain, so the payment can be checked against the settlement rail.
+- A toll's record states the terms its access licence granted. Retired signing keys stay
+  publishable through `LICENSE_RETIRED_PUBLIC_KEYS` and verify records only.
+- `LICENSE_TTL_SECONDS` defaults to 3600.
+
+RSL licences, charged per read:
+
+- `Authorization: License <token>` is recognised (`parseLicenceAuthorization`). The hosted gate
+  hands such a read to an optional `LicenceAuthority` and settles the payment it returns; a
+  record charged this way carries `mandate`, naming what witnessed the read. Without an
+  authority the request gets the ordinary 402.
+- `PublisherConfig.licenceServer` names the RSL licence server for a publisher's paid content.
+  When it is set, `naulonMiddleware` sends a presented licence and the crawler's Web Bot Auth
+  signature to that server's `/introspect` and serves the page only when it answers
+  `permitted`.
+- `@naulon/sdk/rsl` adds `introspectLicence`, `introspectEndpoint` and `licenceServerUrlOk`;
+  `acquireLicenseToken` accepts `extraHeaders`. A licence server URL must be https, or http on a
+  loopback host.
+- Web Bot Auth signing can cover `@path` (`signBotAuth({ path })`), and `verifyBotAuth` reports
+  the covered components and the verified signature bytes.
+- The wayfarer signs the path when it presents a licence, and signs its `/token` request so a
+  server can bind the licence to its key.
+
+Every internal range moves with it, because ranges floor at the version they were built against.
+
 ## v0.8.11
 
 `@naulon/sdk` 0.5.1 → **0.5.2**, `@naulon/shared` 0.5.4 → **0.5.5**, `@naulon/enforce` 0.5.4 →
