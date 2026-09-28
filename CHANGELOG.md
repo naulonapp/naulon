@@ -16,7 +16,11 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
-Nothing yet.
+- `@naulon/wayfarer-mcp`: `naulon_status` can report the spendable balance, the budget left and
+  the wallet's own chain when the host supplies them (`readHostedFunds`, `sessionNetwork`). A
+  hosted agent is no longer told to fund its signer address, and an agent on a testnet balance is
+  no longer told a refusal concerns a mainnet. The handshake reports the package version instead
+  of a hardcoded `0.2.1`.
 
 ## v0.9.0
 
