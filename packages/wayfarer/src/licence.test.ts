@@ -343,3 +343,21 @@ test("the gate this agent pays is not trusted with the agent token", async () =>
     agentToken(false);
   }
 });
+
+test("an inline licence naming a server on an empty content url posts nothing, and says why", async () => {
+  clearLicenseTokens();
+  agentToken(true);
+  try {
+    const net = namedServerSite(NAULON_SERVER);
+    const html = `<html><script type="application/rsl+xml"><rsl xmlns="https://rslstandard.org/rsl">
+      <content url="" server="${NAULON_SERVER}"><license><permits type="usage">ai-input</permits>
+      <payment type="crawl"><amount currency="USD">0.01</amount></payment></license></content></rsl></script></html>`;
+    const got = await makeLicenceResolver({ fetcherFor: net.fetcherFor }).forUrl("https://pub.example/a", { headers: {}, body: html });
+    assert.equal(got.terms?.obligation, "license-server");
+    assert.equal(got.tokenHeld, false);
+    assert.match(got.tokenFailure ?? "", /no url/);
+    assert.ok(!net.asked.some((a) => a.line.includes("/token")), "there is no resource to ask about");
+  } finally {
+    agentToken(false);
+  }
+});
