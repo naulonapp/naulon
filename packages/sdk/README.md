@@ -27,7 +27,9 @@ npm install @naulon/sdk
 - `@naulon/sdk/rsl`: a reader for RSL 1.0, the open content-licensing standard a
   publisher's site can declare. `parseRsl` reads the document, `termsForUrl` resolves
   what it says about one URL (usage, user class, region, price), and `licenceFor`
-  locates and fetches a site's licence from a URL alone.
+  locates and fetches a site's licence from a URL alone. For a licence server (RSL's Open
+  Licence Protocol), `acquireLicenseToken` obtains a licence and `introspectLicence` asks
+  whether one permits a read.
 - `@naulon/sdk/slug`: the one article-key rule, zero dependencies. The gate, the
   crawl engine and a publisher's own credits endpoint all derive the same slug from
   a URL through this, so the three never disagree.

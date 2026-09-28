@@ -38,6 +38,11 @@ The decision kernel and the framework-agnostic middleware core:
 - `naulonMiddleware(opts)` takes a `Request` and returns `{ response, setHeaders }`:
   a `Response` to short-circuit (`402`/`403`), or `null` to let the app render
   (with `setHeaders` to attach to the app's response on a paid pass).
+  When the publisher's configuration names a licence server
+  (`PublisherConfig.licenceServer`), a crawler presenting `Authorization: License` is checked
+  there: the middleware forwards the licence and the crawler's Web Bot Auth signature to the
+  server's `/introspect` and passes only when it answers `permitted`. Anything else is the
+  ordinary 402.
 - `withNaulon(handler, opts)` wraps a generic `fetch` handler.
 - `localQuoteSource(fn)` / `httpQuoteSource(url, key)`: pluggable price and payees.
 - `httpPublisherConfigSource(url, key)`: what is tolled and for whom, read from the
