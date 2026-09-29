@@ -384,3 +384,14 @@ test("a licence sold through a route still verifies after the route is revoked",
   assert.equal((await get(`/.well-known/x402${ALPHA_Q}`)).status, 404, "but the site no longer sells through the route");
   assert.equal((await get(`/licenses/${jti}?host=www.beta.example`)).status, 404, "and another site still sees nothing");
 });
+
+test("every response served through the route names the site; nothing else carries the header", async () => {
+  const paywalled = await viaIngress("/essays/stamped");
+  const passthrough = await viaIngress("/about");
+  const refused = await viaIngress("/essays/stamped", { edge: randomBytes(24).toString("hex") });
+  const elsewhere = await app.request("/essays/x", { headers: { host: "p.example", "user-agent": GPTBOT } });
+  assert.equal(paywalled.headers.get("x-naulon-ingress"), "www.alpha.example");
+  assert.equal(passthrough.headers.get("x-naulon-ingress"), "www.alpha.example", "a page with no other gate header still says it came through");
+  assert.equal(refused.headers.get("x-naulon-ingress"), null, "a refusal names nothing");
+  assert.equal(elsewhere.headers.get("x-naulon-ingress"), null);
+});

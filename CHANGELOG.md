@@ -41,7 +41,9 @@ or neither, see [configuration](docs/configuration.md)); an embedder passes
 - The gate refuses every failed ingress request with the same answer it gives an unknown host,
   answers 508 to its own origin fetch coming back through your CDN, marks ingress responses
   `Cache-Control: private`, and rate limits crawlers per site and per `Forwarded: for=` address.
-  A licence record sold through the route keeps verifying after the route is removed.
+  A licence record sold through the route keeps verifying after the route is removed. Every
+  response served through the route carries `x-naulon-ingress: <site>`, so one request with a
+  crawler user agent shows whether the rule works.
 
 ## v0.9.2
 

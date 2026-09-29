@@ -593,6 +593,10 @@ export function createApp(
       admitted.set(c.req.raw, admission);
       await next();
       c.res = privateToIngress(c.res);
+      // Names the site the gate answered for, on every response it served through the route. A
+      // publisher (or the route self-test) can see the rule works with one request, whatever the
+      // page returned: an unknown article is a plain passthrough that carries no other gate header.
+      c.res.headers.set(INGRESS_RESPONSE_HEADER, admission.siteHost);
     });
   }
   /**
@@ -1326,6 +1330,9 @@ export function canonicalResource(host: string, pathname: string): string {
   const scheme = /^(localhost|127\.|\[::1\])/i.test(host) ? "http" : "https";
   return `${scheme}://${host.toLowerCase()}${pathname}`;
 }
+
+/** Set on every response served through an admitted crawler route, naming the site. */
+export const INGRESS_RESPONSE_HEADER = "x-naulon-ingress";
 
 /** Routes on the ingress host that answer without naming a site: they describe the gate itself. */
 const INGRESS_OPEN_PATHS = new Set(["/healthz", "/.well-known/naulon-edge", "/.well-known/naulon-jwks.json", BOT_AUTH_DIRECTORY_PATH]);
