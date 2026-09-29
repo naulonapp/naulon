@@ -70,10 +70,11 @@ const app = createApp(
 );
 
 const realFetch = globalThis.fetch;
-let origin: Array<{ url: string; headers: Headers }> = [];
+let origin: Array<{ url: string; headers: Headers; body?: string }> = [];
 before(() => {
   globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
-    origin.push({ url: String(input), headers: new Headers(init?.headers as ConstructorParameters<typeof Headers>[0]) });
+    const body = init?.body instanceof ArrayBuffer ? new TextDecoder().decode(init.body) : undefined;
+    origin.push({ url: String(input), headers: new Headers(init?.headers as ConstructorParameters<typeof Headers>[0]), ...(body !== undefined ? { body } : {}) });
     return new Response("<html>origin</html>", {
       status: 200,
       headers: { "content-type": "text/html", "cache-control": "public, max-age=600" },
@@ -326,4 +327,60 @@ test("on any other host the 402 link and the manifest URLs stay relative", async
   const m = (await (await app.request("/.well-known/x402", { headers: { host: "p.example" } })).json()) as { license: Record<string, string> };
   assert.equal(m.license.verify, "/licenses/{jti}");
   assert.equal(m.license.jwks, "/.well-known/naulon-jwks.json");
+});
+
+test("?host= on the ingress publishes terms only for a live crawler route", async () => {
+  const get = (path: string) => app.request(path, { headers: { host: INGRESS } });
+  assert.equal((await get("/.well-known/x402?host=p.example")).status, 404, "a routed site publishes terms on its own host");
+  assert.equal((await app.request("/.well-known/x402", { headers: { host: "p.example" } })).status, 200);
+  assert.equal((await get("/.well-known/x402?host=https://www.alpha.example")).status, 404, "a hint is a host, never a URL");
+});
+
+test("a request body reaches the origin through the ingress unchanged", async () => {
+  const res = await app.request("/contact", {
+    method: "POST",
+    body: "name=ada&note=hello",
+    headers: {
+      host: INGRESS,
+      "user-agent": GPTBOT,
+      "content-type": "application/x-www-form-urlencoded",
+      forwarded: "for=203.0.113.9;host=www.alpha.example;proto=https",
+      "x-naulon-edge-auth": alphaEdge,
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(origin.length, 1);
+  assert.equal(origin[0]!.body, "name=ada&note=hello");
+});
+
+test("a licence sold through a route still verifies after the route is revoked", async () => {
+  let live = true;
+  const revocable = createApp(
+    { async resolve() { return undefined; } },
+    {
+      ingress: {
+        host: INGRESS,
+        async resolve(site) {
+          return live && site === "www.alpha.example" ? { config: alpha, edgeSecretDigests: [edgeSecretDigest(alphaEdge)] } : undefined;
+        },
+      },
+      // Ownership outlives the route: the site is still the publisher's after the grant is gone.
+      resolveInAppConfig: async (host) => (host === "www.alpha.example" ? alpha : undefined),
+    },
+  );
+  const via = (path: string, extra: Record<string, string> = {}) =>
+    revocable.request(path, {
+      headers: { host: INGRESS, "user-agent": GPTBOT, forwarded: "for=203.0.113.9;host=www.alpha.example", "x-naulon-edge-auth": alphaEdge, ...extra },
+    });
+  const first = await via("/essays/kept");
+  const accepts = (decodeJson(first.headers.get(PAYMENT_REQUIRED_HEADER)!).accepts as Array<{ amount: string; extra: { nonce: string } }>)[0]!;
+  const sig = buildMockSignature(walletAddress("0x00000000000000000000000000000000000000b3"), accepts.amount, accepts.extra.nonce);
+  const jti = payload((await via("/essays/kept", { [PAYMENT_SIGNATURE_HEADER]: sig })).headers.get("x-naulon-license")!).jti as string;
+
+  live = false;
+  const get = (path: string) => revocable.request(path, { headers: { host: INGRESS } });
+  assert.equal((await get(`/licenses/${jti}${ALPHA_Q}`)).status, 200, "the licence still verifies");
+  assert.equal((await get(`/licenses/${jti}/record${ALPHA_Q}`)).status, 200, "the permanent record is still permanent");
+  assert.equal((await get(`/.well-known/x402${ALPHA_Q}`)).status, 404, "but the site no longer sells through the route");
+  assert.equal((await get(`/licenses/${jti}?host=www.beta.example`)).status, 404, "and another site still sees nothing");
 });

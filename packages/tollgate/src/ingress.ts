@@ -21,7 +21,7 @@
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
-import type { PublisherConfig } from "@naulon/shared";
+import { isBareHostname, type PublisherConfig } from "@naulon/shared";
 
 /** The request header carrying the per-site edge secret. Stripped before anything is forwarded. */
 export const EDGE_AUTH_HEADER = "x-naulon-edge-auth";
@@ -94,7 +94,6 @@ function unquote(v: string): string {
   return v;
 }
 
-const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
 
 /**
  * A `Forwarded: host=` value reduced to a bare lowercase hostname, or undefined when it is not one.
@@ -103,8 +102,13 @@ const HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]
  */
 export function siteHostOf(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  const bare = value.trim().toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
-  return HOSTNAME.test(bare) ? bare : undefined;
+  const bare = normalizeHost(value);
+  return isBareHostname(bare) ? bare : undefined;
+}
+
+/** A Host as compared everywhere in this file: lowercase, no port, no trailing root dot. */
+function normalizeHost(value: string): string {
+  return value.trim().toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
 }
 
 /** `for=` reduced to an address the rate limiter can key on. IPv6 arrives as `"[::1]:port"`. */
@@ -115,7 +119,7 @@ export function clientAddressOf(value: string | undefined): string | undefined {
   const v6 = /^\[([0-9a-f:.]+)\](?::\d+)?$/i.exec(v);
   if (v6 && isIP(v6[1]!) === 6) return v6[1]!.toLowerCase();
   // RFC 7239 §6 requires IPv6 bracketed and quoted, but a Cloudflare Worker's `cf-connecting-ip`
-  // is bare (measured 2026-09-29), so a recipe that forgets the brackets must still key per crawler.
+  // is bare, so a recipe that forgets the brackets must still key per crawler.
   // A bare IPv6 carries no port, so accepting it is unambiguous.
   if (isIP(v) === 6) return v.toLowerCase();
   const v4 = /^(\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?$/.exec(v);
@@ -150,10 +154,10 @@ function constantTimeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ha, hb);
 }
 
-/** Is this a request to the ingress host? Port and case are ignored. */
-export function isIngressHost(host: string, ingress: IngressOptions | undefined): boolean {
+/** Is this a request to the ingress host? Port, case and a trailing root dot are ignored. */
+export function isIngressHost(host: string, ingress: Pick<IngressOptions, "host"> | undefined): boolean {
   if (!ingress) return false;
-  return host.trim().toLowerCase().replace(/:\d+$/, "") === ingress.host.trim().toLowerCase();
+  return normalizeHost(host) === normalizeHost(ingress.host);
 }
 
 export type IngressAdmission =
@@ -173,12 +177,15 @@ export type IngressAdmission =
 export async function admitIngress(raw: Request, ingress: IngressOptions): Promise<IngressAdmission> {
   const fwd = lastForwardedElement(raw.headers.get("forwarded"));
   const siteHost = siteHostOf(fwd?.host);
-  if (!siteHost || isIngressHost(siteHost, ingress)) return { kind: "miss" };
+  const presented = raw.headers.get(EDGE_AUTH_HEADER);
+  // No secret at all is a miss before any lookup: the sender already knows it sent none, so
+  // answering early discloses nothing, and a secretless flood costs the resolver nothing.
+  if (!siteHost || isIngressHost(siteHost, ingress) || !presented) return { kind: "miss" };
 
   const tenant = await ingress.resolve(siteHost);
   // Compare even when the tenant is unknown, so a miss on an unknown host costs the same as a
   // miss on a wrong secret.
-  const matched = edgeSecretMatches(raw.headers.get(EDGE_AUTH_HEADER), tenant?.edgeSecretDigests ?? []);
+  const matched = edgeSecretMatches(presented, tenant?.edgeSecretDigests ?? []);
   if (!tenant || !matched) return { kind: "miss" };
 
   const originAuth = raw.headers.get("x-naulon-origin-auth");
@@ -199,12 +206,14 @@ export async function admitIngress(raw: Request, ingress: IngressOptions): Promi
   headers.delete("x-forwarded-for");
   headers.set("host", siteHost);
   headers.set("cdn-loop", cdnLoop ? `${cdnLoop}, ${CDN_LOOP_TOKEN}` : CDN_LOOP_TOKEN);
-  const hasBody = raw.method !== "GET" && raw.method !== "HEAD";
+  // The body is handed over as a stream, never read here: admission is followed by the per-site
+  // rate limit, and buffering first would let an over-limit caller make the gate hold its upload.
+  const hasBody = raw.method !== "GET" && raw.method !== "HEAD" && raw.body !== null;
   const request = new Request(url, {
     method: raw.method,
     headers,
-    ...(hasBody ? { body: await raw.arrayBuffer() } : {}),
-  });
+    ...(hasBody ? { body: raw.body, duplex: "half" } : {}),
+  } as RequestInit);
   return { kind: "admitted", request, siteHost, clientIp: clientAddressOf(fwd?.for), config: tenant.config };
 }
 

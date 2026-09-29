@@ -20,6 +20,9 @@ process.env.RATE_LIMIT_RPM = "60";
 process.env.RATE_LIMIT_BURST = "2";
 process.env.INGRESS_HOST = "ingress.self.test";
 process.env.EDGE_SECRET = selfEdge;
+// The sender of a request that reaches no site (a miss, an open route) is keyed like any other
+// request, so the tests name it the way a proxy in front of the gate would.
+process.env.TRUST_PROXY = "true";
 
 const { createApp } = await import("./app.ts");
 const { edgeSecretDigest } = await import("./ingress.ts");
@@ -106,4 +109,67 @@ test("the env secret is never handed to an injected multi-publisher resolver", a
   // The injected resolver answers the ingress hostname as an ordinary Host: nothing was admitted,
   // so the response is not ingress traffic and names no site.
   assert.equal(res.headers.get("cache-control")?.startsWith("private") ?? false, false);
+});
+
+function fromCaller(app: ReturnType<typeof createApp>, path: string, caller: string) {
+  return app.request(path, { headers: { host: "ingress.naulon.test", "x-forwarded-for": caller } });
+}
+
+test("the gate's own routes on the ingress are limited per sender, not left open", async () => {
+  const app = ingressApp();
+  const codes: number[] = [];
+  for (let i = 0; i < 3; i++) codes.push((await fromCaller(app, "/healthz", "198.51.100.7")).status);
+  assert.deepEqual(codes, [200, 200, 429]);
+  assert.equal((await fromCaller(app, "/healthz", "198.51.100.8")).status, 200, "another sender has its own budget");
+});
+
+test("misses and ?host= reads on the ingress share one budget per sender", async () => {
+  const app = ingressApp();
+  const a = await fromCaller(app, "/.well-known/x402?host=www.a.example", "198.51.100.9");
+  const b = await fromCaller(app, "/essays/x", "198.51.100.9");
+  const c = await fromCaller(app, "/.well-known/x402?host=www.a.example", "198.51.100.9");
+  assert.deepEqual([a.status, b.status, c.status], [200, 502, 429]);
+});
+
+test("an ingress host that is not a bare hostname stops the app from being built", () => {
+  for (const host of ["https://ingress.naulon.test", "ingress.naulon.test:443", "INGRESS.naulon.test", "localhost"]) {
+    assert.throws(() => createApp({ async resolve() { return undefined; } }, { ingress: { host, async resolve() { return undefined; } } }), /bare lowercase hostname/, host);
+  }
+});
+
+test("self-host: INGRESS_HOST without EDGE_SECRET, or the reverse, fails at boot", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const appPath = fileURLToPath(new URL("./app.ts", import.meta.url));
+  for (const env of [{ INGRESS_HOST: "ingress.self.test" }, { EDGE_SECRET: selfEdge }]) {
+    // Importing the module builds the default app, which is the boot a self-hoster runs.
+    const run = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `await import(${JSON.stringify(appPath)});`], {
+      env: { PATH: process.env.PATH, NODE_ENV: "test", PAYMENT_MODE: "mock", EVENTS_PATH: process.env.EVENTS_PATH, ...env },
+      encoding: "utf8",
+    });
+    assert.notEqual(run.status, 0, JSON.stringify(Object.keys(env)));
+    assert.match(run.stderr, /set both, or neither/, JSON.stringify(Object.keys(env)));
+  }
+});
+
+test("a sender out of miss budget is refused before the site is looked up", async () => {
+  let lookups = 0;
+  const app = createApp(
+    { async resolve() { return undefined; } },
+    { ingress: { host: "ingress.naulon.test", async resolve() { lookups++; return undefined; } } },
+  );
+  const probe = (edge: string | null) =>
+    app.request("/essays/x", {
+      headers: {
+        host: "ingress.naulon.test",
+        "x-forwarded-for": "198.51.100.20",
+        forwarded: "host=www.random.example",
+        ...(edge ? { "x-naulon-edge-auth": edge } : {}),
+      },
+    });
+  assert.equal((await probe(null)).status, 502);
+  assert.equal(lookups, 0, "no secret, no lookup");
+  const codes = [(await probe(sharedEdge)).status, (await probe(sharedEdge)).status];
+  assert.deepEqual(codes, [502, 429], "burst 2: the secretless miss and one looked-up miss, then refused");
+  assert.equal(lookups, 1, "the refused request never reached the resolver");
 });

@@ -44,7 +44,7 @@ import {
   type PaymentFailureReason,
   classifyPaymentFailure,
   createRateLimiter,
-  resolveClientIdentity,
+  isBareHostname,
   type PublisherConfig,
   type PublisherResolver,
   type TollKind,
@@ -69,8 +69,8 @@ import {
 } from "@naulon/enforce";
 import { get as getEvent } from "./eventLog.ts";
 import { observe } from "./observationLog.ts";
-import { rateLimit } from "./rateLimit.ts";
-import { admitIngress, edgeSecretDigest, isIngressHost, privateToIngress, type IngressAdmission, type IngressOptions } from "./ingress.ts";
+import { clientKeyOf, rateLimit } from "./rateLimit.ts";
+import { admitIngress, edgeSecretDigest, isIngressHost, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
 import { DEFAULT_TOLL_TERMS, settleAndAttribute } from "./settle.ts";
 import { envPublisherResolver } from "./publisher.ts";
 
@@ -413,23 +413,15 @@ async function proxyToOrigin(
 
 
 /**
- * Who sent this request as far as the gate can tell, by the same rule the global limiter uses
- * (trusted proxy hops, then the socket peer). For an ingress request that is the publisher's CDN.
+ * The self-host ingress from `INGRESS_HOST` + `EDGE_SECRET`, or undefined when both are unset. One
+ * without the other is a half-configured route that would otherwise run as no route at all, so it
+ * stops the boot instead.
  */
-function callerOf(c: Context): string {
-  let peer: string | undefined;
-  try {
-    peer = getConnInfo(c).remote.address;
-  } catch {
-    peer = undefined;
-  }
-  const who = resolveClientIdentity({ xff: c.req.header("x-forwarded-for"), peer, trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS });
-  return who.ok ? who.key : "";
-}
-
-/** The self-host ingress from `INGRESS_HOST` + `EDGE_SECRET`, or undefined when either is unset. */
 function envIngress(resolver: PublisherResolver): IngressOptions | undefined {
-  if (!cfg.INGRESS_HOST || !cfg.EDGE_SECRET) return undefined;
+  if (!cfg.INGRESS_HOST && !cfg.EDGE_SECRET) return undefined;
+  if (!cfg.INGRESS_HOST || !cfg.EDGE_SECRET) {
+    throw new Error("INGRESS_HOST and EDGE_SECRET configure the crawler route together: set both, or neither.");
+  }
   const digests = [edgeSecretDigest(cfg.EDGE_SECRET)];
   return {
     host: cfg.INGRESS_HOST,
@@ -518,6 +510,9 @@ export function createApp(
   // The env ingress applies ONLY to the single-tenant default resolver: it carries one secret, and
   // handing one secret to a resolver that answers many publishers would let any of them be named.
   const ingress = opts?.ingress ?? (resolverArg === undefined ? envIngress(resolver) : undefined);
+  if (ingress && !isBareHostname(ingress.host)) {
+    throw new Error(`ingress host must be a bare lowercase hostname, got ${JSON.stringify(ingress.host)}`);
+  }
   const onUpstreamOutcome = opts?.onUpstreamOutcome;
   const resolveInAppConfig = opts?.resolveInAppConfig;
   const licenceAuthority = opts?.licenceAuthority;
@@ -526,15 +521,21 @@ export function createApp(
   // Ingress requests are limited after admission instead (`takeIngress`): before it, every crawler
   // behind one publisher's CDN shares that CDN's egress address, and those addresses are shared
   // across publishers too.
-  app.use("*", rateLimit(ingress ? { skipHost: ingress.host } : {}));
+  app.use("*", rateLimit(ingress ? { skipHost: (host) => isIngressHost(host, ingress) } : {}));
   const ingressLimiter = createRateLimiter({
     rpm: cfg.RATE_LIMIT_RPM,
     burst: cfg.RATE_LIMIT_BURST,
     maxBuckets: cfg.RATE_LIMIT_MAX_BUCKETS,
   });
-  const takeIngress = (key: string): Response | undefined => {
-    if (!ingressLimiter.enabled) return undefined;
-    const { allowed, retryAfter } = ingressLimiter.take(key);
+  /**
+   * `scope` names whose budget this is; an unidentified sender passes, as it does globally. `peek`
+   * answers without spending, for a check that must run before a lookup the caller has not yet
+   * earned.
+   */
+  const takeIngress = (scope: string, caller: string | undefined, mode: "take" | "peek" = "take"): Response | undefined => {
+    if (!ingressLimiter.enabled || caller === undefined) return undefined;
+    const key = `${scope}\0${caller}`;
+    const { allowed, retryAfter } = mode === "peek" ? ingressLimiter.peek(key) : ingressLimiter.take(key);
     if (allowed) return undefined;
     return Response.json({ error: "rate limit exceeded" }, {
       status: 429,
@@ -549,8 +550,9 @@ export function createApp(
   const admitted = new WeakMap<Request, Extract<IngressAdmission, { kind: "admitted" }>>();
   // A verifier following an absolute machine URL (`https://<ingress>/licenses/{jti}?host=<site>`)
   // has no edge secret and needs none: these routes disclose only what the same request with that
-  // `Host` would, and each still checks that the event belongs to the resolved publisher.
-  const hinted = new WeakMap<Request, string>();
+  // `Host` would, and each still checks that the event belongs to the resolved publisher. The value
+  // is the named site, or null when none was named, which resolves nothing.
+  const hinted = new WeakMap<Request, string | null>();
   const machineBase = (site: string): MachineUrlBase | undefined =>
     ingress ? { origin: `https://${ingress.host}`, host: site } : undefined;
   if (ingress) {
@@ -558,21 +560,26 @@ export function createApp(
       const inboundHost = c.req.header("host") ?? new URL(c.req.url).host;
       if (!isIngressHost(inboundHost, ingress)) return next();
       const path = c.req.path;
+      const caller = clientKeyOf(c);
       if (c.req.method === "GET" || c.req.method === "OPTIONS" || c.req.method === "HEAD") {
-        if (INGRESS_OPEN_PATHS.has(path)) return next();
+        if (INGRESS_OPEN_PATHS.has(path)) return takeIngress("ingress", caller) ?? next();
         if (!c.req.header("forwarded") && isMachinePath(path)) {
-          const limited = takeIngress(`ingress\0${callerOf(c)}`);
+          const limited = takeIngress("ingress", caller);
           if (limited) return limited;
-          const site = publisherHostHint(c.req.query("host"));
-          if (site && !isIngressHost(site, ingress)) hinted.set(c.req.raw, site);
+          const site = siteHostOf(c.req.query("host"));
+          hinted.set(c.req.raw, site && !isIngressHost(site, ingress) ? site : null);
           await next();
           c.res = privateToIngress(c.res);
           return;
         }
       }
+      // A sender whose misses have used up its budget is refused before admission looks anything
+      // up; otherwise every refused request would still cost the resolver a lookup.
+      const spent = takeIngress("ingress", caller, "peek");
+      if (spent) return spent;
       const admission = await admitIngress(c.req.raw, ingress);
       if (admission.kind === "miss") {
-        return takeIngress(`ingress\0${callerOf(c)}`) ?? handleUnknownHost(c, inboundHost);
+        return takeIngress("ingress", caller) ?? handleUnknownHost(c, inboundHost);
       }
       if (admission.kind === "loop") {
         return c.text(
@@ -581,21 +588,36 @@ export function createApp(
           { "cache-control": "no-store", "X-Naulon-Verdict": "ingress loop refused" },
         );
       }
-      const limited = takeIngress(`${admission.config.id}\0${admission.clientIp ?? callerOf(c)}`);
+      const limited = takeIngress(admission.config.id, admission.clientIp ?? caller);
       if (limited) return limited;
       admitted.set(c.req.raw, admission);
       await next();
       c.res = privateToIngress(c.res);
     });
   }
-  /** The site a machine route answers for, and its config, when the request came via the ingress. */
-  const ingressSite = async (c: Context): Promise<{ host: string; publisher: PublisherConfig | undefined } | undefined> => {
+  /**
+   * The site a machine route answers for when the request came to the ingress host, or undefined
+   * for any other host. By `?host=` the two kinds of route resolve differently, on purpose:
+   *
+   * - `terms` (the manifest) are what the site sells NOW, so only a live crawler route answers.
+   *   Any other publisher publishes its terms on its own host.
+   * - `identity` (a licence, its record) is permanent: a record sold through a route must still
+   *   verify after that route is revoked. So it resolves the way `/licenses/:jti/record?host=`
+   *   does on every gate host, by routing and then by ownership, and the event's publisher check
+   *   is what bounds what it can disclose.
+   */
+  const ingressSite = async (
+    c: Context,
+    purpose: "terms" | "identity",
+  ): Promise<{ host: string; publisher: PublisherConfig | undefined } | undefined> => {
     const via = admitted.get(c.req.raw);
     if (via) return { host: via.siteHost, publisher: via.config };
+    if (!hinted.has(c.req.raw)) return undefined;
     const site = hinted.get(c.req.raw);
-    if (!site) return undefined;
-    const publisher = (await ingress?.resolve(site))?.config ?? (await resolver.resolve(site)) ?? (await resolveInAppConfig?.(site));
-    return { host: site, publisher };
+    if (!site) return { host: "", publisher: undefined };
+    const live = (await ingress?.resolve(site))?.config;
+    if (purpose === "terms") return { host: site, publisher: live };
+    return { host: site, publisher: live ?? (await resolver.resolve(site)) ?? (await resolveInAppConfig?.(site)) };
   };
 
   // Fail-open error boundary. Any unhandled throw on a route — a down origin, a
@@ -688,7 +710,7 @@ export function createApp(
   // unknown host gets 404 (no toll here) rather than leaking another's config.
   app.get(X402_MANIFEST_PATH, async (c) => {
     const host = c.req.header("host") ?? new URL(c.req.url).host;
-    const site = await ingressSite(c);
+    const site = await ingressSite(c, "terms");
     const publisher = site ? site.publisher : await resolver.resolve(host);
     if (!publisher) return c.json({ error: "no toll for this host" }, 404);
     // Pinned to the TENANT's chain, not the fleet default. The 402 this host emits already
@@ -717,7 +739,7 @@ export function createApp(
     // via publisher A's host. Unknown host → 404, leaking nothing (fail-closed,
     // matches the manifest route).
     const host = c.req.header("host") ?? new URL(c.req.url).host;
-    const site = await ingressSite(c);
+    const site = await ingressSite(c, "identity");
     // ROUTING first, then OWNERSHIP. `resolve` answers "the publisher this host routes to" and is
     // the common case; `resolveOwner` (optional, and absent on the single-tenant default) answers
     // "the publisher that owns this host", which is the only question that has an answer for a host
@@ -787,7 +809,7 @@ export function createApp(
     const jti = c.req.param("jti");
     const notFound = () => c.json({ jti, found: false }, 404, { ...RECORD_CORS, "cache-control": "no-store" });
     if (!licensing) return notFound();
-    const site = await ingressSite(c);
+    const site = await ingressSite(c, "identity");
     const host = publisherHostHint(c.req.query("host")) ?? c.req.header("host") ?? new URL(c.req.url).host;
     const publisher = site ? site.publisher : (await resolver.resolve(host)) ?? (await resolveInAppConfig?.(host));
     if (!publisher) return notFound();
@@ -1295,11 +1317,6 @@ export function createApp(
 export const app = createApp();
 
 /**
- * A `?host=` hint on the record route is a host with an optional port, or nothing. A scheme, a
- * path or a query is refused outright (never "cleaned" into a host), because the value becomes
- * the `iss` of a document a stranger is told to trust.
- */
-/**
  * The URL a buyer paid for, as the citation record names it: the Host that was tolled plus the
  * path exactly as requested, with no query string (a query does not change what was priced; the slug is
  * derived from the path alone). `https` everywhere except a loopback host, which is only ever a
@@ -1318,6 +1335,11 @@ function isMachinePath(path: string): boolean {
   return path === X402_MANIFEST_PATH || /^\/licenses\/[^/]+(\/record)?$/.test(path);
 }
 
+/**
+ * A `?host=` hint on the record route is a host with an optional port, or nothing. A scheme, a
+ * path or a query is refused outright (never "cleaned" into a host), because the value becomes
+ * the `iss` of a document a stranger is told to trust.
+ */
 function publisherHostHint(raw: string | undefined): string | undefined {
   const h = raw?.trim().toLowerCase();
   return h && /^[a-z0-9.-]+(:\d+)?$/.test(h) ? h : undefined;

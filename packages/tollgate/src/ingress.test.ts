@@ -68,6 +68,7 @@ test("edge secret: matches either of two live digests, and nothing else", () => 
 test("ingress host: case and port ignored; no ingress configured matches nothing", () => {
   const ingress = { host: "ingress.naulon.test", resolve: async () => undefined };
   assert.equal(isIngressHost("INGRESS.naulon.test:443", ingress), true);
+  assert.equal(isIngressHost("ingress.naulon.test.", ingress), true, "a fully qualified Host with its root dot");
   assert.equal(isIngressHost("www.site.example", ingress), false);
   assert.equal(isIngressHost("ingress.naulon.test", undefined), false);
 });
