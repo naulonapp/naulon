@@ -33,7 +33,7 @@ import {
   type KeyObject,
 } from "node:crypto";
 import { toAtomicUsdc } from "./networks.ts";
-import { matchesPattern } from "@naulon/sdk/rsl";
+import { matchesPublisherPattern } from "@naulon/sdk/rsl";
 import { primaryPayee, type TieBreak } from "./attribution.ts";
 import type { AttributedEvent, AuthorShare, PaymentEvidence, TermsDocument } from "./types.ts";
 import type { EventMandate } from "./licence-authority.ts";
@@ -540,7 +540,8 @@ export function licenseGrant(claim: NaulonClaim): LicenseGrant {
  *
  * Two modes, and the input each uses is not interchangeable:
  *   - **no scope** — equality against the `slug`, exactly as before.
- *   - **scope** — RFC 9309 patterns against the request PATH. Prefix mode's slug is the
+ *   - **scope** — RFC 9309 patterns against the request path and query (`matchTarget`), read as
+ *     publisher patterns so `/a$` covers `/a?page=2` exactly as the price rule it came from does. Prefix mode's slug is the
  *     captured segment (`on-stillness`), not a path, so a path pattern matched against
  *     it would never fire; site mode's slug happens to be a pathname, but relying on
  *     that would make the check mode-dependent.
@@ -562,5 +563,5 @@ export function licenseCoversPath(
   if (scope === undefined) return claim.slug === req.slug;
   if (!Array.isArray(scope.patterns) || req.path === undefined) return false;
   const path = req.path;
-  return scope.patterns.some((p) => typeof p === "string" && matchesPattern(p, path));
+  return scope.patterns.some((p) => typeof p === "string" && matchesPublisherPattern(p, path));
 }

@@ -30,7 +30,7 @@ export { rawLicensesByContent } from "./raw.ts";
 // The Open Licensing Protocol — how the obligation `terms.ts` reports is actually discharged.
 export { acquireLicenseToken, introspectEndpoint, introspectLicence, INTROSPECT_TIMEOUT_MS, licenceServerUrlOk, olpRetryable, tokenEndpoint, UNSTATED_EXPIRY_SEC } from "./olp.ts";
 export type { IntrospectInput, IntrospectResult, OlpCredentials, OlpFailure, OlpFailureCode, OlpResult, OlpToken } from "./olp.ts";
-export { matchesPattern, specificity } from "./pattern.ts";
+export { matchesPattern, matchesPublisherPattern, matchTarget, publisherPatterns, specificity } from "./pattern.ts";
 export { grantsUsage, termsForUrl, x402Offer, X402_MEDIA_TYPE } from "./terms.ts";
 export type { RslObligation, RslOffer, RslTermsForUrl } from "./terms.ts";
 export {

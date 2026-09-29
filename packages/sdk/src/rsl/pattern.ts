@@ -36,15 +36,44 @@ function compiled(pattern: string): RegExp {
 }
 
 /**
- * Does this RFC 9309 pattern cover this URL path?
+ * Does this RFC 9309 pattern cover this target?
  *
- * `path` is a pathname (`/articles/x`), never a full URL — the caller has already decided the
- * origin matches, and feeding a full URL here would let `https://evil.example/https://good.example`
- * satisfy a pattern written for the good origin.
+ * `target` is the path AND query (`/articles/x?page=2`), which is what RFC 9309 §2.2.2 matches:
+ * its examples match `/foo/bar?baz=quz` whole, so `/a$` does not cover `/a?page=2`. Take it from
+ * `matchTarget`. Never a full URL: the caller has already decided the origin matches, and feeding a
+ * full URL here would let `https://evil.example/https://good.example` satisfy a pattern written for
+ * the good origin.
  */
-export function matchesPattern(pattern: string, path: string): boolean {
+export function matchesPattern(pattern: string, target: string): boolean {
   if (pattern === "") return false; // association-scoped; the caller resolves it, not this matcher
-  return compiled(pattern).test(path);
+  return compiled(pattern).test(target);
+}
+
+/** The part of a URL an RFC 9309 pattern is matched against: path plus query, never the origin or
+ *  the fragment. Accepts an absolute URL or an origin-relative target. */
+export function matchTarget(url: string | URL): string {
+  const u = typeof url === "string" ? new URL(url, "http://target.invalid") : url;
+  return u.pathname + u.search;
+}
+
+/**
+ * The literal RFC 9309 patterns one PUBLISHER pattern stands for.
+ *
+ * A publisher who writes `/a$` means the article at `/a`, and a query string on it is the same
+ * article: pricing `/a?page=2` differently would let an agent pick its own price by appending one.
+ * RFC 9309 reads `/a$` as excluding every query, so the publisher's meaning is `/a$` plus `/a?*`.
+ * Every server-side matcher goes through `matchesPublisherPattern`, and the published RSL document
+ * emits both patterns, so a spec-following client reading the document and the gate charging the
+ * read agree literally. A pattern that already names a query (`/a?page=*`) is taken as written.
+ */
+export function publisherPatterns(pattern: string): string[] {
+  if (!pattern.endsWith("$") || pattern.includes("?")) return [pattern];
+  return [pattern, `${pattern.slice(0, -1)}?*`];
+}
+
+/** `matchesPattern` over a publisher pattern's meaning (`publisherPatterns`), not its literal. */
+export function matchesPublisherPattern(pattern: string, target: string): boolean {
+  return publisherPatterns(pattern).some((p) => matchesPattern(p, target));
 }
 
 /**

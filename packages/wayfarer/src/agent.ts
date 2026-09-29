@@ -24,6 +24,7 @@ import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
 import { type MemoSigner } from "./memo.ts";
 import { railBuyer, type RailSigners } from "./rail.ts";
 import { decide, DEFAULT_POLICY, payHostOf, payUrlOf, spendGate, type LicenceVerdict } from "./decide.ts";
+import { matchTarget } from "@naulon/sdk/rsl";
 import { makeLicenceResolver, type LicenceResolver } from "./licence.ts";
 
 import type { DecideContext, DecisionPolicy } from "./decide.ts";
@@ -165,7 +166,7 @@ export function heldRequestFor(
   const url = candidateUrl ?? articleUrl(base, slug);
   let path = `/${slug}`;
   try {
-    path = new URL(url).pathname;
+    path = matchTarget(url);
   } catch {
     // An unparseable candidate url yields no identity below, so nothing will match it.
   }

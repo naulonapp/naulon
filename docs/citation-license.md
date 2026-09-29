@@ -180,7 +180,7 @@ No `crit`, `jku`, `x5u` or `jwk`: a verifier MUST reject if present.
 
     // --- all four OPTIONAL and absent on today's licence (byte-identical when unused) ---
     "grant": "read" | "none",        // absent => "read". "none" is a citation record.
-    "scope": { "patterns": ["/essays/*"] },   // RFC 9309 paths, matched against the REQUEST PATH
+    "scope": { "patterns": ["/essays/*"] },   // RFC 9309 patterns, matched against the request path and query
     "terms": ["ai-input", "ai-index"],        // RSL 1.0 usage vocabulary; "ai-train" is never sold
     "period": { "from": <epoch s>, "until": <epoch s> | null },  // null = permanent
 
@@ -203,9 +203,10 @@ No `crit`, `jku`, `x5u` or `jwk`: a verifier MUST reject if present.
 (`MintInput.subject`); it must be an account handle or a key, never an email or a
 name, because the record is meant to be publicly verifiable.
 
-**`scope` is matched against the request PATH, not the slug.** Prefix mode's slug is
-the captured segment (`on-stillness`), not a path, so a path pattern could never match
-it. An unscoped licence keeps exact slug equality. A scoped one does **not** fall back
+**`scope` is matched against the request path and query, not the slug.** Prefix mode's
+slug is the captured segment (`on-stillness`), not a path, so a path pattern could never
+match it. A scope pattern is read the way the publisher's price rule was: `/a$` covers `/a`
+and `/a?page=2`, and a pattern naming a query (`/search?q=*`) is taken as written. An unscoped licence keeps exact slug equality. A scoped one does **not** fall back
 to slug equality, because a scope that fails to match must not silently widen back to
 whatever slug was current at mint time.
 

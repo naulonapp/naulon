@@ -208,6 +208,14 @@ test("the most specific rule wins, and each field is inherited independently", (
   assert.equal(tollPrice(p, "citation", "/notes/x"), 0.002);
 });
 
+test("a query on an anchored rule's article keeps that rule's price", () => {
+  // decide.ts hands pricing path plus query. `/papers/preview$` is the article whatever its query,
+  // so appending one must not move the read onto the broader /papers/* price.
+  const p = publisher({ priceRules: RULES });
+  assert.equal(tollPrice(p, "read", "/papers/preview?utm_source=feed"), 0.0005);
+  assert.equal(tollPrice(p, "read", "/papers/preview/v2"), 0.05);
+});
+
 test("quote() charges what tollPrice says for the same path — the two cannot disagree", async () => {
   const p = publisher({ priceRules: [{ pattern: "/essays/*", priceUsdc: 0.07 }] });
   for (const kind of ["read", "citation"] as const) {

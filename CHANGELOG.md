@@ -16,7 +16,16 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
-Nothing yet.
+Pattern matching follows RFC 9309 on the query string:
+
+- `matchesPattern` matches a pattern against the path AND query, as RFC 9309 does, so `/a$` no
+  longer covers `/a?page=2`. `matchTarget(url)` gives that input. `termsForUrl`, the wayfarer's
+  licence tokens and held licences all read the query now.
+- A publisher's own pattern keeps its article under any query: `publisherPatterns("/a$")` is
+  `["/a$", "/a?*"]`, and `matchesPublisherPattern` is what `resolvePriceRule` and
+  `licenseCoversPath` use. Appending a query to an anchored-priced URL no longer moves the read onto
+  another price, and an RSL document that states both patterns reads the same to a client.
+- `@naulon/wayfarer` declares its dependency on `@naulon/sdk`, which it imported without listing.
 
 ## v0.9.1
 
