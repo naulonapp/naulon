@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
-    "@naulon/sdk": "^0.6.1",
-    "@naulon/shared": "^0.6.1",
+    "@naulon/sdk": "^0.6.2",
+    "@naulon/shared": "^0.6.2",
     "hono": "^4.13.5"
   }
 }
