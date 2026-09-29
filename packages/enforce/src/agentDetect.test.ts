@@ -223,3 +223,15 @@ test("no registry fragment is a substring of another that would shadow it", () =
     }
   }
 });
+
+test("crawler route: only the ambiguous middle moves to agent; browsers and allowlisted crawlers stay free", () => {
+  const ambiguous = { userAgent: "fetch-client/1.0", accept: "*/*", headers: {} };
+  assert.equal(classify(signals(ambiguous)).kind, "human", "off the ingress, ambiguous is human");
+  assert.equal(classify(signals({ ...ambiguous, viaIngress: true })).kind, "agent");
+
+  const browser = { userAgent: "Mozilla/5.0 Safari/605.1.15", accept: "text/html", headers: { "sec-fetch-mode": "navigate" } };
+  assert.equal(classify(signals({ ...browser, viaIngress: true })).kind, "human", "a browser that reached the ingress reads free");
+
+  const allowlisted = signals({ userAgent: "Googlebot/2.1", accept: "*/*", headers: {}, viaIngress: true });
+  assert.equal(classify(allowlisted, { seoAllowlist: ["Googlebot"] }).kind, "human");
+});

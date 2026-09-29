@@ -130,6 +130,12 @@ export const configSchema = z.object({
   CITATION_MULTIPLIER: z.coerce.number().positive().default(5),
   // Which path prefixes count as gateable articles (comma-separated).
   ARTICLE_PATH_PREFIXES: z.string().default("essays,articles,posts"),
+  // Crawler route (optional): a hostname on which the gate accepts requests proxied by the
+  // publisher's own CDN, naming the site in `Forwarded: host=` and authenticating with EDGE_SECRET.
+  // Both unset (the default) means no ingress at all.
+  INGRESS_HOST: z.string().trim().toLowerCase().min(1).optional(),
+  // The secret the CDN rule sends in `X-Naulon-Edge-Auth`. Only read when INGRESS_HOST is set.
+  EDGE_SECRET: z.string().min(32, "must be at least 32 characters").optional(),
 
   // ── Hardening ──
   // HMAC secret that signs 402 payment nonces. If unset, the gate mints an

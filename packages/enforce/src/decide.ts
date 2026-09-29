@@ -289,6 +289,8 @@ export interface DecideInput {
    *  instead of the local `licensing` (which is null in a consuming site, so every
    *  licensed re-read would otherwise 402). Absent ⇒ proxy-mode behavior, unchanged. */
   licenseVerification?: LicenseVerification;
+  /** The gate admitted this request through an authenticated crawler-route ingress. */
+  viaIngress?: boolean;
 }
 
 export async function decide(input: DecideInput): Promise<Decision> {
@@ -338,7 +340,7 @@ export async function decide(input: DecideInput): Promise<Decision> {
   }
 
   const verdict = classify(
-    { ...signalsFrom(raw), verifiedAgent },
+    { ...signalsFrom(raw), verifiedAgent, ...(input.viaIngress ? { viaIngress: true } : {}) },
     {
       seoAllowlist: [...(publisher.seoAllowlist ?? []), ...(publisher.crawlerPolicy?.allow ?? [])],
       chargeList: publisher.crawlerPolicy?.charge,

@@ -95,6 +95,8 @@ export interface SettleArgs {
    * `/verify`) have it in scope already.
    */
   host: string;
+  /** Set only for a crawler-route request; stamped onto the event as `servedVia`. */
+  servedVia?: "ingress";
   /** Single timestamp shared with the advertised 402 (build402) — pass decide()'s `now`. */
   now: number;
   /**
@@ -134,7 +136,7 @@ export interface SettleArgs {
 }
 
 export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult> {
-  const { payment, legs, quote: q, publisher, host, now, licence, resource, contentSha256 } = args;
+  const { payment, legs, quote: q, publisher, host, servedVia, now, licence, resource, contentSha256 } = args;
 
   // A SALE IS ALL OR NOTHING; A TOLL IS NOT. Derived from `licence` rather than taken as its own
   // argument, because they are the same fact: a sale is exactly the payment that buys one
@@ -172,6 +174,7 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
     // The host that was tolled. A publisher can serve many; without this the ledger can only say
     // the PUBLISHER earned recently, never which of its domains did.
     host,
+    ...(servedVia ? { servedVia } : {}),
     slug: q.slug,
     kind: q.kind,
     amount: usdc(q.price),

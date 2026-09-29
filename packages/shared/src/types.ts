@@ -123,6 +123,12 @@ export interface AttributedEvent {
    * settle tail knows the host at the moment it writes the row; nothing downstream can recover it.
    */
   host?: string;
+  /**
+   * How the request reached the gate, when not by its own Host. `"ingress"`: the publisher's CDN
+   * proxied it through the crawler-route ingress, and `host` is the site it named. Absent on every
+   * other row, so rows written any other way are byte-identical to before this field existed.
+   */
+  servedVia?: "ingress";
   slug: string;
   kind: TollKind;
   amount: Usdc;
@@ -321,6 +327,8 @@ export interface ObservationEvent {
   publisherId?: string;
   /** The Host header the request came in on. */
   host: string;
+  /** Same as `AttributedEvent.servedVia`. Absent unless the request came through the ingress. */
+  servedVia?: "ingress";
   /** The article slug the gate priced (empty string for a non-article gated path). */
   slug: string;
   /** read | citation when the request reached the machine path; absent for a plain human read. */

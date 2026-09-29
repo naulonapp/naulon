@@ -43,6 +43,8 @@ import {
   type ObservationVerdict,
   type PaymentFailureReason,
   classifyPaymentFailure,
+  createRateLimiter,
+  resolveClientIdentity,
   type PublisherConfig,
   type PublisherResolver,
   type TollKind,
@@ -67,6 +69,7 @@ import {
 import { get as getEvent } from "./eventLog.ts";
 import { observe } from "./observationLog.ts";
 import { rateLimit } from "./rateLimit.ts";
+import { admitIngress, edgeSecretDigest, isIngressHost, privateToIngress, type IngressOptions } from "./ingress.ts";
 import { DEFAULT_TOLL_TERMS, settleAndAttribute } from "./settle.ts";
 import { envPublisherResolver } from "./publisher.ts";
 
@@ -166,6 +169,8 @@ const STRIP_HEADERS = new Set([
   "x-naulon-proof",
   // fleet→origin auth: gate-injected only (see proxyToOrigin), never smuggled inbound
   "x-naulon-origin-auth",
+  // CDN→ingress auth: consumed by the ingress, never forwarded to an origin
+  "x-naulon-edge-auth",
   // gate-controlled forwarding facts (set below, never trusted from the client)
   "forwarded",
   "x-forwarded-for",
@@ -407,6 +412,34 @@ async function proxyToOrigin(
 
 
 /**
+ * Who sent this request as far as the gate can tell, by the same rule the global limiter uses
+ * (trusted proxy hops, then the socket peer). For an ingress request that is the publisher's CDN.
+ */
+function callerOf(c: Context): string {
+  let peer: string | undefined;
+  try {
+    peer = getConnInfo(c).remote.address;
+  } catch {
+    peer = undefined;
+  }
+  const who = resolveClientIdentity({ xff: c.req.header("x-forwarded-for"), peer, trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS });
+  return who.ok ? who.key : "";
+}
+
+/** The self-host ingress from `INGRESS_HOST` + `EDGE_SECRET`, or undefined when either is unset. */
+function envIngress(resolver: PublisherResolver): IngressOptions | undefined {
+  if (!cfg.INGRESS_HOST || !cfg.EDGE_SECRET) return undefined;
+  const digests = [edgeSecretDigest(cfg.EDGE_SECRET)];
+  return {
+    host: cfg.INGRESS_HOST,
+    async resolve(siteHost) {
+      const config = await resolver.resolve(siteHost);
+      return config ? { config, edgeSecretDigests: digests } : undefined;
+    },
+  };
+}
+
+/**
  * No publisher answers this Host. The reference resolver never gets here (it
  * answers every host); an injected resolver returns undefined for a host it
  * doesn't recognize. Fail closed: refuse with a generic 502 and leak nothing about
@@ -466,18 +499,47 @@ export interface CreateAppOptions {
    * the option existed.
    */
   licenceAuthority?: LicenceAuthority;
+
+  /**
+   * Optional crawler-route seam: accept requests the publisher's own CDN proxies to one shared
+   * ingress hostname, naming the site in `Forwarded: host=` and authenticating with a per-site edge
+   * secret (see `ingress.ts`). Omitting it, with `INGRESS_HOST` unset, is byte-identical to before
+   * the option existed: no host is treated as an ingress.
+   */
+  ingress?: IngressOptions;
 }
 
 export function createApp(
-  resolver: PublisherResolver = envPublisherResolver(),
+  resolverArg?: PublisherResolver,
   opts?: CreateAppOptions,
 ): Hono {
+  const resolver = resolverArg ?? envPublisherResolver();
+  // The env ingress applies ONLY to the single-tenant default resolver: it carries one secret, and
+  // handing one secret to a resolver that answers many publishers would let any of them be named.
+  const ingress = opts?.ingress ?? (resolverArg === undefined ? envIngress(resolver) : undefined);
   const onUpstreamOutcome = opts?.onUpstreamOutcome;
   const resolveInAppConfig = opts?.resolveInAppConfig;
   const licenceAuthority = opts?.licenceAuthority;
   const app = new Hono();
   app.use("*", logger());
-  app.use("*", rateLimit());
+  // Ingress requests are limited after admission instead (`takeIngress`): before it, every crawler
+  // behind one publisher's CDN shares that CDN's egress address, and those addresses are shared
+  // across publishers too.
+  app.use("*", rateLimit(ingress ? { skipHost: ingress.host } : {}));
+  const ingressLimiter = createRateLimiter({
+    rpm: cfg.RATE_LIMIT_RPM,
+    burst: cfg.RATE_LIMIT_BURST,
+    maxBuckets: cfg.RATE_LIMIT_MAX_BUCKETS,
+  });
+  const takeIngress = (key: string): Response | undefined => {
+    if (!ingressLimiter.enabled) return undefined;
+    const { allowed, retryAfter } = ingressLimiter.take(key);
+    if (allowed) return undefined;
+    return Response.json({ error: "rate limit exceeded" }, {
+      status: 429,
+      headers: { "Retry-After": String(Math.max(1, retryAfter)), "cache-control": "no-store" },
+    });
+  };
 
   // Fail-open error boundary. Any unhandled throw on a route — a down origin, a
   // resolver/store blip, an unexpected bug — must never reach a caller as a raw
@@ -721,18 +783,58 @@ export function createApp(
       /* serverless / no socket */
     }
 
+    const inboundHost = c.req.header("host") ?? new URL(c.req.url).host;
+
+    // Crawler route: the publisher's CDN proxied this to the shared ingress host, naming the site.
+    // Refusals look exactly like an unknown Host (see ingress.ts); an admitted request is rewritten
+    // into the site's own request, so everything below it names the site without being told to.
+    if (ingress && isIngressHost(inboundHost, ingress)) {
+      const admission = await admitIngress(c.req.raw, ingress);
+      if (admission.kind === "miss") {
+        const limited = takeIngress(`ingress\0${callerOf(c)}`);
+        return limited ?? handleUnknownHost(c, inboundHost);
+      }
+      if (admission.kind === "loop") {
+        return c.text(
+          "naulon received its own request back. Your CDN rule must skip requests that carry the x-naulon-origin-auth header.",
+          508,
+          { "cache-control": "no-store", "X-Naulon-Verdict": "ingress loop refused" },
+        );
+      }
+      const limited = takeIngress(`${admission.config.id}\0${admission.clientIp ?? callerOf(c)}`);
+      if (limited) return limited;
+      const res = await serveGated(c, admission.request, path, admission.clientIp ?? clientIp, admission.siteHost, admission.config, true);
+      return privateToIngress(res);
+    }
+
     // Resolve the publisher this Host fronts. Every downstream decision (proxy
     // target, price, payees, license identity, settlement) reads from here.
-    const host = c.req.header("host") ?? new URL(c.req.url).host;
+    const host = inboundHost;
     const publisher = await resolver.resolve(host);
     if (!publisher) return handleUnknownHost(c, host);
+    return serveGated(c, c.req.raw, path, clientIp, host, publisher, false);
+  });
 
+  /**
+   * Serve one request for a resolved publisher. `raw` is the request as the site sees it: the
+   * inbound one, or for a crawler route the rewritten one. `viaIngress` is set only after the edge
+   * secret checked out, and reaches the classifier and the rows this request writes.
+   */
+  const serveGated = async (
+    c: Context,
+    raw: Request,
+    path: string,
+    clientIp: string,
+    host: string,
+    publisher: PublisherConfig,
+    viaIngress: boolean,
+  ): Promise<Response> => {
     // Suspended ≠ dead. A paused publisher (billing lapse upstream) serves its
     // origin straight through, free and untolled — suspension must never dark a
     // live site or turn its readers away. The gate just stops earning until it's
     // lifted. (Unknown host already failed closed above; this is a KNOWN host.)
     if (publisher.suspended) {
-      const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+      const res = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
       res.headers.set("X-Naulon-Verdict", "suspended (degraded passthrough)");
       return res;
     }
@@ -746,13 +848,14 @@ export function createApp(
     // and the settled payment share one timestamp.
     const now = Date.now();
     const d = await decide({
-      raw: c.req.raw,
+      raw: raw,
       host,
       path,
       publisher,
       now,
       quote,
       botAuthOpts: { allowInsecureHttp: cfg.BOT_AUTH_ALLOW_HTTP },
+      ...(viaIngress ? { viaIngress: true } : {}),
     });
 
     // Audit plane: one observation per gated-route decision, built from the facts
@@ -763,6 +866,7 @@ export function createApp(
         id: randomUUID(),
         publisherId: publisher.id,
         host,
+        ...(viaIngress ? { servedVia: "ingress" as const } : {}),
         slug: obs.slug,
         kind: extra?.kind,
         verdict: v,
@@ -828,12 +932,12 @@ export function createApp(
       // reordering would let the origin perform a side effect for a request that never pays. A
       // GET/HEAD is idempotent and side-effect-free, which is the entire article-read surface
       // this defect lives on; anything else keeps the original settle-then-proxy order.
-      const safeMethod = c.req.method === "GET" || c.req.method === "HEAD";
+      const safeMethod = raw.method === "GET" || raw.method === "HEAD";
       let prefetched: Response | undefined;
       let contentSha256: string | undefined;
       if (safeMethod) {
         prefetched = await reportingThrow("unpaid", () =>
-          proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning),
+          proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning),
         );
         // The bytes must be IN HAND before the money moves, and until now "prefetched" only ever
         // meant the HEADERS arrived. `proxyToOrigin` hands back a STREAMING response, and an
@@ -874,7 +978,7 @@ export function createApp(
           prefetched = materialized;
           // Hash what is about to be served, from the same in-memory bytes the buyer receives. A
           // HEAD carries no body to sell, so it states no hash rather than the hash of nothing.
-          if (c.req.method === "GET") {
+          if (raw.method === "GET") {
             contentSha256 = createHash("sha256")
               .update(new Uint8Array(await materialized.clone().arrayBuffer()))
               .digest("hex");
@@ -908,8 +1012,9 @@ export function createApp(
         quote: p.quote,
         publisher,
         host,
+        ...(viaIngress ? { servedVia: "ingress" as const } : {}),
         now,
-        resource: canonicalResource(host, new URL(c.req.url).pathname),
+        resource: canonicalResource(host, new URL(raw.url).pathname),
         ...(contentSha256 ? { contentSha256 } : {}),
         ...(extra.mandate ? { mandate: extra.mandate } : {}),
       }));
@@ -957,7 +1062,7 @@ export function createApp(
       // origin here (see the ordering note above).
       const res =
         prefetched ??
-        (await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning));
+        (await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning));
       if (settled.responseHeader) res.headers.set(PAYMENT_RESPONSE_HEADER, settled.responseHeader);
       if (settled.licenseJws) res.headers.set(LICENSE_HEADER, settled.licenseJws);
       // Only on the settled path: `crawler-charged` is a claim that money moved, so
@@ -982,7 +1087,7 @@ export function createApp(
           token: p.token,
           publisherId: publisher.id,
           host,
-          resource: canonicalResource(host, new URL(c.req.url).pathname),
+          resource: canonicalResource(host, new URL(raw.url).pathname),
           slug: p.obs.slug,
           tollKind: p.tollKind,
           header: p.header,
@@ -1025,7 +1130,7 @@ export function createApp(
       }
       if (verdict.kind === "held") {
         emitObs(p.obs, "agent-reread", { kind: p.tollKind });
-        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+        const res = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
         res.headers.set("X-Naulon-Verdict", "agent reread (licence)");
         return stampGateCacheHeaders(res, { noStore: true });
       }
@@ -1044,7 +1149,7 @@ export function createApp(
     switch (d.kind) {
       // Non-article OR unknown-article: pure passthrough, no observation.
       case "passthrough":
-        return proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+        return proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
 
       // Publisher-refused crawler: 403 before any content leaves.
       case "blocked": {
@@ -1067,7 +1172,7 @@ export function createApp(
       // (a fresh Response from proxyToOrigin doesn't inherit c.header()).
       case "free": {
         emitObs(d.obs, "served-free");
-        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+        const res = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
         res.headers.set("X-Naulon-Verdict", headerSafe(d.verdict));
         return stampGateCacheHeaders(res, { noStore: false });
       }
@@ -1075,7 +1180,7 @@ export function createApp(
       // A valid license scoped to this slug+kind re-reads free.
       case "reread": {
         emitObs(d.obs, "agent-reread", { kind: d.tollKind });
-        const res = await proxyToOrigin(c.req.raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+        const res = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
         res.headers.set("X-Naulon-Verdict", "agent reread (license)");
         return stampGateCacheHeaders(res, { noStore: true });
       }
@@ -1085,7 +1190,7 @@ export function createApp(
       case "licence-presented":
         // GET only. A HEAD carries no body to sell, and a standing licence must not be charged for a
         // probe the buyer never saw; anything else is not a read at all.
-        if (licenceAuthority && c.req.method === "GET") return serveLicence(d, licenceAuthority);
+        if (licenceAuthority && raw.method === "GET") return serveLicence(d, licenceAuthority);
       // falls through
       // Machine, no payment: 402 with the requirement in the PAYMENT-REQUIRED
       // header. Link points an agent at the toll manifest (discoverability).
@@ -1099,8 +1204,8 @@ export function createApp(
         // Without this the interop cannot be measured at all, only assumed.
         const budget = crawlerBudgetVerdict(
           declaredCrawlerBudget({
-            maxPrice: c.req.header(CRAWLER_MAX_PRICE_HEADER),
-            exactPrice: c.req.header(CRAWLER_EXACT_PRICE_HEADER),
+            maxPrice: raw.headers.get(CRAWLER_MAX_PRICE_HEADER) ?? undefined,
+            exactPrice: raw.headers.get(CRAWLER_EXACT_PRICE_HEADER) ?? undefined,
           }),
           askMicro,
         );
@@ -1108,7 +1213,7 @@ export function createApp(
           // The body is the ADVERTISEMENT — price, terms, where the real obligation is —
           // in the vendor-neutral shape a non-x402 crawler can read. It used to be zero
           // bytes, which told a buyer that does not decode PAYMENT-REQUIRED nothing at all.
-          c.body(paymentRequiredBodyText({ askMicro, publisher: host, endpoint: new URL(c.req.url).pathname, tollKind: d.tollKind }), 402, {
+          c.body(paymentRequiredBodyText({ askMicro, publisher: host, endpoint: new URL(raw.url).pathname, tollKind: d.tollKind }), 402, {
             [PAYMENT_REQUIRED_HEADER]: d.header,
             [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
             "content-type": PAYMENT_BODY_CONTENT_TYPE,
@@ -1125,7 +1230,7 @@ export function createApp(
       case "payment-presented":
         return settleAndServe(d, d.payment, {});
     }
-  });
+  };
 
   return app;
 }

@@ -36,6 +36,13 @@ export interface RequestSignals {
    * cost and classifies exactly as before.
    */
   verifiedAgent?: VerifiedAgent | null;
+  /**
+   * The request arrived through an AUTHENTICATED crawler-route ingress: the publisher's own CDN
+   * matched it as crawler traffic and proxied it here. Never configured, only derived by the gate
+   * after the edge secret checked out, so no www request can carry it. It moves exactly one rule:
+   * the ambiguous middle defaults to agent. A browser-shaped request still reads free.
+   */
+  viaIngress?: boolean;
 }
 
 /** Per-publisher classification policy the gate supplies from `PublisherConfig`. */
@@ -216,6 +223,10 @@ export function classify(signals: RequestSignals, policy?: ClassifyPolicy): Verd
     return { kind: "human", reason: "browser-shaped request", confidence: 0.85 };
   }
 
-  // 5) Ambiguous middle. Starter favors humans (see asymmetry note).
+  // 5) Ambiguous middle. Starter favors humans (see asymmetry note), except on a crawler route,
+  //    where the publisher's CDN has already matched this request as crawler traffic.
+  if (signals.viaIngress) {
+    return { kind: "agent", reason: "ambiguous; routed as crawler traffic by the publisher's CDN", confidence: 0.6 };
+  }
   return { kind: "human", reason: "ambiguous; defaulting to human (free)", confidence: 0.4 };
 }
