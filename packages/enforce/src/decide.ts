@@ -24,6 +24,7 @@ import type { Quote } from "./pricing.ts";
 import { licensing } from "./license.ts";
 import { revocations } from "./revocation.ts";
 import { verifyPopProof } from "./pop.ts";
+import { matchTarget } from "@naulon/sdk/rsl";
 import { slugFromPath, slugFromSitePath } from "@naulon/sdk/slug";
 import { routeTemplateFor } from "./bazaar.ts";
 import {
@@ -157,7 +158,7 @@ export async function licenseEntitlesRead(
   // Scope, when present, is matched against the request PATH — prefix mode's slug is a
   // captured segment, not a path, so patterns could never match it. Unscoped licences keep
   // exact slug equality, byte-identical to the behaviour before W6.
-  if (!licenseCoversPath(n, { slug, path: new URL(req.url).pathname })) return refused("not_covered");
+  if (!licenseCoversPath(n, { slug, path: matchTarget(req.url) })) return refused("not_covered");
   if (requestedKind === "citation" && n.kind !== "citation") return refused("kind_mismatch"); // no read→citation upgrade
   if (cfg.LICENSE_ONLINE_CHECK && (await revocations.isRevoked(r.claims.jti))) return refused("revoked");
   // Holder-of-key: a cnf-bound license is NOT a bearer right — require a fresh
@@ -412,9 +413,9 @@ export async function decide(input: DecideInput): Promise<Decision> {
     }
   }
 
-  // Price it. The pathname (not `path`, which carries the query string) selects the per-path
-  // price rule — the same input, in the same dialect, that a licence scope matches against.
-  const q = await quote(publisher, slug, tollKind, new URL(raw.url).pathname);
+  // Price it. Path plus query selects the per-path price rule, the same input in the same dialect a
+  // licence scope and a spec-following client reading the RSL document match against.
+  const q = await quote(publisher, slug, tollKind, matchTarget(raw.url));
   if (!q) return { kind: "passthrough", verdict: "unknown-article" }; // unknown article — don't gate.
 
   // The resource identifier goes into a SIGNED quote, so it must be the URL the buyer

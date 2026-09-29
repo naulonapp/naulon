@@ -10,9 +10,11 @@
  *
  * Not a bespoke glob. RSL 1.0 requires RFC 9309 for `content@url`, the RSL documents this core's
  * consumers publish already carry that shape (`/prefix/*`), and a licence scope already matches
- * with it (`license.ts` → `matchesPattern`). So a price rule projects
- * 1:1 into an RSL `<content>` block instead of being translated into one, and the gate, the
- * licence and the published terms cannot disagree about which paths a rule covers.
+ * with it (`license.ts` → `matchesPublisherPattern`). So a price rule projects into RSL
+ * `<content>` blocks instead of being translated into one, and the gate, the licence and the
+ * published terms cannot disagree about which URLs a rule covers. Matching reads path plus query,
+ * as RFC 9309 does; the one reading of our own is that `/a$` means the article whatever its query,
+ * so it projects as `/a$` and `/a?*` (`publisherPatterns`).
  *
  * ## Overlap RESOLVES; it is not refused
  *
@@ -41,7 +43,7 @@
  * get a refused settle with no error to read. Free stays what it already is: `excludePrefixes`,
  * `credits_free_slugs`, or a 404 from the credits source.
  */
-import { matchesPattern, specificity } from "@naulon/sdk/rsl";
+import { matchesPublisherPattern, specificity } from "@naulon/sdk/rsl";
 import { USDC_FLOOR } from "./types.ts";
 
 /**
@@ -190,7 +192,8 @@ export function normalizePriceRules(input: readonly unknown[]): PriceRule[] {
 }
 
 /**
- * The rule that governs `path`, or undefined when none does.
+ * The rule that governs `target` (path plus query, `matchTarget`), or undefined when none does.
+ * A rule is a PUBLISHER pattern, so `/a$` also governs `/a?page=2` (`publisherPatterns`).
  *
  * Pure, synchronous and allocation-free on the miss path — it runs inside the price formula on
  * every priced request. It assumes the list is already normalised (most-specific-first); an
@@ -199,11 +202,11 @@ export function normalizePriceRules(input: readonly unknown[]): PriceRule[] {
  */
 export function resolvePriceRule(
   rules: readonly PriceRule[] | undefined,
-  path: string | undefined,
+  target: string | undefined,
 ): PriceRule | undefined {
-  if (!rules || rules.length === 0 || path === undefined) return undefined;
+  if (!rules || rules.length === 0 || target === undefined) return undefined;
   for (const rule of rules) {
-    if (matchesPattern(rule.pattern, path)) return rule;
+    if (matchesPublisherPattern(rule.pattern, target)) return rule;
   }
   return undefined;
 }

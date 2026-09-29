@@ -62,3 +62,10 @@ test("agentFetch presents the token as CAP requires, and never over a caller's o
     clearLicenseTokens();
   }
 });
+
+test("a token scoped to a query pattern is presented for that query, and an anchored one is not", () => {
+  rememberLicenseToken({ origin: "https://pub.example", resource: "/a$", token: "bare", expiresAt: null });
+  rememberLicenseToken({ origin: "https://pub.example", resource: "/a?*", token: "query", expiresAt: null });
+  assert.equal(licenseTokenFor("https://pub.example/a"), "bare");
+  assert.equal(licenseTokenFor("https://pub.example/a?page=2"), "query");
+});

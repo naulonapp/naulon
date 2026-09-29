@@ -251,3 +251,12 @@ test("mintCitationRecord always stamps grant 'none', whatever it is handed", () 
   )["naulon"] as Record<string, unknown>;
   assert.equal(naulon["grant"], "none");
 });
+
+test("a scope reads path plus query, and an anchored pattern keeps its article under a query", () => {
+  const scoped: NaulonClaim = { ...base, scope: { patterns: ["/essays/one$"] } };
+  assert.equal(licenseCoversPath(scoped, { slug: "x", path: "/essays/one?ref=feed" }), true);
+  assert.equal(licenseCoversPath(scoped, { slug: "x", path: "/essays/one/two" }), false);
+  const queryScoped: NaulonClaim = { ...base, scope: { patterns: ["/search?q=*"] } };
+  assert.equal(licenseCoversPath(queryScoped, { slug: "x", path: "/search?q=arc" }), true);
+  assert.equal(licenseCoversPath(queryScoped, { slug: "x", path: "/search" }), false);
+});

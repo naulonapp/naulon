@@ -31,6 +31,7 @@
  */
 import { makeGuardedFetcher } from "../crawl/fetcher.ts";
 import type { Fetcher } from "../crawl/types.ts";
+import { matchTarget } from "./pattern.ts";
 import { parseRslOrNull } from "./parse.ts";
 import type { RslDocument } from "./types.ts";
 
@@ -225,7 +226,7 @@ export async function locateFromObserved(
     const inline = inlineRslFromHtml(observed.body);
     if (inline) {
       const doc = parseRslOrNull(inline);
-      if (doc) return { source: "html-inline", doc, associationPath: target.pathname };
+      if (doc) return { source: "html-inline", doc, associationPath: matchTarget(target) };
     }
   }
   return null;

@@ -231,3 +231,12 @@ test("a narrow scope's user verdict wins over a broader one, per question", () =
   assert.equal(termsForUrl(d, "/private/x")!.user["commercial"], false);
   assert.equal(termsForUrl(d, "/open/x")!.user["commercial"], true);
 });
+
+test("the document is read literally, query included: /a$ is not /a?x, and /a?* is", () => {
+  const d = doc(`
+    <content url="/a$"><license><permits type="usage">ai-input</permits><payment type="free"/></license></content>
+    <content url="/a?*"><license><permits type="usage">search</permits><payment type="free"/></license></content>`);
+  assert.deepEqual(termsForUrl(d, "https://pub.example/a")?.scopes, ["/a$"]);
+  assert.deepEqual(termsForUrl(d, "https://pub.example/a?page=2")?.scopes, ["/a?*"]);
+  assert.deepEqual(termsForUrl(d, "/a?page=2")?.scopes, ["/a?*"]);
+});

@@ -22,7 +22,7 @@
  * resolves to the conservative answer, because the failure mode on the other side is taking a
  * publisher's work without paying them for it.
  */
-import { matchesPattern, specificity } from "./pattern.ts";
+import { matchesPattern, matchTarget, specificity } from "./pattern.ts";
 import type { RslContent, RslDocument, RslPaymentType, RslUsage, RslUserClass } from "./types.ts";
 
 /** A priced (or explicitly free) offer that grants the usage asked for. */
@@ -197,9 +197,9 @@ function readOffer(scopes: RslContent[]): { offer: RslOffer; scope: RslContent }
 /**
  * Resolve `url` against a parsed document.
  *
- * `url` may be absolute or a path; only its pathname is matched, because `content@url` is an
- * RFC 9309 path pattern and matching a full URL would let a crafted path segment satisfy another
- * origin's pattern. The caller has already established that this document governs this origin.
+ * `url` may be absolute or a path; only its path and query are matched (`matchTarget`), because
+ * `content@url` is an RFC 9309 pattern and matching a full URL would let a crafted path segment
+ * satisfy another origin's pattern. The document is read LITERALLY: `/a$` does not cover `/a?x`. The caller has already established that this document governs this origin.
  */
 export function termsForUrl(
   doc: RslDocument,
@@ -208,7 +208,7 @@ export function termsForUrl(
 ): RslTermsForUrl | null {
   let path: string;
   try {
-    path = url.startsWith("/") ? url : new URL(url).pathname;
+    path = matchTarget(url);
   } catch {
     return null;
   }

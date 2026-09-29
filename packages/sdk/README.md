@@ -29,7 +29,9 @@ npm install @naulon/sdk
   what it says about one URL (usage, user class, region, price), and `licenceFor`
   locates and fetches a site's licence from a URL alone. For a licence server (RSL's Open
   Licence Protocol), `acquireLicenseToken` obtains a licence and `introspectLicence` asks
-  whether one permits a read.
+  whether one permits a read. `matchesPattern` is the RFC 9309 matcher, applied to a URL's path
+  and query (`matchTarget`); `matchesPublisherPattern` reads a publisher's `/a$` as the article
+  under any query, which is how prices and licence scopes are matched.
 - `@naulon/sdk/slug`: the one article-key rule, zero dependencies. The gate, the
   crawl engine and a publisher's own credits endpoint all derive the same slug from
   a URL through this, so the three never disagree.

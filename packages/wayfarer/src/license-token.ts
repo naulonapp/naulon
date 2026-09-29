@@ -13,7 +13,7 @@
  * life of the process, keyed by origin + pattern, and never written to disk — it is a bearer
  * credential for somebody else's content.
  */
-import { matchesPattern, specificity } from "@naulon/sdk/rsl";
+import { matchesPattern, matchTarget, specificity } from "@naulon/sdk/rsl";
 
 interface Held {
   origin: string;
@@ -56,7 +56,7 @@ export function licenseTokenFor(url: string, now: number = Date.now()): string |
   try {
     const u = new URL(url);
     origin = u.origin;
-    path = u.pathname;
+    path = matchTarget(u);
   } catch {
     return null;
   }

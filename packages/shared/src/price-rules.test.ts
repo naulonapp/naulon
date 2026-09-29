@@ -199,3 +199,16 @@ test("the label names the list the caller got wrong", () => {
 test("a trimmed pattern is what gets stored, so trailing whitespace cannot fork a scope", () => {
   assert.deepEqual(normalizePathPatterns(["  /essays/*  "], "licence scope", 10), ["/essays/*"]);
 });
+
+test("an anchored rule prices its article whatever the query; a rule naming a query outranks it", () => {
+  const rules = normalizePriceRules([
+    { pattern: "/", priceUsdc: 0.01 },
+    { pattern: "/a$", priceUsdc: 0.05 },
+    { pattern: "/a?page=*", priceUsdc: 0.02 },
+  ]);
+  // Appending a query must not buy the article at the site default.
+  assert.equal(resolvePriceRule(rules, "/a")?.priceUsdc, 0.05);
+  assert.equal(resolvePriceRule(rules, "/a?utm=x")?.priceUsdc, 0.05);
+  assert.equal(resolvePriceRule(rules, "/a?page=2")?.priceUsdc, 0.02);
+  assert.equal(resolvePriceRule(rules, "/a/b")?.priceUsdc, 0.01);
+});
