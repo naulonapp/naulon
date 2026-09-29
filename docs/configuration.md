@@ -58,7 +58,7 @@ A few rules are enforced across variables rather than on one of them:
 | `DEFAULT_PRICE_USDC` | `0.001` | Price of a single read when the credits response doesn't name one. |
 | `CITATION_MULTIPLIER` | `5` | A citation costs this multiple of a read, because a citation has downstream reach: it grounds an answer many people will see. Both resolve to the same payees; only the price differs. `1` prices a citation like a read. |
 | `ARTICLE_PATH_PREFIXES` | `essays,articles,posts` | Comma-separated path prefixes that count as gateable articles. |
-| `INGRESS_HOST` | unset | A hostname on which the gate accepts crawler traffic proxied by your CDN. The CDN names your site in `Forwarded: host=` and sends `EDGE_SECRET`. Unset means no ingress. |
+| `INGRESS_HOST` | unset | A hostname on which the gate accepts crawler traffic proxied by your CDN. The CDN names your site in `Forwarded: host=` and sends `EDGE_SECRET`. Responses served through it link the manifest and licence routes at `https://<INGRESS_HOST>/…?host=<your site>`, so it must be reachable over HTTPS from the public internet. Unset means no ingress. |
 | `EDGE_SECRET` | unset | The secret your CDN rule sends in `X-Naulon-Edge-Auth`. At least 32 characters. Read only when `INGRESS_HOST` is set. |
 | `CREDITS_API_URL` | unset | When set, the gate asks `${url}/credits/:slug` who wrote an article. See [credits-api.md](./credits-api.md). |
 | `CREDITS_API_TOKEN` | unset | Bearer token sent with that request, if your endpoint is not public. |

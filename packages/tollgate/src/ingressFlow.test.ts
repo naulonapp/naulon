@@ -255,3 +255,75 @@ test("on any other host, Forwarded and an edge secret are ignored and nothing ch
     assert.equal(o.servedVia, undefined);
   }
 });
+
+// Machine URLs. A crawler that met a 402 through the CDN follows its links through the same CDN, so
+// they arrive on the ingress too; a verifier's browser does not pass the CDN's crawler rule at all,
+// so a relative URL would send it to the site's origin, which has no such route.
+
+const ABS = `https://${INGRESS}`;
+const ALPHA_Q = "?host=www.alpha.example";
+
+test("a 402 through the ingress links an absolute manifest URL that names the site", async () => {
+  const res = await viaIngress("/essays/linked");
+  assert.equal(res.status, 402);
+  assert.equal(res.headers.get("link"), `<${ABS}/.well-known/x402${ALPHA_Q}>; rel="payment"; type="application/json"`);
+});
+
+test("the manifest answers for the site both through the CDN and by ?host=, with absolute URLs", async () => {
+  const unknown = await app.request("/essays/x", { headers: { host: "nobody.example", "user-agent": GPTBOT } });
+  const miss = { status: unknown.status, body: await unknown.text() };
+  const throughCdn = await viaIngress("/.well-known/x402");
+  const byHint = await app.request(`/.well-known/x402${ALPHA_Q}`, { headers: { host: INGRESS } });
+  for (const [name, res] of [["through the CDN", throughCdn], ["by ?host=", byHint]] as const) {
+    assert.equal(res.status, 200, name);
+    assert.match(res.headers.get("cache-control") ?? "", /^private/, `${name}: one ingress URL serves every site`);
+    const m = (await res.json()) as { license: Record<string, string> };
+    assert.equal(m.license.identity, "naulon:www.alpha.example", name);
+    assert.equal(m.license.verify, `${ABS}/licenses/{jti}${ALPHA_Q}`, name);
+    assert.equal(m.license.record, `${ABS}/licenses/{jti}/record${ALPHA_Q}`, name);
+    assert.equal(m.license.jwks, `${ABS}/.well-known/naulon-jwks.json`, name);
+  }
+  const noHint = await app.request("/.well-known/x402", { headers: { host: INGRESS } });
+  assert.equal(noHint.status, 404, "no site named, no terms");
+  const wrongSecret = await viaIngress("/.well-known/x402", { edge: randomBytes(24).toString("hex") });
+  assert.deepEqual({ status: wrongSecret.status, body: await wrongSecret.text() }, miss, "a forwarded request still needs its secret");
+});
+
+test("a verifier reaches a licence on the ingress by ?host=, and only under its own site", async () => {
+  const first = await viaIngress("/essays/verify-me");
+  const accepts = (decodeJson(first.headers.get(PAYMENT_REQUIRED_HEADER)!).accepts as Array<{ amount: string; extra: { nonce: string } }>)[0]!;
+  const sig = buildMockSignature(walletAddress("0x00000000000000000000000000000000000000b2"), accepts.amount, accepts.extra.nonce);
+  const paid = await viaIngress("/essays/verify-me", { headers: { [PAYMENT_SIGNATURE_HEADER]: sig } });
+  const jti = payload(paid.headers.get("x-naulon-license")!).jti as string;
+
+  const get = (path: string) => app.request(path, { headers: { host: INGRESS } });
+  const found = await get(`/licenses/${jti}${ALPHA_Q}`);
+  assert.equal(found.status, 200);
+  assert.equal(((await found.json()) as { found: boolean }).found, true);
+  assert.equal((await get(`/licenses/${jti}/record${ALPHA_Q}`)).status, 200);
+  assert.equal((await get(`/licenses/${jti}?host=www.beta.example`)).status, 404, "another site never sees alpha's licence");
+  assert.equal((await get(`/licenses/${jti}`)).status, 404, "no site named, nothing found");
+  const through = await viaIngress(`/licenses/${jti}`);
+  assert.equal(through.status, 200, "a crawler checking its licence through the CDN reaches it too");
+});
+
+test("the gate's own routes answer on the ingress, and nothing else does without a secret", async () => {
+  assert.equal((await app.request("/.well-known/naulon-edge", { headers: { host: INGRESS } })).status, 200);
+  assert.equal((await app.request("/.well-known/naulon-jwks.json", { headers: { host: INGRESS } })).status, 200);
+  const unknown = await app.request("/essays/x", { headers: { host: "nobody.example" } });
+  const miss = { status: unknown.status, body: await unknown.text() };
+  const post = await app.request("/healthz", { method: "POST", headers: { host: INGRESS } });
+  assert.deepEqual({ status: post.status, body: await post.text() }, miss);
+  const hintedPath = await app.request(`/essays/x${ALPHA_Q}`, { headers: { host: INGRESS, "user-agent": GPTBOT } });
+  assert.deepEqual({ status: hintedPath.status, body: await hintedPath.text() }, miss, "?host= opens machine routes only");
+  assert.equal(origin.length, 0);
+});
+
+test("on any other host the 402 link and the manifest URLs stay relative", async () => {
+  const res = await app.request("/essays/relative", { headers: { host: "p.example", "user-agent": GPTBOT } });
+  assert.equal(res.status, 402);
+  assert.equal(res.headers.get("link"), '</.well-known/x402>; rel="payment"; type="application/json"');
+  const m = (await (await app.request("/.well-known/x402", { headers: { host: "p.example" } })).json()) as { license: Record<string, string> };
+  assert.equal(m.license.verify, "/licenses/{jti}");
+  assert.equal(m.license.jwks, "/.well-known/naulon-jwks.json");
+});
