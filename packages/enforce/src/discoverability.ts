@@ -46,6 +46,31 @@ function proofTemplate(licenseIdentity: string): string {
 export const PAYMENT_LINK_HEADER = `<${X402_MANIFEST_PATH}>; rel="payment"; type="application/json"`;
 
 /**
+ * Where machine URLs point when the gate answers for a site it does not front. A crawler route
+ * reaches the gate through the publisher's CDN, which forwards only crawler traffic: a relative
+ * `/licenses/{jti}` resolves against the site, and a verifier's browser fetching it reaches the
+ * site's origin, which has no such route. So those URLs name the gate's ingress host and carry the
+ * site as `?host=`, the hint the gate's machine routes already accept.
+ */
+export interface MachineUrlBase {
+  /** The gate origin that serves the machine routes, e.g. `https://ingress.example.com`. */
+  origin: string;
+  /** The site the URLs speak for. */
+  host: string;
+}
+
+function machineUrl(base: MachineUrlBase, path: string, named = true): string {
+  const url = `${base.origin.replace(/\/$/, "")}${path}`;
+  return named ? `${url}?host=${encodeURIComponent(base.host)}` : url;
+}
+
+/** The `Link` header for a 402: relative when the gate fronts the site, absolute otherwise. */
+export function paymentLinkHeader(base?: MachineUrlBase): string {
+  if (!base) return PAYMENT_LINK_HEADER;
+  return `<${machineUrl(base, X402_MANIFEST_PATH)}>; rel="payment"; type="application/json"`;
+}
+
+/**
  * The all-in figure for one toll, summed across every leg the 402 will carry.
  *
  * `atomic` is authoritative. `usdc` is for display and is derived from it, so the FEE is
@@ -190,6 +215,7 @@ export interface X402Manifest {
 export function buildX402Manifest(
   publisher: PublisherConfig,
   net: SettlementNetwork = activeNetwork(),
+  base?: MachineUrlBase,
 ): X402Manifest {
   // Through `tollPriceUnder` — the ONE price formula — never `publisher.price` and a local
   // multiply. A rule overrides the read price and the multiplier independently, and re-deriving
@@ -284,9 +310,9 @@ export function buildX402Manifest(
         "Resolved per article to the primary author from the publisher's credits graph; the recursive co-author split is recorded on each settled event. Custody-free: settlement is buyer → author.",
     },
     license: {
-      jwks: JWKS_PATH,
-      verify: LICENSE_VERIFY_PATH,
-      record: LICENSE_RECORD_PATH,
+      jwks: base ? machineUrl(base, JWKS_PATH, false) : JWKS_PATH,
+      verify: base ? machineUrl(base, LICENSE_VERIFY_PATH) : LICENSE_VERIFY_PATH,
+      record: base ? machineUrl(base, LICENSE_RECORD_PATH) : LICENSE_RECORD_PATH,
       proof: proofTemplate(publisher.licenseIdentity),
       identity: publisher.licenseIdentity,
     },

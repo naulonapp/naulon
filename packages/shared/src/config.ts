@@ -55,6 +55,16 @@ const DEFAULT_WEBHOOK_DELIVERIES = join(REPO_ROOT, "data/webhook-deliveries.json
 
 // Exported so config validation (e.g. the licensing superRefine) is unit-testable
 // without mutating process.env / the getConfig() singleton.
+/**
+ * Is `value` a bare DNS hostname (no scheme, port, path or trailing dot)? The crawler-route ingress
+ * host is both matched against `Host` and printed into absolute machine URLs as `https://<host>`, so
+ * `https://ingress.example.com` or `ingress.example.com:443` would match nothing and print a broken
+ * URL. Exported so a control plane embedding the gate validates the same variable the same way.
+ */
+export function isBareHostname(value: string): boolean {
+  return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/.test(value);
+}
+
 export const configSchema = z.object({
   // Payment rail. "mock" settles offline (no creds); "gateway" uses the real
   // Circle Gateway batching SDK (needs a funded BUYER_PRIVATE_KEY).
@@ -130,6 +140,12 @@ export const configSchema = z.object({
   CITATION_MULTIPLIER: z.coerce.number().positive().default(5),
   // Which path prefixes count as gateable articles (comma-separated).
   ARTICLE_PATH_PREFIXES: z.string().default("essays,articles,posts"),
+  // Crawler route (optional): a hostname on which the gate accepts requests proxied by the
+  // publisher's own CDN, naming the site in `Forwarded: host=` and authenticating with EDGE_SECRET.
+  // Both unset (the default) means no ingress at all.
+  INGRESS_HOST: z.string().trim().toLowerCase().refine(isBareHostname, "must be a bare hostname, e.g. ingress.example.com").optional(),
+  // The secret the CDN rule sends in `X-Naulon-Edge-Auth`. Only read when INGRESS_HOST is set.
+  EDGE_SECRET: z.string().min(32, "must be at least 32 characters").optional(),
 
   // ── Hardening ──
   // HMAC secret that signs 402 payment nonces. If unset, the gate mints an

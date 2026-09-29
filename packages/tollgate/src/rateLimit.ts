@@ -58,6 +58,25 @@ export interface RateLimitOptions {
   trustProxy?: boolean;
   hops?: number;
   now?: () => number;
+  /**
+   * Hosts this limiter leaves alone because the app limits them later, after it knows who the
+   * request is for (the crawler-route ingress). Unset limits every request, as before.
+   */
+  skipHost?: (host: string) => boolean;
+}
+
+/**
+ * The key this limiter would bucket a request under, or undefined when the sender cannot be
+ * identified (which the limiter lets through, with a warning, rather than lumping into one bucket).
+ */
+export function clientKeyOf(c: Context): string | undefined {
+  const who = resolveClientIdentity({
+    xff: c.req.header("x-forwarded-for"),
+    peer: peerOf(c),
+    trustProxy: cfg.TRUST_PROXY,
+    hops: cfg.TRUST_PROXY_HOPS,
+  });
+  return who.ok ? who.key : undefined;
 }
 
 /** Hono middleware. No-op when RATE_LIMIT_RPM=0. */
@@ -74,7 +93,9 @@ export function rateLimit(opts: RateLimitOptions = {}): MiddlewareHandler {
   if (!limiter.enabled) {
     return async (_c, next) => next();
   }
+  const skipHost = opts.skipHost;
   return async (c, next) => {
+    if (skipHost?.(c.req.header("host") ?? new URL(c.req.url).host)) return next();
     const who = resolveClientIdentity({
       xff: c.req.header("x-forwarded-for"),
       peer: peerOf(c),

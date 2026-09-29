@@ -18,6 +18,33 @@ tags and the auto-generated notes on each GitHub Release.
 
 Nothing yet.
 
+## v0.9.3
+
+`@naulon/shared` 0.6.2 → **0.6.3**, `@naulon/enforce` 0.6.2 → **0.6.3**, `@naulon/wayfarer` 0.6.2 →
+**0.6.3** and `@naulon/wayfarer-mcp` 0.6.2 → **0.6.3** (ranges only, so neither can install an
+older `shared`). `@naulon/sdk` and the WordPress plugin are unchanged.
+
+The crawler route: your CDN keeps serving your site and forwards only AI crawler requests to the
+gate on a separate hostname, naming your site in `Forwarded: host=` and authenticating with a
+per-site edge secret. Self-hosted gates enable it with `INGRESS_HOST` and `EDGE_SECRET` (set both
+or neither, see [configuration](docs/configuration.md)); an embedder passes
+`CreateAppOptions.ingress`.
+
+- `@naulon/shared`: `INGRESS_HOST` (a bare hostname) and `EDGE_SECRET` (32 characters or more) in
+  the config schema, `isBareHostname`, and an optional `servedVia: "ingress"` on `AttributedEvent`
+  and `ObservationEvent`. Rows written any other way are unchanged.
+- `@naulon/enforce`: `classify` takes a `viaIngress` signal, set only by the gate after the edge
+  secret checks out. It moves one rule: an ambiguous client on the crawler route is an agent, and
+  a browser-shaped one still reads free. `buildX402Manifest` takes an optional `MachineUrlBase`,
+  and `paymentLinkHeader(base?)` builds the 402 `Link`: both stay relative unless the gate answers
+  for a site it does not front, where they name the ingress host with `?host=<site>`.
+- The gate refuses every failed ingress request with the same answer it gives an unknown host,
+  answers 508 to its own origin fetch coming back through your CDN, marks ingress responses
+  `Cache-Control: private`, and rate limits crawlers per site and per `Forwarded: for=` address.
+  A licence record sold through the route keeps verifying after the route is removed. Every
+  response served through the route carries `x-naulon-ingress: <site>`, so one request with a
+  crawler user agent shows whether the rule works.
+
 ## v0.9.2
 
 `@naulon/sdk` 0.6.1 → **0.6.2**, `@naulon/shared` 0.6.1 → **0.6.2**, `@naulon/enforce` 0.6.1 →
