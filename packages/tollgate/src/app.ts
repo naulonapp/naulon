@@ -70,7 +70,7 @@ import {
 import { get as getEvent } from "./eventLog.ts";
 import { observe } from "./observationLog.ts";
 import { clientKeyOf, rateLimit } from "./rateLimit.ts";
-import { admitIngress, edgeSecretDigest, isIngressHost, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
+import { admitIngress, edgeSecretDigest, isIngressHost, namedSiteOf, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
 import { DEFAULT_TOLL_TERMS, settleAndAttribute } from "./settle.ts";
 import { envPublisherResolver } from "./publisher.ts";
 
@@ -576,12 +576,17 @@ export function createApp(
         }
       }
       // A sender whose misses have used up its budget is refused before admission looks anything
-      // up; otherwise every refused request would still cost the resolver a lookup.
-      const spent = takeIngress("ingress", caller, "peek");
+      // up; otherwise every refused request would still cost the resolver a lookup. The budget is
+      // per NAMED SITE: the sender is a CDN's egress, which publishers share, so one site's stale
+      // or forged rule must not use up the budget of every other site behind the same CDN. A
+      // request naming no site shares the sender's budget with the ingress's open routes.
+      const named = namedSiteOf(c.req.raw);
+      const missScope = named ? `miss\0${named}` : "ingress";
+      const spent = takeIngress(missScope, caller, "peek");
       if (spent) return spent;
       const admission = await admitIngress(c.req.raw, ingress);
       if (admission.kind === "miss") {
-        return takeIngress("ingress", caller) ?? handleUnknownHost(c, inboundHost);
+        return takeIngress(missScope, caller) ?? handleUnknownHost(c, inboundHost);
       }
       if (admission.kind === "loop") {
         return c.text(

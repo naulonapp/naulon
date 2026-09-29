@@ -112,6 +112,12 @@ function normalizeHost(value: string): string {
 }
 
 /** `for=` reduced to an address the rate limiter can key on. IPv6 arrives as `"[::1]:port"`. */
+/** The site a crawler-route request names in its last `Forwarded` element, if it names one. Used to
+ *  key the refusal budget per site: the sender is a CDN's egress, which many publishers share. */
+export function namedSiteOf(raw: Request): string | undefined {
+  return siteHostOf(lastForwardedElement(raw.headers.get("forwarded"))?.host);
+}
+
 export function clientAddressOf(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const v = value.trim();

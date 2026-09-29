@@ -173,3 +173,35 @@ test("a sender out of miss budget is refused before the site is looked up", asyn
   assert.deepEqual(codes, [502, 429], "burst 2: the secretless miss and one looked-up miss, then refused");
   assert.equal(lookups, 1, "the refused request never reached the resolver");
 });
+
+test("one site's refused requests never use up another site's budget behind the same CDN", async () => {
+  let lookups = 0;
+  const good = randomBytes(24).toString("hex");
+  const app = createApp(
+    { async resolve() { return undefined; } },
+    {
+      ingress: {
+        host: "ingress.naulon.test",
+        async resolve(site) {
+          lookups++;
+          return site === "www.b.example" ? { config: pub("b"), edgeSecretDigests: [edgeSecretDigest(good)] } : undefined;
+        },
+      },
+    },
+  );
+  // Every request below comes from ONE sender: the CDN's egress.
+  const via = (site: string, edge: string) =>
+    app.request("/about", {
+      headers: {
+        host: "ingress.naulon.test",
+        "x-forwarded-for": "198.51.100.30",
+        "user-agent": "GPTBot/1.2",
+        forwarded: `for=203.0.113.9;host=${site}`,
+        "x-naulon-edge-auth": edge,
+      },
+    });
+  const stale = [];
+  for (let i = 0; i < 4; i++) stale.push((await via("www.a.example", sharedEdge)).status);
+  assert.deepEqual(stale, [502, 502, 429, 429], "the site with a stale rule is refused once its budget is spent");
+  assert.notEqual((await via("www.b.example", good)).status, 429, "a correctly routed site behind the same CDN is untouched");
+});
