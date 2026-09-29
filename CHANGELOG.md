@@ -21,8 +21,9 @@ Nothing yet.
 ## v0.9.2
 
 `@naulon/sdk` 0.6.1 → **0.6.2**, `@naulon/shared` 0.6.1 → **0.6.2**, `@naulon/enforce` 0.6.1 →
-**0.6.2** and `@naulon/wayfarer` 0.6.1 → **0.6.2**. `@naulon/wayfarer-mcp` stays at 0.6.1; its
-ranges already take the new `wayfarer` and `shared`. The WordPress plugin is unchanged.
+**0.6.2**, `@naulon/wayfarer` 0.6.1 → **0.6.2** and `@naulon/wayfarer-mcp` 0.6.1 → **0.6.2**
+(ranges only, so it cannot install an older `shared` or `wayfarer`). The WordPress plugin is
+unchanged.
 
 Pattern matching follows RFC 9309 on the query string:
 
