@@ -97,6 +97,8 @@ export { outstandingLegMicro, legPayer } from "./pendingLegs.ts";
 export { decide, LICENSE_HEADER } from "@naulon/enforce";
 export type { Decision, DecideInput, DecideObs } from "@naulon/enforce";
 export { settleAndAttribute, type SettleResult, type SettleArgs } from "./settle.ts";
+// The ingress host rules, for an embedder serving its own routes on the ingress host.
+export { isIngressHost, siteHostOf } from "./ingress.ts";
 // The gate's pricing — the hosted /quote prices a resource with the SAME resolver
 // the gate uses (custody-free: a Quote carries payTo addresses, never a key).
 export { quote as resolveQuote } from "@naulon/enforce";
