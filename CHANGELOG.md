@@ -14,7 +14,13 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
-## Unreleased
+## v0.11.0
+
+New package `@naulon/extract` **0.1.0**. `@naulon/shared` 0.6.4 → **0.6.5**, `@naulon/enforce`
+0.7.0 → **0.7.1**, `@naulon/wayfarer` 0.6.4 → **0.7.0** (it now depends on `@naulon/extract`, and
+reads return markdown by default) and `@naulon/wayfarer-mcp` 0.6.4 → **0.7.0** (it now needs
+`wayfarer` 0.7.0). `@naulon/sdk` is unchanged. The WordPress plugin moves to 0.5.9; its own
+changelog says so.
 
 New package `@naulon/extract` 0.1.0: the article inside a page, as markdown, with its title,
 byline, date, canonical URL, word count and an approximate token count. Readability and turndown,

@@ -214,11 +214,12 @@ jobs:
 
       # Build in dependency order so each package's dist/ resolves the one below it.
       # (prepublishOnly rebuilds too, but building up front fails fast on a bad tree.)
-      - name: Build sdk → shared → enforce → wayfarer → wayfarer-mcp
+      - name: Build sdk → shared → enforce → extract → wayfarer → wayfarer-mcp
         run: |
           npm run build -w @naulon/sdk
           npm run build -w @naulon/shared
           npm run build -w @naulon/enforce
+          npm run build -w @naulon/extract
           npm run build -w @naulon/wayfarer
           npm run build -w @naulon/wayfarer-mcp
 
@@ -287,6 +288,9 @@ jobs:
           publish sdk
           publish shared
           publish enforce
+          # Before wayfarer, which depends on it: a wayfarer published first would name a version
+          # nobody can install.
+          publish extract
           publish wayfarer
           publish wayfarer-mcp
         env:
@@ -301,6 +305,7 @@ jobs:
           npm pack -w @naulon/sdk         --pack-destination _release
           npm pack -w @naulon/shared      --pack-destination _release
           npm pack -w @naulon/enforce     --pack-destination _release
+          npm pack -w @naulon/extract     --pack-destination _release
           npm pack -w @naulon/wayfarer    --pack-destination _release
           npm pack -w @naulon/wayfarer-mcp --pack-destination _release
 
