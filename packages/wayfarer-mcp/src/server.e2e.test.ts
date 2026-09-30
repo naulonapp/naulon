@@ -22,6 +22,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 /** Package root — the spawned binary's cwd. This file lives in <pkg>/src. */
 const PKG_ROOT = join(import.meta.dirname, "..");
 
+/** Each test spawns a real process. The suite runs with no per-test timeout, so without this a
+ *  request that never answers leaves the file, and the whole run, waiting forever. */
+const E2E_TEST_TIMEOUT_MS = 120_000;
+
 /** A base64 x402 PAYMENT-REQUIRED header advertising a single author leg. */
 function paymentRequired(amountAtomic: string): string {
   const body = {
@@ -94,9 +98,12 @@ async function startGate(handler: (req: IncomingMessage, res: ServerResponse) =>
  *  OPENAI_API_KEY is blanked so appraise stays offline. Discovery has no bundled
  *  fallback, so any test that discovers must pass CATALOG_URL (see catalogGate). */
 async function connect(env: Record<string, string>) {
+  // The running node with tsx preloaded, not `npx tsx`: npx adds a package resolution and a
+  // second process to every start, and under a loaded machine that start alone outran the
+  // client's 60s request timeout.
   const transport = new StdioClientTransport({
-    command: "npx",
-    args: ["tsx", "src/index.ts"],
+    command: process.execPath,
+    args: ["--import", "tsx", "src/index.ts"],
     cwd: PKG_ROOT,
     env: { ...process.env, OPENAI_API_KEY: "", PAYMENT_MODE: "mock", ...env },
   });
@@ -114,7 +121,7 @@ type Quote = { gated: boolean; totalUsdc?: number; affordable?: boolean; remaini
 type Pay = { ok: boolean; content?: string; costUsdc?: number; spentSessionUsdc: number; remainingUsdc: number; error?: string };
 type Research = { budget: number; requestedBudgetUsdc?: number };
 
-test("e2e (real stdio binary): pay debits the envelope, accumulates, and refuses an over-budget toll spending nothing", async () => {
+test("e2e (real stdio binary): pay debits the envelope, accumulates, and refuses an over-budget toll spending nothing", { timeout: E2E_TEST_TIMEOUT_MS }, async () => {
   const gate = await startGate(payGate("5000")); // 0.005 USDC toll
   // Ceiling 0.012 affords two 0.005 tolls (→0.002 left), not a third.
   const { client, close } = await connect({
@@ -156,7 +163,7 @@ test("e2e (real stdio binary): pay debits the envelope, accumulates, and refuses
   }
 });
 
-test("e2e (real stdio binary): naulon_research clamps a requested budget down to the session remaining (never up)", async () => {
+test("e2e (real stdio binary): naulon_research clamps a requested budget down to the session remaining (never up)", { timeout: E2E_TEST_TIMEOUT_MS }, async () => {
   const gate = await startGate(freeGate);
   const catalog = await startGate(catalogGate);
   const { client, close } = await connect({
@@ -203,7 +210,7 @@ function articleGate(accepts: string[]) {
 
 type CleanPay = Pay & { extraction?: string; article?: { title?: string; words: number; approxTokens: number } };
 
-test("e2e (real stdio binary): a paid read asks for markdown and returns the article, not the page", async () => {
+test("e2e (real stdio binary): a paid read asks for markdown and returns the article, not the page", { timeout: E2E_TEST_TIMEOUT_MS }, async () => {
   const accepts: string[] = [];
   const gate = await startGate(articleGate(accepts));
   const { client, close } = await connect({
