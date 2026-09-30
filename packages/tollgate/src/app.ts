@@ -71,7 +71,7 @@ import {
 import { get as getEvent } from "./eventLog.ts";
 import { observe } from "./observationLog.ts";
 import { clientKeyOf, rateLimit } from "./rateLimit.ts";
-import { admitIngress, EDGE_AUTH_HEADER, ROUTE_REVISION_HEADER, edgeSecretDigest, isIngressHost, namedSiteOf, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
+import { admitIngress, EDGE_AUTH_HEADER, edgeSecretDigest, lastForwardedElement, isIngressHost, namedSiteOf, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
 import { DEFAULT_TOLL_TERMS, settleAndAttribute } from "./settle.ts";
 import { deliverForAgent, varyOnAccept, type Delivered } from "./deliver.ts";
 import { prefersMarkdown } from "@naulon/extract";
@@ -642,7 +642,7 @@ export function createApp(
       if (limited) {
         // A route file older than revision 2 serves the origin on a 429, which would make hurrying
         // a free read. A 403 with the same Retry-After is relayed by every revision.
-        const revision = Number(c.req.header(ROUTE_REVISION_HEADER) ?? "1");
+        const revision = Number(lastForwardedElement(c.req.header("forwarded"))?.route ?? "1");
         if (revision >= 2) return limited;
         return new Response(await limited.text(), { status: 403, headers: limited.headers });
       }

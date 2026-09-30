@@ -26,11 +26,13 @@ import { isBareHostname, type PublisherConfig } from "@naulon/shared";
 /** The request header carrying the per-site edge secret. Stripped before anything is forwarded. */
 export const EDGE_AUTH_HEADER = "x-naulon-edge-auth";
 /**
- * The route file's revision, sent by the CDN rule on every forwarded request. Revision 2 and later
- * relay a 429 to the crawler; earlier files serve the origin on one, so the gate must not answer
- * them with a 429 at all (see `app.ts`). Stripped before the origin fetch like the secret.
+ * The route file's revision, as the `naulon-route` parameter of the `Forwarded` element the CDN rule
+ * writes. It rides there, and not in a header of its own, because a route file forwards the
+ * crawler's own headers: a revision header would be whatever the crawler chose to send, while the
+ * rule REPLACES `Forwarded`, so nothing a client sends survives into it. Revision 2 and later relay
+ * a 429 to the crawler; earlier files serve the origin on one (see `app.ts`).
  */
-export const ROUTE_REVISION_HEADER = "x-naulon-route";
+export const ROUTE_REVISION_PARAM = "naulon-route";
 
 /** Our RFC 8586 `CDN-Loop` token. Appended to the rewritten request, so it rides the origin fetch. */
 export const CDN_LOOP_TOKEN = "naulon";
@@ -56,6 +58,8 @@ export interface ForwardedElement {
   host?: string;
   for?: string;
   proto?: string;
+  /** The route file's revision ({@link ROUTE_REVISION_PARAM}), when the element names one. */
+  route?: string;
 }
 
 /**
@@ -75,6 +79,7 @@ export function lastForwardedElement(header: string | null | undefined): Forward
     const name = pair.slice(0, eq).trim().toLowerCase();
     const value = unquote(pair.slice(eq + 1).trim());
     if (name === "host" || name === "for" || name === "proto") out[name] = value;
+    else if (name === ROUTE_REVISION_PARAM) out.route = value;
   }
   return out;
 }
@@ -219,7 +224,6 @@ export async function admitIngress(raw: Request, ingress: IngressOptions): Promi
   const headers = new Headers(raw.headers);
   headers.delete("forwarded");
   headers.delete(EDGE_AUTH_HEADER);
-  headers.delete(ROUTE_REVISION_HEADER);
   // The rewritten URL is https and authoritative. A proxy-supplied scheme would otherwise override
   // it when the gate trusts proxy headers, and a CDN's own x-forwarded-* describe its hop, not ours.
   headers.delete("x-forwarded-proto");

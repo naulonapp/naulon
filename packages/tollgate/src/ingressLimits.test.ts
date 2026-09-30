@@ -71,9 +71,8 @@ function hit(app: ReturnType<typeof createApp>, site: string, client: string) {
     headers: {
       host: "ingress.naulon.test",
       "user-agent": "GPTBot/1.2",
-      forwarded: `for=${client};host=${site}`,
+      forwarded: `for=${client};host=${site};naulon-route=2`,
       "x-naulon-edge-auth": sharedEdge,
-      "x-naulon-route": "2",
     },
   });
 }
@@ -263,9 +262,11 @@ test("a site whose secret stops matching loses its pass through the pre-check", 
 
 test("an older route file never receives a 429, because it would serve the page free on one", async () => {
   const app = ingressApp();
+  // An older file forwards the crawler's own headers, so a crawler can add anything it likes
+  // except `Forwarded`, which the file replaces. A revision claimed in a header must change nothing.
   const old = (client: string) =>
     app.request("/about", {
-      headers: { host: "ingress.naulon.test", "user-agent": "GPTBot/1.2", forwarded: `for=${client};host=www.a.example`, "x-naulon-edge-auth": sharedEdge },
+      headers: { host: "ingress.naulon.test", "user-agent": "GPTBot/1.2", forwarded: `for=${client};host=www.a.example`, "x-naulon-edge-auth": sharedEdge, "x-naulon-route": "2" },
     });
   const codes = [(await old("203.0.113.70")).status, (await old("203.0.113.70")).status];
   const third = await old("203.0.113.70");
