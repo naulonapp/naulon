@@ -16,6 +16,10 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.10.0
+
 `@naulon/shared` 0.6.3 → **0.6.4** and `@naulon/enforce` 0.6.3 → **0.7.0** (it now needs
 `shared` 0.6.4). `@naulon/wayfarer` and `@naulon/wayfarer-mcp` 0.6.3 → **0.6.4** move their ranges
 only, so neither can install an older `shared`. The WordPress plugin moves too; its own changelog
