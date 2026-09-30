@@ -15,9 +15,9 @@
   "dependencies": {
     "@circle-fin/x402-batching": "^3.5.0",
     "@hono/node-server": "^2.1.1",
-    "@naulon/enforce": "^0.6.3",
+    "@naulon/enforce": "^0.7.0",
     "@naulon/sdk": "^0.6.2",
-    "@naulon/shared": "^0.6.3",
+    "@naulon/shared": "^0.6.4",
     "@x402/core": "^2.23.0",
     "@x402/evm": "^2.23.0",
     "hono": "^4.13.5",
