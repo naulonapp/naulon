@@ -553,7 +553,19 @@ export async function rereadWithLicense(
       error: `re-read unreachable: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
-  if (!res.ok) return { ok: false, error: `re-read returned ${res.status}` };
+  if (!res.ok) {
+    // A re-read spends nothing, so every answer here is unpaid. Only an auth status means the
+    // licence itself was refused; a missing page or a site in trouble is not a verdict on it.
+    const refused = res.status === 401 || res.status === 402 || res.status === 403;
+    const errorCode: FetchErrorCode = refused ? "rejected" : res.status === 404 ? "not_found" : "origin_error";
+    return {
+      ok: false,
+      errorCode,
+      retryable: errorCode === "origin_error",
+      unpaid: true,
+      error: `re-read returned ${res.status}`,
+    };
+  }
   const read = await readBody(res, url, format);
   return { ok: true, ...read, paidUsdc: 0, license };
 }

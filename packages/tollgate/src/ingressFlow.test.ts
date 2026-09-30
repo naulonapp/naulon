@@ -25,7 +25,7 @@ process.env.LICENSES_ENABLED = "true";
 process.env.RATE_LIMIT_RPM = "0";
 
 const { createApp } = await import("./app.ts");
-const { edgeSecretDigest } = await import("./ingress.ts");
+const { cdnLoopId, edgeSecretDigest } = await import("./ingress.ts");
 const { buildMockSignature, PAYMENT_REQUIRED_HEADER, PAYMENT_SIGNATURE_HEADER } = await import("./x402.ts");
 const { usdc, walletAddress } = await import("@naulon/shared");
 
@@ -152,7 +152,7 @@ test("paid through the ingress: licence, event and origin fetch all name the sit
   assert.equal(o.headers.get("x-forwarded-host"), "www.alpha.example");
   assert.equal(o.headers.get("x-forwarded-for"), "203.0.113.9", "the crawler's address, not the CDN's");
   assert.equal(o.headers.get("x-naulon-origin-auth"), alphaOrigin);
-  assert.ok(o.headers.get("cdn-loop")?.includes("naulon"), "the origin fetch carries our loop token");
+  assert.match(o.headers.get("cdn-loop") ?? "", /^naulon; id=[0-9a-f]{32}$/, "the origin fetch carries our keyed loop token");
   assert.equal(o.headers.get("forwarded"), null);
   assert.equal(o.headers.get("x-naulon-edge-auth"), null, "the edge secret never reaches an origin");
 });
@@ -205,8 +205,18 @@ test("our own origin fetch coming back through the CDN is refused as a loop, fet
   const byOriginAuth = await viaIngress("/essays/x", { headers: { "x-naulon-origin-auth": alphaOrigin } });
   assert.equal(byOriginAuth.status, 508);
   assert.equal(byOriginAuth.headers.get("cache-control"), "no-store");
-  const byCdnLoop = await viaIngress("/essays/x", { headers: { "cdn-loop": "cloudflare, naulon" } });
+  const minute = Math.floor(Date.now() / 60_000);
+  const ours = `naulon; id=${cdnLoopId(alphaEdge, minute)}`;
+  const byCdnLoop = await viaIngress("/essays/x", { headers: { "cdn-loop": `cloudflare, ${ours}` } });
   assert.equal(byCdnLoop.status, 508);
+  // A loop answers 5xx, and the route serves the origin on a 5xx, so a token anyone can type would
+  // be a free read. Only the id keyed by the site's edge secret counts.
+  // An id copied out of an origin log goes stale: two minutes on, it is just a header.
+  const stale = `naulon; id=${cdnLoopId(alphaEdge, minute - 2)}`;
+  for (const spoof of ["naulon", "cloudflare, naulon", "naulon; id=0000", `naulon; id=${"0".repeat(32)}`, stale]) {
+    const res = await viaIngress("/essays/x", { headers: { "cdn-loop": spoof } });
+    assert.equal(res.status, 402, spoof);
+  }
   const otherCdnOnly = await viaIngress("/essays/x", { headers: { "cdn-loop": "cloudflare" } });
   assert.equal(otherCdnOnly.status, 402, "another CDN's token alone is not our loop");
   const wrongOriginAuth = await viaIngress("/essays/x", { headers: { "x-naulon-origin-auth": "not-the-origin-value" } });

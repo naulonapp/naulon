@@ -63,10 +63,12 @@ export interface PriceRule {
    * `chatgpt.com`), lowercased. Absent ⇒ the rule prices every agent.
    *
    * Only a VERIFIED identity can select an agent rule. A User-Agent string is whatever the caller
-   * says it is: a cheaper rule keyed on one would be claimable by any scraper, and a dearer one
-   * dodged by changing a header. A signature is the one identity an agent cannot put on, so it is
-   * the only one a price may follow. An agent rule outranks every agentless rule for the agent it
-   * names, whatever their specificity: "this company pays this" is the more specific statement.
+   * says it is, so a cheaper rule keyed on one would be claimable by any scraper. A signature is the
+   * one identity an agent cannot put on, so it is the only one a price may follow. It cannot be
+   * forced on, though: an agent that stops signing is priced by the agentless rules, so a rule
+   * dearer than those is collected only while that agent signs. An agent rule outranks every
+   * agentless rule for the agent it names, whatever their specificity: "this company pays this" is
+   * the more specific statement.
    */
   agent?: string;
 }

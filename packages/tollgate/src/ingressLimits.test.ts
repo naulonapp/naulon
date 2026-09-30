@@ -73,6 +73,7 @@ function hit(app: ReturnType<typeof createApp>, site: string, client: string) {
       "user-agent": "GPTBot/1.2",
       forwarded: `for=${client};host=${site}`,
       "x-naulon-edge-auth": sharedEdge,
+      "x-naulon-route": "2",
     },
   });
 }
@@ -82,7 +83,7 @@ test("each crawler behind one CDN gets its own bucket, per publisher", async () 
   assert.equal((await hit(app, "www.a.example", "203.0.113.1")).status, 200);
   assert.equal((await hit(app, "www.a.example", "203.0.113.1")).status, 200);
   const third = await hit(app, "www.a.example", "203.0.113.1");
-  assert.equal(third.status, 429);
+  assert.equal(third.status, 429, "a revision-2 route file relays the 429");
   assert.equal(third.headers.get("cache-control"), "no-store");
   assert.equal((await hit(app, "www.a.example", "203.0.113.2")).status, 200, "another crawler on the same CDN is unaffected");
   assert.equal((await hit(app, "www.b.example", "203.0.113.1")).status, 200, "the same crawler on another publisher is unaffected");
@@ -204,4 +205,71 @@ test("one site's refused requests never use up another site's budget behind the 
   for (let i = 0; i < 4; i++) stale.push((await via("www.a.example", sharedEdge)).status);
   assert.deepEqual(stale, [502, 502, 429, 429], "the site with a stale rule is refused once its budget is spent");
   assert.notEqual((await via("www.b.example", good)).status, 429, "a correctly routed site behind the same CDN is untouched");
+});
+
+test("a site that has been admitted is never refused by a stranger's misses on the same egress", async () => {
+  const good = randomBytes(24).toString("hex");
+  const app = createApp(
+    { async resolve() { return undefined; } },
+    {
+      ingress: {
+        host: "ingress.naulon.test",
+        async resolve(site) {
+          return site === "www.b.example" ? { config: pub("b"), edgeSecretDigests: [edgeSecretDigest(good)] } : undefined;
+        },
+      },
+    },
+  );
+  const via = (site: string, edge: string, crawler: string) =>
+    app.request("/about", {
+      headers: {
+        host: "ingress.naulon.test",
+        "x-forwarded-for": "198.51.100.50",
+        "user-agent": "GPTBot/1.2",
+        forwarded: `for=${crawler};host=${site}`,
+        "x-naulon-edge-auth": edge,
+      },
+    });
+  assert.equal((await via("www.b.example", good, "203.0.113.1")).status, 200);
+  // A stranger on the same egress names b with a forged secret until b's miss budget is gone.
+  for (let i = 0; i < 5; i++) await via("www.b.example", randomBytes(24).toString("hex"), "203.0.113.66");
+  // The route serves the origin free on a refusal, so b's own crawlers must still be admitted.
+  assert.equal((await via("www.b.example", good, "203.0.113.2")).status, 200);
+});
+
+test("a site whose secret stops matching loses its pass through the pre-check", async () => {
+  let current = randomBytes(24).toString("hex");
+  const app = createApp(
+    { async resolve() { return undefined; } },
+    {
+      ingress: {
+        host: "ingress.naulon.test",
+        async resolve(site) {
+          return site === "www.b.example" ? { config: pub("b"), edgeSecretDigests: [edgeSecretDigest(current)] } : undefined;
+        },
+      },
+    },
+  );
+  const old = current;
+  const via = (edge: string) =>
+    app.request("/about", {
+      headers: { host: "ingress.naulon.test", "x-forwarded-for": "198.51.100.60", "user-agent": "GPTBot/1.2", forwarded: "for=203.0.113.5;host=www.b.example", "x-naulon-edge-auth": edge },
+    });
+  assert.equal((await via(old)).status, 200);
+  current = randomBytes(24).toString("hex"); // rotated
+  const codes = [(await via(old)).status, (await via(old)).status, (await via(old)).status];
+  assert.deepEqual(codes, [502, 502, 429], "the old secret is back under the miss budget after its first miss");
+});
+
+test("an older route file never receives a 429, because it would serve the page free on one", async () => {
+  const app = ingressApp();
+  const old = (client: string) =>
+    app.request("/about", {
+      headers: { host: "ingress.naulon.test", "user-agent": "GPTBot/1.2", forwarded: `for=${client};host=www.a.example`, "x-naulon-edge-auth": sharedEdge },
+    });
+  const codes = [(await old("203.0.113.70")).status, (await old("203.0.113.70")).status];
+  const third = await old("203.0.113.70");
+  assert.deepEqual(codes, [200, 200]);
+  assert.equal(third.status, 403);
+  assert.ok(third.headers.get("retry-after"), "the wait is still stated");
 });

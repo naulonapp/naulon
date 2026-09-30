@@ -71,7 +71,7 @@ import {
 import { get as getEvent } from "./eventLog.ts";
 import { observe } from "./observationLog.ts";
 import { clientKeyOf, rateLimit } from "./rateLimit.ts";
-import { admitIngress, edgeSecretDigest, isIngressHost, namedSiteOf, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
+import { admitIngress, EDGE_AUTH_HEADER, ROUTE_REVISION_HEADER, edgeSecretDigest, isIngressHost, namedSiteOf, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
 import { DEFAULT_TOLL_TERMS, settleAndAttribute } from "./settle.ts";
 import { deliverForAgent, varyOnAccept, type Delivered } from "./deliver.ts";
 import { prefersMarkdown } from "@naulon/extract";
@@ -570,6 +570,14 @@ export function createApp(
     });
   };
 
+  // A site and edge secret that have been admitted before skip the miss budget's pre-check. That
+  // budget is keyed on the sender, and a CDN's egress is shared, so a stranger's forged misses on the
+  // same address would otherwise refuse the site's own crawler traffic before admission, and the
+  // route serves the origin free when the gate refuses that way. Admission still runs in full; this
+  // only decides whether the cheap pre-check applies. Bounded, and cleared rather than evicted.
+  const admittedBefore = new Set<string>();
+  const ADMITTED_BEFORE_MAX = 10_000;
+
   // Crawler route. Admission runs here, in front of every route, because a crawler that received a
   // 402 through the publisher's CDN follows its links through the same CDN: `/.well-known/x402` and
   // `/licenses/*` arrive on the ingress host too, and must answer for the site the CDN named rather
@@ -607,11 +615,21 @@ export function createApp(
       // request naming no site shares the sender's budget with the ingress's open routes.
       const named = namedSiteOf(c.req.raw);
       const missScope = named ? `miss\0${named}` : "ingress";
-      const spent = takeIngress(missScope, caller, "peek");
-      if (spent) return spent;
+      const presented = c.req.header(EDGE_AUTH_HEADER);
+      const seenKey = named && presented ? `${named}\0${edgeSecretDigest(presented)}` : undefined;
+      if (seenKey === undefined || !admittedBefore.has(seenKey)) {
+        const spent = takeIngress(missScope, caller, "peek");
+        if (spent) return spent;
+      }
       const admission = await admitIngress(c.req.raw, ingress);
       if (admission.kind === "miss") {
+        // A secret that stopped matching (rotated, revoked, site removed) loses its pass.
+        if (seenKey !== undefined) admittedBefore.delete(seenKey);
         return takeIngress(missScope, caller) ?? handleUnknownHost(c, inboundHost);
+      }
+      if (seenKey !== undefined && admission.kind === "admitted") {
+        if (admittedBefore.size >= ADMITTED_BEFORE_MAX) admittedBefore.clear();
+        admittedBefore.add(seenKey);
       }
       if (admission.kind === "loop") {
         return c.text(
@@ -621,7 +639,13 @@ export function createApp(
         );
       }
       const limited = takeIngress(admission.config.id, admission.clientIp ?? caller);
-      if (limited) return limited;
+      if (limited) {
+        // A route file older than revision 2 serves the origin on a 429, which would make hurrying
+        // a free read. A 403 with the same Retry-After is relayed by every revision.
+        const revision = Number(c.req.header(ROUTE_REVISION_HEADER) ?? "1");
+        if (revision >= 2) return limited;
+        return new Response(await limited.text(), { status: 403, headers: limited.headers });
+      }
       admitted.set(c.req.raw, admission);
       await next();
       c.res = privateToIngress(c.res);

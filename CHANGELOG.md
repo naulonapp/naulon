@@ -34,6 +34,24 @@ The gate converts a paid read or licensed re-read to markdown when the request r
 `x-naulon-article`. A human's read is never converted. `@naulon/shared`: `ObservationEvent` gains
 `extraction`, `servedBytes` and `sourceBytes` on `paid` and `agent-reread`.
 
+Crawler route: a `CDN-Loop` entry counts as a loop only when it carries the id the gate minted for
+that site (`naulon; id=…`, keyed by the edge secret and rotated each minute). A route file that
+sends `x-naulon-route: 2` receives a 429 when a crawler is over its rate limit; an older file
+receives a 403 with the same `Retry-After`, because it served the origin on a 429. A site that has
+been admitted skips the pre-admission miss budget until its secret stops matching.
+
+A per-agent price rule applies only when the agent's Web Bot Auth signature is valid for 300
+seconds or less. A longer-lived signature still identifies the agent, and is priced like any agent.
+
+`rereadWithLicense` sets `errorCode` on failure: `rejected` for 401, 402 or 403, `not_found` for
+404 and `origin_error` otherwise, with `unpaid: true`. `naulon_pay_and_read` and `naulon_read_held`
+return `site_unreachable` or `page_not_found` instead of `refused_by_publisher` for those, and do
+not pay.
+
+WordPress plugin: the fleet-pull verifier checks the agent, the publisher and the signature window
+before it fetches the key directory, waits 10 seconds after a failed fetch, and refreshes for an
+unknown key id at most once a minute.
+
 ## v0.10.0
 
 `@naulon/shared` 0.6.3 → **0.6.4** and `@naulon/enforce` 0.6.3 → **0.7.0** (it now needs

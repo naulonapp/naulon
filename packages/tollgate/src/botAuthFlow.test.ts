@@ -73,10 +73,10 @@ after(() => {
 });
 
 /** Sign a GET for `path` as `agentHost`, CF profile shape (@authority only). */
-function signedHeaders(agentHost: string, path: string, over: { breakSig?: boolean; ua?: string } = {}): Record<string, string> {
+function signedHeaders(agentHost: string, path: string, over: { breakSig?: boolean; ua?: string; lifetime?: number } = {}): Record<string, string> {
   const now = Math.floor(Date.now() / 1000);
   const agentHeader = `"https://${agentHost}"`;
-  const member = `("@authority");created=${now - 2};expires=${now + 58};keyid="${SIGNER_KEYID}";alg="ed25519";tag="web-bot-auth"`;
+  const member = `("@authority");created=${now - 2};expires=${now - 2 + (over.lifetime ?? 60)};keyid="${SIGNER_KEYID}";alg="ed25519";tag="web-bot-auth"`;
   const entry = parseSignatureInput(`sig1=${member}`)![0]!;
   const base = buildSignatureBase(entry, {
     authority: HOST,
@@ -195,4 +195,13 @@ test("an agent-bound price reaches the verified signer it names, and a forged si
   const obs = await obsFor("agent-priced-2");
   assert.equal(obs.verified, undefined);
   assert.equal(Number(obs.price), 0.001, "a claimed identity is not a verified one");
+
+  // Verified, but valid for an hour: resent by whoever saw it, it would buy this price for that long.
+  const longLived = await app.request("/essays/agent-priced-3", {
+    headers: signedHeaders("chargedsigner.test", "/essays/agent-priced-3", { lifetime: 3600 }),
+  });
+  assert.equal(longLived.status, 402);
+  const long = await obsFor("agent-priced-3");
+  assert.equal(long.verified, true, "still classified as the agent it is");
+  assert.equal(Number(long.price), 0.001, "but priced like any agent");
 });

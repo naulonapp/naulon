@@ -2965,7 +2965,7 @@ test("an ordinary pay carries no heldRefusal, in either place", async () => {
 });
 
 /** A gate that records whether money was offered, and answers a presented licence as told. */
-function periodGate(opts: { licenceOk: boolean }) {
+function periodGate(opts: { licenceOk: boolean; licenceStatus?: number }) {
   const seen = { payments: 0, licences: [] as string[] };
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
     if (req.url?.includes("/.well-known/")) {
@@ -2980,7 +2980,7 @@ function periodGate(opts: { licenceOk: boolean }) {
         res.writeHead(200, { "content-type": "text/markdown", "x-naulon-extraction": "passthrough" });
         res.end("# Covered\n\nRead under the period.");
       } else {
-        res.writeHead(401, { "content-type": "application/json" });
+        res.writeHead(opts.licenceStatus ?? 401, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "licence_invalid" }));
       }
       return;
@@ -3047,6 +3047,51 @@ test("a period the publisher refuses stops the read, and never falls through to 
         assert.equal(res.reason, "refused_by_publisher");
         assert.equal(seen.payments, 0, "a refused period must not turn into a second purchase");
         assert.equal(res.spentSessionUsdc, 0);
+      });
+    } finally {
+      await gate.close();
+    }
+  });
+});
+
+test("a period whose site is down is reported as unreachable, not refused, and still never pays", async () => {
+  await withEnv({ WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-period-down-${process.pid}.json`), CATALOG_URL: "http://catalog.test/c.json" }, async () => {
+    const { seen, handler } = periodGate({ licenceOk: false, licenceStatus: 503 });
+    const gate = await standGate(handler);
+    try {
+      await withEnv({ TOLLGATE_URL: gate.url }, async () => {
+        const host = new URL(gate.url).host;
+        const client = await connectedClientWith({
+          budgetUsdc: 1,
+          periodLicence: async () => ({ license: periodToken(host), jti: "period-1", expiresAt: Math.floor(Date.now() / 1000) + 600, periodUntil: Math.floor(Date.now() / 1000) + 86_400 }),
+        });
+        const res = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } })).structuredContent as Record<string, unknown>;
+        assert.equal(res.ok, false);
+        assert.equal(res.reason, "site_unreachable", "a 503 is the site in trouble, not a verdict on the licence");
+        assert.equal(seen.payments, 0);
+      });
+    } finally {
+      await gate.close();
+    }
+  });
+});
+
+test("a period over a page the site does not have says so, and does not ask for a retry", async () => {
+  await withEnv({ WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-period-404-${process.pid}.json`), CATALOG_URL: "http://catalog.test/c.json" }, async () => {
+    const { seen, handler } = periodGate({ licenceOk: false, licenceStatus: 404 });
+    const gate = await standGate(handler);
+    try {
+      await withEnv({ TOLLGATE_URL: gate.url }, async () => {
+        const host = new URL(gate.url).host;
+        const client = await connectedClientWith({
+          budgetUsdc: 1,
+          periodLicence: async () => ({ license: periodToken(host), jti: "period-1", expiresAt: Math.floor(Date.now() / 1000) + 600, periodUntil: Math.floor(Date.now() / 1000) + 86_400 }),
+        });
+        const res = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "zeybek" } })).structuredContent as Record<string, unknown>;
+        assert.equal(res.ok, false);
+        assert.equal(res.reason, "page_not_found");
+        assert.doesNotMatch(String(res.error), /try again/i);
+        assert.equal(seen.payments, 0);
       });
     } finally {
       await gate.close();
