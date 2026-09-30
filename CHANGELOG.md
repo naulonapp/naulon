@@ -42,8 +42,10 @@ The gate converts a paid read or licensed re-read to markdown when the request r
 
 Crawler route: a `CDN-Loop` entry counts as a loop only when it carries the id the gate minted for
 that site (`naulon; id=…`, keyed by the edge secret and rotated each minute). A route file that
-sends `x-naulon-route: 2` receives a 429 when a crawler is over its rate limit; an older file
-receives a 403 with the same `Retry-After`, because it served the origin on a 429. A site that has
+writes `naulon-route=2` into the `Forwarded` element it sends receives a 429 when a crawler is over
+its rate limit; an older file receives a 403 with the same `Retry-After`, because it served the
+origin on a 429. The revision rides in `Forwarded` because a route file replaces that header, while
+it forwards any other header the crawler sent. A site that has
 been admitted skips the pre-admission miss budget until its secret stops matching.
 
 A per-agent price rule applies only when the agent's Web Bot Auth signature is valid for 300
