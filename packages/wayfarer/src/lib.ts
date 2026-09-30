@@ -50,6 +50,7 @@ export {
 } from "./buyer.ts";
 export type { Buyer, Quoted, LegRequirements, Fetched, FetchErrorCode, PayGuard, ProbeOutcome } from "./buyer.ts";
 export { mockBuyer } from "./pay.ts";
+export { readAccept, readBody, type ReadFormat, type ReadResult } from "./readable.ts";
 export {
   gatewayBuyer,
   gatewayDeposit,

@@ -179,3 +179,55 @@ test("e2e (real stdio binary): naulon_research clamps a requested budget down to
     await catalog.close();
   }
 });
+
+/** Gate that serves an HTML article on payment and records the Accept header each paid read sent. */
+function articleGate(accepts: string[]) {
+  const para = "The sentence an agent paid the author to read. ".repeat(10);
+  const page = `<!doctype html><html lang="en"><head><title>Paid essay</title></head><body>
+<nav>${"<a href='/x'>chrome link</a> ".repeat(30)}</nav>
+<article><h1>Paid essay</h1><p>${para}</p><p>${para}</p></article></body></html>`;
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    if (req.headers["payment-signature"]) {
+      accepts.push(String(req.headers.accept ?? ""));
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "payment-response": Buffer.from(JSON.stringify({ settlement: "mock-settle-ref", network: "arc-testnet" })).toString("base64"),
+      });
+      res.end(page);
+    } else {
+      res.writeHead(402, { "payment-required": paymentRequired("1000"), "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "payment required" }));
+    }
+  };
+}
+
+type CleanPay = Pay & { extraction?: string; article?: { title?: string; words: number; approxTokens: number } };
+
+test("e2e (real stdio binary): a paid read asks for markdown and returns the article, not the page", async () => {
+  const accepts: string[] = [];
+  const gate = await startGate(articleGate(accepts));
+  const { client, close } = await connect({
+    TOLLGATE_URL: gate.url,
+    WAYFARER_BUDGET_USDC: "1",
+    WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-mcp-e2e-clean-${process.pid}.json`),
+  });
+  try {
+    const md = await structured<CleanPay>(client, "naulon_pay_and_read", { slug: "clean-a" });
+    assert.equal(md.ok, true);
+    assert.match(accepts[0]!, /^text\/markdown/, "the paid read asked for markdown first");
+    // This gate does not convert, so the client did, and says so.
+    assert.equal(md.extraction, "client");
+    assert.doesNotMatch(md.content ?? "", /chrome link|<p>/);
+    assert.equal(md.article?.title, "Paid essay");
+    assert.ok((md.article?.words ?? 0) > 50);
+
+    const html = await structured<CleanPay>(client, "naulon_pay_and_read", { slug: "clean-b", format: "html" });
+    assert.equal(html.ok, true);
+    assert.equal(accepts[1], "text/html", "format html asks for the page as served");
+    assert.match(html.content ?? "", /^<!doctype html>/);
+    assert.equal(html.extraction, undefined);
+  } finally {
+    await close();
+    await gate.close();
+  }
+});

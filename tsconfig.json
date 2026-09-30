@@ -17,6 +17,7 @@
       "@naulon/sdk/crawl": ["./packages/sdk/src/crawl/index.ts"],
       "@naulon/shared": ["./packages/shared/src/index.ts"],
       "@naulon/enforce": ["./packages/enforce/src/index.ts"],
+      "@naulon/extract": ["./packages/extract/src/index.ts"],
       "@naulon/wayfarer": ["./packages/wayfarer/src/lib.ts"]
     }
   },

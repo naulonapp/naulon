@@ -4,6 +4,7 @@
  * → PAYMENT-RESPONSE), but signs a simple offline signature the mock tollgate
  * accepts, so the whole loop runs with no chain, wallet, or Circle access.
  */
+import { readAccept, readBody, type ReadFormat, type ReadResult } from "./readable.ts";
 import { agentFetch } from "./sign.ts";
 import { getWallet } from "./wallet.ts";
 import {
@@ -32,7 +33,7 @@ export function mockBuyer(): Buyer {
     price(url, kind): Promise<Quoted | null> {
       return probePrice(url, kind, wallet.address);
     },
-    async fetch(url, kind, guard?: PayGuard): Promise<Fetched> {
+    async fetch(url, kind, guard?: PayGuard, format: ReadFormat = "markdown"): Promise<Fetched> {
       const outcome = await probe(url, kind, wallet.address);
       if (outcome.status !== "gated") return probeFailure(outcome, url);
       const quoted = outcome.quoted;
@@ -51,6 +52,7 @@ export function mockBuyer(): Buyer {
       }));
       const res = await agentFetch(url, {
         headers: {
+          accept: readAccept(format),
           "user-agent": AGENT_UA,
           "x-naulon-agent": wallet.address,
           "x-naulon-kind": kind,
@@ -77,9 +79,9 @@ export function mockBuyer(): Buyer {
       const license = res.headers.get("x-naulon-license") ?? undefined;
       // Mirror paidFetch: a body-read throw after the 200 is settlement-ambiguous, not a
       // safe retry. costUsdc carries the true total (all legs) for correct budget debit.
-      let content: string;
+      let read: ReadResult;
       try {
-        content = await res.text();
+        read = await readBody(res, url, format);
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
         return {
@@ -90,7 +92,7 @@ export function mockBuyer(): Buyer {
         };
       }
       const costUsdc = Number(quotedTotalAtomic(quoted)) / 1_000_000;
-      return { ok: true, content, settlementRef, paidUsdc: quoted.priceUsdc, costUsdc, license };
+      return { ok: true, ...read, settlementRef, paidUsdc: quoted.priceUsdc, costUsdc, license };
     },
   };
 }

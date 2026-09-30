@@ -193,6 +193,41 @@ function guardCeilingAtomic(quoted: { amountAtomic: string; legs?: { amount: str
 /** Wrap a structured payload as the dual content/structuredContent an MCP tool
  *  returns: the text block is what a non-structured client sees; structuredContent
  *  is the machine-readable shape matching the tool's outputSchema. */
+/** The read-format input and the two result fields every content-returning tool shares. */
+const FORMAT_INPUT = z
+  .enum(["markdown", "html"])
+  .optional()
+  .describe(
+    "`markdown` (default) returns the article itself, without the page around it. `html` returns the " +
+      "page exactly as the site served it.",
+  );
+const ARTICLE_OUTPUT = z
+  .object({
+    title: z.string().optional(),
+    byline: z.string().optional(),
+    published: z.string().optional(),
+    canonical: z.string().optional(),
+    lang: z.string().optional(),
+    words: z.number(),
+    approxTokens: z.number(),
+  })
+  .optional()
+  .describe("What the article is: title, byline, date, canonical URL, word count, approximate tokens.");
+const EXTRACTION_OUTPUT = z
+  .enum(["gate", "passthrough", "client", "raw"])
+  .optional()
+  .describe(
+    "How `content` was produced. `gate`: the publisher's gate extracted the article and the licence hash " +
+      "covers exactly this text. `passthrough`: the site served markdown itself. `client`: this client " +
+      "extracted it from the HTML after delivery, so the licence hash covers the HTML, not this text. " +
+      "`raw`: no article could be extracted and `content` is the page as served. Absent for format html.",
+  );
+/** The article facts of a read, only the ones that are present. */
+const readFacts = (r: { article?: unknown; extraction?: string }) => ({
+  ...(r.article ? { article: r.article } : {}),
+  ...(r.extraction ? { extraction: r.extraction } : {}),
+});
+
 function structured<T>(payload: T): { content: { type: "text"; text: string }[]; structuredContent: T } {
   return {
     content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
@@ -252,6 +287,19 @@ export interface DecisionAuditEvent {
    * double charge would find it until someone reworded the sentence.
    */
   heldRefusal?: string;
+}
+
+/** A short token minted against a purchased licence period (`BuildServerOptions.periodLicence`). */
+export interface PeriodLicence {
+  /** Compact JWS, presented to the gate exactly like a held Citation License. */
+  license: string;
+  /** The purchase's id: the record a proof link names. */
+  jti: string;
+  /** When this token dies, epoch seconds. */
+  expiresAt: number;
+  /** When the purchased period ends, epoch seconds. */
+  periodUntil: number;
+  terms?: string[];
 }
 
 export interface BuildServerOptions {
@@ -350,6 +398,14 @@ export interface BuildServerOptions {
    */
   authorizePayee?: (input: { url: string; payTo: string }) => boolean | Promise<boolean>;
   /**
+   * A licence PERIOD the caller already bought that covers `url`, as a fresh short token, or null
+   * when none does. `naulon_pay_and_read` asks this after its held-licence check and before it pays,
+   * so a buyer holding a month of access is never charged per read inside it. The host answers only
+   * with a period whose terms include what a paid read grants (`ai-input`). Absent (every stdio and
+   * self-host caller, which has no account to hold a period) means no period is ever consulted.
+   */
+  periodLicence?: (input: { url: string }) => Promise<PeriodLicence | null>;
+  /**
    * What the host knows about the money behind the hosted signer, for `naulon_status`. A hosted
    * mount spends a managed wallet and meters spend in places this server never sees (a host-side
    * tool can pay outside this server's own counter), so without this seam status could only say
@@ -431,6 +487,12 @@ const SERVER_INSTRUCTIONS = [
   "transaction hash — check `settlementRefKind`, and only call a settlement on-chain when an",
   "`explorerTxUrl` is present. Never build an explorer link yourself. `settlementRefKind: \"mock\"`",
   "means the settlement was SIMULATED and no money moved — never present it as a payment.",
+  "",
+  "CONTENT FORMAT. Reads return the article as markdown by default, with `article` (title, byline,",
+  "date, canonical URL, words, approxTokens). `extraction` says how it was produced: `gate` means the",
+  "licence hash covers exactly this text; `client` means this client converted HTML after delivery, so",
+  "the hash covers the HTML; `passthrough` means the site served markdown; `raw` means no article was",
+  "found and you have the page as served. Pass `format: \"html\"` for the page as served.",
   "",
   "`settlement` describes the chain THIS result's PAYMENT settled on — the publisher's chain, which",
   "need not be the one this session is configured for. When nothing was paid (`paidUsdc: 0`, a free",
@@ -1164,10 +1226,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             "Canonical URL from naulon_discover / naulon_quote (the source's real link). When present the toll " +
               "is paid at it VERBATIM; absent, the slug is reconstructed to the /essays/<slug> template.",
           ),
+        format: FORMAT_INPUT,
       },
       outputSchema: {
         ok: z.boolean(),
         content: z.string().optional().describe("The paid-for content."),
+        article: ARTICLE_OUTPUT,
+        extraction: EXTRACTION_OUTPUT,
         settlementRef: z
           .string()
           .optional()
@@ -1212,6 +1277,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               "may do with the content — do not substitute a stricter guess of your own.",
           ),
         reused: z.boolean().optional().describe("True when a live held licence served this read and nothing was spent."),
+        via: z
+          .enum(["period"])
+          .optional()
+          .describe("`period`: a licence period you bought covers this page, so it was read under that and nothing was spent."),
+        periodUntil: z.number().optional().describe("With via period: epoch SECONDS at which the purchased period ends."),
+        reason: z
+          .enum(["refused_by_publisher"])
+          .optional()
+          .describe("Why ok is false, when it is a known case. `refused_by_publisher`: see the server instructions; do not pay again."),
         expiresAt: z.number().optional().describe("Epoch SECONDS at which the licence stops entitling a free re-read."),
         expiresInSec: z.number().optional().describe("Seconds remaining on the licence at the moment this returned."),
         paidUsdc: z.number().optional().describe("The author leg paid, in USDC."),
@@ -1272,7 +1346,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
     },
-    async ({ slug, url }) => {
+    async ({ slug, url, format }) => {
       // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
       // joining the spend lock or resolving gateBase(), using the SAME ok:false/errorCode shape
       // the origin refusal below already returns. Nothing is spent.
@@ -1312,12 +1386,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         const liveReq = heldRequestFor(gateBase(), slug, target);
         const already = findHeld([...heldNow.values()], liveReq, Math.floor(Date.now() / 1000));
         if (already && !already.pop) {
-          const free = await rereadWithLicense(target, KIND, already.jws, popWallet().address);
+          const free = await rereadWithLicense(target, KIND, already.jws, popWallet().address, undefined, format);
           if (free.ok) {
             emitAudit({ slug, action: "cache", reason: "served from a live held licence — nothing spent", agentId: policy.agentId });
             return structured({
               ok: true,
               content: free.content,
+              ...readFacts(free),
               licenseId: already.jti,
               ...proofLinksFor({ jti: already.jti, aud: already.aud, paidUrl: target }),
               paidUsdc: 0,
@@ -1340,6 +1415,53 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       } catch (err) {
         // A held-store fault must never block a paid read — it just means "pay, as before".
         console.warn(`[naulon] pay_and_read: held-licence pre-check failed (${err instanceof Error ? err.message : String(err)})`);
+      }
+      // A PERIOD the caller bought, asked next: still free, one round trip to the host. It is the
+      // last thing asked before money moves.
+      if (opts.periodLicence) {
+        let period: PeriodLicence | null = null;
+        try {
+          period = await opts.periodLicence({ url: target });
+        } catch (err) {
+          // Same rule as the held store above: a lookup fault never blocks a paid read.
+          console.warn(`[naulon] pay_and_read: licence-period lookup failed (${err instanceof Error ? err.message : String(err)})`);
+        }
+        if (period) {
+          const read = await rereadWithLicense(target, KIND, period.license, popWallet().address, undefined, format);
+          if (!read.ok) {
+            // The period covers this page and the publisher refused its token. Paying again would
+            // charge for what was already bought, and would not fix a site that refuses its own
+            // licences. Stop and say so.
+            console.warn(`[naulon] pay_and_read: publisher refused a purchased period for slug=${slug} (${read.error ?? "no detail"})`);
+            return structured({
+              ok: false,
+              reason: "refused_by_publisher" as const,
+              error:
+                `You hold a licence period covering this page and the publisher refused it (${read.error ?? "re-read failed"}). ` +
+                "Nothing was spent. Paying again would charge you for access you already bought.",
+              ...envelope(),
+            });
+          }
+          emitAudit({ slug, action: "cache", reason: "served under a purchased licence period — nothing spent", agentId: policy.agentId });
+          const decoded = decodeHeld(period.license);
+          return structured({
+            ok: true,
+            content: read.content,
+            ...readFacts(read),
+            licenseId: period.jti,
+            ...(decoded ? proofLinksFor({ jti: period.jti, aud: decoded.aud, paidUrl: target }) : {}),
+            paidUsdc: 0,
+            costUsdc: 0,
+            ...(period.terms ? { terms: period.terms } : {}),
+            usage: usageSentence(period.terms),
+            reused: true,
+            via: "period" as const,
+            expiresAt: period.expiresAt,
+            expiresInSec: Math.max(0, period.expiresAt - Math.floor(Date.now() / 1000)),
+            periodUntil: period.periodUntil,
+            ...envelope(),
+          });
+        }
       }
       const outcome = await probe(target, KIND, payerAddress());
       if (outcome.status !== "gated") {
@@ -1419,7 +1541,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         // Bind the fetched url so the cloud host can resolve the tenant + its owner-declared payees; the
         // guard passes each leg's payTo through and refuses (payee_refused) any the host does not authorize.
         ...(opts.authorizePayee ? { authorizePayee: (payTo: string) => opts.authorizePayee!({ url: target, payTo }) } : {}),
-      });
+      }, format);
       if (!result.ok) {
         // A failed pay is an accountable non-spend: the agent decided to pay, the rail refused.
         // Audit it as a skip carrying the typed failure so the org can see the attempt + cause.
@@ -1515,6 +1637,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       return structured({
         ok: true,
         content: result.content,
+        ...readFacts(result),
         settlementRef: result.settlementRef,
         ...(result.settlementRef ? { settlementRefKind: settlementRefKind(result.settlementRef) } : {}),
         ...(explorerUrl ? { explorerTxUrl: explorerUrl } : {}),
@@ -1564,10 +1687,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               "is decided by path and which is therefore filed under no single slug. Never pass a " +
               "proofUrl or recordUrl here; those are naulon's hosts, not the publisher's.",
           ),
+        format: FORMAT_INPUT,
       },
       outputSchema: {
         ok: z.boolean(),
         content: z.string().optional(),
+        article: ARTICLE_OUTPUT,
+        extraction: EXTRACTION_OUTPUT,
         licenseId: z.string().optional(),
         proofUrl: z.string().optional().describe("CITE THIS beside the source — the same proof page the original pay returned."),
         recordUrl: z.string().optional().describe("The gate's permanent citation record for the settlement behind this licence."),
@@ -1598,7 +1724,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ slug, url }) => {
+    async ({ slug, url, format }) => {
       const held = await heldStore.load();
       const req = heldRequestFor(gateBase(), slug, url);
       const nowSec = Math.floor(Date.now() / 1000);
@@ -1643,7 +1769,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // before any read and has no paid url, so it re-reads at the path its scope matched —
       // already pinned to this gate by `heldRequestFor`.
       const target = license.scope ? req.url : (license.url ?? slugUrl(slug));
-      const reread = await rereadWithLicense(target, KIND, license.jws, popWallet().address, proof);
+      const reread = await rereadWithLicense(target, KIND, license.jws, popWallet().address, proof, format);
       if (!reread.ok) {
         // A live, matched licence the PUBLISHER refused. This is the shape that produced four
         // tolls for one article: the licence was valid and the site could not verify it, so the
@@ -1662,6 +1788,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       return structured({
         ok: true,
         content: reread.content,
+        ...readFacts(reread),
         licenseId: license.jti,
         ...proofLinksFor({ jti: license.jti, aud: license.aud, paidUrl: target }),
         ...(license.terms ? { terms: license.terms } : {}),

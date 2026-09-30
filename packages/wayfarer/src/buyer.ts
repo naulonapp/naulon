@@ -6,6 +6,8 @@
  *   - mock: sign a simple offline payment-signature the mock gate accepts.
  *   - gateway: Circle's GatewayClient does the full deposit-backed 402 flow.
  */
+import type { ArticleMeta, Extraction } from "@naulon/extract";
+import { readAccept, readBody, type ReadFormat } from "./readable.ts";
 import { activeNetwork, getConfig } from "@naulon/shared";
 import { agentFetch } from "./sign.ts";
 
@@ -70,6 +72,10 @@ export interface Fetched {
   costUsdc?: number;
   /** Citation License (compact JWS) the gate handed back on a paid read. */
   license?: string;
+  /** Title, byline, date, canonical URL, word count and approximate tokens, when known. */
+  article?: ArticleMeta;
+  /** How `content` was produced (`gate`, `passthrough`, `client`, `raw`). Absent for `format: "html"`. */
+  extraction?: Extraction;
   error?: string;
   /** Typed failure classification (BUY-1.4); absent on success. */
   errorCode?: FetchErrorCode;
@@ -122,7 +128,7 @@ export interface Buyer {
   price(url: string, kind: "read" | "citation"): Promise<Quoted | null>;
   /** Pay and fetch the content. `guard` (optional) caps the pay-time total — the
    *  buyer aborts beyond it (toll-moved protection), paying nothing. */
-  fetch(url: string, kind: "read" | "citation", guard?: PayGuard): Promise<Fetched>;
+  fetch(url: string, kind: "read" | "citation", guard?: PayGuard, format?: ReadFormat): Promise<Fetched>;
 }
 
 /**
@@ -522,8 +528,10 @@ export async function rereadWithLicense(
   agentId: string,
   /** Holder-of-key proof (`<ts>.<nonce>.<sig>`); required for a cnf-bound license. */
   proof?: string,
+  format: ReadFormat = "markdown",
 ): Promise<Fetched> {
   const headers: Record<string, string> = {
+    accept: readAccept(format),
     "user-agent": AGENT_UA,
     "x-naulon-agent": agentId,
     "x-naulon-kind": kind,
@@ -546,7 +554,8 @@ export async function rereadWithLicense(
     };
   }
   if (!res.ok) return { ok: false, error: `re-read returned ${res.status}` };
-  return { ok: true, content: await res.text(), paidUsdc: 0, license };
+  const read = await readBody(res, url, format);
+  return { ok: true, ...read, paidUsdc: 0, license };
 }
 
 export async function selectBuyer(): Promise<Buyer> {

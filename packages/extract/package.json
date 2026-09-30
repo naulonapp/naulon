@@ -1,0 +1,53 @@
+{
+  "name": "@naulon/extract",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/naulonapp/naulon.git",
+    "directory": "packages/extract"
+  },
+  "description": "Deterministic article extraction to markdown for paid agent reads. Readability picks the article, turndown writes it. No network, no model.",
+  "keywords": [
+    "readability",
+    "markdown",
+    "html-to-markdown",
+    "article-extraction",
+    "ai-agents",
+    "x402",
+    "naulon"
+  ],
+  "homepage": "https://naulon.app",
+  "bugs": {
+    "url": "https://github.com/naulonapp/naulon/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.13",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/turndown": "^5.0.6"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

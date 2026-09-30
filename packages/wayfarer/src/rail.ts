@@ -7,6 +7,7 @@
  * both. Absent per-tenant divergence the 402 carries the fleet rail, so railBuyer picks the same
  * builder activeNetwork() would have — byte-identical to memoBuyer/gatewayBuyer for a single-rail fleet.
  */
+import type { ReadFormat } from "./readable.ts";
 import {
   classifyPaymentError,
   classifySignerRefusal,
@@ -148,7 +149,7 @@ export function railBuyer(signers: RailSigners): Buyer {
     price(url, kind): Promise<Quoted | null> {
       return probe(url, kind, address).then((o) => (o.status === "gated" ? o.quoted : null));
     },
-    async fetch(url, kind, guard?: PayGuard): Promise<Fetched> {
+    async fetch(url, kind, guard?: PayGuard, format?: ReadFormat): Promise<Fetched> {
       const buildPayment = (quoted: Quoted, nowMs: number): Promise<string> =>
         assembleRailPayment(quoted, nowMs, signers);
       const onSignError = (error: string): Fetched => {
@@ -161,7 +162,7 @@ export function railBuyer(signers: RailSigners): Buyer {
           ? { ok: false, error, ...refusal }
           : { ok: false, error, ...classifyPaymentError(error) };
       };
-      return runPaidFetch(url, kind, address, guard, buildPayment, onSignError);
+      return runPaidFetch(url, kind, address, guard, buildPayment, onSignError, format);
     },
   };
 }

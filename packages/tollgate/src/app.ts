@@ -73,6 +73,8 @@ import { observe } from "./observationLog.ts";
 import { clientKeyOf, rateLimit } from "./rateLimit.ts";
 import { admitIngress, edgeSecretDigest, isIngressHost, namedSiteOf, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
 import { DEFAULT_TOLL_TERMS, settleAndAttribute } from "./settle.ts";
+import { deliverForAgent, varyOnAccept, type Delivered } from "./deliver.ts";
+import { prefersMarkdown } from "@naulon/extract";
 import { envPublisherResolver } from "./publisher.ts";
 
 // The origin-mirror seams (`drainSettlements`/`DrainScope` and the whole
@@ -317,6 +319,12 @@ export { headerSafe };
  * Passthrough routes (suspended, non-article, unknown-article) are untouched —
  * they serve the same bytes to every caller.
  */
+/** The delivery half of a `paid` or `agent-reread` observation. */
+function deliveryFacts(d: Delivered | undefined): { extraction?: "gate" | "passthrough" | "raw"; servedBytes?: number; sourceBytes?: number } {
+  if (!d) return {};
+  return { ...(d.extraction ? { extraction: d.extraction } : {}), servedBytes: d.bytes.byteLength, sourceBytes: d.sourceBytes };
+}
+
 function stampGateCacheHeaders(res: Response, opts: { noStore: boolean }): Response {
   const vary = res.headers.get("vary");
   const hasUa =
@@ -963,7 +971,7 @@ export function createApp(
     // Audit plane: one observation per gated-route decision, built from the facts
     // decide() carried back (telemetry only, never gates). Default sink off → no-op.
     // `at` is stamped per emit, exactly as before the extraction.
-    const emitObs = (obs: DecideObs, v: ObservationVerdict, extra?: { kind?: TollKind; price?: Usdc; failureReason?: PaymentFailureReason }): void =>
+    const emitObs = (obs: DecideObs, v: ObservationVerdict, extra?: { kind?: TollKind; price?: Usdc; failureReason?: PaymentFailureReason; delivery?: Delivered }): void =>
       observe({
         id: randomUUID(),
         publisherId: publisher.id,
@@ -983,8 +991,32 @@ export function createApp(
         price: extra?.price,
         // Only ever set on `payment-failed` — the other verdicts have no failure to explain.
         failureReason: extra?.failureReason,
+        ...deliveryFacts(extra?.delivery),
         at: Date.now(),
       });
+
+    // A free reread under a licence the agent already holds. Nothing is charged, so there is no
+    // settle to protect; the body is only read into memory when it has to be reshaped.
+    const serveReread = async (obs: DecideObs, tollKind: TollKind, verdict: string): Promise<Response> => {
+      const fetched = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+      if (!fetched.ok || !prefersMarkdown(raw.headers.get("accept"))) {
+        emitObs(obs, "agent-reread", { kind: tollKind });
+        if (fetched.ok) varyOnAccept(fetched.headers);
+        fetched.headers.set("X-Naulon-Verdict", verdict);
+        return stampGateCacheHeaders(fetched, { noStore: true });
+      }
+      const materialized = await materializeBody(fetched);
+      if (!materialized) {
+        emitObs(obs, "agent-reread", { kind: tollKind });
+        const res = c.text("The origin did not deliver this page in full.", 502);
+        res.headers.set("X-Naulon-Verdict", "agent reread: origin body unreadable");
+        return stampGateCacheHeaders(res, { noStore: true });
+      }
+      const delivery = await deliverForAgent(materialized, raw.headers.get("accept"), raw.url);
+      emitObs(obs, "agent-reread", { kind: tollKind, delivery });
+      delivery.res.headers.set("X-Naulon-Verdict", verdict);
+      return stampGateCacheHeaders(delivery.res, { noStore: true });
+    };
 
     // The paid tail, shared by a buyer-signed payment and one a licence authority returned. `extra`
     // is empty for the former, which keeps that path byte-identical to what it was.
@@ -1039,6 +1071,7 @@ export function createApp(
       const safeMethod = raw.method === "GET" || raw.method === "HEAD";
       let prefetched: Response | undefined;
       let contentSha256: string | undefined;
+      let delivery: Delivered | undefined;
       if (safeMethod) {
         prefetched = await reportingThrow("unpaid", () =>
           proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning),
@@ -1079,13 +1112,15 @@ export function createApp(
               { noStore: true },
             );
           }
-          prefetched = materialized;
+          // Shape the body before hashing it: an agent that asked for markdown gets the article as
+          // markdown, and the licence then covers exactly that text. A throw here is the origin's
+          // body failing to become a read, so it refuses like any other undeliverable body.
+          delivery = await reportingThrow("unpaid", () => deliverForAgent(materialized, raw.headers.get("accept"), raw.url));
+          prefetched = delivery.res;
           // Hash what is about to be served, from the same in-memory bytes the buyer receives. A
           // HEAD carries no body to sell, so it states no hash rather than the hash of nothing.
           if (raw.method === "GET") {
-            contentSha256 = createHash("sha256")
-              .update(new Uint8Array(await materialized.clone().arrayBuffer()))
-              .digest("hex");
+            contentSha256 = createHash("sha256").update(delivery.bytes).digest("hex");
           }
         }
         // Anything outside 2xx, not just 404 — and each non-2xx family is correct to refuse on:
@@ -1160,7 +1195,7 @@ export function createApp(
       });
 
       // Audit plane: the paid outcome on the same timeline as denials/free reads.
-      emitObs(p.obs, "paid", { kind: p.quote.kind, price: usdc(p.quote.price) });
+      emitObs(p.obs, "paid", { kind: p.quote.kind, price: usdc(p.quote.price), ...(delivery ? { delivery } : {}) });
 
       // Reuse the response we already hold on the safe-method path; only a non-GET reaches the
       // origin here (see the ordering note above).
@@ -1232,12 +1267,7 @@ export function createApp(
           { noStore: true },
         );
       }
-      if (verdict.kind === "held") {
-        emitObs(p.obs, "agent-reread", { kind: p.tollKind });
-        const res = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
-        res.headers.set("X-Naulon-Verdict", "agent reread (licence)");
-        return stampGateCacheHeaders(res, { noStore: true });
-      }
+      if (verdict.kind === "held") return serveReread(p.obs, p.tollKind, "agent reread (licence)");
       const { grantId } = verdict;
       return settleAndServe(p, verdict.payment, {
         mandate: verdict.mandate,
@@ -1282,12 +1312,8 @@ export function createApp(
       }
 
       // A valid license scoped to this slug+kind re-reads free.
-      case "reread": {
-        emitObs(d.obs, "agent-reread", { kind: d.tollKind });
-        const res = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
-        res.headers.set("X-Naulon-Verdict", "agent reread (license)");
-        return stampGateCacheHeaders(res, { noStore: true });
-      }
+      case "reread":
+        return serveReread(d.obs, d.tollKind, "agent reread (license)");
 
       // Machine presenting an RSL licence token. With no licence authority configured it is
       // answered exactly as a request with no payment.
