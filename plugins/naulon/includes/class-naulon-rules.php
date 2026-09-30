@@ -31,11 +31,40 @@ class Naulon_Rules {
 	/** Option holding the last good copy, served when a refresh fails. */
 	const LAST_GOOD = 'naulon_rules_last_good';
 
+	/** Transient holding the fresh fleet-agent host, cached alongside the rules it travels with
+	 *  on the same `/_naulon/enforce-config` document. */
+	const FLEET_TRANSIENT = 'naulon_fleet_agent';
+
+	/** Option holding the last good fleet-agent host, served when a refresh fails. */
+	const FLEET_LAST_GOOD = 'naulon_fleet_agent_last_good';
+
+	/** A bare host only. Anything that is not one would point Naulon_Fleet_Pull's directory
+	 *  fetch somewhere the control plane never named, so a malformed value is treated as absent
+	 *  rather than trusted. Mirrors FLEET_AGENT_HOST in @naulon/enforce's config-source.ts. */
+	const FLEET_AGENT_HOST = '/^(?=.{4,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/';
+
+	/** Transient holding the fresh fleet-publisher tenant id, cached alongside the rules and the
+	 *  fleet agent — same document, same request. */
+	const FLEET_PUBLISHER_TRANSIENT = 'naulon_fleet_publisher';
+
+	/** Option holding the last good fleet-publisher tenant id. */
+	const FLEET_PUBLISHER_LAST_GOOD = 'naulon_fleet_publisher_last_good';
+
+	/** A tenant id, never a host — case-sensitive and NOT lowercased anywhere below. Mirrors
+	 *  FLEET_PUBLISHER_ID in @naulon/enforce's config-source.ts. */
+	const FLEET_PUBLISHER_ID = '/^[A-Za-z0-9._:-]{1,128}$/';
+
 	/** @var Naulon_Rules|null */
 	private static $instance = null;
 
 	/** @var array|null|false Memo for this request: false = not loaded yet. */
 	private $memo = false;
+
+	/** @var string|false Memo for this request: false = not loaded yet. */
+	private $fleet_memo = false;
+
+	/** @var string|false Memo for this request: false = not loaded yet. */
+	private $fleet_publisher_memo = false;
 
 	/**
 	 * @return Naulon_Rules
@@ -87,6 +116,27 @@ class Naulon_Rules {
 			set_transient( self::TRANSIENT, $rules, self::TTL );
 			update_option( self::LAST_GOOD, $rules, false );
 			$this->memo = self::normalize( $rules );
+
+			// Same document, same request: the fleet agent travels with the rules it is cached
+			// alongside, so this never costs a second round trip. Absent or malformed clears the
+			// cached agent too — an editor removing the field must turn the rule off, not leave a
+			// stale host trusted forever.
+			$enforcement = isset( $response['body']['enforcement'] ) && is_array( $response['body']['enforcement'] )
+				? $response['body']['enforcement']
+				: array();
+			$fleet_agent = self::valid_fleet_agent( isset( $enforcement['fleetAgent'] ) ? $enforcement['fleetAgent'] : null );
+			set_transient( self::FLEET_TRANSIENT, $fleet_agent, self::TTL );
+			update_option( self::FLEET_LAST_GOOD, $fleet_agent, false );
+			$this->fleet_memo = $fleet_agent;
+
+			// The tenant id this site was configured with, cached the same way and for the same
+			// reason: the gate signs a pull for every tenant it hosts, so the agent host alone
+			// never proves the pull was decided for THIS site.
+			$fleet_publisher = self::valid_fleet_publisher( isset( $enforcement['fleetPublisher'] ) ? $enforcement['fleetPublisher'] : null );
+			set_transient( self::FLEET_PUBLISHER_TRANSIENT, $fleet_publisher, self::TTL );
+			update_option( self::FLEET_PUBLISHER_LAST_GOOD, $fleet_publisher, false );
+			$this->fleet_publisher_memo = $fleet_publisher;
+
 			return $this->memo;
 		}
 		// Stale beats nothing: a publisher who blocked a crawler yesterday still blocks it while
@@ -95,23 +145,103 @@ class Naulon_Rules {
 		if ( is_array( $last ) ) {
 			set_transient( self::TRANSIENT, $last, 60 );
 			$this->memo = self::normalize( $last );
+
+			$fleet_last = get_option( self::FLEET_LAST_GOOD );
+			$fleet_last = is_string( $fleet_last ) ? $fleet_last : '';
+			set_transient( self::FLEET_TRANSIENT, $fleet_last, 60 );
+			$this->fleet_memo = $fleet_last;
+
+			$fleet_publisher_last = get_option( self::FLEET_PUBLISHER_LAST_GOOD );
+			$fleet_publisher_last = is_string( $fleet_publisher_last ) ? $fleet_publisher_last : '';
+			set_transient( self::FLEET_PUBLISHER_TRANSIENT, $fleet_publisher_last, 60 );
+			$this->fleet_publisher_memo = $fleet_publisher_last;
+
 			return $this->memo;
 		}
 		$this->memo = null;
 		return null;
 	}
 
+	/**
+	 * The fleet's own signing identity for this site, or '' when none is configured. Cache-only:
+	 * unlike rules, this is read from the pre-classification fleet-pull check in
+	 * Naulon_Enforcer, before it is known whether the request looks human — so it must never
+	 * force a network fetch of its own. It relies on refresh() above (a machine request or the
+	 * cron) to keep the cached copy warm.
+	 *
+	 * @return string
+	 */
+	public function fleet_agent() {
+		if ( false !== $this->fleet_memo ) {
+			return $this->fleet_memo;
+		}
+		$cached = get_transient( self::FLEET_TRANSIENT );
+		if ( is_string( $cached ) ) {
+			$this->fleet_memo = $cached;
+			return $this->fleet_memo;
+		}
+		$last             = get_option( self::FLEET_LAST_GOOD );
+		$this->fleet_memo = is_string( $last ) ? $last : '';
+		return $this->fleet_memo;
+	}
+
+	/**
+	 * This site's own tenant id on the fleet, or '' when none is configured. Cache-only, for the
+	 * same reason as fleet_agent(): read before classification, it must never force a fetch.
+	 *
+	 * @return string
+	 */
+	public function fleet_publisher() {
+		if ( false !== $this->fleet_publisher_memo ) {
+			return $this->fleet_publisher_memo;
+		}
+		$cached = get_transient( self::FLEET_PUBLISHER_TRANSIENT );
+		if ( is_string( $cached ) ) {
+			$this->fleet_publisher_memo = $cached;
+			return $this->fleet_publisher_memo;
+		}
+		$last                       = get_option( self::FLEET_PUBLISHER_LAST_GOOD );
+		$this->fleet_publisher_memo = is_string( $last ) ? $last : '';
+		return $this->fleet_publisher_memo;
+	}
+
+	/**
+	 * @param mixed $raw The `enforcement.fleetPublisher` field as the control plane sent it.
+	 * @return string The tenant id, unchanged, or '' when absent or malformed.
+	 */
+	private static function valid_fleet_publisher( $raw ) {
+		return is_string( $raw ) && 1 === preg_match( self::FLEET_PUBLISHER_ID, $raw ) ? $raw : '';
+	}
+
+	/**
+	 * @param mixed $raw The `enforcement.fleetAgent` field as the control plane sent it.
+	 * @return string The bare host, lowercased, or '' when absent or malformed.
+	 */
+	private static function valid_fleet_agent( $raw ) {
+		return is_string( $raw ) && 1 === preg_match( self::FLEET_AGENT_HOST, $raw ) ? strtolower( $raw ) : '';
+	}
+
 	/** Forget the cached copy, so the next read asks the control plane. */
 	public static function flush() {
 		delete_transient( self::TRANSIENT );
-		self::instance()->memo = false;
+		delete_transient( self::FLEET_TRANSIENT );
+		delete_transient( self::FLEET_PUBLISHER_TRANSIENT );
+		self::instance()->memo                 = false;
+		self::instance()->fleet_memo           = false;
+		self::instance()->fleet_publisher_memo = false;
 	}
 
 	/** Test seam: forget this request's memo, and every stored copy. */
 	public function reset() {
-		$this->memo = false;
+		$this->memo                 = false;
+		$this->fleet_memo           = false;
+		$this->fleet_publisher_memo = false;
 		delete_transient( self::TRANSIENT );
+		delete_transient( self::FLEET_TRANSIENT );
+		delete_transient( self::FLEET_PUBLISHER_TRANSIENT );
 		delete_option( self::LAST_GOOD );
+		delete_option( self::FLEET_LAST_GOOD );
+		delete_option( self::FLEET_PUBLISHER_LAST_GOOD );
 	}
 
 	/**

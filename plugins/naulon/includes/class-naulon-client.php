@@ -107,11 +107,25 @@ class Naulon_Client {
 	 * crawler blocks and stated terms, pre-resolved so this plugin applies them without
 	 * re-deriving any rule. See Naulon_Rules.
 	 *
+	 * Carries `X-Naulon-Capabilities: fleet-pull` unconditionally — a capability of this BUILD,
+	 * not of the site's configuration. It tells the control plane that whatever code answers this
+	 * fetch already stands down on the gate's own signed origin pull (Naulon_Fleet_Pull), so it
+	 * can stop treating a crawler route plus in-app enforcement as a double-toll conflict once a
+	 * live fetch carrying it lands.
+	 *
 	 * @param string $resource Any absolute URL on this site; the control plane resolves the host.
 	 * @return array
 	 */
 	public function enforce_config( $resource ) {
-		return $this->request( 'GET', '/_naulon/enforce-config?' . http_build_query( array( 'resource' => $resource ) ), null, self::TIMEOUT_REQUEST );
+		return $this->request(
+			'GET',
+			'/_naulon/enforce-config?' . http_build_query( array( 'resource' => $resource ) ),
+			null,
+			self::TIMEOUT_REQUEST,
+			null,
+			null,
+			array( 'x-naulon-capabilities' => 'fleet-pull' )
+		);
 	}
 
 	public function quote( $resource, $slug, $kind = 'read', $build_402 = false ) {
@@ -316,15 +330,19 @@ class Naulon_Client {
 	 * @param string|null $key    Override key (rotation), else the stored one.
 	 * @param string|null $base   Override base URL (validating a pasted self-host gate URL before
 	 *                            it is stored), else the configured one.
+	 * @param array       $extra_headers Additional headers this one call sends, name => value.
 	 * @return array {ok:bool, status:int, body:array|null, error:string}
 	 */
-	private function request( $method, $path, $body, $timeout, $key = null, $base = null ) {
+	private function request( $method, $path, $body, $timeout, $key = null, $base = null, array $extra_headers = array() ) {
 		$api_key = null === $key ? Naulon_Settings::api_key() : $key;
 		$url     = ( null === $base ? Naulon_Settings::api_base() : untrailingslashit( $base ) ) . $path;
 
 		$headers = array( 'Accept' => 'application/json' );
 		if ( '' !== $api_key ) {
 			$headers['Authorization'] = 'Bearer ' . $api_key;
+		}
+		foreach ( $extra_headers as $name => $value ) {
+			$headers[ $name ] = $value;
 		}
 		$args = array(
 			'method'  => $method,
