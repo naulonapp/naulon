@@ -44,6 +44,7 @@ interface Pkg {
   files?: string[];
   exports?: unknown;
   repository?: { type?: string; url?: string; directory?: string };
+  dependencies?: Record<string, string>;
 }
 
 function published(): Array<{ pkg: Pkg; dir: string }> {
@@ -96,3 +97,22 @@ for (const { pkg, dir } of PUBLISHED) {
     );
   });
 }
+
+test("the release workflow publishes every public package, each after the ones it depends on", () => {
+  const workflow = readFileSync(join(PACKAGES, "..", ".github", "workflows", "release.yml"), "utf8");
+  const line = /PUBLISHED_PACKAGES:\s*"([^"]+)"/.exec(workflow);
+  assert.ok(line, "release.yml declares PUBLISHED_PACKAGES");
+  const order = line[1]!.trim().split(/\s+/);
+  const dirOf = (p: { dir: string }) => p.dir.split(/[\\/]/).pop()!;
+  // A public package left off the list builds nowhere and publishes nowhere, while a sibling that
+  // depends on it is published naming a version nobody can install.
+  assert.deepEqual([...order].sort(), PUBLISHED.map(dirOf).sort());
+  const byName = new Map(PUBLISHED.map((p) => [p.pkg.name, dirOf(p)]));
+  for (const { pkg, dir } of PUBLISHED) {
+    for (const dep of Object.keys(pkg.dependencies ?? {})) {
+      const depDir = byName.get(dep);
+      if (depDir === undefined) continue;
+      assert.ok(order.indexOf(depDir) < order.indexOf(dirOf({ dir })), `${pkg.name} is published before ${dep}, which it depends on`);
+    }
+  }
+});

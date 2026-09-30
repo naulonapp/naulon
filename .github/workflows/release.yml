@@ -2,8 +2,9 @@ name: Release (npm)
 
 # Publishes the publisher-facing @naulon/* packages to npm on a version tag.
 # Ordered by the real dependency graph — sdk (clean base) → shared (imports sdk)
-# → enforce (imports shared) → wayfarer (imports shared) → wayfarer-mcp (imports
-# shared + wayfarer). @naulon/tollgate is NOT published here: the gate ships as a
+# → enforce (imports shared) → extract (no internal imports) → wayfarer (imports
+# shared + extract) → wayfarer-mcp (imports shared + wayfarer). The order lives in
+# PUBLISHED_PACKAGES below, and packageMetadata.test.ts holds it to the manifests. @naulon/tollgate is NOT published here: the gate ships as a
 # Docker image (see the OSS distribution decision), not npm.
 #
 # Every publish is IDEMPOTENT: a version already on the registry is skipped, so a
@@ -27,6 +28,11 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      # The published packages, in dependency order: each one's dependencies come before it. The
+      # build, the version check, the publish and the pack all read THIS list. Four hand-kept copies
+      # is how @naulon/extract was left out of every one of them while wayfarer depended on it.
+      PUBLISHED_PACKAGES: "sdk shared enforce extract wayfarer wayfarer-mcp"
     steps:
       # fetch-depth: 0 — the version guard below reads the PREVIOUS tag's plugin
       # header. A shallow clone carries neither the tags nor the history to do it.
@@ -144,7 +150,7 @@ jobs:
           version_at() { git show "$1:packages/$2/package.json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version"; }
           failed=0
 
-          for pkg in sdk shared enforce wayfarer wayfarer-mcp; do
+          for pkg in $PUBLISHED_PACKAGES; do
             now=$(node -p "require('./packages/${pkg}/package.json').version")
 
             # A package that did not exist at the previous tag has nothing to compare.
@@ -214,13 +220,9 @@ jobs:
 
       # Build in dependency order so each package's dist/ resolves the one below it.
       # (prepublishOnly rebuilds too, but building up front fails fast on a bad tree.)
-      - name: Build sdk → shared → enforce → wayfarer → wayfarer-mcp
+      - name: Build the published packages in dependency order
         run: |
-          npm run build -w @naulon/sdk
-          npm run build -w @naulon/shared
-          npm run build -w @naulon/enforce
-          npm run build -w @naulon/wayfarer
-          npm run build -w @naulon/wayfarer-mcp
+          for pkg in $PUBLISHED_PACKAGES; do npm run build -w "@naulon/${pkg}"; done
 
       # Idempotent publish, in dependency order. --access public is required for a
       # first-time scoped publish. Each package's prepublishOnly re-runs its build
@@ -284,11 +286,9 @@ jobs:
             npm publish -w "${name}" --access public --provenance
             await_registry "$name" "$ver"
           }
-          publish sdk
-          publish shared
-          publish enforce
-          publish wayfarer
-          publish wayfarer-mcp
+          # Dependency order matters: a package published before one it depends on would name a
+          # version nobody can install yet.
+          for pkg in $PUBLISHED_PACKAGES; do publish "$pkg"; done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -298,11 +298,7 @@ jobs:
       - name: Pack the published tarballs
         run: |
           mkdir -p _release
-          npm pack -w @naulon/sdk         --pack-destination _release
-          npm pack -w @naulon/shared      --pack-destination _release
-          npm pack -w @naulon/enforce     --pack-destination _release
-          npm pack -w @naulon/wayfarer    --pack-destination _release
-          npm pack -w @naulon/wayfarer-mcp --pack-destination _release
+          for pkg in $PUBLISHED_PACKAGES; do npm pack -w "@naulon/${pkg}" --pack-destination _release; done
 
       # The WordPress plugin's ONLY distribution channel until it is listed on
       # wordpress.org. The portal's domains card and the customer docs both link

@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.5.8
+Stable tag: 0.5.9
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -146,6 +146,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.5.9 =
+* A request that cannot pass the signature checks no longer makes your site fetch naulon's key list. After a failed fetch the plugin waits ten seconds before trying again, so a slow key server cannot hold up your pages.
+
 = 0.5.8 =
 * Serves naulon's own signed origin fetch without charging, so the plugin can run beside a crawler route.
 
@@ -213,6 +216,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.5.9 =
+A request that cannot pass naulon's signature checks no longer makes your site fetch naulon's key list, so a slow key server cannot hold up your pages.
+
 = 0.5.8 =
 When your site sits behind a naulon crawler route, the gate's own origin fetch is now served free and left out of your reports instead of being charged a second time.
 
