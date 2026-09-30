@@ -66,6 +66,13 @@ export interface Quote {
    * which case `buildRequirements` still falls back to `activeNetwork()`, as it always did.
    */
   network?: NetworkName;
+  /**
+   * The verified agent whose own price rule set `price`, when one did. Absent ⇒ priced for every
+   * agent. It travels with the quote for the same reason `network` does: a quote crosses a process
+   * boundary, and whoever checks the price against the publisher's record has to price the same
+   * question, which includes who it was asked for.
+   */
+  pricedFor?: string;
 }
 
 /**
@@ -87,13 +94,18 @@ export interface Quote {
  * rules silently prices at the site base — which on the verifying side reads as "the quote does
  * not match the tenant record" and refuses a settle the publisher priced correctly. So the
  * quoting and verifying calls move together, as they already had to for the formula itself.
+ *
+ * `verifiedAgent` is a Web Bot Auth identity the caller VERIFIED, and selects that agent's own
+ * rules (`PriceRule.agent`). Never pass a User-Agent string here: an agent rule keyed on text the
+ * caller wrote is a discount anyone can claim.
  */
 export function tollPrice(
   publisher: Pick<PublisherConfig, "price" | "citationMultiplier" | "priceRules">,
   kind: TollKind,
   path?: string,
+  verifiedAgent?: string,
 ): Usdc {
-  return tollPriceUnder(publisher, kind, resolvePriceRule(publisher.priceRules, path));
+  return tollPriceUnder(publisher, kind, resolvePriceRule(publisher.priceRules, path, verifiedAgent));
 }
 
 /**
@@ -135,6 +147,7 @@ export async function quote(
   slug: string,
   kind: TollKind,
   path?: string,
+  verifiedAgent?: string,
 ): Promise<Quote | undefined> {
   const credits = await publisher.credits.resolve(slug);
   if (!credits) return undefined;
@@ -145,7 +158,8 @@ export async function quote(
   const payees = resolvePayees(credits);
   if (payees.length === 0) return undefined;
 
-  const price = tollPrice(publisher, kind, path);
+  const rule = resolvePriceRule(publisher.priceRules, path, verifiedAgent);
+  const price = tollPriceUnder(publisher, kind, rule);
 
   return {
     slug: credits.slug,
@@ -175,5 +189,6 @@ export async function quote(
     // advertised testnet USDC to paying agents. The price and the chain it is payable on
     // are one fact; they travel together or neither is trustworthy.
     network: publisher.settlementNetwork ?? activeNetwork().chainName,
+    ...(rule?.agent !== undefined ? { pricedFor: rule.agent } : {}),
   };
 }

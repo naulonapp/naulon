@@ -49,6 +49,8 @@ const PUB: PublisherConfig = {
   },
   licenseIdentity: "naulon:wba.example",
   crawlerPolicy: { allow: ["goodsigner.test"], block: ["badsigner.test"], charge: [] },
+  // An agent-bound price for one signer on one section, to prove only a verified identity reaches it.
+  priceRules: [{ pattern: "/essays/agent-priced*", priceUsdc: 0.2, agent: "chargedsigner.test" }],
 };
 
 const app = createApp({ async resolve(h) { return h === HOST ? PUB : undefined; } });
@@ -179,4 +181,18 @@ test("a signed licence read hands the authority the verified signature bytes, it
   const sigB64 = String((headers as Record<string, string>)["signature"]).slice("sig1=:".length, -1);
   assert.equal(seen[0]!.signer?.keyid, SIGNER_KEYID);
   assert.equal(seen[0]!.signer?.signature, sigB64, "the bytes that verified, not the header's text");
+});
+
+test("an agent-bound price reaches the verified signer it names, and a forged signature pays the site price", async () => {
+  const signed = await app.request("/essays/agent-priced-1", { headers: signedHeaders("chargedsigner.test", "/essays/agent-priced-1") });
+  assert.equal(signed.status, 402);
+  assert.equal(Number((await obsFor("agent-priced-1")).price), 0.2);
+
+  const forged = await app.request("/essays/agent-priced-2", {
+    headers: signedHeaders("chargedsigner.test", "/essays/agent-priced-2", { breakSig: true, ua: "GPTBot/1.0" }),
+  });
+  assert.equal(forged.status, 402);
+  const obs = await obsFor("agent-priced-2");
+  assert.equal(obs.verified, undefined);
+  assert.equal(Number(obs.price), 0.001, "a claimed identity is not a verified one");
 });

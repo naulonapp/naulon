@@ -267,3 +267,13 @@ test("one payable author beside a delegated one still quotes, and pays the whole
   assert.equal(q.payees.length, 1);
   assert.equal(q.payees[0]?.share, 1);
 });
+
+test("tollPrice and quote price a verified agent by its own rule, and nobody else", async () => {
+  const p = publisher({ priceRules: [{ pattern: "/", priceUsdc: 0.2, agent: "chatgpt.com" }] });
+  assert.equal(tollPrice(p, "read", "/papers/x", "chatgpt.com"), 0.2);
+  assert.equal(tollPrice(p, "read", "/papers/x"), tollPrice(publisher(), "read"));
+  const q = await quote(p, "on-passage", "read", "/essays/on-passage", "chatgpt.com");
+  assert.equal(q?.price, 0.2);
+  assert.equal(q?.pricedFor, "chatgpt.com", "the quote names whose rule priced it");
+  assert.equal((await quote(p, "on-passage", "read", "/essays/on-passage"))?.pricedFor, undefined);
+});
