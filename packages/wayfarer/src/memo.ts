@@ -12,6 +12,7 @@
  * descriptor" split the gate's own `buildMemoSignature` uses (the gate then verifies
  * against that identical descriptor). `selectBuyer` routes here when `supportsMemo`.
  */
+import type { ReadFormat } from "./readable.ts";
 import { privateKeyToAccount } from "viem/accounts";
 import { toHex, type TypedDataDomain } from "viem";
 import {
@@ -206,7 +207,7 @@ export function memoBuyer(signer?: MemoSigner): Buyer {
     price(url, kind): Promise<Quoted | null> {
       return probePrice(url, kind, address);
     },
-    async fetch(url, kind, guard?: PayGuard): Promise<Fetched> {
+    async fetch(url, kind, guard?: PayGuard, format?: ReadFormat): Promise<Fetched> {
       // One raw EIP-3009 authorization per advertised leg (operator fee → 2-leg array); a stock
       // single-author quote stays the bare object, byte-identical to before. The shared loop owns
       // probe→moved-guard→paid-GET→classify; the memo rail supplies only how it signs and how it
@@ -223,6 +224,7 @@ export function memoBuyer(signer?: MemoSigner): Buyer {
             ? { ok: false, error, ...refusal }
             : { ok: false, error, errorCode: "origin_error", retryable: true };
         },
+        format,
       );
     },
   };

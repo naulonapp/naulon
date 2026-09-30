@@ -16,7 +16,23 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
-Nothing yet.
+New package `@naulon/extract` 0.1.0: the article inside a page, as markdown, with its title,
+byline, date, canonical URL, word count and an approximate token count. Readability and turndown,
+no network and no model. It returns null for a page with no readable article.
+
+`@naulon/wayfarer` and `@naulon/wayfarer-mcp` now ask for markdown on every paid read and re-read
+(`Accept: text/markdown, text/html;q=0.9`). A paid read returns `article` and `extraction` beside
+`content`. `extraction` is `gate` when the gate converted the page, which means the licence hash
+covers exactly that text; `client` when the client converted HTML after delivery, so the hash
+covers the HTML; `passthrough` when the site served markdown; `raw` when no article was found.
+`naulon_pay_and_read` and `naulon_read_held` take `format: "html"` for the page as served.
+`Buyer.fetch`, `runPaidFetch` and `rereadWithLicense` take the same format as a new optional last
+argument.
+
+The gate converts a paid read or licensed re-read to markdown when the request ranks
+`text/markdown` above HTML, before it hashes the body, and says how in `x-naulon-extraction` and
+`x-naulon-article`. A human's read is never converted. `@naulon/shared`: `ObservationEvent` gains
+`extraction`, `servedBytes` and `sourceBytes` on `paid` and `agent-reread`.
 
 ## v0.10.0
 

@@ -4,6 +4,7 @@
  * from memoBuyer/gatewayBuyer so a third buyer (railBuyer) reuses it without a third copy of
  * the loop. Behaviour is byte-identical to the two originals (their suites are the regression).
  */
+import { readAccept, readBody, type ReadFormat, type ReadResult } from "./readable.ts";
 import {
   AGENT_UA,
   classifyPaymentError,
@@ -32,6 +33,7 @@ export async function runPaidFetch(
   guard: PayGuard | undefined,
   buildPayment: BuildPayment,
   onSignError: OnSignError,
+  format: ReadFormat = "markdown",
 ): Promise<Fetched> {
   const outcome = await probe(url, kind, address);
   if (outcome.status !== "gated") return probeFailure(outcome, url);
@@ -62,6 +64,7 @@ export async function runPaidFetch(
   try {
     res = await agentFetch(url, {
       headers: {
+        accept: readAccept(format),
         "user-agent": AGENT_UA,
         "x-naulon-agent": address,
         "x-naulon-kind": kind,
@@ -101,9 +104,9 @@ export async function runPaidFetch(
   // failure), it is NOT safe to retry: a fresh pay would mint a second valid authorization
   // and double-charge. Surface a distinct, non-retryable `settlement_ambiguous` instead of
   // letting the raw rejection escape (the host loop only ever inspects a resolved Fetched).
-  let content: string;
+  let read: ReadResult;
   try {
-    content = await res.text();
+    read = await readBody(res, url, format);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     return {
@@ -116,7 +119,7 @@ export async function runPaidFetch(
   // costUsdc is the TRUE total the buyer authorized (all legs), so callers debit budgets on
   // it — not paidUsdc (author leg only), which under-counts a fee'd toll.
   const costUsdc = Number(quotedTotalAtomic(quoted)) / 1_000_000;
-  return { ok: true, content, settlementRef, paidUsdc: quoted.priceUsdc, costUsdc, license };
+  return { ok: true, ...read, settlementRef, paidUsdc: quoted.priceUsdc, costUsdc, license };
 }
 
 // Re-export the two classifiers so a rail's `onSignError` can build the same typed result the

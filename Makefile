@@ -37,6 +37,7 @@ build-wayfarer: ## Build @naulon/wayfarer → wayfarer-mcp (tsc → dist/) — b
 	npm run build -w @naulon/wayfarer-mcp
 
 build-sdk: ## Build every published package (tsc → dist/), in dependency order
+	npm run build -w @naulon/extract
 	npm run build -w @naulon/sdk
 	npm run build -w @naulon/shared
 	npm run build -w @naulon/enforce

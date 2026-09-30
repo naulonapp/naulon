@@ -375,6 +375,16 @@ export interface ObservationEvent {
    * was the publisher's own `settlement_network` pointing at a chain no buyer was funded on.
    */
   failureReason?: PaymentFailureReason;
+  /**
+   * How the body of a `paid` or `agent-reread` serve was produced: `gate` (extracted to markdown
+   * here), `passthrough` (the origin served markdown) or `raw` (markdown was asked for, and no
+   * article could be extracted). Absent when the agent asked for the page as served.
+   */
+  extraction?: "gate" | "passthrough" | "raw";
+  /** Bytes sent to the agent, on `paid` and `agent-reread`. */
+  servedBytes?: number;
+  /** Bytes the origin returned for that same serve. */
+  sourceBytes?: number;
   /** epoch ms — passed in by the caller (no ambient clock in shared code). */
   at: number;
 }

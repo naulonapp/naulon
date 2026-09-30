@@ -19,6 +19,7 @@
  * Gateway Wallet); the pay path here is pure sign-only. On the env/CLI path `init()` still
  * deposits via the SDK `GatewayClient` for backwards compatibility.
  */
+import type { ReadFormat } from "./readable.ts";
 import { type Address, type Hex, type TypedDataDomain } from "viem";
 import { activeNetwork, getConfig } from "@naulon/shared";
 // Type-only (erased at runtime) — the SDK itself is loaded lazily so the mock path never pulls it in.
@@ -269,7 +270,7 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
     price(url, kind): Promise<Quoted | null> {
       return probe(url, kind, this.address).then((o) => (o.status === "gated" ? o.quoted : null));
     },
-    async fetch(url, kind, guard?: PayGuard): Promise<Fetched> {
+    async fetch(url, kind, guard?: PayGuard, format?: ReadFormat): Promise<Fetched> {
       const address = this.address as `0x${string}`;
       // The shared loop owns probe→moved-guard→paid-GET→classify. The gateway rail supplies only
       // how it builds the payment (the two pre-sign guards live INSIDE the builder so a bad quote
@@ -294,6 +295,7 @@ export function gatewayBuyer(signer?: GatewaySigner): Buyer {
             ? { ok: false, error, ...refusal }
             : { ok: false, error, ...classifyPaymentError(error) };
         },
+        format,
       );
     },
   };
