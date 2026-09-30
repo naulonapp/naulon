@@ -48,6 +48,8 @@ export type PublisherEnforcementConfig = Partial<
     | "crawlerPolicy"
     | "termsPolicy"
     | "licenceServer"
+    | "fleetAgent"
+    | "fleetPublisher"
   >
 >;
 
@@ -154,6 +156,20 @@ interface CacheEntry {
   inFlight?: Promise<void>;
 }
 
+/**
+ * What this runtime can do that the control plane must know before offering a setup that relies on
+ * it. `fleet-pull`: the gate's own signed origin pull is served without charging (`decide`), so this
+ * runtime can run behind a crawler route without billing a read the gate already charged.
+ */
+export const CAPABILITIES_HEADER = "x-naulon-capabilities";
+export const RUNTIME_CAPABILITIES = "fleet-pull";
+
+/** A fleet tenant id: a slug or a uuid. */
+const FLEET_PUBLISHER_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/** A lowercase DNS host with at least one dot: what `VerifiedAgent.agent` reports. */
+const FLEET_AGENT_HOST = /^(?=.{4,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
 /** Drop `undefined` values so a spread of this document can never blank a local default. */
 function defined<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
@@ -193,6 +209,11 @@ function narrow(body: unknown): PublisherConfigDocument | null {
       // a plain-http licence server on a real host would leak every token on the wire.
       licenceServer:
         typeof e["licenceServer"] === "string" && licenceServerUrlOk(e["licenceServer"]) ? e["licenceServer"] : undefined,
+      // A bare host only. Anything that is not one would point the verifier at a key directory
+      // somewhere else, and whoever holds that key could read every page free.
+      fleetAgent: typeof e["fleetAgent"] === "string" && FLEET_AGENT_HOST.test(e["fleetAgent"]) ? e["fleetAgent"] : undefined,
+      fleetPublisher:
+        typeof e["fleetPublisher"] === "string" && FLEET_PUBLISHER_ID.test(e["fleetPublisher"]) ? e["fleetPublisher"] : undefined,
     }),
     ...(typeof manifest === "object" && manifest !== null ? { manifest: manifest as X402Manifest } : {}),
     // The licence is listed here or it does not exist for anything downstream: both the
@@ -244,7 +265,7 @@ export function httpPublisherConfigSource(
     let res: Response;
     try {
       res = await doFetch(`${configUrl}?resource=${encodeURIComponent(resource)}`, {
-        headers: { authorization: `Bearer ${apiKey}` },
+        headers: { authorization: `Bearer ${apiKey}`, [CAPABILITIES_HEADER]: RUNTIME_CAPABILITIES },
       });
     } catch (err) {
       fail(0, err instanceof Error ? err.message : "unreachable");

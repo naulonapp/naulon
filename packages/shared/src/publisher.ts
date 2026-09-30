@@ -148,6 +148,23 @@ export interface PublisherConfig {
    */
   originAuthSecret?: string;
   /**
+   * The Web Bot Auth agent host (e.g. `naulon.app`) whose signed origin pull a runtime serves
+   * without charging. Set only for a runtime that sits BEHIND a gate, as a publisher's app or
+   * plugin does when a crawler route sends AI crawlers through the gate first: the gate has already
+   * charged the read, and its pull carries a signature over this exact `@authority` and `@path`.
+   * A request that verifies against this host's key directory and covers `@path` is served free;
+   * anything else is decided as usual. The gate never sets it on itself, so it cannot waive a toll
+   * the gate is about to take.
+   */
+  fleetAgent?: string;
+  /**
+   * This publisher's id on the fleet, which the gate names in `x-naulon-publisher` on a pull it
+   * decided under this publisher's policy, inside the signature. Required with `fleetAgent`: any
+   * tenant can name any site as its origin, so a signature alone proves only that SOME tenant's
+   * read was decided, not that this publisher's was.
+   */
+  fleetPublisher?: string;
+  /**
    * Verified search / discovery crawler UA fragments that read FREE for this
    * publisher — the SEO allowlist. A request whose user-agent contains one of
    * these is classified human (a discovery read), so a publisher's indexing is

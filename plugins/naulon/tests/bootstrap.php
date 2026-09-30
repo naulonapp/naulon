@@ -59,6 +59,11 @@ require_once __DIR__ . '/../includes/class-naulon-wallet.php';
 require_once __DIR__ . '/../includes/class-naulon-key.php';
 require_once __DIR__ . '/../includes/class-naulon-agent.php';
 require_once __DIR__ . '/../includes/class-naulon-rules.php';
+// The pure verifier — parsing and the sodium crypto check take an already-resolved directory and
+// a clock, so verify_with_directory() needs no WordPress function at all. Only verify() itself
+// (the WP-facing entry point, which fetches and caches the directory) is out of reach here; that
+// half lives in the wp-env suite. See FleetPullTest.
+require_once __DIR__ . '/../includes/class-naulon-fleet-pull.php';
 require_once __DIR__ . '/../includes/class-naulon-license.php';
 // Money formatting and the settlement-mode read are pure functions over integers and a header
 // string, so they belong in the fast suite — the parts of the ledger that touch a database are

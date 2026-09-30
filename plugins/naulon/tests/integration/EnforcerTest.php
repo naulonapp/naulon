@@ -77,9 +77,10 @@ class EnforcerTest extends WP_UnitTestCase {
 
 	public function tear_down() {
 		remove_filter( 'pre_http_request', array( $this, 'intercept' ), 10 );
-		foreach ( array( 'HTTP_USER_AGENT', 'HTTP_ACCEPT', 'HTTP_PAYMENT_SIGNATURE', 'HTTP_X_NAULON_LICENSE', 'HTTP_X_WP_NONCE', 'HTTP_REFERER', 'HTTP_ORIGIN', 'HTTP_X_NAULON_KIND' ) as $k ) {
+		foreach ( array( 'HTTP_USER_AGENT', 'HTTP_ACCEPT', 'HTTP_PAYMENT_SIGNATURE', 'HTTP_X_NAULON_LICENSE', 'HTTP_X_WP_NONCE', 'HTTP_REFERER', 'HTTP_ORIGIN', 'HTTP_X_NAULON_KIND', 'HTTP_SIGNATURE_INPUT', 'HTTP_SIGNATURE', 'HTTP_SIGNATURE_AGENT', 'HTTP_X_NAULON_PUBLISHER' ) as $k ) {
 			unset( $_SERVER[ $k ] );
 		}
+		delete_transient( 'naulon_fleet_dir_' . md5( 'fleet.example' ) );
 		delete_transient( 'naulon_402_' . md5( 'blog/tolled-post|read' ) );
 		Naulon_Rules::instance()->reset();
 		Naulon_Enforcer::instance()->reset();
@@ -515,6 +516,87 @@ class EnforcerTest extends WP_UnitTestCase {
 		Naulon_Rules::instance()->reset();
 		$this->responses['/_naulon/enforce-config'] = array( 'error' => 'timed out' );
 		$this->as_agent();
+		$this->assertSame( 'pay', $this->decide()['action'] );
+	}
+
+	/**
+	 * The rules fetch always declares this build's capability, whether or not this site has a
+	 * fleet agent configured — it is a fact about the code, not about the site.
+	 */
+	public function test_the_rules_fetch_declares_the_fleet_pull_capability() {
+		$this->with_rules( array() );
+		$this->as_agent();
+		$this->decide();
+
+		$this->assertNotEmpty( $this->rule_requests, 'the rules fetch never ran' );
+		foreach ( $this->rule_requests as $r ) {
+			$this->assertArrayHasKey( 'x-naulon-capabilities', $r['args']['headers'] );
+			$this->assertSame( 'fleet-pull', $r['args']['headers']['x-naulon-capabilities'] );
+		}
+	}
+
+	// ── The gate's own origin pull, beside a crawler route ─────────────────────────────────
+	// Real WordPress on both ends of the request: the headers go through the enforcer's own
+	// $_SERVER reading (wp_unslash + sanitize_text_field), and the decision through decide().
+
+	/**
+	 * The control plane names the fleet's agent and this site's tenant id, and serves the agent's
+	 * key directory; the request is signed the way the gate signs an origin pull.
+	 *
+	 * @param string $signed_for  The tenant id the signature covers.
+	 * @param string $configured  The tenant id the control plane gives this site ('' = none).
+	 */
+	private function as_fleet_pull( $signed_for, $configured = 'site-under-test' ) {
+		$seed    = str_repeat( "\x07", SODIUM_CRYPTO_SIGN_SEEDBYTES );
+		$pair    = sodium_crypto_sign_seed_keypair( $seed );
+		$x       = rtrim( strtr( base64_encode( sodium_crypto_sign_publickey( $pair ) ), '+/', '-_' ), '=' );
+		$keyid   = rtrim( strtr( base64_encode( hash( 'sha256', '{"crv":"Ed25519","kty":"OKP","x":"' . $x . '"}', true ) ), '+/', '-_' ), '=' );
+		$created = time();
+		$member  = '("@authority" "@path" "x-naulon-publisher");created=' . $created . ';expires=' . ( $created + 60 ) . ';keyid="' . $keyid . '";tag="web-bot-auth"';
+		$base    = "\"@authority\": example.org\n\"@path\": /blog/tolled-post/\n\"x-naulon-publisher\": " . $signed_for . "\n\"@signature-params\": " . $member;
+		$sig     = base64_encode( sodium_crypto_sign_detached( $base, sodium_crypto_sign_secretkey( $pair ) ) );
+
+		$this->with_rules( array() );
+		$this->responses['/_naulon/enforce-config']['body']['enforcement'] = array_filter(
+			array(
+				'fleetAgent'     => 'fleet.example',
+				'fleetPublisher' => $configured,
+			)
+		);
+		$this->responses['/.well-known/http-message-signatures-directory'] = array(
+			'code' => 200,
+			'body' => array( 'keys' => array( array( 'kty' => 'OKP', 'crv' => 'Ed25519', 'x' => $x ) ) ),
+		);
+		Naulon_Rules::instance()->refresh();
+
+		$this->as_agent();
+		$_SERVER['HTTP_HOST']               = 'example.org';
+		$_SERVER['REQUEST_URI']             = '/blog/tolled-post/';
+		$_SERVER['HTTP_SIGNATURE_INPUT']    = 'sig1=' . $member;
+		$_SERVER['HTTP_SIGNATURE']          = 'sig1=:' . $sig . ':';
+		$_SERVER['HTTP_SIGNATURE_AGENT']    = '"fleet.example"';
+		$_SERVER['HTTP_X_NAULON_PUBLISHER'] = $signed_for;
+		$this->requests                     = array();
+	}
+
+	public function test_the_gates_signed_pull_for_this_site_is_served_free_without_a_quote() {
+		$this->as_fleet_pull( 'site-under-test' );
+		$decision = $this->decide();
+
+		$this->assertSame( 'free', $decision['action'] );
+		$this->assertSame( 'origin pull signed by the gate', $decision['reason'] );
+		$this->assertSame( 0, $this->asked( '/_naulon/quote' ), 'a read the gate already charged is not priced again' );
+		$this->assertSame( 0, $this->asked( '/_naulon/verify' ) );
+	}
+
+	public function test_a_pull_the_gate_signed_for_another_site_is_charged() {
+		// Any tenant can name this site as its origin; its reads are decided on its own terms.
+		$this->as_fleet_pull( 'someone-else' );
+		$this->assertSame( 'pay', $this->decide()['action'] );
+	}
+
+	public function test_without_its_tenant_id_the_site_serves_no_pull_free() {
+		$this->as_fleet_pull( 'site-under-test', '' );
 		$this->assertSame( 'pay', $this->decide()['action'] );
 	}
 }

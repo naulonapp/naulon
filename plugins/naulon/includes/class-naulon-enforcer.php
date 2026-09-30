@@ -301,6 +301,17 @@ class Naulon_Enforcer {
 		if ( $this->is_first_party() ) {
 			return $this->free( 'first-party request' );
 		}
+		// The gate's own origin pull, after it already charged this read at a crawler route: it is
+		// signed by the fleet's agent over this exact host, path and tenant id, so it cannot be
+		// replayed onto another page, passed off as another tenant's pull, or double-billed by a
+		// runtime sitting behind that route. Decided before classification, and returned as a
+		// plain free() rather than logged() — this must not count as a read, must not touch
+		// Naulon_Log or Naulon_Observer, and must not make the license-check or quote call that
+		// keeps this plugin's in-app heartbeat fresh. See Naulon_Fleet_Pull and
+		// packages/enforce/src/decide.ts's "fleet-pull" verdict.
+		if ( $this->is_fleet_pull() ) {
+			return $this->free( 'origin pull signed by the gate' );
+		}
 		// Classification runs BEFORE the tollable check, and the order matters for two reasons.
 		// A human verdict returns here having touched no database beyond the post already loaded
 		// and having written nothing — which is the promise. And everything past this line is
@@ -569,6 +580,46 @@ class Naulon_Enforcer {
 		 * @param bool $first_party Current verdict.
 		 */
 		return (bool) apply_filters( 'naulon_is_first_party', false );
+	}
+
+	/**
+	 * Is this request the gate's own signed origin pull? Cheap when the rule is off: a site with
+	 * no configured fleet agent or tenant id never even reads the request's signature headers.
+	 * Both must be configured — the agent host alone only proves SOME naulon tenant signed the
+	 * request, never that it was signed for this site, since the gate signs a pull for every
+	 * tenant it hosts.
+	 *
+	 * @return bool
+	 */
+	private function is_fleet_pull() {
+		$fleet_agent = Naulon_Rules::instance()->fleet_agent();
+		if ( '' === $fleet_agent ) {
+			return false;
+		}
+		$fleet_publisher = Naulon_Rules::instance()->fleet_publisher();
+		if ( '' === $fleet_publisher ) {
+			return false;
+		}
+		$headers = array(
+			'signature-input'    => $this->header( 'Signature-Input' ),
+			'signature'          => $this->header( 'Signature' ),
+			'signature-agent'    => $this->header( 'Signature-Agent' ),
+			'x-naulon-publisher' => $this->header( 'X-Naulon-Publisher' ),
+		);
+		return Naulon_Fleet_Pull::verify( $headers, $this->header( 'Host' ), $this->request_path(), $fleet_agent, $fleet_publisher );
+	}
+
+	/**
+	 * The request path WordPress was actually asked for, no query string. What the signer covers
+	 * with `@path` is the path alone — a query string riding along would make an otherwise valid
+	 * signature fail to verify, which is the correct outcome for a URL variant nobody signed.
+	 *
+	 * @return string
+	 */
+	private function request_path() {
+		$uri = isset( $_SERVER['REQUEST_URI'] ) ? (string) wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+		$path = wp_parse_url( $uri, PHP_URL_PATH );
+		return is_string( $path ) ? $path : '';
 	}
 
 	/**

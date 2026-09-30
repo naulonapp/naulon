@@ -173,6 +173,8 @@ const STRIP_HEADERS = new Set([
   "x-naulon-proof",
   // fleet→origin auth: gate-injected only (see proxyToOrigin), never smuggled inbound
   "x-naulon-origin-auth",
+  // the publisher a signed pull is for: gate-injected only, and covered by the signature
+  "x-naulon-publisher",
   // CDN→ingress auth: consumed by the ingress, never forwarded to an origin
   "x-naulon-edge-auth",
   // gate-controlled forwarding facts (set below, never trusted from the client)
@@ -385,8 +387,22 @@ async function proxyToOrigin(
   // over cleartext); signed per call for a fresh ~1-minute validity window. The secret
   // header still rides alongside, so nothing depends solely on WBA mid-migration.
   // Unconfigured (proxySigning null) ⇒ byte-identical, unsigned — the standing bar.
+  // A publisher runtime running beside a crawler route serves a pull it verifies as ours without
+  // charging again, so the signature is the witness that this read was decided under THIS
+  // publisher's policy. It covers `@path`, so it cannot be replayed on another page, and the
+  // publisher id, because any tenant can name any site as its origin: without it, a tenant whose
+  // origin is someone else's site could make the gate fetch that site's pages under a valid
+  // signature, on its own (possibly free) terms.
   if (proxySigning && origin.protocol === "https:") {
-    const signed = signBotAuth({ key: proxySigning.key, authority: origin.host, tag: "web-bot-auth", agent: proxySigning.agent });
+    outHeaders.set("x-naulon-publisher", publisherId);
+    const signed = signBotAuth({
+      key: proxySigning.key,
+      authority: origin.host,
+      path: target.pathname,
+      headers: { "x-naulon-publisher": publisherId },
+      tag: "web-bot-auth",
+      agent: proxySigning.agent,
+    });
     for (const [k, v] of Object.entries(signed)) outHeaders.set(k, v);
   }
   const upstream = await fetch(target, {

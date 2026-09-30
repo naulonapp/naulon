@@ -491,10 +491,14 @@ export function naulonMiddleware(
 
       // Human, or a free re-read on a license already paid for: the app renders locally.
       case "free":
-        report(d.obs, "served-free", resource, {
-          // The site's own host as the reader saw it, the same one `resource` names.
-          referrerHost: referrerHost(req.headers.get("referer"), new URL(resource).host),
-        });
+        // A fleet pull is a read the gate already charged and recorded. Reporting it again would
+        // count one read twice and keep this runtime's heartbeat fresh on traffic it never decided.
+        if (d.verdict !== "fleet-pull") {
+          report(d.obs, "served-free", resource, {
+            // The site's own host as the reader saw it, the same one `resource` names.
+            referrerHost: referrerHost(req.headers.get("referer"), new URL(resource).host),
+          });
+        }
         return { response: null };
 
       case "reread":

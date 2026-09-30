@@ -225,6 +225,9 @@ export { slugFromPath, slugFromSitePath };
  * The classification facts an observed decision carries so the caller can emit a
  * byte-identical `observe(...)` — the classifier verdict + Web-Bot-Auth signals.
  */
+/** The header naming the publisher a gate pull was decided for, covered by the gate's signature. */
+export const FLEET_PUBLISHER_HEADER = "x-naulon-publisher";
+
 export interface DecideObs {
   /** The gated slug — carried so the caller's `observe(...)` needs nothing decide computed. */
   slug: string;
@@ -317,6 +320,25 @@ export async function decide(input: DecideInput): Promise<Decision> {
   const botAuth = await verifyBotAuth(requestFactsFrom(raw, host), input.botAuthOpts ?? {});
   const verifiedAgent = botAuth.status === "verified" ? botAuth.agent : null;
   const sigInvalid = botAuth.status === "invalid" ? true : undefined;
+
+  // The gate's own origin pull, after it decided this read at a crawler route. It is signed by the
+  // fleet's agent over this host, this path and this publisher's id, so it cannot be replayed onto
+  // another page or passed off by another tenant that names this site as its origin. A runtime
+  // behind the gate that charged it again would bill one read twice.
+  if (
+    publisher.fleetAgent &&
+    publisher.fleetPublisher &&
+    verifiedAgent?.agent === publisher.fleetAgent &&
+    verifiedAgent.covers.includes("@path") &&
+    verifiedAgent.covers.includes(FLEET_PUBLISHER_HEADER) &&
+    raw.headers.get(FLEET_PUBLISHER_HEADER) === publisher.fleetPublisher
+  ) {
+    return {
+      kind: "free",
+      verdict: "fleet-pull",
+      obs: { slug, classifiedAs: "agent", classifyReason: "origin pull signed by the gate", verified: true, verifiedAgent: verifiedAgent.agent },
+    };
+  }
 
   // Publisher-refused crawlers: 403 BEFORE classification, so payment intent can
   // never buy past a block, and before the allow merge, so block wins an overlap.

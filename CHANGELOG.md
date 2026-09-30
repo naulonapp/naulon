@@ -18,6 +18,27 @@ tags and the auto-generated notes on each GitHub Release.
 
 Nothing yet.
 
+## v0.10.0
+
+`@naulon/shared` 0.6.3 → **0.6.4** and `@naulon/enforce` 0.6.3 → **0.7.0** (it now needs
+`shared` 0.6.4). `@naulon/wayfarer` and `@naulon/wayfarer-mcp` 0.6.3 → **0.6.4** move their ranges
+only, so neither can install an older `shared`. The WordPress plugin moves too; its own changelog
+says so.
+
+A runtime can now sit behind a crawler route. The gate's signed origin fetch now covers the page's
+path and an `x-naulon-publisher` header naming the publisher it decided the read for, beside the
+host. `decide` serves a request free when it verifies against the key directory of
+`PublisherConfig.fleetAgent`, covers `@path` and `x-naulon-publisher`, and names
+`PublisherConfig.fleetPublisher`. Such a read is not reported, because the gate already recorded
+it. `signBotAuth` takes `headers` to cover. The hosted config document carries both fields, and the
+runtime's config fetch declares `x-naulon-capabilities: fleet-pull` so the control plane knows it
+can offer the route beside it. A gate never sets either field on itself.
+
+A price rule can name one agent by its Web Bot Auth directory host, and only a signature-verified
+identity selects it; the quote records it as `pricedFor`, and agent rules stay out of the x402
+manifest. Observations carry the request pathname and, on a person's read, the referring host,
+through one `referrerHost` rule shared by the gate and the in-app middleware (#146).
+
 ## v0.9.3
 
 `@naulon/shared` 0.6.2 → **0.6.3**, `@naulon/enforce` 0.6.2 → **0.6.3**, `@naulon/wayfarer` 0.6.2 →

@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.5.7
+Stable tag: 0.5.8
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -146,6 +146,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.5.8 =
+* Serves naulon's own signed origin fetch without charging, so the plugin can run beside a crawler route.
+
 = 0.5.7 =
 * Opening your licence at /license.xml in a browser now shows the terms instead of downloading a file. Crawlers still receive it as an RSL document.
 
@@ -210,6 +213,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.5.8 =
+When your site sits behind a naulon crawler route, the gate's own origin fetch is now served free and left out of your reports instead of being charged a second time.
+
 = 0.5.7 =
 Your licence at /license.xml opens in a browser instead of downloading.
 
