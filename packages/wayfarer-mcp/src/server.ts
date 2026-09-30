@@ -1283,9 +1283,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .describe("`period`: a licence period you bought covers this page, so it was read under that and nothing was spent."),
         periodUntil: z.number().optional().describe("With via period: epoch SECONDS at which the purchased period ends."),
         reason: z
-          .enum(["refused_by_publisher"])
+          .enum(["refused_by_publisher", ...UNREADABLE_REASONS])
           .optional()
-          .describe("Why ok is false, when it is a known case. `refused_by_publisher`: see the server instructions; do not pay again."),
+          .describe(
+            "Why ok is false, when it is a known case. `refused_by_publisher`: see the server instructions; do not pay again. " +
+              UNREADABLE_DESCRIPTION,
+          ),
         expiresAt: z.number().optional().describe("Epoch SECONDS at which the licence stops entitling a free re-read."),
         expiresInSec: z.number().optional().describe("Seconds remaining on the licence at the moment this returned."),
         paidUsdc: z.number().optional().describe("The author leg paid, in USDC."),
@@ -1405,6 +1408,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               ...envelope(),
             });
           }
+          // Held, and the site is down or has no such page: paying would reach the same site.
+          const heldUnreadable = unreadable(free);
+          if (heldUnreadable) {
+            console.warn(`[naulon] pay_and_read: a live held licence could not be read for slug=${slug} (${free.error ?? "no detail"})`);
+            return structured({ ok: false, ...heldUnreadable, ...envelope() });
+          }
           // Held but the publisher refused it. Fall through and pay — the read is what the caller
           // asked for — but leave a trace, because this is the exact silent path that turned one
           // article into four tolls. The trace is a LOG for the operator and a typed field on the
@@ -1428,6 +1437,11 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         }
         if (period) {
           const read = await rereadWithLicense(target, KIND, period.license, popWallet().address, undefined, format);
+          const periodUnreadable = unreadable(read);
+          if (periodUnreadable) {
+            console.warn(`[naulon] pay_and_read: a purchased period could not be read for slug=${slug} (${read.error ?? "no detail"})`);
+            return structured({ ok: false, ...periodUnreadable, ...envelope() });
+          }
           if (!read.ok) {
             // The period covers this page and the publisher refused its token. Paying again would
             // charge for what was already bought, and would not fix a site that refuses its own
@@ -1710,7 +1724,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           ),
         paidUsdc: z.number().optional().describe("Always 0 on a held re-read."),
         reason: z
-          .enum(["expired", "not_matched", "never_held", "refused_by_publisher"])
+          .enum(["expired", "not_matched", "never_held", "refused_by_publisher", ...UNREADABLE_REASONS])
           .optional()
           .describe(
             "Why the free re-read did not happen. `expired` — you held it, its window closed. " +
@@ -1718,7 +1732,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               "url's host differs from the issuer that minted it; retry with the exact paid url). " +
               "`never_held` — nothing for this source. `refused_by_publisher` — the licence was " +
               "presented and the publisher's site rejected it, which may be a fault on THEIR side, " +
-              "not yours.",
+              "not yours. " +
+              UNREADABLE_DESCRIPTION,
           ),
         error: z.string().optional(),
       },
@@ -1770,6 +1785,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // already pinned to this gate by `heldRequestFor`.
       const target = license.scope ? req.url : (license.url ?? slugUrl(slug));
       const reread = await rereadWithLicense(target, KIND, license.jws, popWallet().address, proof, format);
+      const heldUnreadable = reread.ok ? null : unreadable(reread);
+      if (heldUnreadable) return structured({ ok: false, ...heldUnreadable });
       if (!reread.ok) {
         // A live, matched licence the PUBLISHER refused. This is the shape that produced four
         // tolls for one article: the licence was valid and the site could not verify it, so the
@@ -2086,4 +2103,32 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   );
 
   return server;
+}
+
+/** Why a free re-read under a licence the caller holds could not happen, when that is not the
+ *  publisher refusing the licence. Neither is a reason to pay: it would reach the same site. */
+const UNREADABLE_REASONS = ["site_unreachable", "page_not_found"] as const;
+const UNREADABLE_DESCRIPTION =
+  "`site_unreachable`: you hold access to this page and the site did not answer; nothing was spent, try again later. " +
+  "`page_not_found`: you hold access but the site has no such page; nothing was spent, and retrying will not help.";
+
+/** The unreadable outcome for a failed re-read, or null when the publisher refused the licence
+ *  itself (or the cause is unknown), which the callers handle as they always have. */
+function unreadable(read: {
+  ok: boolean;
+  errorCode?: string;
+  error?: string;
+}): { reason: (typeof UNREADABLE_REASONS)[number]; error: string } | null {
+  if (read.ok) return null;
+  const detail = read.error ?? "re-read failed";
+  if (read.errorCode === "not_found") {
+    return { reason: "page_not_found", error: `You hold access to this page, but the site has no such page (${detail}). Nothing was spent.` };
+  }
+  if (read.errorCode === "origin_error") {
+    return {
+      reason: "site_unreachable",
+      error: `You hold access to this page, and the site could not serve it (${detail}). Nothing was spent. Try again later; paying would reach the same site.`,
+    };
+  }
+  return null;
 }

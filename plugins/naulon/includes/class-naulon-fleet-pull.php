@@ -49,6 +49,12 @@ class Naulon_Fleet_Pull {
 	/** The directory fetch's own budget — this runs on the hot path of an origin fetch. */
 	const DIRECTORY_FETCH_TIMEOUT = 3;
 
+	/** Seconds between two rotation-grace refreshes, which a request's own keyid can trigger. */
+	const ROTATION_REFRESH_INTERVAL = 60;
+
+	/** Seconds a failed directory fetch waits before the next try. */
+	const FETCH_FAILURE_BACKOFF = 10;
+
 	/** Clock tolerance either side of created/expires. */
 	const MAX_CLOCK_SKEW = 60;
 
@@ -82,6 +88,10 @@ class Naulon_Fleet_Pull {
 			return false;
 		}
 
+		if ( ! self::precheck( $entry, $headers, $fleet_agent, $fleet_publisher, time() ) ) {
+			return false;
+		}
+
 		$directory  = self::cached_directory( $fleet_agent );
 		$was_cached = null !== $directory;
 		if ( null === $directory ) {
@@ -91,10 +101,12 @@ class Naulon_Fleet_Pull {
 			return false;
 		}
 		if ( $was_cached && ! isset( $directory[ $entry['keyid'] ] ) ) {
-			// Rotation grace: the cached copy may predate a key the operator just added.
-			$directory = self::refresh_directory( $fleet_agent );
-			if ( null === $directory ) {
-				return false;
+			// Rotation grace: the cached copy may predate a key the operator just added. Once a
+			// minute at most, because the keyid is whatever the request says it is.
+			$rotate = self::directory_transient_key( $fleet_agent ) . '_rotate';
+			if ( false === get_transient( $rotate ) ) {
+				set_transient( $rotate, 1, self::ROTATION_REFRESH_INTERVAL );
+				$directory = self::refresh_directory( $fleet_agent ) ?? $directory;
 			}
 		}
 
@@ -128,19 +140,17 @@ class Naulon_Fleet_Pull {
 	}
 
 	/**
-	 * Shared by both entry points once Signature-Input has parsed.
+	 * Every check that needs no key: the profile, the window, the agent and the tenant. Run before
+	 * the directory is fetched, so a request that could never verify cannot make this site call out.
 	 *
-	 * @param array  $entry           Parsed Signature-Input entry (see parse_signature_input()).
-	 * @param array  $headers         Request headers: lowercase names, raw values.
-	 * @param string $host            The Host this request was served on.
-	 * @param string $path            The request path, no query string.
-	 * @param string $fleet_agent     The configured fleet agent host.
-	 * @param string $fleet_publisher This site's configured tenant id.
-	 * @param array  $directory       keyid => base64url Ed25519 public key.
-	 * @param int    $now             Unix time.
+	 * @param array  $entry           Parsed Signature-Input entry.
+	 * @param array  $headers         Request headers, lowercased keys.
+	 * @param string $fleet_agent     Configured fleet agent host.
+	 * @param string $fleet_publisher Configured tenant id.
+	 * @param int    $now             Unix seconds.
 	 * @return bool
 	 */
-	private static function verify_parsed( array $entry, array $headers, $host, $path, $fleet_agent, $fleet_publisher, array $directory, $now ) {
+	private static function precheck( array $entry, array $headers, $fleet_agent, $fleet_publisher, $now ) {
 		if ( 'web-bot-auth' !== $entry['tag'] ) {
 			return false;
 		}
@@ -182,6 +192,29 @@ class Naulon_Fleet_Pull {
 		if ( '' === $publisher_header || $publisher_header !== $fleet_publisher ) {
 			return false;
 		}
+
+		return true;
+	}
+
+	/**
+	 * Shared by both entry points once Signature-Input has parsed.
+	 *
+	 * @param array  $entry           Parsed Signature-Input entry (see parse_signature_input()).
+	 * @param array  $headers         Request headers: lowercase names, raw values.
+	 * @param string $host            The Host this request was served on.
+	 * @param string $path            The request path, no query string.
+	 * @param string $fleet_agent     The configured fleet agent host.
+	 * @param string $fleet_publisher This site's configured tenant id.
+	 * @param array  $directory       keyid => base64url Ed25519 public key.
+	 * @param int    $now             Unix time.
+	 * @return bool
+	 */
+	private static function verify_parsed( array $entry, array $headers, $host, $path, $fleet_agent, $fleet_publisher, array $directory, $now ) {
+		if ( ! self::precheck( $entry, $headers, $fleet_agent, $fleet_publisher, $now ) ) {
+			return false;
+		}
+		// The same value precheck compared, so the base below signs what was checked.
+		$publisher_header = trim( self::header_value( $headers, 'x-naulon-publisher' ) );
 
 		if ( ! isset( $directory[ $entry['keyid'] ] ) ) {
 			return false;
@@ -484,8 +517,15 @@ class Naulon_Fleet_Pull {
 	 * @return array|null
 	 */
 	private static function refresh_directory( $fleet_agent ) {
+		// A failed fetch backs off briefly, so a directory that is down is not asked again by every
+		// request in the meantime. Only a failure sets it: a success must never delay the next.
+		$backoff = self::directory_transient_key( $fleet_agent ) . '_backoff';
+		if ( false !== get_transient( $backoff ) ) {
+			return null;
+		}
 		$directory = self::fetch_directory( $fleet_agent );
 		if ( null === $directory ) {
+			set_transient( $backoff, 1, self::FETCH_FAILURE_BACKOFF );
 			return null;
 		}
 		set_transient( self::directory_transient_key( $fleet_agent ), $directory, self::DIRECTORY_CACHE_TTL );

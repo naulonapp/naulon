@@ -441,7 +441,7 @@ export async function decide(input: DecideInput): Promise<Decision> {
 
   // Price it. Path plus query selects the per-path price rule, the same input in the same dialect a
   // licence scope and a spec-following client reading the RSL document match against.
-  const q = await quote(publisher, slug, tollKind, matchTarget(raw.url), verifiedAgent?.agent);
+  const q = await quote(publisher, slug, tollKind, matchTarget(raw.url), pricedAgent(verifiedAgent));
   if (!q) return { kind: "passthrough", verdict: "unknown-article" }; // unknown article — don't gate.
 
   // The resource identifier goes into a SIGNED quote, so it must be the URL the buyer
@@ -486,4 +486,23 @@ export async function decide(input: DecideInput): Promise<Decision> {
     };
   }
   return { kind: "payment-required", legs, header, quote: q, tollKind, obs };
+}
+
+/** The longest-lived signature a per-agent price follows. The signed headers travel with the
+ *  request, so whoever sees them can resend them from their own wallet until they expire. */
+export const AGENT_PRICE_MAX_VALIDITY_SEC = 300;
+
+/**
+ * The verified agent a per-agent price rule may follow, or undefined to price it like any agent.
+ * Verification accepts a signature that lives up to a day, which is right for classifying traffic
+ * and too long for money: resent verbatim, it would buy that agent's price for a day. Real signers
+ * cover `@authority` and not the path, so the path cannot be required; the window can, and the
+ * profile they sign to is about a minute.
+ */
+export function pricedAgent(
+  v: { agent: string; created?: number; expires?: number } | null | undefined,
+): string | undefined {
+  if (!v || v.created === undefined || v.expires === undefined) return undefined;
+  if (v.expires - v.created > AGENT_PRICE_MAX_VALIDITY_SEC) return undefined;
+  return v.agent;
 }

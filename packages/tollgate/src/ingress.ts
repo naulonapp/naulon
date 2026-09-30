@@ -19,12 +19,18 @@
  *   `Host: <site>`), so every identity downstream (the signed x402 resource, the licence, the
  *   event, Web Bot Auth's `@authority`) names the publisher's site without being told to.
  */
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import { isBareHostname, type PublisherConfig } from "@naulon/shared";
 
 /** The request header carrying the per-site edge secret. Stripped before anything is forwarded. */
 export const EDGE_AUTH_HEADER = "x-naulon-edge-auth";
+/**
+ * The route file's revision, sent by the CDN rule on every forwarded request. Revision 2 and later
+ * relay a 429 to the crawler; earlier files serve the origin on one, so the gate must not answer
+ * them with a 429 at all (see `app.ts`). Stripped before the origin fetch like the secret.
+ */
+export const ROUTE_REVISION_HEADER = "x-naulon-route";
 
 /** Our RFC 8586 `CDN-Loop` token. Appended to the rewritten request, so it rides the origin fetch. */
 export const CDN_LOOP_TOKEN = "naulon";
@@ -198,20 +204,30 @@ export async function admitIngress(raw: Request, ingress: IngressOptions): Promi
   const secret = tenant.config.originAuthSecret;
   if (originAuth && secret && constantTimeEqual(originAuth, secret)) return { kind: "loop" };
   const cdnLoop = raw.headers.get("cdn-loop");
-  if (cdnLoop && cdnLoopNamesUs(cdnLoop)) return { kind: "loop" };
+  // Our token carries an id keyed by the edge secret the CDN just presented. A bare `naulon` is
+  // what any client can send, and a loop is answered with a 5xx the route serves the origin on, so
+  // honouring it would hand the page to whoever typed the header.
+  const minute = Math.floor(Date.now() / 60_000);
+  // A real loop comes back within seconds, so the neighbouring minutes cover a boundary.
+  if (cdnLoop && [minute, minute - 1, minute + 1].some((m) => cdnLoopNamesUs(cdnLoop, cdnLoopId(presented, m)))) {
+    return { kind: "loop" };
+  }
+  const loopId = cdnLoopId(presented, minute);
 
   const inbound = new URL(raw.url);
   const url = `https://${siteHost}${inbound.pathname}${inbound.search}`;
   const headers = new Headers(raw.headers);
   headers.delete("forwarded");
   headers.delete(EDGE_AUTH_HEADER);
+  headers.delete(ROUTE_REVISION_HEADER);
   // The rewritten URL is https and authoritative. A proxy-supplied scheme would otherwise override
   // it when the gate trusts proxy headers, and a CDN's own x-forwarded-* describe its hop, not ours.
   headers.delete("x-forwarded-proto");
   headers.delete("x-forwarded-host");
   headers.delete("x-forwarded-for");
   headers.set("host", siteHost);
-  headers.set("cdn-loop", cdnLoop ? `${cdnLoop}, ${CDN_LOOP_TOKEN}` : CDN_LOOP_TOKEN);
+  const ours = `${CDN_LOOP_TOKEN}; id=${loopId}`;
+  headers.set("cdn-loop", cdnLoop ? `${cdnLoop}, ${ours}` : ours);
   // The body is handed over as a stream, never read here: admission is followed by the per-site
   // rate limit, and buffering first would let an over-limit caller make the gate hold its upload.
   const hasBody = raw.method !== "GET" && raw.method !== "HEAD" && raw.body !== null;
@@ -223,10 +239,22 @@ export async function admitIngress(raw: Request, ingress: IngressOptions): Promi
   return { kind: "admitted", request, siteHost, clientIp: clientAddressOf(fwd?.for), config: tenant.config };
 }
 
-function cdnLoopNamesUs(header: string): boolean {
-  return header
-    .split(",")
-    .some((entry) => entry.trim().split(";")[0]!.trim().toLowerCase() === CDN_LOOP_TOKEN);
+/** The id our `CDN-Loop` entry carries for one site in one minute: keyed by its edge secret, so
+ *  only the gate can mint it, and by the minute, because it reaches the origin in clear and a value
+ *  that never changed would be a standing free-read pass for anyone who saw one origin log line. */
+export function cdnLoopId(edgeSecret: string, minute: number): string {
+  return createHmac("sha256", edgeSecret).update(`naulon cdn-loop ${minute}`).digest("hex").slice(0, 32);
+}
+
+function cdnLoopNamesUs(header: string, id: string): boolean {
+  return header.split(",").some((entry) => {
+    const [token, ...params] = entry.split(";").map((p) => p.trim());
+    if (token?.toLowerCase() !== CDN_LOOP_TOKEN) return false;
+    return params.some((p) => {
+      const eq = p.indexOf("=");
+      return eq > 0 && p.slice(0, eq).trim().toLowerCase() === "id" && constantTimeEqual(p.slice(eq + 1).trim(), id);
+    });
+  });
 }
 
 /**
