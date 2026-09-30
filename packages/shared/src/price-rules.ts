@@ -58,12 +58,27 @@ export interface PriceRule {
   priceUsdc?: number;
   /** Absent ⇒ inherit the site citation multiplier. */
   citationMultiplier?: number;
+  /**
+   * Binds the rule to ONE agent: a Web Bot Auth identity (its signature directory host, e.g.
+   * `chatgpt.com`), lowercased. Absent ⇒ the rule prices every agent.
+   *
+   * Only a VERIFIED identity can select an agent rule. A User-Agent string is whatever the caller
+   * says it is: a cheaper rule keyed on one would be claimable by any scraper, and a dearer one
+   * dodged by changing a header. A signature is the one identity an agent cannot put on, so it is
+   * the only one a price may follow. An agent rule outranks every agentless rule for the agent it
+   * names, whatever their specificity: "this company pays this" is the more specific statement.
+   */
+  agent?: string;
 }
 
 /** More than this is not a pricing policy, it is an import that went wrong. */
 export const MAX_PRICE_RULES = 50;
 /** Longer than this is not a path pattern. The longest real URL path we serve is ~120. */
 export const MAX_PATTERN_LEN = 200;
+
+/** A signature directory host is a DNS name; longer than this is not one. */
+export const MAX_AGENT_LEN = 253;
+const AGENT_ID = /^[a-z0-9.-]+$/;
 
 /** Printable ASCII, space excluded — the only bytes a URL path pattern may carry verbatim. */
 const PRINTABLE_PATH = /^[\x21-\x7e]+$/;
@@ -142,14 +157,28 @@ export function normalizePriceRules(input: readonly unknown[]): PriceRule[] {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
       throw new Error("priceRules contains an entry that is not an object");
     }
-    const { pattern, priceUsdc, citationMultiplier } = raw as Record<string, unknown>;
+    const { pattern, priceUsdc, citationMultiplier, agent } = raw as Record<string, unknown>;
 
     const p = normalizePathPattern(pattern, "price rule");
-    if (seen.has(p)) {
-      throw new Error(`price rule "${p}" is listed twice — two prices for one pattern have no resolution order`);
+    let a: string | undefined;
+    if (agent !== undefined && agent !== null && agent !== "") {
+      if (typeof agent !== "string") throw new Error(`price rule "${p}" names an agent that is not text`);
+      a = agent.trim().toLowerCase();
+      if (a.length > MAX_AGENT_LEN || !AGENT_ID.test(a)) {
+        throw new Error(`price rule "${p}" names agent "${agent}", which is not a signature directory host such as chatgpt.com`);
+      }
+    }
+    const key = a === undefined ? p : `${a}\u0000${p}`;
+    if (seen.has(key)) {
+      throw new Error(
+        a === undefined
+          ? `price rule "${p}" is listed twice — two prices for one pattern have no resolution order`
+          : `price rule "${p}" for ${a} is listed twice — two prices for one pattern have no resolution order`,
+      );
     }
 
     const rule: PriceRule = { pattern: p };
+    if (a !== undefined) rule.agent = a;
 
     if (priceUsdc !== undefined && priceUsdc !== null) {
       if (typeof priceUsdc !== "number" || !Number.isFinite(priceUsdc)) {
@@ -182,17 +211,22 @@ export function normalizePriceRules(input: readonly unknown[]): PriceRule[] {
       throw new Error(`price rule "${p}" sets neither a price nor a citation multiplier — it would change nothing`);
     }
 
-    seen.add(p);
+    seen.add(key);
     out.push(rule);
   }
 
-  // Most specific first. `sort` is stable in every runtime we target (ES2019 requires it), so
-  // equal-specificity rules keep the order the publisher wrote them in.
-  return out.sort((a, b) => specificity(b.pattern) - specificity(a.pattern));
+  // Agent rules first, then most specific first. `sort` is stable in every runtime we target
+  // (ES2019 requires it), so equal-rank rules keep the order the publisher wrote them in.
+  return out.sort(
+    (a, b) =>
+      Number(b.agent !== undefined) - Number(a.agent !== undefined) || specificity(b.pattern) - specificity(a.pattern),
+  );
 }
 
 /**
  * The rule that governs `target` (path plus query, `matchTarget`), or undefined when none does.
+ * `verifiedAgent` is a signature-verified identity and nothing else: an unverified caller passes
+ * undefined and is priced by the agentless rules alone.
  * A rule is a PUBLISHER pattern, so `/a$` also governs `/a?page=2` (`publisherPatterns`).
  *
  * Pure, synchronous and allocation-free on the miss path — it runs inside the price formula on
@@ -203,9 +237,13 @@ export function normalizePriceRules(input: readonly unknown[]): PriceRule[] {
 export function resolvePriceRule(
   rules: readonly PriceRule[] | undefined,
   target: string | undefined,
+  verifiedAgent?: string,
 ): PriceRule | undefined {
   if (!rules || rules.length === 0 || target === undefined) return undefined;
+  const agent = verifiedAgent?.toLowerCase();
   for (const rule of rules) {
+    // An agent rule is invisible to every caller but the verified agent it names.
+    if (rule.agent !== undefined && rule.agent !== agent) continue;
     if (matchesPublisherPattern(rule.pattern, target)) return rule;
   }
   return undefined;

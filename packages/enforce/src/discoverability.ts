@@ -260,7 +260,9 @@ export function buildX402Manifest(
     if (micro <= toMicro(base.atomic)) return base;
     return { ...base, buyerTotal: { atomic: micro.toString(), usdc: Number(micro) / 1_000_000 } };
   };
-  const ruleLegs = (free ? [] : (publisher.priceRules ?? [])).map((rule) => {
+  // Agent-bound rules are not section prices: they apply only to the one verified agent they name,
+  // so publishing them here would tell every other agent it could pay that figure.
+  const ruleLegs = (free ? [] : (publisher.priceRules ?? []).filter((r) => r.agent === undefined)).map((rule) => {
     const read = tollPriceUnder(publisher, "read", rule) as number;
     const citation = tollPriceUnder(publisher, "citation", rule) as number;
     return {

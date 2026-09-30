@@ -212,3 +212,44 @@ test("an anchored rule prices its article whatever the query; a rule naming a qu
   assert.equal(resolvePriceRule(rules, "/a?page=2")?.priceUsdc, 0.02);
   assert.equal(resolvePriceRule(rules, "/a/b")?.priceUsdc, 0.01);
 });
+
+/* ── agent-bound rules ─────────────────────────────────────────────────────── */
+
+test("an agent rule is normalised to a lowercase identity and sorted ahead of every agentless rule", () => {
+  const rules = normalizePriceRules([
+    { pattern: "/papers/preview$", priceUsdc: 0.001 },
+    { pattern: "/", priceUsdc: 0.02, agent: "ChatGPT.com" },
+  ]);
+  assert.deepEqual(rules[0], { pattern: "/", priceUsdc: 0.02, agent: "chatgpt.com" });
+});
+
+test("an agent that is not a directory host is refused, and one pattern may carry a rule per agent", () => {
+  assert.throws(() => normalizePriceRules([{ pattern: "/", priceUsdc: 0.02, agent: "GPTBot/1.0 (+https://x)" }]), /directory host/);
+  assert.equal(
+    normalizePriceRules([
+      { pattern: "/", priceUsdc: 0.02, agent: "chatgpt.com" },
+      { pattern: "/", priceUsdc: 0.03, agent: "claude.ai" },
+      { pattern: "/", priceUsdc: 0.01 },
+    ]).length,
+    3,
+  );
+  assert.throws(
+    () =>
+      normalizePriceRules([
+        { pattern: "/", priceUsdc: 0.02, agent: "chatgpt.com" },
+        { pattern: "/", priceUsdc: 0.03, agent: "chatgpt.com" },
+      ]),
+    /listed twice/,
+  );
+});
+
+test("an agent rule prices only the verified agent it names; everyone else sees the agentless rules", () => {
+  const rules = normalizePriceRules([
+    { pattern: "/papers/*", priceUsdc: 0.05 },
+    { pattern: "/", priceUsdc: 0.2, agent: "chatgpt.com" },
+  ]);
+  assert.equal(resolvePriceRule(rules, "/papers/x", "chatgpt.com")?.priceUsdc, 0.2, "the named agent's rule outranks a more specific path rule");
+  assert.equal(resolvePriceRule(rules, "/papers/x", "claude.ai")?.priceUsdc, 0.05);
+  assert.equal(resolvePriceRule(rules, "/papers/x")?.priceUsdc, 0.05, "an unverified caller never reaches an agent rule");
+  assert.equal(resolvePriceRule(rules, "/about")?.priceUsdc, undefined);
+});

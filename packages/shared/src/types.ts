@@ -331,6 +331,20 @@ export interface ObservationEvent {
   servedVia?: "ingress";
   /** The article slug the gate priced (empty string for a non-article gated path). */
   slug: string;
+  /**
+   * The request's pathname, without the query string. The slug is lossy (it drops the article
+   * prefix), and a robots.txt rule or a price rule is written against the path, so a reader asking
+   * "was this agent allowed here" needs the path itself. The query is left out because it can
+   * carry a reader's own tokens. Optional so rows written before it existed stay valid.
+   */
+  path?: string;
+  /**
+   * The host of the page that sent a PERSON here (the `Referer` header's host), on human reads
+   * only. It is what lets a publisher see readers arriving from an AI answer engine beside the
+   * agents that engine sent to read. Host only: the rest of a referring URL can identify the
+   * reader's own conversation, and a host is the whole answer to "which engine sent them".
+   */
+  referrerHost?: string;
   /** read | citation when the request reached the machine path; absent for a plain human read. */
   kind?: TollKind;
   verdict: ObservationVerdict;

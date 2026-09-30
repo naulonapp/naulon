@@ -45,6 +45,9 @@ export interface ObservationReport {
    * exactly what let a deployment with no verifier bill one article four times in a day.
    */
   licenceRefusal?: LicenceRefusal;
+  /** On a person's read, the host of the other site that sent them (`referrerHost` in
+   *  `@naulon/shared`). Host only, never the referring URL. */
+  referrerHost?: string;
   /** Who the caller was, as this runtime's classifier saw them — what makes a row bucket
    *  under "GPTBot" rather than "(unknown agent)". */
   agent?: {
