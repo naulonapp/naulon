@@ -263,3 +263,36 @@ test("the licence server travels to the runtime when it is a URL a client may se
   assert.equal(await load("http://ls.example/olp"), undefined, "never a licence token over plain http to a real host");
   assert.equal(await load(42), undefined);
 });
+
+test("fleetAgent survives only as a bare host, because it names whose signature waives the toll", async () => {
+  const load = async (fleetAgent: unknown) => {
+    const { fetchImpl } = planeReturning({ ...DOC, enforcement: { ...DOC.enforcement, fleetAgent } });
+    const src = httpPublisherConfigSource("http://cloud/_naulon/enforce-config", "nln_live_k", { fetchImpl });
+    return (await src.load({ resource: RESOURCE }))?.enforcement.fleetAgent;
+  };
+  assert.equal(await load("naulon.app"), "naulon.app");
+  for (const bad of ["https://naulon.app", "naulon.app/x", "localhost", "NAULON.APP", "evil.example:8443", 42, ""]) {
+    assert.equal(await load(bad), undefined, String(bad));
+  }
+});
+
+test("the config fetch declares what this runtime can do, so the control plane can offer a route beside it", async () => {
+  let sent: Headers | undefined;
+  const fetchImpl = (async (_url: string, init?: RequestInit) => {
+    sent = new Headers(init?.headers);
+    return new Response(JSON.stringify(DOC), { status: 200, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+  await httpPublisherConfigSource("http://cloud/_naulon/enforce-config", "nln_live_k", { fetchImpl }).load({ resource: RESOURCE });
+  assert.equal(sent?.get("x-naulon-capabilities"), "fleet-pull");
+});
+
+test("fleetPublisher survives only as a tenant id", async () => {
+  const load = async (fleetPublisher: unknown) => {
+    const { fetchImpl } = planeReturning({ ...DOC, enforcement: { ...DOC.enforcement, fleetPublisher } });
+    const src = httpPublisherConfigSource("http://cloud/_naulon/enforce-config", "nln_live_k", { fetchImpl });
+    return (await src.load({ resource: RESOURCE }))?.enforcement.fleetPublisher;
+  };
+  assert.equal(await load("wpblog-raxtzu"), "wpblog-raxtzu");
+  assert.equal(await load("76409c2e-897b-444a-9c42-ef93ce106401"), "76409c2e-897b-444a-9c42-ef93ce106401");
+  for (const bad of ["", "a b", "x".repeat(129), 7, "p\nx"]) assert.equal(await load(bad), undefined, String(bad));
+});

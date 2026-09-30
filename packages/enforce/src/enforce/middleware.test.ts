@@ -760,3 +760,45 @@ test("a licence re-read is reported like the gate reports one; a charged read is
   await licenceRig({ json: { active: true, permitted: true, charged_micro: "5500" } }, paid.observe).mw(licensedGet());
   assert.deepEqual(paid.seen, [], "the cloud writes `paid` from the settle it owns; writing it here too would double-count");
 });
+
+test("the gate's signed pull is served and NOT reported: the gate already recorded that read", async () => {
+  const { botAuthDirectoryBody, botAuthKeyFromSeed, signBotAuth, signBotAuthDirectory } = await import("@naulon/shared");
+  const key = botAuthKeyFromSeed(Buffer.alloc(32, 11).toString("base64url"));
+  const agent = "fleet-mw.example";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    assert.equal(new URL(String(input)).host, agent);
+    const sig = signBotAuthDirectory(key, agent);
+    return new Response(botAuthDirectoryBody(key), {
+      status: 200,
+      headers: {
+        "content-type": "application/http-message-signatures-directory+json",
+        "signature-input": sig["signature-input"],
+        signature: sig.signature,
+      },
+    });
+  }) as typeof fetch;
+  try {
+    const { seen, observe } = reporter();
+    const mw = naulonMiddleware({
+      ...opts,
+      publisher: { ...opts.publisher, fleetAgent: agent, fleetPublisher: "p" },
+      observe: observe as never,
+    });
+    const h = signBotAuth({ key, authority: "h", path: "/essays/x", headers: { "x-naulon-publisher": "p" }, tag: "web-bot-auth", agent });
+    const out = await mw(
+      new Request("http://h/essays/x", {
+        headers: ua("GPTBot/1.2", {
+          "signature-input": h["signature-input"],
+          signature: h.signature,
+          "signature-agent": h["signature-agent"]!,
+          "x-naulon-publisher": "p",
+        }),
+      }),
+    );
+    assert.equal(out.response, null);
+    assert.equal(seen.length, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
