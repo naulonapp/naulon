@@ -238,6 +238,15 @@ test("a human read is reported as served-free — the negative space the audit s
   assert.equal(seen[0]?.classifiedAs, "human");
 });
 
+test("a human read carries the referring host, and an agent read never does", async () => {
+  const { seen, observe } = reporter();
+  const mw = naulonMiddleware({ ...opts, observe: observe as never });
+  await mw(new Request("http://h/essays/x", { headers: { ...ua("Mozilla/5.0 (real browser)"), referer: "https://chatgpt.com/c/1" } }));
+  await mw(new Request("http://h/essays/x", { headers: { ...ua("GPTBot/1.0"), referer: "https://chatgpt.com/c/1" } }));
+  assert.equal(seen[0]?.referrerHost, "chatgpt.com");
+  assert.equal(seen[1]?.referrerHost, undefined);
+});
+
 test("a non-article is NOT reported — an asset request is not traffic on an article", async () => {
   const { seen, observe } = reporter();
   const mw = naulonMiddleware({ ...opts, observe: observe as never });

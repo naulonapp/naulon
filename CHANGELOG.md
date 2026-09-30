@@ -34,6 +34,11 @@ it. `signBotAuth` takes `headers` to cover. The hosted config document carries b
 runtime's config fetch declares `x-naulon-capabilities: fleet-pull` so the control plane knows it
 can offer the route beside it. A gate never sets either field on itself.
 
+A price rule can name one agent by its Web Bot Auth directory host, and only a signature-verified
+identity selects it; the quote records it as `pricedFor`, and agent rules stay out of the x402
+manifest. Observations carry the request pathname and, on a person's read, the referring host,
+through one `referrerHost` rule shared by the gate and the in-app middleware (#146).
+
 ## v0.9.3
 
 `@naulon/shared` 0.6.2 → **0.6.3**, `@naulon/enforce` 0.6.2 → **0.6.3**, `@naulon/wayfarer` 0.6.2 →

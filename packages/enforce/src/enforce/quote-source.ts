@@ -20,6 +20,8 @@ export interface QuoteContext {
   /** The resource's PATHNAME — what a per-path price rule matches against. Derivable from
    *  `resource`, and carried anyway so a source never has to parse a URL to price one. */
   path?: string;
+  /** A Web Bot Auth identity this runtime VERIFIED, for agent-bound price rules. Never a UA. */
+  verifiedAgent?: string;
 }
 
 export interface QuoteSource {
@@ -28,14 +30,20 @@ export interface QuoteSource {
 
 /** Wrap a publisher's own price+payees lookup. `undefined`/`null` → free read. */
 export function localQuoteSource(
-  fn: (publisher: unknown, slug: string, kind: TollKind, path?: string) => Promise<Quote | null | undefined>,
+  fn: (
+    publisher: unknown,
+    slug: string,
+    kind: TollKind,
+    path?: string,
+    verifiedAgent?: string,
+  ) => Promise<Quote | null | undefined>,
 ): QuoteSource {
   return {
     async quote(publisher, slug, kind, ctx) {
       // `ctx.path` reaches the publisher's own pricing so a self-hosting site's price rules
       // resolve exactly as the hosted gate's do. A wrapper that ignores the argument keeps
       // today's site-wide pricing, which is what every existing caller does.
-      return (await fn(publisher, slug, kind, ctx.path)) ?? null;
+      return (await fn(publisher, slug, kind, ctx.path, ctx.verifiedAgent)) ?? null;
     },
   };
 }
@@ -94,6 +102,8 @@ export function httpQuoteSource(
       // slug+kind let the cloud price directly (decide() already derived the slug);
       // resource is carried for catalog lookups keyed on the full URL.
       const q = new URLSearchParams({ resource: ctx.resource, slug, kind });
+      // Only an identity this runtime verified is sent; the cloud prices that agent's own rules.
+      if (ctx.verifiedAgent !== undefined) q.set("verifiedAgent", ctx.verifiedAgent);
       let res: Response;
       try {
         res = await fetchImpl(`${quoteUrl}?${q}`, { headers: { authorization: `Bearer ${apiKey}` } });

@@ -53,6 +53,7 @@ import {
   type LicenceAuthority,
   type LicenceVerdict,
   parseLicenceAuthorization,
+  referrerHost,
 } from "@naulon/shared";
 import {
   decide,
@@ -969,6 +970,8 @@ export function createApp(
         host,
         ...(viaIngress ? { servedVia: "ingress" as const } : {}),
         slug: obs.slug,
+        path: pathnameOf(path),
+        ...(obs.classifiedAs === "human" ? optionalReferrer(referrerHost(raw.headers.get("referer"), host)) : {}),
         kind: extra?.kind,
         verdict: v,
         classifiedAs: obs.classifiedAs,
@@ -1373,4 +1376,15 @@ function isMachinePath(path: string): boolean {
 function publisherHostHint(raw: string | undefined): string | undefined {
   const h = raw?.trim().toLowerCase();
   return h && /^[a-z0-9.-]+(:\d+)?$/.test(h) ? h : undefined;
+}
+
+/** The pathname of a request target that may carry a query string. */
+function pathnameOf(target: string): string {
+  const q = target.search(/[?#]/);
+  return q === -1 ? target : target.slice(0, q);
+}
+
+
+function optionalReferrer(h: string | undefined): { referrerHost?: string } {
+  return h === undefined ? {} : { referrerHost: h };
 }

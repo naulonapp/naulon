@@ -338,3 +338,8 @@ test("a manifest without stated terms carries no agentReads field", () => {
   assert.equal("agentReads" in buildX402Manifest(fixturePublisher()), false);
   assert.equal(buildX402Manifest({ ...fixturePublisher(), termsPolicy: { "ai-input": "prohibit" } }).agentReads, "refused");
 });
+
+test("an agent-bound rule is never advertised as a section price", () => {
+  const m = buildX402Manifest({ ...fixturePublisher(), priceRules: [{ pattern: "/", priceUsdc: 0.2, agent: "chatgpt.com" }] });
+  assert.equal(m.payment.price.rules, undefined);
+});

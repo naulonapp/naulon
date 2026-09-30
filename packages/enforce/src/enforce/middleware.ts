@@ -37,7 +37,7 @@ import {
 import { PAYMENT_BODY_CONTENT_TYPE, paymentRequiredBodyText } from "../paymentBody.ts";
 import { X402_MANIFEST_PATH } from "../discoverability.ts";
 import { headerSafe } from "../headerSafe.ts";
-import { externalUrl, getConfig, rslResponseHeaders, type JwkSet } from "@naulon/shared";
+import { externalUrl, getConfig, referrerHost, rslResponseHeaders, type JwkSet } from "@naulon/shared";
 import type { QuoteSource } from "./quote-source.ts";
 import { introspectLicence } from "@naulon/sdk/rsl";
 import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
@@ -335,7 +335,7 @@ export function naulonMiddleware(
     obs: DecideObs,
     verdict: ReportableVerdict,
     resource: string,
-    extra?: { kind?: "read" | "citation"; priceUsdc?: number },
+    extra?: { kind?: "read" | "citation"; priceUsdc?: number; referrerHost?: string },
   ): void => {
     if (!opts.observe) return;
     const r: ObservationReport = {
@@ -347,6 +347,7 @@ export function naulonMiddleware(
       agent: agentOf(obs),
     };
     if (extra?.kind !== undefined) r.kind = extra.kind;
+    if (extra?.referrerHost !== undefined && obs.classifiedAs === "human") r.referrerHost = extra.referrerHost;
     // Whole USDC → integer micro-USDC on the wire. Rounded, never floored: the figure is
     // "what this request would have paid", and a sub-micro price is a real toll.
     if (extra?.priceUsdc !== undefined) r.priceMicro = Math.round(extra.priceUsdc * 1_000_000);
@@ -439,7 +440,8 @@ export function naulonMiddleware(
       path: url.pathname + url.search,
       publisher: publisher as never,
       now: clock(),
-      quote: (publisher, slug, kind, path) => opts.quote.quote(publisher, slug, kind, { resource, path }),
+      quote: (publisher, slug, kind, path, verifiedAgent) =>
+        opts.quote.quote(publisher, slug, kind, { resource, path, ...(verifiedAgent ? { verifiedAgent } : {}) }),
       ...(licenseVerification ? { licenseVerification } : {}),
     });
 
@@ -491,7 +493,12 @@ export function naulonMiddleware(
       case "free":
         // A fleet pull is a read the gate already charged and recorded. Reporting it again would
         // count one read twice and keep this runtime's heartbeat fresh on traffic it never decided.
-        if (d.verdict !== "fleet-pull") report(d.obs, "served-free", resource);
+        if (d.verdict !== "fleet-pull") {
+          report(d.obs, "served-free", resource, {
+            // The site's own host as the reader saw it, the same one `resource` names.
+            referrerHost: referrerHost(req.headers.get("referer"), new URL(resource).host),
+          });
+        }
         return { response: null };
 
       case "reread":

@@ -235,6 +235,24 @@ test("observations name the site and say it came through the ingress", async () 
   }
 });
 
+test("observations carry the request path without its query string", async () => {
+  await viaIngress("/essays/pathed-one?utm_source=x&token=secret");
+  const obs = await waitForObs("pathed-one");
+  assert.ok(obs.length > 0);
+  for (const o of obs) assert.equal(o.path, "/essays/pathed-one");
+});
+
+test("a human read records the referring host, and only the host", async () => {
+  await app.request("/essays/referred-one", {
+    headers: { host: "p.example", "user-agent": "Mozilla/5.0 Safari", accept: "text/html", referer: "https://chatgpt.com/c/abc-123?x=1" },
+  });
+  await app.request("/essays/referred-two", {
+    headers: { host: "p.example", "user-agent": "Mozilla/5.0 Safari", accept: "text/html", referer: "https://p.example/essays/other" },
+  });
+  for (const o of await waitForObs("referred-one")) assert.equal(o.referrerHost, "chatgpt.com");
+  for (const o of await waitForObs("referred-two")) assert.equal(o.referrerHost, undefined, "internal navigation is not an arrival");
+});
+
 test("on any other host, Forwarded and an edge secret are ignored and nothing changes", async () => {
   const res = await app.request("/essays/routed-one", {
     headers: {

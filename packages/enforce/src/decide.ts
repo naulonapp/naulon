@@ -285,6 +285,8 @@ export interface DecideInput {
     slug: string,
     kind: TollKind,
     path?: string,
+    /** A Web Bot Auth identity decide() verified, for agent-bound price rules. Never a UA string. */
+    verifiedAgent?: string,
   ) => Promise<Quote | null | undefined>;
   /** Web-Bot-Auth options (e.g. `allowInsecureHttp` on a dev/plaintext origin). */
   botAuthOpts?: BotAuthOptions;
@@ -439,7 +441,7 @@ export async function decide(input: DecideInput): Promise<Decision> {
 
   // Price it. Path plus query selects the per-path price rule, the same input in the same dialect a
   // licence scope and a spec-following client reading the RSL document match against.
-  const q = await quote(publisher, slug, tollKind, matchTarget(raw.url));
+  const q = await quote(publisher, slug, tollKind, matchTarget(raw.url), verifiedAgent?.agent);
   if (!q) return { kind: "passthrough", verdict: "unknown-article" }; // unknown article — don't gate.
 
   // The resource identifier goes into a SIGNED quote, so it must be the URL the buyer
