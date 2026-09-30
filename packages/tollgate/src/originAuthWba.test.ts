@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { test, before, beforeEach, after } from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createPublicKey, verify } from "node:crypto";
 
 const SEED = Buffer.alloc(32, 7).toString("base64url");
 process.env.EVENTS_PATH = join(tmpdir(), `naulon-wba-${process.pid}.jsonl`);
@@ -86,9 +87,27 @@ test("secret header and WBA signature coexist on the same pull (migration-safe)"
   assert.ok(captured[0]!.get("signature"), "signature still present alongside the secret");
 });
 
-test("the signed @authority is the origin host the request targets", async () => {
+test("the pull is signed over the origin host AND the path, and verifies only for that path", async () => {
   current = pub("https://origin.example");
-  await app.request("/about", { headers: { host: "p.example" } });
-  // signBotAuth lowercases and covers only ("@authority"); the input echoes the member.
-  assert.match(captured[0]!.get("signature-input") ?? "", /\("@authority"\)/);
+  await app.request("/about?x=1", { headers: { host: "p.example" } });
+  const input = captured[0]!.get("signature-input") ?? "";
+  assert.match(input, /\("@authority" "@path" "x-naulon-publisher"\)/);
+  const publisher = captured[0]!.get("x-naulon-publisher") ?? "";
+  assert.ok(publisher.length > 0, "the pull names the publisher it was decided for");
+  // Rebuild the RFC 9421 base the way a publisher runtime would, and check it against the
+  // operator's public key: this page verifies, any other page of the same host does not.
+  const member = input.replace(/^sig1=/, "");
+  const sig = Buffer.from((captured[0]!.get("signature") ?? "").replace(/^sig1=:|:$/g, ""), "base64");
+  const pub1 = createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: botAuthKeyFromSeed(SEED).x }, format: "jwk" });
+  const base = (path: string, pub = publisher) =>
+    Buffer.from(`"@authority": origin.example\n"@path": ${path}\n"x-naulon-publisher": ${pub}\n"@signature-params": ${member}`, "utf8");
+  assert.equal(verify(null, base("/about"), pub1, sig), true);
+  assert.equal(verify(null, base("/other"), pub1, sig), false);
+  assert.equal(verify(null, base("/about", "someone-else"), pub1, sig), false);
+});
+
+test("a client cannot smuggle its own x-naulon-publisher to the origin", async () => {
+  current = pub("https://origin.example");
+  await app.request("/about", { headers: { host: "p.example", "x-naulon-publisher": "forged" } });
+  assert.notEqual(captured[0]!.get("x-naulon-publisher"), "forged");
 });

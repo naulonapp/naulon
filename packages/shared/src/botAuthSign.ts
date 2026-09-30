@@ -82,6 +82,10 @@ interface SignParams {
    *  the witness of a charge, so it cannot be replayed on another URL of the
    *  same host. */
   path?: string;
+  /** Request header fields the signature also covers, lowercase names, in this order after
+   *  `@path`. The gate covers `x-naulon-publisher` so a pull cannot be passed off as another
+   *  publisher's. The caller must send exactly these values on the request. */
+  headers?: Record<string, string>;
   tag: "web-bot-auth" | "http-message-signatures-directory";
   /** Signature-Agent value (request profile only): the directory host, e.g.
    *  "naulon.app", or an http://127.0.0.1:port fixture under the gate's
@@ -104,11 +108,14 @@ export function signBotAuth(params: SignParams): BotAuthSignedHeaders {
   const created = params.createdSec ?? Math.floor(Date.now() / 1000);
   const expires = created + (params.validitySec ?? DEFAULT_VALIDITY_SEC);
   const label = params.label ?? "sig1";
-  const covered = params.path !== undefined ? `("@authority" "@path")` : `("@authority")`;
+  const coveredHeaders = Object.entries(params.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v.trim()] as const);
+  const names = ['"@authority"', ...(params.path !== undefined ? ['"@path"'] : []), ...coveredHeaders.map(([k]) => `"${k}"`)];
+  const covered = `(${names.join(" ")})`;
   const member = `${covered};created=${created};expires=${expires};keyid="${params.key.keyid}";tag="${params.tag}"`;
   const base = [
     `"@authority": ${params.authority.toLowerCase()}`,
     ...(params.path !== undefined ? [`"@path": ${params.path}`] : []),
+    ...coveredHeaders.map(([k, v]) => `"${k}": ${v}`),
     `"@signature-params": ${member}`,
   ].join("\n");
   const sig = cryptoSign(null, Buffer.from(base, "utf8"), params.key.privateKey).toString("base64");
