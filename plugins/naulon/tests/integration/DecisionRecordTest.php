@@ -193,6 +193,56 @@ class DecisionRecordTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'no quote available', $entries[0]['reason'] );
 	}
 
+	public function test_a_forged_claim_served_free_still_says_it_was_forged() {
+		// No price for the article, so the forged claim ends on a free fallback rather than a 402.
+		// The row must still tell the publisher an impostor was caught, or Diagnostics shows a
+		// Googlebot that read free for no stated reason.
+		$this->responses['/_naulon/quote'] = array( 'code' => 204, 'body' => null );
+		$doc = array(
+			'version'     => 1,
+			'generatedAt' => gmdate( 'c' ),
+			'proxies'     => array( 'cloudflare' => array( '173.245.48.0/20' ) ),
+			'operators'   => array(
+				array(
+					'id'             => 'google',
+					'operator'       => 'Google',
+					'fragments'      => array( 'googlebot' ),
+					'kind'           => 'ranges',
+					'forgedEligible' => true,
+					'fetchedAt'      => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+					'prefixes'       => array( '66.249.64.0/27' ),
+				),
+			),
+			'sources'     => array(),
+		);
+		update_option( Naulon_Ranges::OPTION, Naulon_Ranges::next_store( array( 'ok' => true, 'body' => $doc ), time() ), false );
+		$memo = new ReflectionProperty( Naulon_Ranges::class, 'compiled' );
+		$memo->setAccessible( true );
+		$memo->setValue( Naulon_Ranges::instance(), false );
+		add_filter( 'naulon_identity_armed', static function () {
+			return array( 'google' );
+		} );
+		Naulon_Settings::update( array( 'trusted_ip_header' => 'HTTP_X_TEST_IP' ) );
+		// Googlebot on the allowlist, as the dashboard ships it: the free pass the check withholds.
+		set_transient( Naulon_Rules::TRANSIENT, Naulon_Rules::normalize( array( 'allow' => array( 'googlebot' ) ) ), HOUR_IN_SECONDS );
+		foreach ( array( 'memo', 'armed_memo' ) as $prop ) {
+			$r = new ReflectionProperty( Naulon_Rules::class, $prop );
+			$r->setAccessible( true );
+			$r->setValue( Naulon_Rules::instance(), false );
+		}
+		$_SERVER['HTTP_USER_AGENT'] = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
+		$_SERVER['HTTP_ACCEPT']     = '*/*';
+		$_SERVER['HTTP_X_TEST_IP']  = '9.9.9.9';
+
+		$this->decide();
+
+		$entries = Naulon_Log::all();
+		$this->assertCount( 1, $entries );
+		$this->assertSame( 'free', $entries[0]['action'] );
+		$this->assertStringContainsString( 'no quote available', $entries[0]['reason'] );
+		$this->assertStringContainsString( "outside Google's published ranges", $entries[0]['reason'] );
+	}
+
 	public function test_the_window_stays_bounded() {
 		for ( $i = 0; $i < Naulon_Log::MAX_ENTRIES + 10; $i++ ) {
 			Naulon_Log::record( array( 'action' => 'pay', 'slug' => 'blog/x-' . $i ) );

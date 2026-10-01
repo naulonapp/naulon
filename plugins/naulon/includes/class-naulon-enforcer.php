@@ -270,9 +270,16 @@ class Naulon_Enforcer {
 		$kind = $this->requested_kind();
 		$ua   = $this->header( 'User-Agent' );
 
-		// A forged verdict's reason already names the address check; say it once.
-		$forged  = null !== $this->agent_verdict && isset( $this->agent_verdict['identity'] ) && 'forged' === $this->agent_verdict['identity'];
-		$checked = $forged ? '' : Naulon_Identity::describe( $this->identity );
+		// A forged verdict's reason names the address check, so say it once: as the decision's own
+		// reason on the paid path, appended on a fallback that serves free for another reason (no
+		// quote, nothing credited), where it would otherwise vanish and a caught impostor would
+		// read as an unexplained free Googlebot.
+		$forged = null !== $this->agent_verdict && isset( $this->agent_verdict['identity'] ) && 'forged' === $this->agent_verdict['identity'];
+		if ( $forged ) {
+			$checked = false === strpos( $decision['reason'], $this->agent_verdict['reason'] ) ? 'agent (' . $this->agent_verdict['reason'] . ')' : '';
+		} else {
+			$checked = Naulon_Identity::describe( $this->identity );
+		}
 		Naulon_Log::record(
 			array(
 				'action' => $decision['action'],
