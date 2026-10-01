@@ -36,7 +36,10 @@ function countUp(el, to, money) {
 function paintFreshness() {
   if (!lastUpdate) return;
   const s = Math.floor((Date.now() - lastUpdate) / 1000);
-  $("#freshness").textContent = s < 1 ? "updated now" : `updated ${s}s ago`;
+  // Seconds, then minutes, then hours: the text never outgrows "updated 59m ago", which the
+  // label's fixed box holds, so a tick cannot move the controls beside it.
+  $("#freshness").textContent =
+    s < 1 ? "updated now" : s < 60 ? `updated ${s}s ago` : s < 3600 ? `updated ${Math.floor(s / 60)}m ago` : `updated ${Math.floor(s / 3600)}h ago`;
 }
 
 /**

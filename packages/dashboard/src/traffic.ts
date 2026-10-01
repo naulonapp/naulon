@@ -12,7 +12,7 @@
  * Everything here is pure: observations and a clock in, plain data out. No fs, no
  * config, no Date.now — so every branch is testable without a gate or a log file.
  */
-import { OBSERVATION_VERDICTS } from "@naulon/shared";
+import { agentKey, OBSERVATION_VERDICTS, registryCrawler } from "@naulon/shared";
 import type { ObservationEvent, ObservationVerdict } from "@naulon/shared";
 
 /** How an agent's identity was established. The Agents page is built on this split. */
@@ -32,6 +32,14 @@ export interface TrafficQuery {
   verdict?: ObservationVerdict | undefined;
   /** Case-insensitive substring over slug, host, user-agent and verified agent. */
   q?: string | undefined;
+  /** Restrict to one outcome group. */
+  outcome?: Outcome | undefined;
+  /** Restrict to one agent, by the key it rolls up under. */
+  agent?: string | undefined;
+  /** Restrict to one path (slug). */
+  slug?: string | undefined;
+  /** Restrict to one way of proving identity. */
+  identity?: AgentIdentity | undefined;
 }
 
 /** One row of the "which path" rollup — money earned and money missed, per slug. */
@@ -50,18 +58,24 @@ export interface PathRow {
 
 /** One row of the "who" rollup. Identity is the strongest seen for that key. */
 export interface AgentRow {
-  /** The verified operator host when signed, else the raw UA. Never empty. */
+  /** The key it rolls up under (`agentKeyOf`). Never empty. */
   agent: string;
   identity: AgentIdentity;
+  /** The crawler registry's company and purpose, when the registry names it. */
+  operator?: string;
+  purpose?: string;
   requests: number;
   paid: number;
   denied: number;
   paymentFailed: number;
   blocked: number;
+  /** A good payment declined because the origin could not serve the read. */
+  unservable: number;
   /** Reads taken without paying: served-free + agent-reread. */
   free: number;
   earned: number;
   missed: number;
+  lastAt: number;
 }
 
 /**
@@ -78,13 +92,34 @@ export interface MissedByCause {
   byPath: { slug: string; denied: number; deniedUsdc: number; paymentFailed: number; paymentFailedUsdc: number }[];
 }
 
+/** Where a page of rows starts: strictly after this row in (at desc, id desc) order. */
+export interface RowCursor {
+  at: number;
+  id: string;
+}
+
+/** Whose requests the row list holds. Every rollup is about agents; the list is too by default. */
+export type Who = "agent" | "human" | "all";
+
+export function parseWho(v: string | undefined): Who {
+  return v === "human" || v === "all" ? v : "agent";
+}
+
 export interface TrafficReport {
   at: number;
   since: number;
-  /** Observations matching the filter, newest first, capped. */
-  rows: ObservationEvent[];
-  /** How many matched before the cap — so the UI never implies it showed everything. */
+  /** One page of the rows matching the filter, newest first, each with the key it rolls up under. */
+  rows: Array<ObservationEvent & { agent: string }>;
+  /** How many rows the list holds in all, before paging, so a page can say "of N". */
   matched: number;
+  /** Where the next older page starts, or null at the end. */
+  next: RowCursor | null;
+  /** Agent requests by outcome, the Requests page's ribbon. */
+  outcomes: Record<Outcome, number>;
+  /** USDC taken on paid requests, and quoted to agents that walked away: what the page leads with. */
+  money: { earned: number; missed: number };
+  /** Agent requests by weekday and hour, UTC: `heatmap[weekday][hour]`, Sunday = 0. */
+  heatmap: number[][];
   /** Verdict counts across the MATCHED set (i.e. after the filter). */
   byVerdict: Record<ObservationVerdict, number>;
   topPaths: PathRow[];
@@ -116,17 +151,48 @@ export function identityOf(o: ObservationEvent): AgentIdentity {
 }
 
 /**
- * The key an agent rolls up under. A verified caller groups by its directory host, so
- * every ChatGPT request lands on one row however its UA string drifts. Everything else
- * groups by raw UA — spoofable, and labelled as such by `identity`.
+ * The key an agent rolls up under: `agentKey` from shared, the same rule the hosted audit uses. A
+ * verified caller groups by its directory host; a known crawler by its registry name however its UA
+ * string is spelled; anything else by its raw UA, spoofable and labelled as such by `identity`.
+ * Keying on the raw UA split one crawler into a row per spelling.
  */
-export function agentKeyOf(o: ObservationEvent): string {
-  return o.verifiedAgent || o.agentUa || "(no user-agent)";
+export const agentKeyOf = (o: ObservationEvent): string => agentKey(o);
+
+/** The four outcomes a toll decision falls into, as the Requests page shows them. */
+export type Outcome = "paid" | "left" | "free" | "refused";
+export const OUTCOMES: readonly Outcome[] = ["paid", "left", "free", "refused"];
+
+export function outcomeOf(v: ObservationVerdict): Outcome {
+  switch (v) {
+    case "paid":
+      return "paid";
+    case "denied":
+      return "left";
+    case "served-free":
+    case "agent-reread":
+      return "free";
+    case "blocked":
+    case "payment-failed":
+    case "unservable":
+      return "refused";
+    default: {
+      const unhandled: never = v;
+      return unhandled;
+    }
+  }
+}
+
+export function parseOutcome(v: string | undefined): Outcome | undefined {
+  return v && (OUTCOMES as readonly string[]).includes(v) ? (v as Outcome) : undefined;
+}
+
+export function parseIdentity(v: string | undefined): AgentIdentity | undefined {
+  return v === "verified" || v === "unsigned" || v === "masquerade" ? v : undefined;
 }
 
 /** Case-insensitive substring across every field an operator would search by. */
 function matchesQuery(o: ObservationEvent, needle: string): boolean {
-  const hay = `${o.slug} ${o.host} ${o.agentUa ?? ""} ${o.verifiedAgent ?? ""} ${o.classifyReason ?? ""}`;
+  const hay = `${o.slug} ${o.path ?? ""} ${o.host} ${agentKeyOf(o)} ${o.agentUa ?? ""} ${o.verifiedAgent ?? ""} ${o.classifyReason ?? ""} ${o.referrerHost ?? ""}`;
   return hay.toLowerCase().includes(needle);
 }
 
@@ -136,6 +202,10 @@ export function filterObservations(observations: readonly ObservationEvent[], q:
   return observations.filter((o) => {
     if (o.at < q.since) return false;
     if (q.verdict && o.verdict !== q.verdict) return false;
+    if (q.outcome && outcomeOf(o.verdict) !== q.outcome) return false;
+    if (q.agent && agentKeyOf(o) !== q.agent) return false;
+    if (q.slug !== undefined && o.slug !== q.slug) return false;
+    if (q.identity && (o.classifiedAs !== "agent" || identityOf(o) !== q.identity)) return false;
     if (needle && !matchesQuery(o, needle)) return false;
     return true;
   });
@@ -190,17 +260,21 @@ export function rollupAgents(observations: readonly ObservationEvent[]): AgentRo
     const agent = agentKeyOf(o);
     let row = rows.get(agent);
     if (!row) {
+      const reg = registryCrawler(o);
       row = {
         agent,
         identity: identityOf(o),
+        ...(reg ? { operator: reg.operator, purpose: reg.category } : {}),
         requests: 0,
         paid: 0,
         denied: 0,
         paymentFailed: 0,
         blocked: 0,
+        unservable: 0,
         free: 0,
         earned: 0,
         missed: 0,
+        lastAt: o.at,
       };
       rows.set(agent, row);
     }
@@ -211,7 +285,10 @@ export function rollupAgents(observations: readonly ObservationEvent[]): AgentRo
     else if (seen === "masquerade" && row.identity !== "verified") row.identity = "masquerade";
 
     row.requests += 1;
+    if (o.at > row.lastAt) row.lastAt = o.at;
     const price = o.price ?? 0;
+    // Exhaustive: an outcome with no column raised `requests` and nothing else, so a row could not
+    // add up to its own total. `unservable` was that outcome.
     switch (o.verdict) {
       case "paid":
         row.paid += 1;
@@ -228,10 +305,17 @@ export function rollupAgents(observations: readonly ObservationEvent[]): AgentRo
       case "blocked":
         row.blocked += 1;
         break;
+      case "unservable":
+        row.unservable += 1;
+        break;
       case "served-free":
       case "agent-reread":
         row.free += 1;
         break;
+      default: {
+        const unhandled: never = o.verdict;
+        void unhandled;
+      }
     }
   }
   return [...rows.values()].sort(
@@ -275,10 +359,43 @@ export function missedByCause(observations: readonly ObservationEvent[]): Missed
 }
 
 export interface TrafficOptions {
-  /** Cap on returned rows. The report still reports `matched` so the cap is visible. */
+  /** Rows per page. The report still carries `matched`, so a page never reads as the whole. */
   rowLimit?: number;
   /** Cap on rollup rows. */
   rollupLimit?: number;
+  /** Start after this row (the `next` of the previous page). */
+  after?: RowCursor | null;
+  /** Whose requests the row list holds. */
+  who?: Who;
+}
+
+/** Newest first, rows sharing a millisecond ordered by id, so a page edge inside such a run
+ *  neither repeats nor skips a row. */
+const newestFirst = (a: ObservationEvent, b: ObservationEvent): number =>
+  b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+
+/** One page of rows after `after`, and where the next one starts. */
+export function pageRows(
+  rows: readonly ObservationEvent[],
+  limit: number,
+  after: RowCursor | null = null,
+): { page: ObservationEvent[]; next: RowCursor | null } {
+  const sorted = [...rows].sort(newestFirst);
+  const start = after ? sorted.filter((r) => r.at < after.at || (r.at === after.at && r.id < after.id)) : sorted;
+  const page = start.slice(0, limit);
+  const last = page[page.length - 1];
+  return { page, next: start.length > limit && last ? { at: last.at, id: last.id } : null };
+}
+
+/** Agent requests by weekday × hour in UTC, the console's one clock. */
+export function heatmapOf(observations: readonly ObservationEvent[]): number[][] {
+  const cells = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
+  for (const o of observations) {
+    if (o.classifiedAs !== "agent") continue;
+    const d = new Date(o.at);
+    cells[d.getUTCDay()]![d.getUTCHours()]! += 1;
+  }
+  return cells;
 }
 
 /** The whole traffic answer for one filter, in one pass over the log. */
@@ -288,18 +405,32 @@ export function buildTraffic(
   nowMs: number,
   opts: TrafficOptions = {},
 ): TrafficReport {
-  const rowLimit = opts.rowLimit ?? 200;
+  const rowLimit = opts.rowLimit ?? 50;
   const rollupLimit = opts.rollupLimit ?? 10;
+  const who = opts.who ?? "agent";
   const matched = filterObservations(observations, query);
 
   const byVerdict = zeroVerdicts();
-  for (const o of matched) if (o.verdict in byVerdict) byVerdict[o.verdict] += 1;
+  const outcomes: Record<Outcome, number> = { paid: 0, left: 0, free: 0, refused: 0 };
+  const money = { earned: 0, missed: 0 };
+  for (const o of matched) {
+    if (o.verdict in byVerdict) byVerdict[o.verdict] += 1;
+    if (o.classifiedAs === "agent") outcomes[outcomeOf(o.verdict)] += 1;
+    if (o.verdict === "paid") money.earned += o.price ?? 0;
+    if (o.verdict === "denied") money.missed += o.price ?? 0;
+  }
+  const listed = who === "all" ? matched : matched.filter((o) => o.classifiedAs === who);
+  const { page, next } = pageRows(listed, rowLimit, opts.after ?? null);
 
   return {
     at: nowMs,
     since: query.since,
-    rows: [...matched].sort((a, b) => b.at - a.at).slice(0, rowLimit),
-    matched: matched.length,
+    rows: page.map((o) => ({ ...o, agent: agentKeyOf(o) })),
+    matched: listed.length,
+    next,
+    outcomes,
+    money,
+    heatmap: heatmapOf(matched),
     byVerdict,
     topPaths: rollupPaths(matched).slice(0, rollupLimit),
     topAgents: rollupAgents(matched).slice(0, rollupLimit),

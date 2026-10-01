@@ -54,7 +54,7 @@ test("a verified agent groups by its directory host, not its drifting UA", () =>
 });
 
 test("an agent with no user-agent at all still gets a stable key", () => {
-  assert.equal(agentKeyOf(obs({ verdict: "denied" })), "(no user-agent)");
+  assert.equal(agentKeyOf(obs({ verdict: "denied" })), "(unknown agent)");
 });
 
 test("the window filter excludes anything older than `since`", () => {
@@ -215,4 +215,62 @@ test("buildAgents splits identity and counts only agent traffic", () => {
   const r = buildAgents(rows, { since: 0 }, NOW);
   assert.deepEqual(r.split, { total: 3, verified: 1, unsigned: 1, masquerade: 1 });
   assert.equal(r.agents.length, 3, "the human is not an agent row");
+});
+
+test("every spelling of one crawler rolls up under one row, with its company", () => {
+  const rows = rollupAgents([
+    obs({ verdict: "denied", agentUa: "GPTBot/1.0" }),
+    obs({ verdict: "paid", agentUa: "Mozilla/5.0 (compatible; GPTBot/1.2; +https://openai.com/gptbot)" }),
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.agent, "GPTBot");
+  assert.equal(rows[0]!.operator, "OpenAI");
+});
+
+test("an agent row adds up to its own total, unservable included", () => {
+  const [row] = rollupAgents([
+    obs({ verdict: "unservable", agentUa: "curl/8" }),
+    obs({ verdict: "paid", agentUa: "curl/8" }),
+    obs({ verdict: "blocked", agentUa: "curl/8" }),
+  ]);
+  assert.equal(row!.paid + row!.denied + row!.paymentFailed + row!.blocked + row!.unservable + row!.free, row!.requests);
+});
+
+test("buildTraffic pages every row once, rows sharing a millisecond included, and says how many", () => {
+  const rows = ["a", "b", "c", "d", "e"].map((id) => obs({ id, verdict: "denied", agentUa: "GPTBot/1.0", at: NOW }));
+  const seen: string[] = [];
+  let after: { at: number; id: string } | null = null;
+  for (let i = 0; i < 10; i++) {
+    const r = buildTraffic(rows, { since: 0 }, NOW, { rowLimit: 2, after });
+    assert.equal(r.matched, 5);
+    seen.push(...r.rows.map((o) => o.id));
+    if (!r.next) break;
+    after = r.next;
+  }
+  assert.deepEqual(seen, ["e", "d", "c", "b", "a"]);
+});
+
+test("buildTraffic lists agents unless asked for people, and the ribbon counts agents only", () => {
+  const rows = [
+    obs({ verdict: "served-free", classifiedAs: "human", agentUa: "Mozilla/5.0 (Macintosh)" }),
+    obs({ verdict: "paid", agentUa: "GPTBot/1.0" }),
+    obs({ verdict: "denied", agentUa: "ClaudeBot/1.0" }),
+  ];
+  const agents = buildTraffic(rows, { since: 0 }, NOW);
+  assert.equal(agents.matched, 2);
+  assert.deepEqual(agents.outcomes, { paid: 1, left: 1, free: 0, refused: 0 });
+  assert.deepEqual(agents.money, { earned: 0, missed: 0 });
+  assert.equal(buildTraffic(rows, { since: 0 }, NOW, { who: "all" }).matched, 3);
+});
+
+test("filters narrow by outcome, agent, path and identity", () => {
+  const rows = [
+    obs({ verdict: "paid", agentUa: "GPTBot/1.0", slug: "a" }),
+    obs({ verdict: "blocked", agentUa: "curl/8", slug: "b" }),
+    obs({ verdict: "denied", agentUa: "x", verified: true, verifiedAgent: "chatgpt.com", slug: "a" }),
+  ];
+  assert.equal(filterObservations(rows, { since: 0, outcome: "refused" }).length, 1);
+  assert.equal(filterObservations(rows, { since: 0, agent: "GPTBot" }).length, 1);
+  assert.equal(filterObservations(rows, { since: 0, slug: "a" }).length, 2);
+  assert.equal(filterObservations(rows, { since: 0, identity: "verified" }).length, 1);
 });

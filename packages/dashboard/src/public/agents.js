@@ -5,7 +5,7 @@
  * Security: agent keys are caller-controlled (a raw User-Agent, when unsigned). Every
  * one goes through esc() from shell.js before it touches innerHTML.
  */
-import { $, esc, usd, emptyState, renderShell, poll, wireSeg, debounced } from "./shell.js";
+import { $, esc, usd, rel, emptyState, renderShell, poll, wireSeg, debounced, live } from "./shell.js";
 
 renderShell({ active: "agents" });
 
@@ -14,6 +14,15 @@ let q = "";
 let refresh = null;
 
 const pct = (n, total) => (total ? `${Math.round((n / total) * 100)}% of agent traffic` : "");
+
+/** The crawler registry's purposes, in the words the hosted audit page uses. */
+const PURPOSE = {
+  "ai-training": "AI training",
+  "ai-assistant": "AI assistant",
+  search: "search",
+  archiver: "archive",
+  seo: "SEO",
+};
 
 const IDENTITY_NOTE = {
   verified: "signature verified",
@@ -34,7 +43,7 @@ function renderSplit(s) {
   // statement of fact and no "fix" — there is nothing for them to change. Saying
   // nothing at all would be worse: this is the one number on the page that means
   // somebody is actively lying about who they are.
-  $("#masqNote").innerHTML = s.masquerade
+  live($("#masqNote")).html = s.masquerade
     ? `<div class="banner pending"><b>${s.masquerade} request${s.masquerade === 1 ? "" : "s"} presented a signature that did not verify.</b>
        <div class="toll-fix">That is a different thing from unsigned traffic: a key was claimed and the claim failed. The gate already refused to treat them as verified — nothing is broken on your side. The rows below name which agent string it was.</div></div>`
     : "";
@@ -48,11 +57,15 @@ function renderSplit(s) {
  */
 const NUM_CELLS = [
   ["requests", (r) => r.requests, false],
-  ["took free", (r) => r.free, false],
+  ["free", (r) => r.free, false],
   ["paid", (r) => r.paid, false],
-  ["refused", (r) => r.denied, false],
+  // The Requests page and the hosted audit page call a 402 walk-away "left at the price" and a
+  // 403 "refused". This table used "refused" for the walk-away, so one word meant two outcomes.
+  // Short forms of the same words, so seven columns fit.
+  ["left", (r) => r.denied, false],
   ["failed", (r) => r.paymentFailed, true],
-  ["blocked", (r) => r.blocked, false],
+  ["unserved", (r) => r.unservable ?? 0, true],
+  ["refused", (r) => r.blocked, false],
 ];
 
 const numCells = (r) =>
@@ -65,7 +78,7 @@ const numCells = (r) =>
 function renderAgents(rows) {
   $("#agentCount").textContent = `${rows.length} agent${rows.length === 1 ? "" : "s"}`;
   if (!rows.length) {
-    $("#agents").innerHTML = emptyState({
+    live($("#agents")).html = emptyState({
       icon: "agents",
       lead: "No agent traffic in this window.",
       body: q ? "Nothing matches that filter." : "Humans do not appear here — they read free, always, and there is nothing to act on.",
@@ -73,18 +86,20 @@ function renderAgents(rows) {
     });
     return;
   }
-  $("#agents").innerHTML = rows.map((r) => `
-    <div class="agent-row">
+  live($("#agents")).html = rows.map((r) => `
+    <a class="agent-row agent-link" href="/requests?${esc(new URLSearchParams({ agent: r.agent, window: win }).toString())}" aria-label="${esc(`See ${r.agent}'s requests`)}">
       <div class="agent-id">
         <div class="rank-name mono">${esc(r.agent)}</div>
         <div class="rank-meta"><span class="badge ${esc(r.identity)}">${esc(r.identity)}</span> ${esc(IDENTITY_NOTE[r.identity] ?? "")}</div>
+        ${r.operator ? `<div class="rank-meta">${esc(r.operator)} · ${esc(PURPOSE[r.purpose] ?? r.purpose ?? "")}</div>` : ""}
       </div>
       <div class="agent-nums">${numCells(r)}</div>
       <div class="agent-money">
         <div class="mono-figure pos">${usd(r.earned)}</div>
         ${r.missed > 0 ? `<div class="stat-sub">${usd(r.missed)} missed</div>` : ""}
+        <div class="stat-sub">last seen ${esc(rel(r.lastAt))} ago</div>
       </div>
-    </div>`).join("");
+    </a>`).join("");
 }
 
 async function tick() {

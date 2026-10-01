@@ -20,6 +20,10 @@ export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESCAPES[c])
 export const fmt6 = (n) => Number(n || 0).toFixed(6);
 /** Six-decimal micro-USDC with the sign. Use this wherever a figure is shown alone. */
 export const usd = (n) => "$" + fmt6(n);
+/** A headline amount: two to three decimals, like the hosted portal's money figures. The ledger's
+ *  six-decimal `usd` stays for rows, where sub-cent tolls need every digit. */
+export const usdLead = (n) =>
+  "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 3 });
 
 /** Middle-truncate an address or hash. Null-safe. */
 export const trunc = (a) => (a && a.length > 12 ? a.slice(0, 6) + "…" + a.slice(-4) : a || "—");
@@ -116,6 +120,18 @@ export const VERDICT_LABEL = {
   "payment-failed": "failed",
   unservable: "unservable",
   paid: "paid",
+};
+
+/** Full names, for a heading or a table cell where the verdict is the subject. The hosted audit
+ *  page uses the same words, so an operator moving between the two reads one vocabulary. */
+export const VERDICT_TITLE = {
+  "served-free": "Read free",
+  "agent-reread": "Re-read",
+  denied: "Left at the price",
+  blocked: "Refused",
+  "payment-failed": "Payment failed",
+  unservable: "Not served",
+  paid: "Paid",
 };
 
 /** Verdicts that mean something went wrong, so a non-zero count can go red.
@@ -534,6 +550,35 @@ export function debounced(fn, ms = 200) {
 }
 
 // ── data ──────────────────────────────────────────────────────────────────────
+/**
+ * Markup a poll repaints, written as `live(el).html = …`. An unchanged render is skipped outright
+ * (most polls change nothing), and a changed one keeps keyboard focus: the focused descendant is
+ * found again by its `data-key`, `href` or `id` and refocused. A list rebuilt with plain innerHTML
+ * every five seconds threw focus back to <body> mid-Tab (measured on Agents).
+ */
+const written = new WeakMap();
+export function live(el) {
+  return {
+    set html(markup) {
+      // Compared with what was last written, not with innerHTML: a page that sets widths through
+      // the CSSOM after rendering reads back with style attributes and would never look unchanged.
+      if (!el || written.get(el) === markup) return;
+      written.set(el, markup);
+      const active = document.activeElement;
+      const key =
+        active && el.contains(active)
+          ? active.getAttribute("data-key") || active.getAttribute("href") || active.id || null
+          : null;
+      el.innerHTML = markup;
+      if (!key) return;
+      const again = [...el.querySelectorAll("[data-key],[href],[id]")].find(
+        (n) => n.getAttribute("data-key") === key || n.getAttribute("href") === key || n.id === key,
+      );
+      again?.focus({ preventScroll: true });
+    },
+  };
+}
+
 /**
  * Run `fn` now, then every `ms`, and once more whenever the tab becomes visible.
  * Pauses while hidden so a backgrounded console stops hammering the gate.

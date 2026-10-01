@@ -168,3 +168,47 @@ export const CRAWLER_REGISTRY: RegistryCrawler[] = [
   { id: "ahrefsbot", name: "AhrefsBot", operator: "Ahrefs", fragment: "ahrefsbot", category: "seo", defaultCharged: false, directoryHost: "ahrefs.com" },
   { id: "semrushbot", name: "SemrushBot", operator: "Semrush", fragment: "semrushbot", category: "seo", defaultCharged: false },
 ];
+
+/** Registry fragments longest-first, so `applebot-extended` is tested before `applebot` and a UA
+ *  carrying the more specific token can never file under the broader one. */
+const BY_FRAGMENT = [...CRAWLER_REGISTRY].sort((a, b) => b.fragment.length - a.fragment.length);
+
+/** The parts of an observation that say who asked. */
+export interface ObservedCaller {
+  agentUa?: string;
+  verifiedAgent?: string;
+}
+
+/**
+ * The registry row behind a request, when the registry names it. A verified Web Bot Auth identity
+ * is matched by its directory host or registry name, and one operator's host can sign for several
+ * agents (`chatgpt.com` is GPTBot, ChatGPT-User and OAI-SearchBot), so the UA picks among that
+ * operator's rows before the first one is taken. Otherwise the UA is matched on its fragment.
+ */
+export function registryCrawler(o: ObservedCaller): RegistryCrawler | null {
+  if (o.verifiedAgent !== undefined) {
+    const v = o.verifiedAgent.toLowerCase();
+    const ua = o.agentUa?.toLowerCase();
+    const byIdentity = CRAWLER_REGISTRY.filter((c) => c.name.toLowerCase() === v || c.directoryHost?.toLowerCase() === v);
+    const byUa = ua === undefined ? undefined : BY_FRAGMENT.find((c) => byIdentity.includes(c) && ua.includes(c.fragment));
+    const picked = byUa ?? byIdentity[0];
+    if (picked) return picked;
+  }
+  if (o.agentUa === undefined) return null;
+  const ua = o.agentUa.toLowerCase();
+  return BY_FRAGMENT.find((c) => ua.includes(c.fragment)) ?? null;
+}
+
+/**
+ * The name one caller's traffic is counted under, most trustworthy first: a verified identity, a
+ * known crawler's registry NAME matched on its UA token, else the raw UA.
+ *
+ * Operators do not send one UA string. Production carried nine spellings of GPTBot, and keying on
+ * the raw string split one operator across nine rows whose largest held a fraction of its traffic,
+ * which makes "who is reading me" unanswerable from a table that fragments its own subject. An
+ * unrecognised client keeps its exact string, because that string is the only identity it has.
+ */
+export function agentKey(o: ObservedCaller): string {
+  if (o.verifiedAgent !== undefined) return o.verifiedAgent;
+  return registryCrawler({ agentUa: o.agentUa })?.name ?? o.agentUa ?? "(unknown agent)";
+}

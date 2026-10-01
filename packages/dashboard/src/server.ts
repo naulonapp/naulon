@@ -23,7 +23,7 @@ import { aggregate, type Ledger } from "./aggregate.ts";
 import { watchLedger } from "./watch.ts";
 import { summarizeOps, windowMsFromKey } from "./ops.ts";
 import { watchOps } from "./watch-ops.ts";
-import { buildAgents, buildTraffic, parseVerdict } from "./traffic.ts";
+import { buildAgents, buildTraffic, parseIdentity, parseOutcome, parseVerdict, parseWho } from "./traffic.ts";
 import {
   exportFilename,
   parseFormat,
@@ -356,11 +356,29 @@ if (ACCESS.refuse) {
       const now = Date.now();
       const windowMs = windowMsFromKey(c.req.query("window"));
       const observations = await readObservations();
+      const afterAt = Number(c.req.query("afterAt"));
+      const afterId = c.req.query("afterId");
+      const limit = Number(c.req.query("limit"));
+      const slug = c.req.query("slug");
       return c.json(
         buildTraffic(
           observations,
-          { since: now - windowMs, verdict: parseVerdict(c.req.query("verdict")), q: c.req.query("q") },
+          {
+            since: now - windowMs,
+            verdict: parseVerdict(c.req.query("verdict")),
+            outcome: parseOutcome(c.req.query("outcome")),
+            agent: c.req.query("agent") || undefined,
+            // Present-but-empty is a real path: a gated URL that is not an article.
+            slug: slug === undefined ? undefined : slug,
+            identity: parseIdentity(c.req.query("identity")),
+            q: c.req.query("q"),
+          },
           now,
+          {
+            who: parseWho(c.req.query("who")),
+            after: Number.isFinite(afterAt) && afterId ? { at: afterAt, id: afterId } : null,
+            rowLimit: Number.isInteger(limit) && limit > 0 && limit <= 200 ? limit : undefined,
+          },
         ),
       );
     });

@@ -327,6 +327,9 @@ body {
 .seg-btn:first-child { border-left: 0; }
 .seg-btn:hover { color: var(--fg); }
 .seg-btn.on { color: var(--primary); background: var(--primary-soft); }
+/* On paper the selected window read 4.38:1 (#0a7350 on its own 14% tint), under the 4.5:1 floor for
+   11.5px text. A darker ink of the same green clears it without changing which state it shows. */
+:root[data-theme="light"] .seg-btn.on { color: color-mix(in oklab, var(--primary) 78%, black); }
 
 /* The portal's empty-state shape: a dashed, tinted box with an icon tile. This used to be bare
    centred text on the page background, which read as a gap in the layout rather than a deliberate
@@ -454,7 +457,14 @@ body {
 /* nowrap so a long relative time ('updated 1h 24m ago') can never wrap to a second
    line and change the header row's height. It is the first child of a right-pinned
    flex row (see overview.html) so its width is free to grow leftward. */
-.freshness { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--faint); white-space: nowrap; }
+/* A fixed box, right-aligned: the text ticks every second and resets on every poll ("updated now"
+   ↔ "updated 4s ago"). Sized to the longest form, so the window control and Test toll beside it
+   hold still whether this row is pinned right or has wrapped under the heading (measured: a
+   21 px jump on every poll at 900 px wide, before). */
+.freshness {
+  display: inline-block; min-width: calc(15ch + 1.2em); text-align: right;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--faint); white-space: nowrap;
+}
 .freshness.beat { animation: freshbeat 600ms var(--ease); }
 @keyframes freshbeat {
   0% { color: var(--primary); }
@@ -669,7 +679,7 @@ body {
    line — the same defect the old console's `.tile.wide` had — and, because two of the
    six used to be conditional, the columns did not line up from one row to the next.
    Every row now renders all six; a zero is information here ("0 blocked" is a fact). */
-.agent-nums { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0 10px; }
+.agent-nums { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0 10px; }
 .agent-nums .kv { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; }
 .agent-nums .kv .k { letter-spacing: 0.1em; font-size: 9.5px; white-space: nowrap; }
 .agent-nums .kv .v { font-size: 13px; }
@@ -815,4 +825,99 @@ body {
 .who-role {
   color: var(--faint);
   font-size: 0.86em;
+}
+
+/* ── page: requests (the hosted audit page's twin) ─────────────────────────────
+   Same four outcome colours as the portal's ribbon and chart, so a yellow band means "left at
+   the price" on both. */
+:root { --o-paid: var(--primary); --o-left: var(--warning); --o-free: var(--muted-fg); --o-refused: var(--down); }
+.money-lead { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 40px; margin-bottom: 26px; }
+.money-lead .ml-k { margin: 0; font-size: 13px; color: var(--muted-fg); }
+.money-lead .ml-v { margin: 4px 0 0; font-family: var(--font-serif); font-weight: 500; font-size: 44px; line-height: 1.1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.money-lead .ml-v.pos { color: var(--primary); }
+.money-lead .ml-n { margin: 6px 0 0; font-size: 13px; color: var(--muted-fg); }
+.ribbon { display: flex; gap: 3px; height: 12px; border-radius: 3px; overflow: hidden; }
+.ribbon a { display: block; min-width: 6px; opacity: 0.9; transition: opacity var(--motion) var(--ease); }
+.ribbon a:hover { opacity: 1; }
+.ribbon.has-active a:not(.on) { opacity: 0.3; }
+.legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 24px; margin-top: 16px; }
+.legend a { display: block; padding: 6px; margin: -6px; border-radius: 4px; color: inherit; text-decoration: none; }
+.legend a:hover { background: var(--elev-2); }
+.ribbon.has-active + .legend a:not(.on) { opacity: 0.5; }
+.legend .k { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-fg); }
+.legend .sw { width: 8px; height: 8px; border-radius: 50%; }
+.legend .v { font-family: var(--font-serif); font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.legend .v small { font-family: var(--font-sans); font-size: 11px; color: var(--muted-fg); margin-left: 6px; }
+@media (max-width: 720px) { .legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } .money-lead { grid-template-columns: 1fr; } .money-lead .ml-v { font-size: 34px; } }
+
+.scroll-x { overflow-x: auto; contain: paint; }
+.dtable { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px; }
+.dtable th {
+  text-align: left; font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted-fg); padding: 9px 14px; border-bottom: 1px solid var(--line);
+}
+.dtable td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.dtable tbody tr:last-child td { border-bottom: 0; }
+.dtable tbody tr { cursor: pointer; transition: background var(--motion) var(--ease); }
+.dtable tbody tr:hover { background: var(--elev-2); }
+.dtable .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dtable .sub { display: block; font-size: 11.5px; color: var(--muted-fg); margin-top: 2px; }
+.dtable .path { font-family: var(--font-mono); font-size: 12px; }
+.dot-o { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+.linkish { background: none; border: 0; padding: 0; color: inherit; font-family: inherit; font-size: inherit; font-weight: inherit; cursor: pointer; text-align: left; }
+.linkish:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+.pager {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  border-top: 1px solid var(--line); padding: 10px 14px; font-size: 12px; color: var(--muted-fg);
+}
+.pager .ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pager .pager-nav { display: flex; gap: 6px; }
+.pager select { font-family: inherit; font-size: 12px; color: var(--fg); background: var(--card); border: 1px solid var(--input); border-radius: 5px; padding: 6px 8px; }
+.pager .btn { padding: 6px 12px; font-size: 12px; }
+.pager .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted-fg); }
+.toolbar label { display: inline-flex; align-items: center; gap: 8px; color: var(--fg); cursor: pointer; }
+
+.drawer-back { position: fixed; inset: 0; z-index: 50; background: color-mix(in oklab, var(--bg) 70%, transparent); backdrop-filter: blur(2px); }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 51; width: min(480px, 100vw);
+  display: flex; flex-direction: column; background: var(--card); border-left: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-panel); animation: drawer-in 240ms var(--ease);
+}
+@keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .drawer { animation: none; } }
+.drawer header { display: flex; align-items: flex-start; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.drawer header h2 { font-family: var(--font-serif); font-weight: 500; font-size: 20px; margin: 0; }
+.drawer header p { margin: 4px 0 0; font-size: 13px; color: var(--muted-fg); }
+.drawer .body { flex: 1; overflow-y: auto; padding: 18px 20px; }
+.drawer .amount { font-family: var(--font-serif); font-size: 34px; font-weight: 500; margin: 0 0 16px; }
+.drawer .amount small { font-family: var(--font-sans); font-size: 13px; color: var(--muted-fg); margin-left: 8px; }
+.drawer footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
+.fact { display: grid; grid-template-columns: 9rem 1fr; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.fact:last-child { border-bottom: 0; }
+.fact dt { color: var(--muted-fg); }
+.fact dd { margin: 0; overflow-wrap: anywhere; }
+.fact dd.mono { font-size: 12px; }
+
+.heat { display: grid; grid-template-columns: 2.75rem repeat(24, minmax(0, 1fr)); gap: 3px; min-width: 34rem; font-size: 10px; color: var(--muted-fg); }
+.heat .c { aspect-ratio: 1; border-radius: 2px; background: var(--elev-2); }
+.heat .l { align-self: center; }
+.heat-wrap { padding: 14px; }
+/* A rollup row you can pick to narrow the page: the row's own grid and padding, as a button. */
+.roll-pick {
+  width: 100%; margin: 0; border: 0; border-bottom: 1px solid var(--line); background: transparent;
+  color: inherit; font-family: inherit; text-align: left; cursor: pointer;
+  transition: background var(--motion) var(--ease);
+}
+.roll-pick:hover { background: var(--elev-2); }
+.roll-pick:last-child { border-bottom: 0; }
+.roll-pick:focus-visible { outline: 2px solid color-mix(in oklab, var(--primary) 60%, transparent); outline-offset: -2px; }
+/* An agent row is a way into that agent's requests. */
+.agent-link { color: inherit; text-decoration: none; transition: background var(--motion) var(--ease); }
+.agent-link:hover { background: var(--elev-2); }
+/* Seven counts fit side by side only on a wide screen: measured at 1024 and 390 px, "requests" and
+   "unserved" ran into the next column. Narrower, they wrap to two rows of four. */
+@media (max-width: 1180px) {
+  .agent-nums { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 }
