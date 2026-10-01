@@ -457,7 +457,14 @@ body {
 /* nowrap so a long relative time ('updated 1h 24m ago') can never wrap to a second
    line and change the header row's height. It is the first child of a right-pinned
    flex row (see overview.html) so its width is free to grow leftward. */
-.freshness { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--faint); white-space: nowrap; }
+/* A fixed box, right-aligned: the text ticks every second and resets on every poll ("updated now"
+   ↔ "updated 4s ago"). Sized to the longest form, so the window control and Test toll beside it
+   hold still whether this row is pinned right or has wrapped under the heading (measured: a
+   21 px jump on every poll at 900 px wide, before). */
+.freshness {
+  display: inline-block; min-width: calc(15ch + 1.2em); text-align: right;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--faint); white-space: nowrap;
+}
 .freshness.beat { animation: freshbeat 600ms var(--ease); }
 @keyframes freshbeat {
   0% { color: var(--primary); }

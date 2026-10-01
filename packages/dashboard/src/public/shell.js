@@ -551,6 +551,35 @@ export function debounced(fn, ms = 200) {
 
 // ── data ──────────────────────────────────────────────────────────────────────
 /**
+ * Markup a poll repaints, written as `live(el).html = …`. An unchanged render is skipped outright
+ * (most polls change nothing), and a changed one keeps keyboard focus: the focused descendant is
+ * found again by its `data-key`, `href` or `id` and refocused. A list rebuilt with plain innerHTML
+ * every five seconds threw focus back to <body> mid-Tab (measured on Agents).
+ */
+const written = new WeakMap();
+export function live(el) {
+  return {
+    set html(markup) {
+      // Compared with what was last written, not with innerHTML: a page that sets widths through
+      // the CSSOM after rendering reads back with style attributes and would never look unchanged.
+      if (!el || written.get(el) === markup) return;
+      written.set(el, markup);
+      const active = document.activeElement;
+      const key =
+        active && el.contains(active)
+          ? active.getAttribute("data-key") || active.getAttribute("href") || active.id || null
+          : null;
+      el.innerHTML = markup;
+      if (!key) return;
+      const again = [...el.querySelectorAll("[data-key],[href],[id]")].find(
+        (n) => n.getAttribute("data-key") === key || n.getAttribute("href") === key || n.id === key,
+      );
+      again?.focus({ preventScroll: true });
+    },
+  };
+}
+
+/**
  * Run `fn` now, then every `ms`, and once more whenever the tab becomes visible.
  * Pauses while hidden so a backgrounded console stops hammering the gate.
  */

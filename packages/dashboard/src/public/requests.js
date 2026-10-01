@@ -8,7 +8,7 @@
  * through esc() from shell.js before it touches innerHTML. The CSP forbids inline style
  * attributes, so widths and colours are set through the CSSOM after the markup lands.
  */
-import { $, esc, usd, usdLead, rel, exactTime, emptyState, renderShell, poll, wireSeg, debounced, VERDICT_TITLE } from "./shell.js";
+import { $, esc, usd, usdLead, rel, exactTime, emptyState, renderShell, poll, wireSeg, debounced, VERDICT_TITLE, live } from "./shell.js";
 
 renderShell({ active: "requests" });
 
@@ -85,7 +85,7 @@ function renderRibbon(o) {
   const total = OUTCOMES.reduce((n, k) => n + (o[k] || 0), 0);
   const ribbon = $("#ribbon");
   ribbon.classList.toggle("has-active", Boolean(state.outcome));
-  ribbon.innerHTML = total
+  live(ribbon).html = total
     ? OUTCOMES.filter((k) => o[k] > 0)
         .map((k) => `<a href="#" data-outcome="${k}" class="${state.outcome === k ? "on" : ""}" aria-label="${esc(OUTCOME_LABEL[k])}: ${o[k]}"></a>`)
         .join("")
@@ -94,7 +94,7 @@ function renderRibbon(o) {
     a.style.flexGrow = String(o[a.dataset.outcome]);
     a.style.background = outcomeColor(a.dataset.outcome);
   }
-  $("#legend").innerHTML = OUTCOMES.map(
+  live($("#legend")).html = OUTCOMES.map(
     (k) => `<a href="#" data-outcome="${k}" class="${state.outcome === k ? "on" : ""}">
       <span class="k"><span class="sw" data-sw="${k}"></span>${esc(OUTCOME_LABEL[k])}</span>
       <span class="v">${o[k] || 0}<small>${pct(o[k] || 0, total)}%</small></span>
@@ -116,13 +116,13 @@ function rollRow(name, meta, earned, missed, attrs) {
 }
 
 function renderPaths(rows) {
-  $("#topPaths").innerHTML = rows.length
+  live($("#topPaths")).html = rows.length
     ? rows.map((r) => rollRow(esc(r.slug), `${r.requests} req · ${r.paid} paid · ${r.servedFree} free`, r.earned, r.missed, `data-slug="${esc(r.slug === "(non-article)" ? "" : r.slug)}"`)).join("")
     : `<div class="panel-empty">No paths in this window.</div>`;
 }
 
 function renderAgents(rows) {
-  $("#topAgents").innerHTML = rows.length
+  live($("#topAgents")).html = rows.length
     ? rows
         .map((r) =>
           rollRow(
@@ -139,13 +139,13 @@ function renderAgents(rows) {
 
 function renderMissed(m) {
   if (m.denied.requests === 0 && m.paymentFailed.requests === 0) {
-    $("#missed").innerHTML = `<div class="panel-empty">Nothing was left on the table in this window.</div>`;
+    live($("#missed")).html = `<div class="panel-empty">Nothing was left on the table in this window.</div>`;
     return;
   }
   // The two causes are different problems. `denied` is the toll working as designed; a failed
   // payment is money that was OFFERED and did not land, a fault worth chasing. One combined figure
   // hides the second inside the first, so they never share a row.
-  $("#missed").innerHTML = `
+  live($("#missed")).html = `
     <div class="cause-row">
       <div class="cause">
         <div class="stat-k">left at the price</div>
@@ -184,7 +184,7 @@ function renderRows(rows, matched) {
   $("#newest").disabled = trail.length === 1;
   $("#older").disabled = !next;
   if (!rows.length) {
-    $("#rows").innerHTML = `<tbody><tr><td>${emptyState({
+    live($("#rows")).html = `<tbody><tr><td>${emptyState({
       icon: "requests",
       lead: "Nothing matches.",
       body: state.q || state.outcome || state.agent || state.slug !== undefined || state.identity ? "Widen the filter, or try a longer window." : "No gated request has been recorded in this window yet.",
@@ -192,7 +192,7 @@ function renderRows(rows, matched) {
     })}</td></tr></tbody>`;
     return;
   }
-  $("#rows").innerHTML = `
+  live($("#rows")).html = `
     <thead><tr><th>When</th><th>Outcome</th><th>Agent</th><th>Path</th><th class="num">Amount</th></tr></thead>
     <tbody>${rows
       .map((o) => {
@@ -215,7 +215,7 @@ function renderChips() {
   if (state.agent) chips.push(["agent", `agent: ${state.agent}`]);
   if (state.slug !== undefined) chips.push(["slug", `path: ${state.slug || "(non-article)"}`]);
   if (state.outcome) chips.push(["outcome", `outcome: ${OUTCOME_LABEL[state.outcome]}`]);
-  $("#chips").innerHTML = chips.map(([k, label]) => `<button type="button" class="badge linkish" data-clear="${k}" aria-label="Clear ${esc(label)}">${esc(label)} ×</button>`).join(" ");
+  live($("#chips")).html = chips.map(([k, label]) => `<button type="button" class="badge linkish" data-clear="${k}" aria-label="Clear ${esc(label)}">${esc(label)} ×</button>`).join(" ");
 }
 
 function openDrawer(o) {
