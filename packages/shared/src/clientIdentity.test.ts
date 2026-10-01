@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { forwardedFor, resolveClientIdentity } from "./clientIdentity.ts";
+import { callerIp, forwardedFor, resolveClientIdentity } from "./clientIdentity.ts";
 
 test("peer address is the identity when there is no trusted proxy", () => {
   const r = resolveClientIdentity({ xff: undefined, peer: "203.0.113.9", trustProxy: false });
@@ -110,4 +110,22 @@ test("an empty or comma-only XFF is not an identity", () => {
 
 test("forwardedFor trims whitespace around entries", () => {
   assert.equal(forwardedFor("  a  ,  b  ", 1), "b");
+});
+
+test("callerIp: a configured header wins and never falls back to the socket", () => {
+  const h = new Headers({ "cf-connecting-ip": "66.249.64.9" });
+  assert.equal(callerIp({ headers: h, header: "cf-connecting-ip", peer: "127.0.0.1", trustProxy: false, hops: 1 }), "66.249.64.9");
+  assert.equal(callerIp({ headers: new Headers(), header: "cf-connecting-ip", peer: "127.0.0.1", trustProxy: false, hops: 1 }), null);
+});
+
+test("callerIp: Cloudflare's IPv6 header beats pseudo-IPv4", () => {
+  const h = new Headers({ "cf-connecting-ip": "240.16.0.1", "cf-connecting-ipv6": "2001:4860:4801:10::9" });
+  assert.equal(callerIp({ headers: h, header: "cf-connecting-ip", peer: undefined, trustProxy: false, hops: 1 }), "2001:4860:4801:10::9");
+});
+
+test("callerIp: without a header, the existing trust rules apply", () => {
+  const h = new Headers({ "x-forwarded-for": "9.9.9.9, 10.0.0.1" });
+  assert.equal(callerIp({ headers: h, header: undefined, peer: "10.0.0.1", trustProxy: false, hops: 1 }), "10.0.0.1");
+  assert.equal(callerIp({ headers: h, header: undefined, peer: "10.0.0.1", trustProxy: true, hops: 1 }), "10.0.0.1");
+  assert.equal(callerIp({ headers: h, header: undefined, peer: "10.0.0.1", trustProxy: true, hops: 2 }), "9.9.9.9");
 });

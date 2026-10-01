@@ -60,6 +60,12 @@ export interface CrawlerPolicy {
    * Absent → recognition is the classifier's default set, unchanged.
    */
   charge?: string[];
+  /**
+   * What a caller gets when it names a crawler from an address outside that operator's published
+   * ranges, on an install armed for that operator. `charge` (default): the ordinary 402. `block`:
+   * the 403 a blocked crawler gets.
+   */
+  forged?: "charge" | "block";
 }
 
 /**
@@ -179,6 +185,11 @@ export interface PublisherConfig {
    * effect, byte-identical to before this field existed.
    */
   crawlerPolicy?: CrawlerPolicy;
+  /**
+   * Crawler identity checks. `auto` (default): every crawler claim is checked and recorded, and a
+   * forged claim loses its free read once this install is armed for that operator. `off`: no check.
+   */
+  identityMode?: "off" | "auto";
   /**
    * The usage terms the publisher DECLARED, carried into the RSL document.
    *

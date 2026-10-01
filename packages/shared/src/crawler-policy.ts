@@ -84,8 +84,14 @@ function normalizeList(list: string[], label: string, opts?: { guardHumans?: boo
   return out;
 }
 
-export function normalizeCrawlerPolicy(input: { allow: string[]; block: string[]; charge?: string[] }): CrawlerPolicy {
+export function normalizeCrawlerPolicy(input: {
+  allow: string[];
+  block: string[];
+  charge?: string[];
+  forged?: "charge" | "block";
+}): CrawlerPolicy {
   const allow = normalizeList(input.allow, "allow");
+  const forged = input.forged ? { forged: input.forged } : {};
   const block = normalizeList(input.block, "block", { guardHumans: true });
   const charge =
     input.charge && input.charge.length > 0
@@ -102,8 +108,8 @@ export function normalizeCrawlerPolicy(input: { allow: string[]; block: string[]
     const allowCharge = allow.find((f) => charge.includes(f));
     if (allowCharge) throw new Error(`"${allowCharge}" appears in both allow and charge. Pick one state per crawler`);
 
-    return { allow, block, charge };
+    return { allow, block, charge, ...forged };
   }
 
-  return { allow, block };
+  return { allow, block, ...forged };
 }

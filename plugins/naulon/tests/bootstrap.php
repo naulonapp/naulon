@@ -57,7 +57,10 @@ if ( ! function_exists( 'sanitize_text_field' ) ) {
 require_once __DIR__ . '/../includes/class-naulon-slug.php';
 require_once __DIR__ . '/../includes/class-naulon-wallet.php';
 require_once __DIR__ . '/../includes/class-naulon-key.php';
+require_once __DIR__ . '/../includes/class-naulon-ip.php';
+require_once __DIR__ . '/../includes/class-naulon-ranges.php';
 require_once __DIR__ . '/../includes/class-naulon-agent.php';
+require_once __DIR__ . '/../includes/class-naulon-identity.php';
 require_once __DIR__ . '/../includes/class-naulon-rules.php';
 // The pure verifier — parsing and the sodium crypto check take an already-resolved directory and
 // a clock, so verify_with_directory() needs no WordPress function at all. Only verify() itself

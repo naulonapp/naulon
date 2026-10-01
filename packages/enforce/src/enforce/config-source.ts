@@ -46,6 +46,7 @@ export type PublisherEnforcementConfig = Partial<
     | "licenseIdentity"
     | "seoAllowlist"
     | "crawlerPolicy"
+    | "identityMode"
     | "termsPolicy"
     | "licenceServer"
     | "fleetAgent"
@@ -65,6 +66,12 @@ export interface PublisherConfigDocument {
    * agent the toll is misconfigured at the exact moment it was trying to pay.
    */
   manifest?: X402Manifest;
+  /**
+   * Crawler operators this site is armed for: its control plane has seen enough of each one's
+   * real crawler at verified addresses to trust the site's client-IP setup. Absent or empty: every
+   * claim is checked and reported, and none changes a verdict.
+   */
+  identity?: { armed: string[] };
   /**
    * The publisher's RSL licence document (`/license.xml`), built by the control plane from the same
    * tenant record.
@@ -164,6 +171,9 @@ interface CacheEntry {
 export const CAPABILITIES_HEADER = "x-naulon-capabilities";
 export const RUNTIME_CAPABILITIES = "fleet-pull";
 
+/** A crawler operator id as CRAWLER_PROOF spells one. */
+const OPERATOR_ID = /^[a-z0-9-]{1,64}$/;
+
 /** A fleet tenant id: a slug or a uuid. */
 const FLEET_PUBLISHER_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
@@ -189,6 +199,8 @@ function narrow(body: unknown): PublisherConfigDocument | null {
   const e = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   const manifest = (body as { manifest?: unknown }).manifest;
   const license = (body as { license?: unknown }).license;
+  const identity = (body as { identity?: unknown }).identity;
+  const armedRaw = typeof identity === "object" && identity !== null ? (identity as { armed?: unknown }).armed : undefined;
   return {
     enforcement: defined({
       articlePrefixes: Array.isArray(e["articlePrefixes"]) ? (e["articlePrefixes"] as string[]) : undefined,
@@ -214,7 +226,14 @@ function narrow(body: unknown): PublisherConfigDocument | null {
       fleetAgent: typeof e["fleetAgent"] === "string" && FLEET_AGENT_HOST.test(e["fleetAgent"]) ? e["fleetAgent"] : undefined,
       fleetPublisher:
         typeof e["fleetPublisher"] === "string" && FLEET_PUBLISHER_ID.test(e["fleetPublisher"]) ? e["fleetPublisher"] : undefined,
+      // `off` is the publisher opting out of the crawler identity check; anything else unknown is dropped.
+      identityMode: e["identityMode"] === "off" || e["identityMode"] === "auto" ? e["identityMode"] : undefined,
     }),
+    // The operators this site is armed for. Named here or a real SDK site never arms: a field this
+    // function does not list is dropped, and the static source used in tests skips this function.
+    ...(Array.isArray(armedRaw)
+      ? { identity: { armed: armedRaw.filter((a): a is string => typeof a === "string" && OPERATOR_ID.test(a)) } }
+      : {}),
     ...(typeof manifest === "object" && manifest !== null ? { manifest: manifest as X402Manifest } : {}),
     // The licence is listed here or it does not exist for anything downstream: both the
     // middleware's `/license.xml` answer and `serveRslDocument` read `doc.license`, and a field

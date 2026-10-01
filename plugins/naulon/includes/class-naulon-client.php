@@ -225,6 +225,54 @@ class Naulon_Client {
 	}
 
 	/**
+	 * The gate's merged crawler-ranges document. Public, so it carries no credential.
+	 *
+	 * Refused over plain http: these ranges decide which requests may be charged as impostors,
+	 * so a document an on-path attacker could rewrite must never be applied. A local test gate
+	 * opts in through the `naulon_crawler_ranges_allow_http` filter, which no real install sets.
+	 *
+	 * @return array {ok:bool, status:int, body:array|null, error:string}
+	 */
+	public function crawler_ranges() {
+		$base = Naulon_Settings::api_base();
+		if ( 0 !== strpos( $base, 'https://' ) && ! apply_filters( 'naulon_crawler_ranges_allow_http', false ) ) {
+			return array(
+				'ok'     => false,
+				'status' => 0,
+				'body'   => null,
+				'error'  => 'non-https base',
+			);
+		}
+		$response = wp_remote_get(
+			$base . '/.well-known/naulon/crawler-ranges.json',
+			array(
+				'timeout'             => self::TIMEOUT_ADMIN,
+				'redirection'         => 0,
+				// Stop reading past the size a real document could have. A cut-off body does not
+				// decode, so an oversized one is refused without ever being held whole.
+				'limit_response_size' => Naulon_Ranges::MAX_BYTES + 1,
+				'headers'             => array( 'Accept' => 'application/json' ),
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			return array(
+				'ok'     => false,
+				'status' => 0,
+				'body'   => null,
+				'error'  => $response->get_error_message(),
+			);
+		}
+		$status = (int) wp_remote_retrieve_response_code( $response );
+		$body   = json_decode( (string) wp_remote_retrieve_body( $response ), true );
+		return array(
+			'ok'     => 200 === $status && is_array( $body ),
+			'status' => $status,
+			'body'   => is_array( $body ) ? $body : null,
+			'error'  => '',
+		);
+	}
+
+	/**
 	 * This tenant's RSL licence, as the control plane generates it.
 	 *
 	 * Its own method rather than `request()` because the body is XML, not JSON — decoding it

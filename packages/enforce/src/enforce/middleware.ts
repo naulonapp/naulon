@@ -37,7 +37,10 @@ import {
 import { PAYMENT_BODY_CONTENT_TYPE, paymentRequiredBodyText } from "../paymentBody.ts";
 import { X402_MANIFEST_PATH } from "../discoverability.ts";
 import { headerSafe } from "../headerSafe.ts";
-import { externalUrl, getConfig, referrerHost, rslResponseHeaders, type JwkSet } from "@naulon/shared";
+import { claimsIn, externalUrl, getConfig, referrerHost, rslResponseHeaders, type JwkSet } from "@naulon/shared";
+import { sdkClientIp, type ClientIpOption } from "./clientIp.ts";
+import { decidingClaim } from "../identity.ts";
+import { httpCrawlerRangesSource } from "./rangesSource.ts";
 import type { QuoteSource } from "./quote-source.ts";
 import { introspectLicence } from "@naulon/sdk/rsl";
 import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
@@ -128,6 +131,17 @@ export interface NaulonMiddlewareOptionsBase {
    * Fire-and-forget: never awaited, so it cannot delay or fail a reader's response.
    */
   observe?: ObservationReporter;
+  /**
+   * Where the caller's address comes from, for the crawler identity check. Default: detected from
+   * the platform (Vercel, Netlify, Cloudflare Workers). Use `"cloudflare"` when Cloudflare sits in
+   * front of another platform. `"none"` turns the check's address input off.
+   */
+  clientIp?: ClientIpOption;
+  /**
+   * The gate's crawler-ranges document. Default: `${new URL(verifyUrl).origin}/.well-known/naulon/crawler-ranges.json`,
+   * cached for an hour. `false`: no ranges, so every claim reads `unverified`.
+   */
+  crawlerRanges?: false | { url?: string; ttlMs?: number };
 }
 
 /**
@@ -257,6 +271,14 @@ export function naulonMiddleware(
   const doFetch = opts.fetchImpl ?? fetch;
   const clock = opts.now ?? Date.now;
   const cfg = getConfig();
+  const rangesSource =
+    opts.crawlerRanges === false
+      ? null
+      : httpCrawlerRangesSource(opts.crawlerRanges?.url ?? `${new URL(opts.verifyUrl).origin}/.well-known/naulon/crawler-ranges.json`, {
+          fetchImpl: doFetch,
+          now: clock,
+          ...(opts.crawlerRanges?.ttlMs ? { ttlMs: opts.crawlerRanges.ttlMs } : {}),
+        });
 
   // API-mode license verification: a cached fetcher for the minting gate's JWKS. Built
   // once; each request reuses the cached keys until the TTL lapses, then refetches. On a
@@ -354,6 +376,12 @@ export function naulonMiddleware(
     // A licence was presented and refused. Carried so a double-charged reader is visible as
     // itself rather than as an ordinary unpaid agent.
     if (obs.licenceRefusal !== undefined) r.licenceRefusal = obs.licenceRefusal;
+    if (obs.identity) {
+      r.identityCheck = obs.identity.check;
+      const decided = decidingClaim(obs.identity)?.operatorId;
+      if (decided) r.claimedOperator = decided;
+    }
+    if (obs.forgedFrom) r.forgedFrom = obs.forgedFrom;
     opts.observe(r);
   };
 
@@ -422,7 +450,11 @@ export function naulonMiddleware(
     // human read or a first-time agent 402 carries none, so the hot path never fetches.
     // The enforcement config in force for THIS request. Cached per host with
     // stale-if-error inside the source, so a warm hit costs a map lookup.
-    const remote = opts.config ? (await opts.config.load({ resource }))?.enforcement : undefined;
+    const remoteDoc = opts.config ? await opts.config.load({ resource }) : null;
+    const remote = remoteDoc?.enforcement;
+    const armed = new Set(remoteDoc?.identity?.armed ?? []);
+    // Only a UA that names a crawler reaches the ranges or the address, so a person costs nothing.
+    const claimsCrawler = claimsIn(req.headers.get("user-agent") ?? "").length > 0;
     const publisher = resolvePublisher(opts.publisher, remote);
     if (!publisher) {
       // Neither a control-plane document nor a local floor: nothing is in scope, so there
@@ -443,6 +475,16 @@ export function naulonMiddleware(
       quote: (publisher, slug, kind, path, verifiedAgent) =>
         opts.quote.quote(publisher, slug, kind, { resource, path, ...(verifiedAgent ? { verifiedAgent } : {}) }),
       ...(licenseVerification ? { licenseVerification } : {}),
+      ...(claimsCrawler
+        ? {
+            identity: {
+              ranges: rangesSource?.current() ?? null,
+              clientIp: sdkClientIp(req, opts.clientIp),
+              now: clock(),
+              isArmed: (op: string) => armed.has(op),
+            },
+          }
+        : {}),
     });
 
     // The 402 advertisement, shared by a read with no payment and a licence that did not permit it.
@@ -485,8 +527,10 @@ export function naulonMiddleware(
     switch (d.kind) {
       // Not a gated route at all (non-article / unknown article) — the gate emits no
       // observation here either, and inventing one would put every asset request into
-      // the publisher's traffic figures.
+      // the publisher's traffic figures. The one exception is an untolled article read by a
+      // request naming a crawler: decide() carries its obs so a forged claim stays visible.
       case "passthrough":
+        if (d.verdict === "unknown-article" && d.obs) report(d.obs, "served-free", resource);
         return { response: null };
 
       // Human, or a free re-read on a license already paid for: the app renders locally.

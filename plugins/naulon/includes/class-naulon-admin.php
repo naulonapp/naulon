@@ -152,6 +152,7 @@ class Naulon_Admin {
 
 	public function render_setup() {
 		$this->guard( Naulon_Roles::MANAGE_SETTINGS );
+		Naulon_Ranges::instance()->refresh_if_stale();
 		Naulon_Admin_Setup::render();
 	}
 

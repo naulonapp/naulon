@@ -51,12 +51,17 @@ export async function readCrawlerPolicyFile(path: string): Promise<CrawlerPolicy
 
   const o = parsed as Record<string, unknown>;
   const charge = asList(o["charge"]);
+  const forgedRaw = o["forged"];
+  if (forgedRaw !== undefined && forgedRaw !== "charge" && forgedRaw !== "block") {
+    return { policy: undefined, problem: `${path}: forged must be "charge" or "block"`, absent: false };
+  }
   try {
     return {
       policy: normalizeCrawlerPolicy({
         allow: asList(o["allow"]),
         block: asList(o["block"]),
         ...(charge.length > 0 ? { charge } : {}),
+        ...(forgedRaw ? { forged: forgedRaw } : {}),
       }),
       problem: null,
       absent: false,

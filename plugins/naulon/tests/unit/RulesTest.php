@@ -105,4 +105,100 @@ class RulesTest extends TestCase {
 		$this->assertSame( array(), $r['refuse']['crawlers'] );
 		$this->assertFalse( $r['agentReadsFree'] );
 	}
+
+	/* Identity: a forged crawler claim, decided in the gate's order. */
+
+	const T0 = 1790812800;
+
+	private function identity_ctx( $ip, array $armed = array( 'google' ) ) {
+		$doc = Naulon_Ranges::validate(
+			array(
+				'version'     => 1,
+				'generatedAt' => gmdate( 'c', self::T0 ),
+				'proxies'     => array(),
+				'operators'   => array(
+					array(
+						'id'             => 'google',
+						'operator'       => 'Google',
+						'fragments'      => array( 'googlebot' ),
+						'kind'           => 'ranges',
+						'forgedEligible' => true,
+						'fetchedAt'      => gmdate( 'c', self::T0 - 3600 ),
+						'prefixes'       => array( '66.249.64.0/27' ),
+					),
+				),
+			)
+		);
+		return array(
+			'compiled'  => Naulon_Ranges::compile( $doc ),
+			'client_ip' => $ip,
+			'now'       => self::T0,
+			'armed'     => $armed,
+		);
+	}
+
+	private function googlebot() {
+		return $this->signals( 'Mozilla/5.0 (compatible; Googlebot/2.1)', array( 'accept' => 'text/html' ) );
+	}
+
+	public function test_normalize_keeps_known_forged_and_identity_mode_values_only() {
+		$r = $this->rules( array( 'forged' => 'block', 'identityMode' => 'off' ) );
+		$this->assertSame( 'block', $r['forged'] );
+		$this->assertSame( 'off', $r['identityMode'] );
+		$r = $this->rules( array( 'forged' => 'maybe', 'identityMode' => 'sometimes' ) );
+		$this->assertSame( 'charge', $r['forged'] );
+		$this->assertSame( 'auto', $r['identityMode'] );
+	}
+
+	public function test_an_armed_forged_googlebot_loses_its_free_read() {
+		$out = Naulon_Rules::access( $this->googlebot(), $this->rules(), array( 'seo_allowlist' => array( 'googlebot' ) ), $this->identity_ctx( '9.9.9.9' ) );
+		$this->assertSame( 'continue', $out['action'] );
+		$this->assertSame( 'forged', $out['identity']['check'] );
+		$this->assertSame( 'google', $out['forged_claim']['operator_id'] );
+	}
+
+	public function test_forged_block_refuses_it() {
+		$out = Naulon_Rules::access( $this->googlebot(), $this->rules( array( 'forged' => 'block' ) ), array( 'seo_allowlist' => array( 'googlebot' ) ), $this->identity_ctx( '9.9.9.9' ) );
+		$this->assertSame( 'blocked', $out['action'] );
+		// The audit row and the 403 name the forgery, as the gate's classifyReason does. "Blocked
+		// by publisher" would be false: this publisher allowlisted Googlebot.
+		$this->assertSame( 'claimed "googlebot" from an address outside Google\'s published ranges', $out['reason'] );
+	}
+
+	public function test_identity_mode_off_reads_free_and_checks_nothing() {
+		$out = Naulon_Rules::access( $this->googlebot(), $this->rules( array( 'identityMode' => 'off' ) ), array( 'seo_allowlist' => array( 'googlebot' ) ), $this->identity_ctx( '9.9.9.9' ) );
+		$this->assertSame( 'free', $out['action'] );
+		$this->assertNull( $out['identity'] );
+	}
+
+	public function test_unarmed_forged_claim_reads_free_and_is_still_reported() {
+		$out = Naulon_Rules::access( $this->googlebot(), $this->rules(), array( 'seo_allowlist' => array( 'googlebot' ) ), $this->identity_ctx( '9.9.9.9', array() ) );
+		$this->assertSame( 'free', $out['action'] );
+		$this->assertSame( 'forged', $out['identity']['check'] );
+	}
+
+	public function test_real_googlebot_reads_free() {
+		$out = Naulon_Rules::access( $this->googlebot(), $this->rules(), array( 'seo_allowlist' => array( 'googlebot' ) ), $this->identity_ctx( '66.249.64.9' ) );
+		$this->assertSame( 'free', $out['action'] );
+		$this->assertSame( 'ip-verified', $out['identity']['check'] );
+	}
+
+	/** Null rules (control plane unreachable) still check, still report, and arm from the last list. */
+	public function test_no_rules_still_checks_the_claim() {
+		$out = Naulon_Rules::access( $this->googlebot(), null, array( 'seo_allowlist' => array( 'googlebot' ) ), $this->identity_ctx( '9.9.9.9' ) );
+		$this->assertSame( 'continue', $out['action'] );
+	}
+
+	/**
+	 * An armed set nobody has refreshed is missing evidence, and missing evidence never charges.
+	 * After ARMED_MAX_AGE it reads as empty, so a disarm the site never heard about still lands.
+	 */
+	public function test_an_aged_armed_set_reads_empty() {
+		$stored = array( 'ids' => array( 'google' ), 'stored_at' => self::T0 );
+		$this->assertSame( array( 'google' ), Naulon_Rules::armed_from( $stored, self::T0 + Naulon_Rules::ARMED_MAX_AGE ) );
+		$this->assertSame( array(), Naulon_Rules::armed_from( $stored, self::T0 + Naulon_Rules::ARMED_MAX_AGE + 1 ) );
+		$this->assertSame( array(), Naulon_Rules::armed_from( array( 'google' ), self::T0 ) );
+		$this->assertSame( array(), Naulon_Rules::armed_from( null, self::T0 ) );
+		$this->assertLessThan( 72 * 3600, Naulon_Rules::ARMED_MAX_AGE );
+	}
 }

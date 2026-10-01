@@ -136,39 +136,57 @@ class Naulon_Observer {
 	}
 
 	/**
-	 * Record one decision for reporting, and make sure it gets sent before the request ends.
+	 * One decision as the control plane's observe route reads it, or null when it is not
+	 * reported. Pure, so the wire shape is unit-tested.
 	 *
-	 * @param array  $report {
-	 *     @type string $resource     Absolute URL the decision was made for.
-	 *     @type string $slug         Canonical slug ('' for a gated non-article path).
-	 *     @type string $action       The enforcer's action.
-	 *     @type string $kind         read|citation.
-	 *     @type string $ua           User agent of the machine that asked.
-	 *     @type string $reason       Why, as the classifier put it.
-	 *     @type int    $price_micro  What it would have paid, integer micro-USDC.
+	 * @param array $report {
+	 *     @type string     $resource      Absolute URL the decision was made for.
+	 *     @type string     $slug          Canonical slug ('' for a gated non-article path).
+	 *     @type string     $action        The enforcer's action.
+	 *     @type string     $kind          read|citation.
+	 *     @type string     $ua            User agent of the machine that asked.
+	 *     @type string     $reason        Why, as the classifier put it.
+	 *     @type int        $price_micro   What it would have paid, integer micro-USDC.
+	 *     @type string     $classified_as Optional. 'human' is honoured only with an identity check.
+	 *     @type array|null $identity      Optional. Naulon_Identity::check() result.
+	 *     @type string     $forged_from   Optional. The /24 or /48 a forged claim came from.
 	 * }
-	 * @return void
+	 * @return array|null
 	 */
-	public function record( array $report ) {
+	public static function shape( array $report ) {
 		$verdict = self::verdict_for( isset( $report['action'] ) ? $report['action'] : '' );
 		if ( null === $verdict ) {
-			return;
+			return null;
 		}
 		$resource = isset( $report['resource'] ) ? (string) $report['resource'] : '';
 		if ( '' === $resource ) {
-			return;
+			return null;
 		}
+		$identity = isset( $report['identity'] ) && is_array( $report['identity'] ) && isset( $report['identity']['check'] ) ? $report['identity'] : null;
 
 		$shaped = array(
-			'resource' => $resource,
-			'slug'     => isset( $report['slug'] ) ? (string) $report['slug'] : '',
-			'verdict'  => $verdict,
-			// Every path that reaches here is past the human check in compute_decision. There
-			// is no branch on which this is 'human', and hard-coding it says so.
-			'classifiedAs' => 'agent',
-			'kind'     => isset( $report['kind'] ) && 'citation' === $report['kind'] ? 'citation' : 'read',
-			'at'       => (int) round( microtime( true ) * 1000 ),
+			'resource'     => $resource,
+			'slug'         => isset( $report['slug'] ) ? (string) $report['slug'] : '',
+			'verdict'      => $verdict,
+			// Every path that reaches here is past the human check in compute_decision, with one
+			// exception: a request whose user-agent names a crawler is reported even when the
+			// classifier freed it, because the control plane arms a site from those rows. Only
+			// such a report, carrying its identity check, may say `human`.
+			'classifiedAs' => ( null !== $identity && isset( $report['classified_as'] ) && 'human' === $report['classified_as'] ) ? 'human' : 'agent',
+			'kind'         => isset( $report['kind'] ) && 'citation' === $report['kind'] ? 'citation' : 'read',
+			'at'           => (int) round( microtime( true ) * 1000 ),
 		);
+
+		if ( null !== $identity ) {
+			$shaped['identityCheck'] = $identity['check'];
+			$decided                 = Naulon_Identity::deciding_claim( $identity );
+			if ( null !== $decided ) {
+				$shaped['claimedOperator'] = $decided['operator_id'];
+			}
+			if ( 'forged' === $identity['check'] && ! empty( $report['forged_from'] ) ) {
+				$shaped['forgedFrom'] = (string) $report['forged_from'];
+			}
+		}
 
 		$price = isset( $report['price_micro'] ) ? (int) $report['price_micro'] : 0;
 		if ( $price > 0 ) {
@@ -189,6 +207,28 @@ class Naulon_Observer {
 			// does not verify Web Bot Auth signatures (see Naulon_Agent), so it has no verdict
 			// on them and must not send one. An omitted field is unknown; `false` is a claim.
 			$shaped['agent'] = $agent;
+		}
+
+		return $shaped;
+	}
+
+	/**
+	 * Record one decision for reporting, and make sure it gets sent before the request ends.
+	 *
+	 * @param array $report See shape().
+	 * @return void
+	 */
+	public function record( array $report ) {
+		$shaped = self::shape( $report );
+		if ( null === $shaped ) {
+			return;
+		}
+
+		if ( self::defers( $shaped ) ) {
+			// A crawler that read free never waits on the control plane. Its row joins the
+			// buffer the next agent request or the hourly cron drains.
+			self::store_pending( self::with_deferred( self::pending(), $shaped ) );
+			return;
 		}
 
 		$this->queue[] = $shaped;
@@ -216,10 +256,9 @@ class Naulon_Observer {
 			return;
 		}
 
-		// Oldest first out of the buffer, newest kept: a publisher reads the recent end.
-		if ( count( $batch ) > self::MAX_BATCH ) {
-			$batch = array_slice( $batch, -self::MAX_BATCH );
-		}
+		// Oldest first out of the buffer, newest kept: a publisher reads the recent end. Verified
+		// crawler rows are kept ahead of the rest, see trim().
+		$batch = self::trim( $batch );
 
 		if ( ! self::can_report() ) {
 			// Not connected yet. Hold what we have rather than dropping it — a site that
@@ -271,6 +310,57 @@ class Naulon_Observer {
 	 */
 	public static function can_report() {
 		return Naulon_Settings::is_connected() && '' !== Naulon_Settings::api_key();
+	}
+
+	/**
+	 * Whether a report waits for a later send instead of this request's shutdown. Only a crawler
+	 * the classifier freed reports `human`, and an allowlisted search crawler must not pay a
+	 * blocking round trip on every fetch.
+	 *
+	 * @param array $shaped From shape().
+	 * @return bool
+	 */
+	public static function defers( array $shaped ) {
+		return isset( $shaped['classifiedAs'] ) && 'human' === $shaped['classifiedAs'];
+	}
+
+	/**
+	 * The buffer with one more report, capped at MAX_BATCH.
+	 *
+	 * @param array $buffer Pending reports.
+	 * @param array $shaped The new report.
+	 * @return array
+	 */
+	public static function with_deferred( array $buffer, array $shaped ) {
+		$buffer[] = $shaped;
+		return self::trim( $buffer );
+	}
+
+	/**
+	 * Cap a batch at MAX_BATCH, evicting the oldest rows that are not `ip-verified` first. The
+	 * control plane arms a site from its verified rows, so a forger flooding the buffer with forged
+	 * claims must never be able to push those out.
+	 *
+	 * @param array $rows Reports, oldest first.
+	 * @return array
+	 */
+	public static function trim( array $rows ) {
+		$rows  = array_values( $rows );
+		$extra = count( $rows ) - self::MAX_BATCH;
+		if ( $extra <= 0 ) {
+			return $rows;
+		}
+		foreach ( $rows as $i => $row ) {
+			if ( $extra <= 0 ) {
+				break;
+			}
+			if ( ! isset( $row['identityCheck'] ) || 'ip-verified' !== $row['identityCheck'] ) {
+				unset( $rows[ $i ] );
+				--$extra;
+			}
+		}
+		$rows = array_values( $rows );
+		return $extra > 0 ? array_slice( $rows, $extra ) : $rows;
 	}
 
 	/**
