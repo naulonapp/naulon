@@ -16,9 +16,10 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## v0.12.0
 
-`@naulon/shared` 0.6.5 → **0.6.6** and `@naulon/enforce` 0.7.1 → **0.8.0**. `@naulon/sdk`,
-`@naulon/extract`, `@naulon/wayfarer` and `@naulon/wayfarer-mcp` are unchanged. The WordPress
-plugin moves to 0.6.0; its own changelog says so.
+`@naulon/shared` 0.6.5 → **0.6.6** and `@naulon/enforce` 0.7.1 → **0.8.0**. `@naulon/wayfarer`
+and `@naulon/wayfarer-mcp` move to **0.7.1** only to require `@naulon/shared` 0.6.6; their code is
+unchanged. `@naulon/sdk` and `@naulon/extract` are unchanged. The WordPress plugin moves to 0.6.0;
+its own changelog says so.
 
 ### Added
 - Crawler identity check. A request whose user-agent names a known crawler is checked against
