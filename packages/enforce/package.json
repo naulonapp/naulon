@@ -1,6 +1,6 @@
 {
   "name": "@naulon/enforce",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/naulonapp/naulon.git",
@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@naulon/sdk": "^0.6.2",
-    "@naulon/shared": "^0.6.5",
+    "@naulon/shared": "^0.6.6",
     "viem": "^2.56.0"
   },
   "peerDependencies": {

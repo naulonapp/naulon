@@ -14,7 +14,12 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
-## Unreleased
+## v0.12.0
+
+`@naulon/shared` 0.6.5 → **0.6.6** and `@naulon/enforce` 0.7.1 → **0.8.0**. `@naulon/wayfarer`
+and `@naulon/wayfarer-mcp` move to **0.7.1** only to require `@naulon/shared` 0.6.6; their code is
+unchanged. `@naulon/sdk` and `@naulon/extract` are unchanged. The WordPress plugin moves to 0.6.0;
+its own changelog says so.
 
 ### Added
 - Crawler identity check. A request whose user-agent names a known crawler is checked against
@@ -26,6 +31,8 @@ tags and the auto-generated notes on each GitHub Release.
 - Observations carry `identityCheck`, `claimedOperator` and, on forged rows, `forgedFrom`. A
   crawler claim on an article nobody is credited for is now observed too.
 - The WordPress plugin (0.6.0) runs the same check, decided by the same shared test cases.
+- `MemoryArmingStore` takes an `onChange` callback and gains `exportPair` and `importPairs`, so a
+  host can keep arming state across restarts. `importPairs` merges into pairs already recorded.
 
 ### Fixed
 - The HTTP config source now carries `identity.armed` and `identityMode`, so an SDK site can arm.
