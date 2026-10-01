@@ -183,6 +183,22 @@ export const configSchema = z.object({
   // of that proxy. Only read when TRUST_PROXY=true; adding a hop is an env change,
   // never a code change.
   TRUST_PROXY_HOPS: z.coerce.number().int().positive().default(1),
+  // A header a trusted edge sets to the caller's own address (e.g. `cf-connecting-ip` when only
+  // Cloudflare can reach the origin). Unset: the socket address, or X-Forwarded-For under
+  // TRUST_PROXY. Read only by the crawler identity check. Set it only when nothing but that edge
+  // can reach this gate, or any caller can name its own address.
+  CLIENT_IP_HEADER: z
+    .string()
+    .regex(/^[A-Za-z0-9-]+$/)
+    .transform((v) => v.toLowerCase())
+    .optional(),
+  // Fetch crawler operators' published IP ranges for the identity check. Off under a test run
+  // (NODE_ENV=test, or any process `node --test` started) so no test reaches the network or a
+  // stubbed fetch; a deploy that must make no outbound calls can turn it off too, which leaves
+  // every crawler claim `unverified` (free reads unchanged).
+  CRAWLER_RANGES: z
+    .enum(["on", "off"])
+    .default(process.env.NODE_ENV === "test" || process.env.NODE_TEST_CONTEXT ? "off" : "on"),
   // Web Bot Auth: allow http:// + loopback key directories so a LOCAL signer
   // fixture can serve its directory from a loopback port. Test walks only —
   // never enable in production (the directory URL is attacker-supplied).

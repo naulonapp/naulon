@@ -90,4 +90,108 @@ final class ObserverReportTest extends TestCase {
 	public function test_no_legs_is_no_price() {
 		$this->assertSame( 0, Naulon_Observer::legs_total( array() ) );
 	}
+
+	/* The identity fields, and the one report allowed to say `human`. */
+
+	private function base( array $over = array() ) {
+		return array_merge(
+			array(
+				'resource' => 'https://example.com/a/',
+				'slug'     => 'a',
+				'action'   => 'free',
+				'kind'     => 'read',
+				'ua'       => 'Googlebot/2.1',
+				'reason'   => 'seo allowlist matched "googlebot"',
+			),
+			$over
+		);
+	}
+
+	public function test_a_crawler_claim_classified_human_reports_human_with_its_check() {
+		$shaped = Naulon_Observer::shape(
+			$this->base(
+				array(
+					'classified_as' => 'human',
+					'identity'      => array(
+						'check'  => 'ip-verified',
+						'claims' => array( array( 'operator_id' => 'google', 'operator' => 'Google', 'fragment' => 'googlebot', 'check' => 'ip-verified' ) ),
+					),
+				)
+			)
+		);
+		$this->assertSame( 'human', $shaped['classifiedAs'] );
+		$this->assertSame( 'served-free', $shaped['verdict'] );
+		$this->assertSame( 'ip-verified', $shaped['identityCheck'] );
+		$this->assertSame( 'google', $shaped['claimedOperator'] );
+		$this->assertArrayNotHasKey( 'forgedFrom', $shaped );
+	}
+
+	public function test_without_an_identity_check_the_report_is_always_agent() {
+		$shaped = Naulon_Observer::shape( $this->base( array( 'classified_as' => 'human' ) ) );
+		$this->assertSame( 'agent', $shaped['classifiedAs'] );
+		$this->assertArrayNotHasKey( 'identityCheck', $shaped );
+	}
+
+	public function test_forged_from_rides_only_on_a_forged_report() {
+		$forged = Naulon_Observer::shape(
+			$this->base(
+				array(
+					'action'      => 'pay',
+					'identity'    => array(
+						'check'  => 'forged',
+						'claims' => array( array( 'operator_id' => 'google', 'operator' => 'Google', 'fragment' => 'googlebot', 'check' => 'forged' ) ),
+					),
+					'forged_from' => '9.9.9.0/24',
+				)
+			)
+		);
+		$this->assertSame( 'forged', $forged['identityCheck'] );
+		$this->assertSame( '9.9.9.0/24', $forged['forgedFrom'] );
+		$this->assertSame( 'agent', $forged['classifiedAs'] );
+
+		$verified = Naulon_Observer::shape(
+			$this->base(
+				array(
+					'identity'    => array(
+						'check'  => 'ip-verified',
+						'claims' => array( array( 'operator_id' => 'google', 'operator' => 'Google', 'fragment' => 'googlebot', 'check' => 'ip-verified' ) ),
+					),
+					'forged_from' => '9.9.9.0/24',
+				)
+			)
+		);
+		$this->assertArrayNotHasKey( 'forgedFrom', $verified );
+	}
+
+	/**
+	 * A crawler that read free must not wait on the control plane: its row waits in the buffer for
+	 * the next agent request or the cron. Only a charged or refused row is sent in-request.
+	 */
+	public function test_a_free_crawler_row_is_deferred_and_a_charged_one_is_not() {
+		$this->assertTrue( Naulon_Observer::defers( array( 'classifiedAs' => 'human' ) ) );
+		$this->assertFalse( Naulon_Observer::defers( array( 'classifiedAs' => 'agent' ) ) );
+	}
+
+	public function test_the_deferred_buffer_keeps_the_newest_rows_only() {
+		$buffer = array();
+		for ( $i = 0; $i < Naulon_Observer::MAX_BATCH + 5; $i++ ) {
+			$buffer = Naulon_Observer::with_deferred( $buffer, array( 'n' => $i ) );
+		}
+		$this->assertCount( Naulon_Observer::MAX_BATCH, $buffer );
+		$this->assertSame( Naulon_Observer::MAX_BATCH + 4, end( $buffer )['n'] );
+	}
+
+	/**
+	 * Arming is counted from the verified rows. A forger who floods the buffer with forged claims
+	 * must not be able to push every verified row out of it and keep the site from ever arming.
+	 */
+	public function test_a_flood_of_unverified_rows_never_evicts_a_verified_one() {
+		$buffer = Naulon_Observer::with_deferred( array(), array( 'n' => 'real', 'identityCheck' => 'ip-verified' ) );
+		for ( $i = 0; $i < Naulon_Observer::MAX_BATCH * 3; $i++ ) {
+			$buffer = Naulon_Observer::with_deferred( $buffer, array( 'n' => $i, 'identityCheck' => 'forged' ) );
+		}
+		$this->assertCount( Naulon_Observer::MAX_BATCH, $buffer );
+		$this->assertContains( 'real', array_column( $buffer, 'n' ) );
+		$this->assertSame( Naulon_Observer::MAX_BATCH * 3 - 1, end( $buffer )['n'] );
+	}
 }

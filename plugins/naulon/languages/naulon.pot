@@ -2,7 +2,7 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: naulon citation toll 0.5.9\n"
+"Project-Id-Version: naulon citation toll 0.6.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/naulon\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -110,6 +110,14 @@ msgstr ""
 
 #: includes/admin/class-naulon-admin-content.php:186
 msgid "One fragment per line. Use this for a crawler the built-in list does not know about yet."
+msgstr ""
+
+#: includes/admin/class-naulon-admin-content.php:194
+msgid "Trusted client IP header"
+msgstr ""
+
+#: includes/admin/class-naulon-admin-content.php:195
+msgid "Only if your host puts a proxy or firewall in front of WordPress and documents the header it sets (for example Sucuri's X-Sucuri-ClientIP). Leave empty behind Cloudflare; it is detected."
 msgstr ""
 
 #: includes/admin/class-naulon-admin-content.php:193
@@ -241,6 +249,10 @@ msgstr ""
 
 #: includes/admin/class-naulon-admin-diagnostics.php:149
 msgid "Paste these into whichever \"never cache these user agents\" list your caching plugin offers. They are the exact fragments this plugin charges for, so the two cannot disagree."
+msgstr ""
+
+#: includes/admin/class-naulon-admin-diagnostics.php:152
+msgid "The last entries are not charged: they are crawlers this site checks against their published addresses. Your cache answers before this plugin runs, so a crawler it serves is never checked. Update your cache's list when these entries change."
 msgstr ""
 
 #: includes/admin/class-naulon-admin-diagnostics.php:170

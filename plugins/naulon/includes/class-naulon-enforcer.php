@@ -59,6 +59,21 @@ class Naulon_Enforcer {
 	 *  WHY a machine was called a machine, without classifying a second time. */
 	private $agent_verdict = null;
 
+	/**
+	 * The crawler identity check for this request (Naulon_Identity::check), or null when the
+	 * user-agent names no crawler. Carried to the report beside the verdict.
+	 *
+	 * @var array|null
+	 */
+	private $identity = null;
+
+	/**
+	 * The /24 or /48 a forged claim came from, or ''.
+	 *
+	 * @var string
+	 */
+	private $forged_from = '';
+
 	public static function instance() {
 		if ( null === self::$instance ) {
 			self::$instance = new self();
@@ -255,10 +270,13 @@ class Naulon_Enforcer {
 		$kind = $this->requested_kind();
 		$ua   = $this->header( 'User-Agent' );
 
+		// A forged verdict's reason already names the address check; say it once.
+		$forged  = null !== $this->agent_verdict && isset( $this->agent_verdict['identity'] ) && 'forged' === $this->agent_verdict['identity'];
+		$checked = $forged ? '' : Naulon_Identity::describe( $this->identity );
 		Naulon_Log::record(
 			array(
 				'action' => $decision['action'],
-				'reason' => $decision['reason'],
+				'reason' => '' === $checked ? $decision['reason'] : $decision['reason'] . '; ' . $checked,
 				'slug'   => $slug,
 				'kind'   => $kind,
 				'ua'     => $ua,
@@ -274,13 +292,16 @@ class Naulon_Enforcer {
 		if ( is_string( $permalink ) && '' !== $permalink ) {
 			Naulon_Observer::instance()->record(
 				array(
-					'resource'    => $permalink,
-					'slug'        => $slug,
-					'action'      => $decision['action'],
-					'kind'        => $kind,
-					'ua'          => $ua,
-					'reason'      => null === $this->agent_verdict ? $decision['reason'] : $this->agent_verdict['reason'],
-					'price_micro' => isset( $decision['price_micro'] ) ? (int) $decision['price_micro'] : 0,
+					'resource'      => $permalink,
+					'slug'          => $slug,
+					'action'        => $decision['action'],
+					'kind'          => $kind,
+					'ua'            => $ua,
+					'reason'        => null === $this->agent_verdict ? $decision['reason'] : $this->agent_verdict['reason'],
+					'price_micro'   => isset( $decision['price_micro'] ) ? (int) $decision['price_micro'] : 0,
+					'classified_as' => null === $this->agent_verdict ? 'agent' : $this->agent_verdict['kind'],
+					'identity'      => $this->identity,
+					'forged_from'   => $this->forged_from,
 				)
 			);
 		}
@@ -321,18 +342,38 @@ class Naulon_Enforcer {
 		// control plane could not be read, leave every step exactly as it was before they existed.
 		// A request the plugin's own classifier calls a person reads the stored rules without a
 		// fetch, so a reader never waits on the control plane; a machine may refresh them.
-		$signals             = Naulon_Agent::signals_from_request();
-		$looks_human         = 'human' === Naulon_Agent::classify( $signals, $this->policy() )['kind'];
-		$access              = Naulon_Rules::access( $signals, Naulon_Rules::instance()->get( ! $looks_human ), $this->policy() );
+		$signals      = Naulon_Agent::signals_from_request();
+		$looks_human  = 'human' === Naulon_Agent::classify( $signals, $this->policy() )['kind'];
+		// The identity check runs only when the user-agent names a crawler, which is the only
+		// case signals_from_request() derives a client address for. Ranges and the armed set are
+		// both read from stored copies, never fetched here.
+		$identity_ctx = null;
+		if ( array_key_exists( 'client_ip', $signals ) ) {
+			$identity_ctx = array(
+				'compiled'  => Naulon_Ranges::instance()->current(),
+				'client_ip' => $signals['client_ip'],
+				'now'       => time(),
+				'armed'     => Naulon_Rules::instance()->armed(),
+			);
+		}
+		$access              = Naulon_Rules::access( $signals, Naulon_Rules::instance()->get( ! $looks_human ), $this->policy(), $identity_ctx );
 		$this->agent_verdict = null !== $access['verdict'] ? $access['verdict'] : array( 'kind' => 'agent', 'reason' => $access['reason'], 'confidence' => 1.0 );
+		$this->identity      = $access['identity'];
+		$this->forged_from   = '';
+		if ( null !== $this->identity && 'forged' === $this->identity['check'] && null !== $identity_ctx && is_string( $identity_ctx['client_ip'] ) ) {
+			$parsed            = Naulon_Ip::parse_client_address( $identity_ctx['client_ip'] );
+			$this->forged_from = null === $parsed ? '' : Naulon_Ip::truncate( $parsed );
+		}
 		if ( 'blocked' === $access['action'] ) {
 			// The logged reason is the refusal, not the classifier's verdict.
 			$this->agent_verdict = array( 'kind' => 'agent', 'reason' => $access['reason'], 'confidence' => 1.0 );
 			return $this->logged( $this->blocked( ucfirst( $access['reason'] ) . '.' ), $post, Naulon_Credits::instance()->canonical_slug_for( $post ) );
 		}
 		if ( 'free' === $access['action'] ) {
-			// A person is never logged, anywhere. An agent reading free under the terms is.
-			if ( null !== $access['verdict'] && 'human' === $access['verdict']['kind'] ) {
+			// A person is never logged. A request whose user-agent names a crawler is not a person
+			// by its own account, and without its row the control plane can never arm this site.
+			// An agent reading free under the terms is logged too.
+			if ( null !== $access['verdict'] && 'human' === $access['verdict']['kind'] && null === $access['identity'] ) {
 				return $this->free( $access['reason'] );
 			}
 			return $this->logged( $this->free( $access['reason'] ), $post, Naulon_Credits::instance()->canonical_slug_for( $post ) );
@@ -672,6 +713,20 @@ class Naulon_Enforcer {
 	}
 
 	/**
+	 * The headers no_store() sends beside nocache_headers(). LiteSpeed Cache honours its own
+	 * header, not DONOTCACHEPAGE alone, so without it a stored 402 or 403 is replayed to the next
+	 * person who asks for the page.
+	 *
+	 * @return string[]
+	 */
+	public static function no_store_headers() {
+		return array(
+			'Cache-Control: private, no-store',
+			'X-LiteSpeed-Cache-Control: no-cache',
+		);
+	}
+
+	/**
 	 * Keep every cache layer off an agent response. A cached 402 served to a human, or cached
 	 * paid content served to someone who did not pay, are both worse than no caching at all.
 	 *
@@ -683,7 +738,9 @@ class Naulon_Enforcer {
 			define( 'DONOTCACHEPAGE', true );
 		}
 		nocache_headers();
-		header( 'Cache-Control: private, no-store' );
+		foreach ( self::no_store_headers() as $line ) {
+			header( $line );
+		}
 	}
 
 	/**
@@ -797,5 +854,7 @@ class Naulon_Enforcer {
 	public function reset() {
 		$this->decision      = null;
 		$this->agent_verdict = null;
+		$this->identity      = null;
+		$this->forged_from   = '';
 	}
 }

@@ -296,3 +296,17 @@ test("fleetPublisher survives only as a tenant id", async () => {
   assert.equal(await load("76409c2e-897b-444a-9c42-ef93ce106401"), "76409c2e-897b-444a-9c42-ef93ce106401");
   for (const bad of ["", "a b", "x".repeat(129), 7, "p\nx"]) assert.equal(await load(bad), undefined, String(bad));
 });
+
+test("the armed set and identityMode reach the SDK through the HTTP source, narrowed", async () => {
+  const load = async (extra: Record<string, unknown>, identityMode?: unknown) => {
+    const { fetchImpl } = planeReturning({ ...DOC, ...extra, enforcement: { ...DOC.enforcement, ...(identityMode !== undefined ? { identityMode } : {}) } });
+    return httpPublisherConfigSource("http://cloud/_naulon/enforce-config", "nln_live_k", { fetchImpl }).load({ resource: RESOURCE });
+  };
+  const doc = await load({ identity: { armed: ["google", "openai-gptbot", "Not An Id", 42, "x".repeat(65)] } }, "off");
+  assert.deepEqual(doc?.identity, { armed: ["google", "openai-gptbot"] });
+  assert.equal(doc?.enforcement.identityMode, "off");
+  assert.equal((await load({}, "auto"))?.enforcement.identityMode, "auto");
+  assert.equal((await load({}, "sometimes"))?.enforcement.identityMode, undefined);
+  assert.equal((await load({ identity: "google" }))?.identity, undefined);
+  assert.equal((await load({}))?.identity, undefined);
+});

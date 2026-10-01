@@ -113,6 +113,43 @@ managed control plane, or your own self-hosted `POST /_naulon/verify` +
 `GET /_naulon/quote`. The middleware never holds funds: it forwards the buyer's
 signed payment to `verifyUrl`, which settles buyer → author directly.
 
+## Crawler identity
+
+A user-agent is free text. A scraper that sends `Googlebot/2.1` on a site that lets Googlebot read
+free would otherwise read free too. The middleware checks a request that names a known crawler
+against that operator's published IP ranges, which it reads from your gate at
+`/.well-known/naulon/crawler-ranges.json` (cached for an hour, fetched only when a crawler asks).
+
+Nothing changes on day one. Every claim is checked and reported (`identityCheck` on each
+observation), and a forged claim only loses its free read once your control plane has seen that
+operator's real crawler at verified addresses: 20 times within 14 days. That is the proof your
+site reads the caller's address correctly. A misconfigured setup sees every real crawler as
+forged, so it never reaches that point, and no publisher gets deindexed by a header mix-up.
+
+The address comes from your platform's edge header, detected from its environment:
+
+| Platform | Header read | Set `clientIp` |
+|---|---|---|
+| Vercel | `x-vercel-forwarded-for`, then `x-real-ip` | nothing |
+| Netlify functions | `x-nf-client-connection-ip` | nothing (Netlify Edge has no header, so claims there stay unverified) |
+| Cloudflare Workers | `cf-connecting-ipv6`, then `cf-connecting-ip` | nothing |
+| Cloudflare in front of another platform | `cf-connecting-ipv6`, then `cf-connecting-ip` | `"cloudflare"` |
+| Any other edge | the header you name | `{ header: "x-client-ip" }` |
+
+```ts
+naulonMiddleware({
+  config,
+  quote,
+  verifyUrl: `${plane}/_naulon/verify`,
+  apiKey: process.env.NAULON_API_KEY!,
+  clientIp: "cloudflare",
+});
+```
+
+`clientIp: "none"` or `crawlerRanges: false` turns the check's inputs off, so every claim reads
+`unverified` and nothing changes. `crawlerPolicy.forged: "block"` answers a forged claim with the
+403 a blocked crawler gets instead of the 402. `identityMode: "off"` skips the check entirely.
+
 ## Layering
 
 Arrows point to what a package depends on:

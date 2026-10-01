@@ -263,12 +263,21 @@ class Naulon_Cache {
 	 * The user agents a publisher should paste into whichever exclusion list their cache offers.
 	 *
 	 * Taken from the classifier, so this list cannot drift from the one that actually decides who
-	 * gets charged.
+	 * gets charged. Plus the fragments of every crawler operator this site is armed for: a page
+	 * cache answers before any plugin runs, so a forged claim to that operator would otherwise read
+	 * a cached copy without ever being checked.
 	 *
+	 * @param string[] $armed Operator ids this site is armed for (Naulon_Rules::armed()).
 	 * @return string[]
 	 */
-	public static function exclusion_fragments() {
-		return Naulon_Agent::KNOWN_AGENT_UA;
+	public static function exclusion_fragments( array $armed = array() ) {
+		$out = Naulon_Agent::KNOWN_AGENT_UA;
+		foreach ( Naulon_Identity::PROOF as $row ) {
+			if ( in_array( $row['id'], $armed, true ) ) {
+				$out = array_merge( $out, $row['fragments'] );
+			}
+		}
+		return array_values( array_unique( $out ) );
 	}
 
 	/**

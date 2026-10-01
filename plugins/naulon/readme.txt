@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.5.9
+Stable tag: 0.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -116,7 +116,7 @@ No. Your content never leaves your server. The plugin talks to the control plane
 
 = Does it log my visitors? =
 
-No. Human requests are never recorded: not their address, not their browser, not the fact that they arrived. The Diagnostics screen lists recent decisions, and every line on it is a machine.
+No. Human requests are never recorded: not their address, not their browser, not the fact that they arrived. The Diagnostics screen lists recent decisions, and every line on it is a machine. A request whose user agent names a crawler counts as a machine, because that is what it says it is.
 
 = What happens to my data if I delete the plugin? =
 
@@ -132,6 +132,10 @@ The plugin's folder is not writable by the user your web server runs as. Removin
 
 The same way as any other: **Dashboard → Updates**, or the notice on the Plugins screen. Turning on "Enable auto-updates" there works too, and nothing about this plugin needs you to treat it differently.
 
+= Will this ever charge Googlebot? =
+
+Only a request that names Googlebot from an address outside Google's published list, and only after the real Googlebot has been seen on your site at verified addresses. Behind a firewall or proxy, set the trusted client IP header, or claims are simply not checked.
+
 = I use a caching plugin. Does that matter? =
 
 Yes, and the plugin is direct about it. A page cache answers before any plugin runs, so a cached article can be handed to a crawler for free. Install the cache guard from Diagnostics, which stops agent responses being cached at all, then add the listed user agents to your caching plugin's own exclusion list, and use the check on that screen to confirm a crawler is actually being charged.
@@ -145,6 +149,12 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 5. Diagnostics: the caching check, recent decisions, and connection health.
 
 == Changelog ==
+
+= 0.6.0 =
+* Requests that claim to be a known crawler are now checked against that crawler's published addresses. Once naulon has seen the real crawler on your site, an impostor using its name no longer reads for free.
+* New setting on the Content screen: the trusted client IP header, for sites behind a proxy or firewall other than Cloudflare.
+* Responses that must not be cached now also carry LiteSpeed Cache's own no-cache header.
+* Diagnostics shows, for each crawler decision, whether its address was checked and what it showed, and adds the crawlers this site checks to the user agents to keep out of your page cache.
 
 = 0.5.9 =
 * A request that cannot pass the signature checks no longer makes your site fetch naulon's key list. After a failed fetch the plugin waits ten seconds before trying again, so a slow key server cannot hold up your pages.
@@ -216,6 +226,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.6.0 =
+A request that names Googlebot or another known crawler from an address outside that crawler's published list stops reading for free, once naulon has seen the real crawler on your site.
+
 = 0.5.9 =
 A request that cannot pass naulon's signature checks no longer makes your site fetch naulon's key list, so a slow key server cannot hold up your pages.
 

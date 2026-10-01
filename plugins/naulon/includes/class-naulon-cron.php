@@ -101,6 +101,9 @@ class Naulon_Cron {
 		// The dashboard's rules, for the same reason: a human request reads only the stored copy,
 		// so a quiet site still picks up a new block or a changed term within the hour.
 		Naulon_Rules::instance()->refresh();
+		// The crawler ranges an identity check reads. Fetched here and on the settings screen only,
+		// never on a request, and only once the stored copy is older than REFRESH_SECONDS.
+		Naulon_Ranges::instance()->refresh_if_stale();
 		// Last, and only ever a drain of what a crawler request could not deliver. A site with a
 		// trickle of machine traffic would otherwise hold a failed batch until the next crawl,
 		// which on a quiet site can be days. Nothing is recorded here — see Naulon_Observer.

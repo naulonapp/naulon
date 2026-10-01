@@ -190,6 +190,14 @@ class Naulon_Admin_Content {
 			esc_textarea( implode( "\n", (array) $settings['charge_list'] ) )
 		);
 
+		$header = is_string( $settings['trusted_ip_header'] ) ? $settings['trusted_ip_header'] : '';
+		echo '<h3><label for="naulon_trusted_ip_header">' . esc_html__( 'Trusted client IP header', 'naulon' ) . '</label></h3>';
+		echo '<p class="naulon-muted">' . esc_html__( 'Only if your host puts a proxy or firewall in front of WordPress and documents the header it sets (for example Sucuri\'s X-Sucuri-ClientIP). Leave empty behind Cloudflare; it is detected.', 'naulon' ) . '</p>';
+		printf(
+			'<p><input type="text" id="naulon_trusted_ip_header" name="naulon_trusted_ip_header" class="regular-text code" placeholder="X-Sucuri-ClientIP" value="%s"></p>',
+			esc_attr( '' === $header ? '' : str_replace( '_', '-', substr( $header, 5 ) ) )
+		);
+
 		submit_button( __( 'Save', 'naulon' ), 'primary', 'submit', false );
 		Naulon_Admin::form_close();
 
@@ -249,12 +257,14 @@ class Naulon_Admin_Content {
 
 		$allow  = self::parse_fragments( isset( $_POST['naulon_seo_allowlist'] ) ? sanitize_textarea_field( wp_unslash( $_POST['naulon_seo_allowlist'] ) ) : '' );
 		$charge = self::parse_fragments( isset( $_POST['naulon_charge_list'] ) ? sanitize_textarea_field( wp_unslash( $_POST['naulon_charge_list'] ) ) : '' );
+		$header = Naulon_Settings::sanitize_ip_header( isset( $_POST['naulon_trusted_ip_header'] ) ? sanitize_text_field( wp_unslash( $_POST['naulon_trusted_ip_header'] ) ) : '' );
 		// phpcs:enable WordPress.Security.NonceVerification.Missing
 
 		Naulon_Settings::update(
 			array(
-				'seo_allowlist' => $allow,
-				'charge_list'   => $charge,
+				'seo_allowlist'     => $allow,
+				'charge_list'       => $charge,
+				'trusted_ip_header' => $header,
 			)
 		);
 		Naulon_Admin::notice( 'success', __( 'Saved.', 'naulon' ) );

@@ -811,3 +811,76 @@ test("the gate's signed pull is served and NOT reported: the gate already record
     globalThis.fetch = realFetch;
   }
 });
+
+test("SDK: a forged Googlebot loses its free read only when the config document arms Google", async () => {
+  const { staticPublisherConfigSource } = await import("./config-source.ts");
+  const fresh = new Date(Date.now() - 3_600_000).toISOString();
+  const rangesDoc = {
+    version: 1, generatedAt: fresh, proxies: {}, sources: [],
+    operators: [{ id: "google", operator: "Google", fragments: ["googlebot"], kind: "ranges", forgedEligible: true, fetchedAt: fresh, prefixes: ["66.249.64.0/27"] }],
+  };
+  let rangeFetches = 0;
+  const fetchImpl = (async (input: string | URL | Request) => {
+    if (String(input) === "https://gate.test/r") { rangeFetches++; return new Response(JSON.stringify(rangesDoc)); }
+    return new Response("nope", { status: 404 });
+  }) as typeof fetch;
+  const GB = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+  const build = (armed: string[], q: typeof quote = quote) => {
+    const { seen, observe } = reporter();
+    const mw = naulonMiddleware({
+      ...opts,
+      quote: q,
+      publisher: { ...opts.publisher, crawlerPolicy: { allow: ["googlebot"], block: [] } },
+      config: staticPublisherConfigSource({ enforcement: {}, identity: { armed } }),
+      clientIp: { header: "x-test-ip" },
+      crawlerRanges: { url: "https://gate.test/r" },
+      fetchImpl,
+      observe: observe as never,
+    });
+    return { mw, seen };
+  };
+  const req = (ip: string) => new Request("http://h/essays/x", { headers: { "user-agent": GB, accept: "text/html", "x-test-ip": ip } });
+
+  const armed = build(["google"]);
+  await armed.mw(req("9.9.9.9")); // warms this middleware's ranges cache
+  await new Promise((r) => setTimeout(r, 10));
+  const forged = await armed.mw(req("9.9.9.9"));
+  assert.equal(forged.response?.status, 402);
+  assert.equal(armed.seen.at(-1)?.identityCheck, "forged");
+  assert.equal(armed.seen.at(-1)?.forgedFrom, "9.9.9.0/24");
+
+  const real = await armed.mw(req("66.249.64.9"));
+  assert.equal(real.response, null);
+  assert.equal(armed.seen.at(-1)?.identityCheck, "ip-verified");
+
+  const unarmed = build([]);
+  await unarmed.mw(req("9.9.9.9"));
+  await new Promise((r) => setTimeout(r, 10));
+  const free = await unarmed.mw(req("9.9.9.9"));
+  assert.equal(free.response, null);
+  assert.equal(unarmed.seen.at(-1)?.identityCheck, "forged");
+
+  // An article nobody is credited for is served as is, but a forged claim on it is still reported:
+  // otherwise the audit cannot see a forger working the untolled half of a site.
+  const untolled = build(["google"], localQuoteSource(async () => null as never));
+  await untolled.mw(req("9.9.9.9"));
+  await new Promise((r) => setTimeout(r, 10));
+  const before = untolled.seen.length;
+  const passed = await untolled.mw(req("9.9.9.9"));
+  assert.equal(passed.response, null);
+  assert.equal(untolled.seen.length, before + 1);
+  assert.equal(untolled.seen.at(-1)?.identityCheck, "forged");
+  assert.equal(untolled.seen.at(-1)?.verdict, "served-free");
+  assert.ok(rangeFetches >= 2);
+});
+
+test("SDK: a person's request never fetches the ranges", async () => {
+  let fetches = 0;
+  const mw = naulonMiddleware({
+    ...opts,
+    crawlerRanges: { url: "https://gate.test/r" },
+    fetchImpl: (async () => { fetches++; return new Response("{}"); }) as typeof fetch,
+  });
+  await mw(new Request("http://h/essays/x", { headers: { "user-agent": "Mozilla/5.0 (Macintosh) Safari/605.1.15", accept: "text/html" } }));
+  assert.equal(fetches, 0);
+});

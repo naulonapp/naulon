@@ -82,9 +82,38 @@ class Naulon_Settings {
 				// uninstall before it removes the files, so a Delete that fails can still have
 				// wiped everything — the default refuses to make that possible. See Naulon_Data.
 				'purge_on_uninstall' => false,
+				// The header a proxy or firewall in front of WordPress puts the caller's address
+				// in, stored in its $_SERVER form (HTTP_X_SUCURI_CLIENTIP). Empty means
+				// REMOTE_ADDR, or Cloudflare's own header when the peer is Cloudflare.
+				'trusted_ip_header'  => '',
 			),
 			$stored
 		);
+	}
+
+	/**
+	 * Normalise a header name typed by a publisher to its $_SERVER key. Accepts either spelling
+	 * (`X-Sucuri-ClientIP` or `HTTP_X_SUCURI_CLIENTIP`); anything that is not a plain header name
+	 * comes back empty, which means "no trusted header".
+	 *
+	 * @param string $raw Input.
+	 * @return string
+	 */
+	public static function sanitize_ip_header( $raw ) {
+		$name = trim( (string) $raw );
+		if ( 0 === stripos( $name, 'HTTP_' ) ) {
+			$name = substr( $name, 5 );
+		}
+		$name = str_replace( '_', '-', $name );
+		if ( '' === $name || ! preg_match( '/^[A-Za-z0-9-]+$/D', $name ) ) {
+			return '';
+		}
+		// A list the client can prepend to: its first entry is whatever the caller sent, so
+		// trusting it would let a forger mark its own claim verified.
+		if ( in_array( strtolower( $name ), array( 'x-forwarded-for', 'forwarded' ), true ) ) {
+			return '';
+		}
+		return 'HTTP_' . strtoupper( str_replace( '-', '_', $name ) );
 	}
 
 	/**

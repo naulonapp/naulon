@@ -147,9 +147,13 @@ class Naulon_Admin_Diagnostics {
 			echo '</ul>';
 			echo '<h3>' . esc_html__( 'User agents to exclude from your cache', 'naulon' ) . '</h3>';
 			echo '<p class="naulon-muted">' . esc_html__( 'Paste these into whichever "never cache these user agents" list your caching plugin offers. They are the exact fragments this plugin charges for, so the two cannot disagree.', 'naulon' ) . '</p>';
+			$armed = Naulon_Rules::instance()->armed();
+			if ( ! empty( $armed ) ) {
+				echo '<p class="naulon-muted">' . esc_html__( 'The last entries are not charged: they are crawlers this site checks against their published addresses. Your cache answers before this plugin runs, so a crawler it serves is never checked. Update your cache\'s list when these entries change.', 'naulon' ) . '</p>';
+			}
 			printf(
 				'<p><textarea readonly rows="6" class="large-text code" onfocus="this.select()">%s</textarea></p>',
-				esc_textarea( implode( "\n", Naulon_Cache::exclusion_fragments() ) )
+				esc_textarea( implode( "\n", Naulon_Cache::exclusion_fragments( $armed ) ) )
 			);
 		}
 

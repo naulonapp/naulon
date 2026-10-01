@@ -235,3 +235,15 @@ test("crawler route: only the ambiguous middle moves to agent; browsers and allo
   const allowlisted = signals({ userAgent: "Googlebot/2.1", accept: "*/*", headers: {}, viaIngress: true });
   assert.equal(classify(allowlisted, { seoAllowlist: ["Googlebot"] }).kind, "human");
 });
+
+test("a verified signer reads free only when its host IS the allowlisted host, never when it merely contains it", () => {
+  const signed = (agent: string) => ({
+    userAgent: "Mozilla/5.0", hasPaymentHeader: false, declaredAgentId: null, accept: "text/html", headers: {},
+    verifiedAgent: { agent, keyid: "k", covers: ["@authority"] } as never,
+  });
+  assert.equal(classify(signed("googlebot.evil.example"), { seoAllowlist: ["googlebot"] }).kind, "agent");
+  assert.equal(classify(signed("evilchatgpt.com"), { seoAllowlist: ["chatgpt.com"] }).kind, "agent");
+  assert.equal(classify(signed("chatgpt.com"), { seoAllowlist: ["chatgpt.com"] }).kind, "human");
+  assert.equal(classify(signed("crawl.chatgpt.com"), { seoAllowlist: ["chatgpt.com"] }).kind, "human");
+  assert.equal(classify(signed("ChatGPT.com"), { seoAllowlist: ["chatgpt.com"] }).kind, "human");
+});

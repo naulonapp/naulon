@@ -22,6 +22,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { getConnInfo } from "@hono/node-server/conninfo";
+import { createRangeFetcher, type RangeFetcher } from "./rangeFetcher.ts";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { logger } from "hono/logger";
@@ -54,9 +55,14 @@ import {
   type LicenceVerdict,
   parseLicenceAuthorization,
   referrerHost,
+  callerIp,
+  claimsIn,
 } from "@naulon/shared";
 import {
   decide,
+  decidingClaim,
+  MemoryArmingStore,
+  type ArmingStore,
   LICENSE_HEADER,
   type Decision,
   type DecideObs,
@@ -142,6 +148,7 @@ import {
 // bot-auth key; in settle.ts for the mint). Only per-publisher facts live on the
 // resolved PublisherConfig.
 const cfg = getConfig();
+const CRAWLER_RANGES_PATH = "/.well-known/naulon/crawler-ranges.json";
 
 // When this gate process booted. The credits resolver reads its fixture file once
 // at boot (fixtureResolverFromFile), so the operator dashboard compares this to the
@@ -527,6 +534,12 @@ export interface CreateAppOptions {
    * the option existed: no host is treated as an ingress.
    */
   ingress?: IngressOptions;
+
+  /** Crawler identity ranges. Default: fetched from each operator on demand (`CRAWLER_RANGES`). */
+  crawlerRanges?: RangeFetcher;
+
+  /** Per-install crawler identity arming. Default: in memory (re-arms from zero on restart). */
+  arming?: ArmingStore;
 }
 
 export function createApp(
@@ -542,6 +555,8 @@ export function createApp(
   }
   const onUpstreamOutcome = opts?.onUpstreamOutcome;
   const resolveInAppConfig = opts?.resolveInAppConfig;
+  const rangeFetcher = opts?.crawlerRanges ?? createRangeFetcher({ disabled: cfg.CRAWLER_RANGES === "off" });
+  const arming = opts?.arming ?? new MemoryArmingStore();
   const licenceAuthority = opts?.licenceAuthority;
   const app = new Hono();
   app.use("*", logger());
@@ -720,6 +735,13 @@ export function createApp(
     c.json(licensing ? licensing.publishedJwks : { keys: [] }, 200, { ...JWKS_CORS }),
   );
   app.options("/.well-known/naulon-jwks.json", (c) => c.body(null, 204, { ...JWKS_CORS }));
+
+  // The merged crawler ranges this gate checks claims against, for the runtimes that ask it.
+  app.get(CRAWLER_RANGES_PATH, (c) => {
+    const doc = rangeFetcher.document();
+    if (!doc) return c.json({ error: "crawler ranges not fetched yet" }, 503, { "retry-after": "60", "access-control-allow-origin": "*" });
+    return c.json(doc, 200, { "cache-control": "public, max-age=3600", "access-control-allow-origin": "*" });
+  });
 
   // Edge-identity probe: a host-independent 200 that ONLY a naulon gate serves. It lets a
   // caller confirm a custom domain actually ROUTES through the gate — not merely that its
@@ -925,11 +947,16 @@ export function createApp(
     // getConnInfo needs a node socket; under a serverless adapter (Vercel) it
     // throws — fall back rather than 500 the request.
     let clientIp = "unknown";
+    let peer: string | undefined;
     try {
-      clientIp = getConnInfo(c).remote.address ?? "unknown";
+      peer = getConnInfo(c).remote.address ?? undefined;
+      clientIp = peer ?? "unknown";
     } catch {
       /* serverless / no socket */
     }
+    // The caller's own address for the crawler identity check. Separate from `clientIp`, which
+    // feeds proxying and rate limits and keeps its existing meaning.
+    const identityIp = callerIp({ headers: c.req.raw.headers, header: cfg.CLIENT_IP_HEADER, peer, trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS });
 
     const inboundHost = c.req.header("host") ?? new URL(c.req.url).host;
 
@@ -937,7 +964,8 @@ export function createApp(
     // Refusals look exactly like an unknown Host (see ingress.ts); an admitted request is rewritten
     // into the site's own request, so everything below it names the site without being told to.
     const via = admitted.get(c.req.raw);
-    if (via) return serveGated(c, via.request, path, via.clientIp ?? clientIp, via.siteHost, via.config, true);
+    // On the crawler route the outer address is the publisher CDN's egress, never the caller's.
+    if (via) return serveGated(c, via.request, path, via.clientIp ?? clientIp, via.siteHost, via.config, true, via.clientIp ?? null);
     // An open path reached with a method its route does not take: nothing to serve on this host.
     if (ingress && isIngressHost(inboundHost, ingress)) return handleUnknownHost(c, inboundHost);
 
@@ -946,7 +974,7 @@ export function createApp(
     const host = inboundHost;
     const publisher = await resolver.resolve(host);
     if (!publisher) return handleUnknownHost(c, host);
-    return serveGated(c, c.req.raw, path, clientIp, host, publisher, false);
+    return serveGated(c, c.req.raw, path, clientIp, host, publisher, false, identityIp);
   });
 
   /**
@@ -962,6 +990,7 @@ export function createApp(
     host: string,
     publisher: PublisherConfig,
     viaIngress: boolean,
+    identityIp: string | null,
   ): Promise<Response> => {
     // Suspended ≠ dead. A paused publisher (billing lapse upstream) serves its
     // origin straight through, free and untolled — suspension must never dark a
@@ -990,7 +1019,26 @@ export function createApp(
       quote,
       botAuthOpts: { allowInsecureHttp: cfg.BOT_AUTH_ALLOW_HTTP },
       ...(viaIngress ? { viaIngress: true } : {}),
+      // Only a UA that names a crawler reaches the ranges, so a person's request costs nothing here.
+      ...(claimsIn(raw.headers.get("user-agent") ?? "").length > 0
+        ? {
+            identity: {
+              ranges: rangeFetcher.current(),
+              clientIp: identityIp,
+              now,
+              isArmed: (op: string) => arming.isArmed(publisher.id, op),
+            },
+          }
+        : {}),
     });
+    const decidedObs = d.kind === "passthrough" ? (d.verdict === "unknown-article" ? d.obs : undefined) : d.obs;
+    if (decidedObs?.identity) {
+      try {
+        arming.record(publisher.id, decidedObs.identity, now);
+      } catch (err) {
+        console.error("[tollgate] arming record failed (ignored):", err);
+      }
+    }
 
     // Audit plane: one observation per gated-route decision, built from the facts
     // decide() carried back (telemetry only, never gates). Default sink off → no-op.
@@ -1012,6 +1060,8 @@ export function createApp(
         verified: obs.verified,
         verifiedAgent: obs.verifiedAgent,
         sigInvalid: obs.sigInvalid,
+        ...(obs.identity ? { identityCheck: obs.identity.check, claimedOperator: decidingClaim(obs.identity)?.operatorId } : {}),
+        ...(obs.forgedFrom ? { forgedFrom: obs.forgedFrom } : {}),
         price: extra?.price,
         // Only ever set on `payment-failed` — the other verdicts have no failure to explain.
         failureReason: extra?.failureReason,
@@ -1307,6 +1357,7 @@ export function createApp(
     switch (d.kind) {
       // Non-article OR unknown-article: pure passthrough, no observation.
       case "passthrough":
+        if (d.verdict === "unknown-article" && d.obs) emitObs(d.obs, "served-free");
         return proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
 
       // Publisher-refused crawler: 403 before any content leaves.
@@ -1411,7 +1462,7 @@ export function canonicalResource(host: string, pathname: string): string {
 export const INGRESS_RESPONSE_HEADER = "x-naulon-ingress";
 
 /** Routes on the ingress host that answer without naming a site: they describe the gate itself. */
-const INGRESS_OPEN_PATHS = new Set(["/healthz", "/.well-known/naulon-edge", "/.well-known/naulon-jwks.json", BOT_AUTH_DIRECTORY_PATH]);
+const INGRESS_OPEN_PATHS = new Set(["/healthz", "/.well-known/naulon-edge", "/.well-known/naulon-jwks.json", CRAWLER_RANGES_PATH, BOT_AUTH_DIRECTORY_PATH]);
 
 /** The gate's own machine routes, which a verifier may reach on the ingress host by `?host=`. */
 function isMachinePath(path: string): boolean {

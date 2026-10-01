@@ -89,6 +89,7 @@ class Naulon_Agent {
 	 *     @type string $declared_agent_id  X-Naulon-Agent value, or ''.
 	 *     @type string $accept             Accept header.
 	 *     @type array  $headers            Lower-cased header names present on the request.
+	 *     @type array  $forged_claim       Optional. Set by Naulon_Identity::classify only.
 	 * }
 	 * @param array $policy {
 	 *     @type string[] $seo_allowlist Fragments that read FREE for this publisher.
@@ -115,7 +116,19 @@ class Naulon_Agent {
 
 		// 2) The publisher's SEO allowlist wins over everything below it — never toll the
 		//    crawlers a publisher needs for indexing, even when the UA also looks like a bot.
+		//    Except a claim the caller's address contradicts on an armed site
+		//    (Naulon_Identity::classify sets `forged_claim`): it earns nothing here, and nothing
+		//    below may free it again, because a forged crawler is browser-shaped too.
 		$allowed = self::match_fragment( $ua_lower, $allow_list );
+		if ( null !== $allowed && ! empty( $signals['forged_claim'] ) ) {
+			$f = $signals['forged_claim'];
+			return array(
+				'kind'       => 'agent',
+				'identity'   => 'forged',
+				'reason'     => sprintf( 'claimed "%s" from an address outside %s\'s published ranges', $f['fragment'], $f['operator'] ),
+				'confidence' => 0.95,
+			);
+		}
 		if ( null !== $allowed ) {
 			return self::verdict( 'human', sprintf( 'seo allowlist matched "%s"', $allowed ), 0.9 );
 		}
@@ -156,13 +169,82 @@ class Naulon_Agent {
 			}
 		}
 
-		return array(
-			'user_agent'         => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
+		$ua      = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
+		$signals = array(
+			'user_agent'         => $ua,
 			'accept'             => isset( $_SERVER['HTTP_ACCEPT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_ACCEPT'] ) ) : '',
 			'has_payment_header' => isset( $_SERVER['HTTP_PAYMENT_SIGNATURE'] ),
 			'declared_agent_id'  => isset( $_SERVER['HTTP_X_NAULON_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_NAULON_AGENT'] ) ) : '',
 			'headers'            => $headers,
 		);
+		// The caller's address is read only when the user-agent names a crawler, so a person's
+		// request never loads the ranges option. The built-in table is the pre-filter: a claim it
+		// does not know cannot be checked anyway until the ranges name it.
+		if ( ! empty( Naulon_Identity::claims_in( $ua, null ) ) ) {
+			$settings             = Naulon_Settings::all();
+			$signals['client_ip'] = self::client_ip(
+				$_SERVER, // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- client_ip() reads only address headers and parses them.
+				is_string( $settings['trusted_ip_header'] ) ? $settings['trusted_ip_header'] : '',
+				Naulon_Ranges::instance()->current()
+			);
+		}
+		return $signals;
+	}
+
+	/**
+	 * The caller's address, as the identity check should read it. A header is believed only from
+	 * a peer that could have set it, mirroring the gate's callerIp():
+	 *   - the publisher's configured header (its first comma entry), when one is set;
+	 *   - else CF-Connecting-IPv6 / CF-Connecting-IP, when REMOTE_ADDR is inside Cloudflare's
+	 *     published ranges, because anyone can send those headers straight to the origin;
+	 *   - else REMOTE_ADDR.
+	 * A private or reserved result is returned as is; Naulon_Ip::usable() then reads it as
+	 * unverified, which never charges anyone.
+	 *
+	 * @param array      $server         $_SERVER, or a test double.
+	 * @param string     $trusted_header Stored setting in HTTP_ form, or ''.
+	 * @param array|null $compiled       Naulon_Ranges::compile() output, or null.
+	 * @return string|null
+	 */
+	public static function client_ip( array $server, $trusted_header, $compiled ) {
+		$read = function ( $key ) use ( $server ) {
+			if ( ! isset( $server[ $key ] ) || ! is_string( $server[ $key ] ) ) {
+				return null;
+			}
+			// WordPress slashes $_SERVER (wp_magic_quotes). An address never holds a backslash, so
+			// stripping them is safe on a value that was never slashed too.
+			$first = trim( explode( ',', stripslashes( $server[ $key ] ) )[0] );
+			return '' === $first ? null : $first;
+		};
+		if ( '' !== $trusted_header ) {
+			// Cloudflare sends a pseudo-IPv4 in CF-Connecting-IP for an IPv6 caller, and the real
+			// address beside it.
+			if ( 'HTTP_CF_CONNECTING_IP' === $trusted_header ) {
+				$v6 = $read( 'HTTP_CF_CONNECTING_IPV6' );
+				if ( null !== $v6 ) {
+					return $v6;
+				}
+			}
+			return $read( $trusted_header );
+		}
+		$peer = $read( 'REMOTE_ADDR' );
+		if ( null === $peer ) {
+			return null;
+		}
+		if ( null !== $compiled && isset( $compiled['proxies']['cloudflare'] ) ) {
+			$parsed = Naulon_Ip::parse( $peer );
+			if ( null !== $parsed && Naulon_Ip::in_any( $parsed, $compiled['proxies']['cloudflare'] ) ) {
+				$v6 = $read( 'HTTP_CF_CONNECTING_IPV6' );
+				if ( null !== $v6 ) {
+					return $v6;
+				}
+				$v4 = $read( 'HTTP_CF_CONNECTING_IP' );
+				if ( null !== $v4 ) {
+					return $v4;
+				}
+			}
+		}
+		return $peer;
 	}
 
 	/**

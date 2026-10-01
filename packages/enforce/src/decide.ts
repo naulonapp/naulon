@@ -17,7 +17,8 @@
  * (unknown-host already failed closed) and NOT suspended (a paused publisher
  * proxies straight through, free). `decide()` assumes a known, live publisher.
  */
-import { classify, matchUaFragment, type RequestSignals, type Verdict } from "./agentDetect.ts";
+import { matchUaFragment, type RequestSignals, type Verdict } from "./agentDetect.ts";
+import { classifyWithIdentity, type IdentityInput, type IdentityResult } from "./identity.ts";
 import { verifyBotAuth, type RequestFacts, type BotAuthOptions } from "./botAuth.ts";
 import { build402, PAYMENT_SIGNATURE_HEADER, type SettlementLegReq } from "./build402.ts";
 import type { Quote } from "./pricing.ts";
@@ -35,10 +36,12 @@ import {
   licenseCoversPath,
   licenseGrant,
   type LicenceSigner,
+  parseClientAddress,
   parseLicenceAuthorization,
   popBoundAddress,
   prohibitedUse,
   type ProhibitedTerm,
+  truncateIp,
   verifyLicense,
   type JwkSet,
   type PublisherConfig,
@@ -243,6 +246,10 @@ export interface DecideObs {
    * is what made a misconfigured verifier invisible while it double-billed every agent.
    */
   licenceRefusal?: LicenceRefusal;
+  /** The crawler identity result, for the caller's arming store and observation. */
+  identity?: IdentityResult;
+  /** Set only when `identity.check` is `forged`. */
+  forgedFrom?: string;
 }
 
 /**
@@ -250,7 +257,13 @@ export interface DecideObs {
  * `payment-presented` hands the caller the buyer's payment + legs to settle.
  */
 export type Decision =
-  | { kind: "passthrough"; verdict: "non-article" | "unknown-article" }
+  | { kind: "passthrough"; verdict: "non-article" }
+  /**
+   * An article nobody is credited for: served as is. `obs` rides along only when the user-agent named
+   * a crawler, so a forged claim on an untolled page still reaches the audit and the arming count,
+   * while ordinary agent traffic on untolled pages stays out of the publisher's figures.
+   */
+  | { kind: "passthrough"; verdict: "unknown-article"; obs?: DecideObs }
   | { kind: "free"; verdict: string; obs: DecideObs }
   | { kind: "blocked"; frag: string; obs: DecideObs }
   | { kind: "prohibited"; term: ProhibitedTerm; reason: string; obs: DecideObs }
@@ -296,6 +309,8 @@ export interface DecideInput {
   licenseVerification?: LicenseVerification;
   /** The gate admitted this request through an authenticated crawler-route ingress. */
   viaIngress?: boolean;
+  /** Crawler identity inputs. Absent ⇒ no check (byte-identical to before). */
+  identity?: IdentityInput;
 }
 
 export async function decide(input: DecideInput): Promise<Decision> {
@@ -363,13 +378,16 @@ export async function decide(input: DecideInput): Promise<Decision> {
     };
   }
 
-  const verdict = classify(
+  const { verdict, identity, forgedClaim } = classifyWithIdentity(
     { ...signalsFrom(raw), verifiedAgent, ...(input.viaIngress ? { viaIngress: true } : {}) },
     {
       seoAllowlist: [...(publisher.seoAllowlist ?? []), ...(publisher.crawlerPolicy?.allow ?? [])],
       chargeList: publisher.crawlerPolicy?.charge,
     },
+    publisher.identityMode ?? "auto",
+    input.identity,
   );
+  const forgedIp = identity?.check === "forged" && input.identity?.clientIp ? parseClientAddress(input.identity.clientIp) : null;
 
   const obs: DecideObs = {
     slug,
@@ -379,7 +397,13 @@ export async function decide(input: DecideInput): Promise<Decision> {
     verified: verifiedAgent ? true : undefined,
     verifiedAgent: verifiedAgent?.agent,
     sigInvalid,
+    ...(identity ? { identity } : {}),
+    ...(forgedIp ? { forgedFrom: truncateIp(forgedIp) } : {}),
   };
+
+  if (verdict.identity === "forged" && forgedClaim && publisher.crawlerPolicy?.forged === "block") {
+    return { kind: "blocked", frag: forgedClaim.fragment, obs };
+  }
 
   // A use the publisher prohibits: 403 before the free read and before any price, so neither a
   // browser-shaped crawler nor a payment can reach a term that is not for sale. `prohibitedUse`
@@ -442,7 +466,7 @@ export async function decide(input: DecideInput): Promise<Decision> {
   // Price it. Path plus query selects the per-path price rule, the same input in the same dialect a
   // licence scope and a spec-following client reading the RSL document match against.
   const q = await quote(publisher, slug, tollKind, matchTarget(raw.url), pricedAgent(verifiedAgent));
-  if (!q) return { kind: "passthrough", verdict: "unknown-article" }; // unknown article — don't gate.
+  if (!q) return { kind: "passthrough", verdict: "unknown-article", ...(obs.identity ? { obs } : {}) }; // unknown article — don't gate.
 
   // The resource identifier goes into a SIGNED quote, so it must be the URL the buyer
   // actually fetched — not the one this process observed. TLS terminates at the edge in

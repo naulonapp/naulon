@@ -16,6 +16,7 @@
  * Telemetry, never a toll: a reporter takes no callback and returns nothing. It cannot
  * block a response, cannot fail one, and a sink outage costs at most some visibility.
  */
+import type { IdentityCheck } from "@naulon/shared";
 import type { LicenceRefusal, TollKind } from "../decide.ts";
 
 /** The verdicts a publisher's own runtime witnesses (and no one else does). */
@@ -45,6 +46,12 @@ export interface ObservationReport {
    * exactly what let a deployment with no verifier bill one article four times in a day.
    */
   licenceRefusal?: LicenceRefusal;
+  /** The crawler identity check, when the UA named a crawler with a known proof source. */
+  identityCheck?: IdentityCheck;
+  /** The operator whose claim decided `identityCheck` (`CRAWLER_PROOF` ids). */
+  claimedOperator?: string;
+  /** On `forged` rows only: the caller's /24 or /48. Never a full address. */
+  forgedFrom?: string;
   /** On a person's read, the host of the other site that sent them (`referrerHost` in
    *  `@naulon/shared`). Host only, never the referring URL. */
   referrerHost?: string;

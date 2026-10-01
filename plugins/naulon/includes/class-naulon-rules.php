@@ -54,6 +54,20 @@ class Naulon_Rules {
 	 *  FLEET_PUBLISHER_ID in @naulon/enforce's config-source.ts. */
 	const FLEET_PUBLISHER_ID = '/^[A-Za-z0-9._:-]{1,128}$/';
 
+	/** The operator ids this site is armed for (`identity.armed`), cached beside the rules. */
+	const ARMED_TRANSIENT = 'naulon_identity_armed';
+	const ARMED_LAST_GOOD = 'naulon_identity_armed_last_good';
+
+	/**
+	 * How long an armed set stays trusted without a successful refresh. The hourly cron renews it
+	 * well inside this, and it sits far under the spec's 72-hour disarm bound: an armed set nobody
+	 * could refresh is missing evidence, and missing evidence never charges.
+	 */
+	const ARMED_MAX_AGE = 21600;
+
+	/** An operator id as CRAWLER_PROOF spells one. */
+	const OPERATOR_ID = '/^[a-z0-9-]{1,64}$/';
+
 	/** @var Naulon_Rules|null */
 	private static $instance = null;
 
@@ -65,6 +79,9 @@ class Naulon_Rules {
 
 	/** @var string|false Memo for this request: false = not loaded yet. */
 	private $fleet_publisher_memo = false;
+
+	/** @var array|false Armed operator ids for this request; false until first read. */
+	private $armed_memo = false;
 
 	/**
 	 * @return Naulon_Rules
@@ -137,6 +154,20 @@ class Naulon_Rules {
 			update_option( self::FLEET_PUBLISHER_LAST_GOOD, $fleet_publisher, false );
 			$this->fleet_publisher_memo = $fleet_publisher;
 
+			// The operators this site is armed for. Same document, same caching, and the same
+			// rule: absent or malformed clears it, which returns every claim to observing.
+			$armed = self::valid_armed( isset( $response['body']['identity'] ) && is_array( $response['body']['identity'] ) && isset( $response['body']['identity']['armed'] ) ? $response['body']['identity']['armed'] : null );
+			set_transient( self::ARMED_TRANSIENT, $armed, self::TTL );
+			update_option(
+				self::ARMED_LAST_GOOD,
+				array(
+					'ids'       => $armed,
+					'stored_at' => time(),
+				),
+				false
+			);
+			$this->armed_memo = $armed;
+
 			return $this->memo;
 		}
 		// Stale beats nothing: a publisher who blocked a crawler yesterday still blocks it while
@@ -155,6 +186,9 @@ class Naulon_Rules {
 			$fleet_publisher_last = is_string( $fleet_publisher_last ) ? $fleet_publisher_last : '';
 			set_transient( self::FLEET_PUBLISHER_TRANSIENT, $fleet_publisher_last, 60 );
 			$this->fleet_publisher_memo = $fleet_publisher_last;
+
+			// The last good armed set, aged as it stands: a failed refresh never renews it.
+			$this->armed_memo = self::armed_from( get_option( self::ARMED_LAST_GOOD ), time() );
 
 			return $this->memo;
 		}
@@ -206,6 +240,61 @@ class Naulon_Rules {
 	}
 
 	/**
+	 * The crawler operators this site is armed for. Cache-only, like fleet_agent(): read on a
+	 * request the classifier may call a person, so it must never force a fetch.
+	 *
+	 * `naulon_identity_armed` is a test seam for a local gate that serves no enforce-config. No
+	 * real install sets it.
+	 *
+	 * @return string[]
+	 */
+	public function armed() {
+		if ( false === $this->armed_memo ) {
+			$cached = get_transient( self::ARMED_TRANSIENT );
+			if ( is_array( $cached ) ) {
+				$this->armed_memo = $cached;
+			} else {
+				$this->armed_memo = self::armed_from( get_option( self::ARMED_LAST_GOOD ), time() );
+			}
+		}
+		return self::valid_armed( apply_filters( 'naulon_identity_armed', $this->armed_memo ) );
+	}
+
+	/**
+	 * The stored armed set, or empty once it is older than ARMED_MAX_AGE or has no age at all.
+	 *
+	 * @param mixed $stored The ARMED_LAST_GOOD option value.
+	 * @param int   $now    Unix seconds.
+	 * @return string[]
+	 */
+	public static function armed_from( $stored, $now ) {
+		if ( ! is_array( $stored ) || ! isset( $stored['ids'], $stored['stored_at'] ) ) {
+			return array();
+		}
+		if ( $now - (int) $stored['stored_at'] > self::ARMED_MAX_AGE ) {
+			return array();
+		}
+		return self::valid_armed( $stored['ids'] );
+	}
+
+	/**
+	 * @param mixed $raw The `identity.armed` field as the control plane sent it.
+	 * @return string[] Operator ids, or empty when absent or malformed.
+	 */
+	public static function valid_armed( $raw ) {
+		if ( ! is_array( $raw ) ) {
+			return array();
+		}
+		$out = array();
+		foreach ( $raw as $id ) {
+			if ( is_string( $id ) && 1 === preg_match( self::OPERATOR_ID, $id ) ) {
+				$out[] = $id;
+			}
+		}
+		return array_values( array_unique( $out ) );
+	}
+
+	/**
 	 * @param mixed $raw The `enforcement.fleetPublisher` field as the control plane sent it.
 	 * @return string The tenant id, unchanged, or '' when absent or malformed.
 	 */
@@ -226,6 +315,8 @@ class Naulon_Rules {
 		delete_transient( self::TRANSIENT );
 		delete_transient( self::FLEET_TRANSIENT );
 		delete_transient( self::FLEET_PUBLISHER_TRANSIENT );
+		delete_transient( self::ARMED_TRANSIENT );
+		self::instance()->armed_memo           = false;
 		self::instance()->memo                 = false;
 		self::instance()->fleet_memo           = false;
 		self::instance()->fleet_publisher_memo = false;
@@ -236,7 +327,10 @@ class Naulon_Rules {
 		$this->memo                 = false;
 		$this->fleet_memo           = false;
 		$this->fleet_publisher_memo = false;
+		$this->armed_memo           = false;
 		delete_transient( self::TRANSIENT );
+		delete_transient( self::ARMED_TRANSIENT );
+		delete_option( self::ARMED_LAST_GOOD );
 		delete_transient( self::FLEET_TRANSIENT );
 		delete_transient( self::FLEET_PUBLISHER_TRANSIENT );
 		delete_option( self::LAST_GOOD );
@@ -282,6 +376,10 @@ class Naulon_Rules {
 				'agents'   => isset( $refuse['agents'] ) && true === $refuse['agents'],
 			),
 			'agentReadsFree' => isset( $raw['agentReadsFree'] ) && true === $raw['agentReadsFree'],
+			// What an armed, forged crawler claim gets: charged like any agent, or refused.
+			'forged'         => isset( $raw['forged'] ) && 'block' === $raw['forged'] ? 'block' : 'charge',
+			// `off` switches the identity check out entirely for this site.
+			'identityMode'   => isset( $raw['identityMode'] ) && 'off' === $raw['identityMode'] ? 'off' : 'auto',
 		);
 	}
 
@@ -291,7 +389,9 @@ class Naulon_Rules {
 	 * parity test calls it with the same inputs it gives the gate's `decide()`.
 	 *
 	 *   1. a blocked crawler            → blocked  (before classification: no payment buys past it)
-	 *   2. classify, with the dashboard's allow and charge lists joined to the local ones
+	 *   2. classify, with the dashboard's allow and charge lists joined to the local ones, and the
+	 *      crawler identity check applied (Naulon_Identity::classify)
+	 *   2b. an armed, forged claim on a site set to `forged: block` → blocked
 	 *   3. a use the terms refuse        → blocked  (before the free read: no allowlist undoes it)
 	 *   4. a person                      → free
 	 *   5. agent reads free by the terms → free
@@ -300,17 +400,20 @@ class Naulon_Rules {
 	 * @param array      $signals      Naulon_Agent signals for this request.
 	 * @param array|null $rules        Normalized rules, or null when none could be read.
 	 * @param array      $local_policy The plugin's own seo_allowlist and charge_list.
-	 * @return array {action: blocked|free|continue, reason: string, verdict: array|null}
+	 * @param array|null $identity     {compiled, client_ip, now, armed}, or null to skip the check.
+	 * @return array {action: blocked|free|continue, reason: string, verdict: array|null, identity: array|null, forged_claim: array|null}
 	 */
-	public static function access( array $signals, $rules, array $local_policy ) {
+	public static function access( array $signals, $rules, array $local_policy, $identity = null ) {
 		$ua = isset( $signals['user_agent'] ) ? (string) $signals['user_agent'] : '';
 		if ( is_array( $rules ) ) {
 			$fragment = self::blocked_by( $ua, $rules );
 			if ( null !== $fragment ) {
 				return array(
-					'action'  => 'blocked',
-					'reason'  => sprintf( 'crawler blocked by publisher (%s)', $fragment ),
-					'verdict' => null,
+					'action'       => 'blocked',
+					'reason'       => sprintf( 'crawler blocked by publisher (%s)', $fragment ),
+					'verdict'      => null,
+					'identity'     => null,
+					'forged_claim' => null,
 				);
 			}
 		}
@@ -322,36 +425,51 @@ class Naulon_Rules {
 			$policy['seo_allowlist'] = array_values( array_unique( array_merge( $policy['seo_allowlist'], $rules['allow'] ) ) );
 			$policy['charge_list']   = array_values( array_unique( array_merge( $policy['charge_list'], $rules['charge'] ) ) );
 		}
-		$verdict = Naulon_Agent::classify( $signals, $policy );
+		if ( is_array( $identity ) ) {
+			$mode   = is_array( $rules ) ? $rules['identityMode'] : 'auto';
+			$result = Naulon_Identity::classify(
+				$signals,
+				$policy,
+				$mode,
+				isset( $identity['compiled'] ) ? $identity['compiled'] : null,
+				isset( $identity['client_ip'] ) ? $identity['client_ip'] : null,
+				isset( $identity['now'] ) ? (int) $identity['now'] : time(),
+				isset( $identity['armed'] ) && is_array( $identity['armed'] ) ? $identity['armed'] : array()
+			);
+		} else {
+			$result = array(
+				'verdict'      => Naulon_Agent::classify( $signals, $policy ),
+				'identity'     => null,
+				'forged_claim' => null,
+			);
+		}
+		$verdict = $result['verdict'];
+		$out     = static function ( $action, $reason ) use ( $verdict, $result ) {
+			return array(
+				'action'       => $action,
+				'reason'       => $reason,
+				'verdict'      => $verdict,
+				'identity'     => $result['identity'],
+				'forged_claim' => $result['forged_claim'],
+			);
+		};
+		$forged = isset( $verdict['identity'] ) && 'forged' === $verdict['identity'] && null !== $result['forged_claim'];
+		if ( $forged && is_array( $rules ) && 'block' === $rules['forged'] ) {
+			return $out( 'blocked', $verdict['reason'] );
+		}
 		if ( is_array( $rules ) ) {
 			$refused = self::refusal( $ua, $verdict['kind'], $rules );
 			if ( null !== $refused ) {
-				return array(
-					'action'  => 'blocked',
-					'reason'  => $refused,
-					'verdict' => $verdict,
-				);
+				return $out( 'blocked', $refused );
 			}
 		}
 		if ( 'human' === $verdict['kind'] ) {
-			return array(
-				'action'  => 'free',
-				'reason'  => 'human (' . $verdict['reason'] . ')',
-				'verdict' => $verdict,
-			);
+			return $out( 'free', 'human (' . $verdict['reason'] . ')' );
 		}
 		if ( is_array( $rules ) && $rules['agentReadsFree'] ) {
-			return array(
-				'action'  => 'free',
-				'reason'  => "agent (ai-input free by the site's terms)",
-				'verdict' => $verdict,
-			);
+			return $out( 'free', "agent (ai-input free by the site's terms)" );
 		}
-		return array(
-			'action'  => 'continue',
-			'reason'  => $verdict['reason'],
-			'verdict' => $verdict,
-		);
+		return $out( 'continue', $verdict['reason'] );
 	}
 
 	/**

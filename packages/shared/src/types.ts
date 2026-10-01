@@ -11,6 +11,7 @@
 // Imported for use in the gate-internal types below AND re-exported so every
 // existing `from "@naulon/shared"` import keeps resolving unchanged.
 import { walletAddress } from "@naulon/sdk";
+import type { IdentityCheck } from "./crawlerProof.ts";
 import type { WalletAddress, ArticleCredits, Contributor, CreditsResolver } from "@naulon/sdk";
 import type { PaymentFailureReason } from "./paymentfailure.ts";
 import type { LicenceFacts } from "./licence-facts.ts";
@@ -363,6 +364,12 @@ export interface ObservationEvent {
    * attempt (or a badly broken signer), distinct from plain unsigned traffic.
    */
   sigInvalid?: boolean;
+  /** The crawler identity check, when the UA named a crawler with a known proof source. */
+  identityCheck?: IdentityCheck;
+  /** The operator whose claim decided `identityCheck` (`CRAWLER_PROOF` ids). */
+  claimedOperator?: string;
+  /** On `forged` rows only: the caller's /24 or /48. Never a full address. */
+  forgedFrom?: string;
   /** The quoted price (paid → settled; denied/payment-failed → what they'd have paid = "earnings missed"). */
   price?: Usdc;
   /**

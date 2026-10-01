@@ -17,7 +17,7 @@
 
 import type { VerifiedAgent } from "./botAuth.ts";
 
-export type Verdict = { kind: "human" | "agent"; reason: string; confidence: number };
+export type Verdict = { kind: "human" | "agent"; reason: string; confidence: number; identity?: "forged" };
 
 /** Request facts the classifier reasons over (framework-agnostic). */
 export interface RequestSignals {
@@ -43,6 +43,12 @@ export interface RequestSignals {
    * the ambiguous middle defaults to agent. A browser-shaped request still reads free.
    */
   viaIngress?: boolean;
+  /**
+   * Set by `classifyWithIdentity` when the UA claims a crawler, the caller's address is outside that
+   * operator's published ranges, and this install is armed for the operator. It removes exactly one
+   * thing: the free read the claim would otherwise earn from the allowlist.
+   */
+  forgedClaim?: { operatorId: string; operator: string; fragment: string };
 }
 
 /** Per-publisher classification policy the gate supplies from `PublisherConfig`. */
@@ -52,9 +58,9 @@ export interface ClassifyPolicy {
    * publisher (their SEO allowlist). Honored ahead of the known-agent list, so an
    * allowlisted crawler is freed even if its UA also looks like a bot — the point
    * is to never toll the crawlers a publisher needs for indexing. Matched
-   * case-insensitively against the user-agent. UA is spoofable; verifying crawler
-   * identity (reverse DNS / Web Bot Auth) is a later hardening — for now a
-   * publisher's own allowlist is the stored intent we honor.
+   * case-insensitively against the user-agent. UA is spoofable; a claim from outside the
+   * operator's published ranges is refused the free read once the install is
+   * armed (`identity.ts`).
    */
   seoAllowlist?: string[];
   /**
@@ -141,6 +147,22 @@ export function matchUaFragment(ua: string, fragments: string[] | undefined): st
 }
 
 /**
+ * The allowlist entry a VERIFIED signer's host matches: the host itself, or a subdomain of it.
+ * A signature proves who controls the signing host, and anyone can control
+ * `googlebot.example-attacker.net`, so a substring match would let any domain containing an
+ * allowlisted word read free with a perfectly valid signature. Only the free-read path needs this;
+ * the block path keeps substring matching, because blocking more is the safe direction.
+ */
+export function matchSignerHost(host: string, fragments: string[] | undefined): string | undefined {
+  if (!fragments?.length) return undefined;
+  const h = host.toLowerCase().replace(/\.$/, "");
+  return fragments.find((f) => {
+    const frag = f.toLowerCase().replace(/\.$/, "");
+    return frag.length > 0 && (h === frag || h.endsWith(`.${frag}`));
+  });
+}
+
+/**
  * Classify a request as human or agent.
  *
  * TODO(you): implement the core heuristic. A starter is provided so the gate
@@ -186,7 +208,7 @@ export function classify(signals: RequestSignals, policy?: ClassifyPolicy): Verd
   //     classification (block beats payment) and covers the verified id there.
   if (signals.verifiedAgent) {
     const va = signals.verifiedAgent.agent;
-    const allowed = matchUaFragment(va, policy?.seoAllowlist);
+    const allowed = matchSignerHost(va, policy?.seoAllowlist);
     if (allowed) {
       return { kind: "human", reason: `seo allowlist matched verified agent "${allowed}"`, confidence: 0.98 };
     }
@@ -197,8 +219,19 @@ export function classify(signals: RequestSignals, policy?: ClassifyPolicy): Verd
 
   // 2) SEO allowlist — verified discovery crawlers this publisher wants indexed
   //    read FREE. Before the known-bot check so an allowlisted crawler is freed
-  //    even when its UA also matches a known-bot fragment.
+  //    even when its UA also matches a known-bot fragment. A claim the caller's
+  //    address contradicts earns nothing here, and nothing below may free it
+  //    again (a forged crawler is browser-shaped too).
   const allowed = policy?.seoAllowlist?.find((frag) => ua.includes(frag.toLowerCase()));
+  if (allowed && signals.forgedClaim) {
+    const f = signals.forgedClaim;
+    return {
+      kind: "agent",
+      identity: "forged",
+      reason: `claimed "${f.fragment}" from an address outside ${f.operator}'s published ranges`,
+      confidence: 0.95,
+    };
+  }
   if (allowed) {
     return { kind: "human", reason: `seo allowlist matched "${allowed}"`, confidence: 0.9 };
   }

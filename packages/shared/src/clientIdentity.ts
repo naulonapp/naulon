@@ -119,3 +119,34 @@ export function resolveClientIdentity({
     reason: "no socket peer and no X-Forwarded-For — nothing identifies the caller",
   };
 }
+
+/** The facts `callerIp` reasons over. */
+export interface CallerIpInput {
+  headers: Headers;
+  /** `CLIENT_IP_HEADER`: a header a trusted edge sets to the caller's address. Lowercase. */
+  header: string | undefined;
+  peer: string | undefined;
+  trustProxy: boolean;
+  hops: number;
+}
+
+/**
+ * The caller's address for the crawler identity check, or null.
+ *
+ * A configured header is the whole answer: when it is missing the request did not come through
+ * the edge that sets it, and the socket peer is that edge's neighbour, not the caller. Cloudflare
+ * writes a pseudo-IPv4 into `cf-connecting-ip` for IPv6 callers on zones with that setting, and
+ * the real address into `cf-connecting-ipv6`, so the latter wins when both are present.
+ */
+export function callerIp({ headers, header, peer, trustProxy, hops }: CallerIpInput): string | null {
+  if (header) {
+    if (header === "cf-connecting-ip") {
+      const v6 = headers.get("cf-connecting-ipv6")?.trim();
+      if (v6) return v6;
+    }
+    const first = headers.get(header)?.split(",")[0]?.trim();
+    return first ? first : null;
+  }
+  const id = resolveClientIdentity({ xff: headers.get("x-forwarded-for") ?? undefined, peer, trustProxy, hops });
+  return id.ok ? id.key : null;
+}

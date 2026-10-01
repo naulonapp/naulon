@@ -49,4 +49,14 @@ class CacheVaryTest extends TestCase {
 	public function test_wildcard_vary_is_left_alone() {
 		$this->assertSame( '', Naulon_Enforcer::merge_vary( '*' ) );
 	}
+
+	/**
+	 * LiteSpeed Cache honours its own header and not DONOTCACHEPAGE alone, so a stored 402 or
+	 * 403 would otherwise be replayed to the next person who asks for the page.
+	 */
+	public function test_no_store_tells_litespeed_too() {
+		$lines = Naulon_Enforcer::no_store_headers();
+		$this->assertContains( 'X-LiteSpeed-Cache-Control: no-cache', $lines );
+		$this->assertContains( 'Cache-Control: private, no-store', $lines );
+	}
 }

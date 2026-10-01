@@ -14,6 +14,30 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## Unreleased
+
+### Added
+- Crawler identity check. A request whose user-agent names a known crawler is checked against
+  that operator's published IP ranges. Once a site has seen the real crawler at verified
+  addresses, a claim from outside the ranges no longer earns that crawler's free read.
+- `GET /.well-known/naulon/crawler-ranges.json` on the gate.
+- `CLIENT_IP_HEADER` and `CRAWLER_RANGES` gate settings; `clientIp` and `crawlerRanges`
+  middleware options; `crawlerPolicy.forged` and `identityMode` publisher settings.
+- Observations carry `identityCheck`, `claimedOperator` and, on forged rows, `forgedFrom`. A
+  crawler claim on an article nobody is credited for is now observed too.
+- The WordPress plugin (0.6.0) runs the same check, decided by the same shared test cases.
+
+### Fixed
+- The HTTP config source now carries `identity.armed` and `identityMode`, so an SDK site can arm.
+- A Web Bot Auth signature backs a crawler claim only when it comes from that crawler's own key
+  directory. Any other signer's claim is checked by address like an unsigned one.
+- A client address carrying a port, quotes or IPv6 brackets is read as the address.
+- The gate publishes no ranges document until every proxy list has been fetched once, and a
+  document with an empty proxy list or an empty fragment is refused.
+- A smaller range file served identically three fetches running is applied instead of refused
+  forever. A malformed redirect fails only its own source, and a retry refetches only the
+  sources that never succeeded.
+
 ## v0.11.0
 
 New package `@naulon/extract` **0.1.0**. `@naulon/shared` 0.6.4 → **0.6.5**, `@naulon/enforce`

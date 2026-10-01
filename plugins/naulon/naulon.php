@@ -3,7 +3,7 @@
  * Plugin Name:       naulon citation toll
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
- * Version:           0.5.9
+ * Version:           0.6.0
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
@@ -36,7 +36,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NAULON_VERSION', '0.5.9' );
+define( 'NAULON_VERSION', '0.6.0' );
 define( 'NAULON_PLUGIN_FILE', __FILE__ );
 define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 
@@ -54,7 +54,10 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-verification.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-license.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ip.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ranges.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-agent.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-identity.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-rules.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-fleet-pull.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
