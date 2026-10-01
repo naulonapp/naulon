@@ -118,6 +118,18 @@ export const VERDICT_LABEL = {
   paid: "paid",
 };
 
+/** Full names, for a heading or a table cell where the verdict is the subject. The hosted audit
+ *  page uses the same words, so an operator moving between the two reads one vocabulary. */
+export const VERDICT_TITLE = {
+  "served-free": "Read free",
+  "agent-reread": "Re-read",
+  denied: "Left at the price",
+  blocked: "Refused",
+  "payment-failed": "Payment failed",
+  unservable: "Not served",
+  paid: "Paid",
+};
+
 /** Verdicts that mean something went wrong, so a non-zero count can go red.
  *  `unservable` belongs here: it means the catalog prices a read the origin cannot serve, which
  *  is the publisher's own misconfiguration and the only place it is visible. */

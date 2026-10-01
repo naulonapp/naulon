@@ -82,3 +82,7 @@ test("unservable specifically is present everywhere it must be", () => {
   assert.ok(shellObjectKeys("VERDICT_LABEL").includes("unservable"));
   assert.ok(VERDICTS.includes("unservable"));
 });
+
+test("VERDICT_TITLE names every verdict and nothing else", () => {
+  assert.deepEqual(shellObjectKeys("VERDICT_TITLE").sort(), [...OBSERVATION_VERDICTS].sort());
+});

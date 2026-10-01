@@ -816,3 +816,89 @@ body {
   color: var(--faint);
   font-size: 0.86em;
 }
+
+/* ── page: requests (the hosted audit page's twin) ─────────────────────────────
+   Same four outcome colours as the portal's ribbon and chart, so a yellow band means "left at
+   the price" on both. */
+:root { --o-paid: var(--primary); --o-left: var(--warning); --o-free: var(--muted-fg); --o-refused: var(--down); }
+.headline {
+  font-family: var(--font-serif); font-weight: 500; font-size: 26px; line-height: 1.3;
+  max-width: 44ch; margin: 0 0 22px; color: var(--fg);
+}
+.ribbon { display: flex; gap: 3px; height: 12px; border-radius: 3px; overflow: hidden; }
+.ribbon a { display: block; min-width: 6px; opacity: 0.9; transition: opacity var(--motion) var(--ease); }
+.ribbon a:hover { opacity: 1; }
+.ribbon.has-active a:not(.on) { opacity: 0.3; }
+.legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 24px; margin-top: 16px; }
+.legend a { display: block; padding: 6px; margin: -6px; border-radius: 4px; color: inherit; text-decoration: none; }
+.legend a:hover { background: var(--elev-2); }
+.ribbon.has-active + .legend a:not(.on) { opacity: 0.5; }
+.legend .k { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-fg); }
+.legend .sw { width: 8px; height: 8px; border-radius: 50%; }
+.legend .v { font-family: var(--font-serif); font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.legend .v small { font-family: var(--font-sans); font-size: 11px; color: var(--muted-fg); margin-left: 6px; }
+@media (max-width: 720px) { .legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } .headline { font-size: 21px; } }
+
+.scroll-x { overflow-x: auto; contain: paint; }
+.dtable { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px; }
+.dtable th {
+  text-align: left; font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted-fg); padding: 9px 14px; border-bottom: 1px solid var(--line);
+}
+.dtable td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.dtable tbody tr:last-child td { border-bottom: 0; }
+.dtable tbody tr { cursor: pointer; transition: background var(--motion) var(--ease); }
+.dtable tbody tr:hover { background: var(--elev-2); }
+.dtable .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dtable .sub { display: block; font-size: 11.5px; color: var(--muted-fg); margin-top: 2px; }
+.dtable .path { font-family: var(--font-mono); font-size: 12px; }
+.dot-o { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+.linkish { background: none; border: 0; padding: 0; color: inherit; font-family: inherit; font-size: inherit; font-weight: inherit; cursor: pointer; text-align: left; }
+.linkish:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+.pager {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  border-top: 1px solid var(--line); padding: 10px 14px; font-size: 12px; color: var(--muted-fg);
+}
+.pager .ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pager .pager-nav { display: flex; gap: 6px; }
+.pager select { font-family: inherit; font-size: 12px; color: var(--fg); background: var(--card); border: 1px solid var(--input); border-radius: 5px; padding: 6px 8px; }
+.pager .btn { padding: 6px 12px; font-size: 12px; }
+.pager .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted-fg); }
+.toolbar label { display: inline-flex; align-items: center; gap: 8px; color: var(--fg); cursor: pointer; }
+
+.drawer-back { position: fixed; inset: 0; z-index: 50; background: color-mix(in oklab, var(--bg) 70%, transparent); backdrop-filter: blur(2px); }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 51; width: min(480px, 100vw);
+  display: flex; flex-direction: column; background: var(--card); border-left: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-panel); animation: drawer-in 240ms var(--ease);
+}
+@keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .drawer { animation: none; } }
+.drawer header { display: flex; align-items: flex-start; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.drawer header h2 { font-family: var(--font-serif); font-weight: 500; font-size: 20px; margin: 0; }
+.drawer header p { margin: 4px 0 0; font-size: 13px; color: var(--muted-fg); }
+.drawer .body { flex: 1; overflow-y: auto; padding: 18px 20px; }
+.drawer .amount { font-family: var(--font-serif); font-size: 34px; font-weight: 500; margin: 0 0 16px; }
+.drawer .amount small { font-family: var(--font-sans); font-size: 13px; color: var(--muted-fg); margin-left: 8px; }
+.drawer footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
+.fact { display: grid; grid-template-columns: 9rem 1fr; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.fact:last-child { border-bottom: 0; }
+.fact dt { color: var(--muted-fg); }
+.fact dd { margin: 0; overflow-wrap: anywhere; }
+.fact dd.mono { font-size: 12px; }
+
+.heat { display: grid; grid-template-columns: 2.75rem repeat(24, minmax(0, 1fr)); gap: 3px; min-width: 34rem; font-size: 10px; color: var(--muted-fg); }
+.heat .c { aspect-ratio: 1; border-radius: 2px; background: var(--elev-2); }
+.heat .l { align-self: center; }
+.heat-wrap { padding: 14px; }
+/* A rollup row you can pick to narrow the page: the row's own grid and padding, as a button. */
+.roll-pick {
+  width: 100%; margin: 0; border: 0; border-bottom: 1px solid var(--line); background: transparent;
+  color: inherit; font-family: inherit; text-align: left; cursor: pointer;
+  transition: background var(--motion) var(--ease);
+}
+.roll-pick:hover { background: var(--elev-2); }
+.roll-pick:last-child { border-bottom: 0; }
+.roll-pick:focus-visible { outline: 2px solid color-mix(in oklab, var(--primary) 60%, transparent); outline-offset: -2px; }

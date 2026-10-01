@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark light" />
 <title>naulon — requests</title>
-<meta name="description" content="Every gated request this naulon gate decided on: served free, denied, blocked, paid or failed — with which path earned and which crawler took free." />
+<meta name="description" content="Every gated request this naulon gate decided on: what happened to it, who asked, and what it was worth." />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <script src="/theme.js"></script>
 <link rel="stylesheet" href="/app.css" />
@@ -18,7 +18,7 @@
         <div>
           <p class="eyebrow">Traffic</p>
           <h1 class="page-title">Requests</h1>
-          <p class="page-sub">Every decision the gate made, including the ones that earned nothing. The settlement ledger cannot see this half — it only knows about money that moved.</p>
+          <p class="page-sub">Every decision the gate made, including the ones that earned nothing. The settlement ledger cannot see this half. It only knows about money that moved.</p>
         </div>
         <div class="head-actions">
           <div class="seg" id="winSeg" role="group" aria-label="traffic window">
@@ -32,36 +32,71 @@
 
       <div id="notice" aria-live="polite"></div>
 
-      <section class="stat-strip" id="verdicts"></section>
+      <section class="card hero-card" aria-labelledby="headline">
+        <p class="headline" id="headline">Reading the log…</p>
+        <nav class="ribbon" id="ribbon" aria-label="Requests by outcome. Pick one to narrow the page to it."></nav>
+        <div class="legend" id="legend"></div>
+      </section>
 
       <div class="filters">
-        <input id="q" class="in" type="search" placeholder="Filter by path, host or agent" aria-label="Filter requests" />
-        <div class="seg" id="verdictSeg" role="group" aria-label="Filter by verdict"></div>
+        <input id="q" class="in" type="search" placeholder="Search paths, agents, referrers" aria-label="Search requests" />
+        <select id="identity" class="in" aria-label="Identity">
+          <option value="">Any identity</option>
+          <option value="verified">Signed and verified</option>
+          <option value="unsigned">Unsigned</option>
+          <option value="masquerade">Failed signature</option>
+        </select>
+        <span id="chips"></span>
       </div>
 
       <div class="two-col">
         <section class="panel">
           <div class="panel-head"><span class="eyebrow">Top paths</span></div>
           <div id="topPaths"></div>
-          <div class="panel-foot">by what they earned</div>
+          <div class="panel-foot">by what they earned · pick one to see its requests</div>
         </section>
         <section class="panel">
           <div class="panel-head"><span class="eyebrow">Top agents</span></div>
           <div id="topAgents"></div>
-          <div class="panel-foot">humans excluded — they read free</div>
+          <div class="panel-foot">humans excluded, they read free · pick one to see its requests</div>
         </section>
       </div>
 
       <div class="section-head"><span class="rule"></span><h2>Missed earnings, by cause</h2></div>
       <section class="panel">
         <div id="missed"></div>
-        <div class="panel-foot">denied = they saw the price and walked · failed = they tried to pay and could not</div>
+        <div class="panel-foot">left = they saw the price and walked · failed = they tried to pay and could not</div>
       </section>
 
-      <div class="section-head"><span class="rule"></span><h2>The tail</h2><span class="n" id="tailCount"></span></div>
-      <div id="rows"></div>
+      <div class="section-head"><span class="rule"></span><h2>When agents come</h2><span class="n">hours in UTC</span></div>
+      <section class="panel"><div class="scroll-x heat-wrap"><div class="heat" id="heat"></div></div><div class="panel-foot" id="peak"></div></section>
+
+      <div class="section-head"><span class="rule"></span><h2>Every request</h2><span class="n" id="tailCount"></span></div>
+      <section class="panel">
+        <div class="toolbar">
+          <span>Pick a row to see everything recorded about it.</span>
+          <label><input type="checkbox" id="who" /> Include people</label>
+        </div>
+        <div class="scroll-x"><table class="dtable" id="rows"></table></div>
+        <nav class="pager" aria-label="Pages of requests">
+          <span id="range" aria-live="polite"></span>
+          <span class="ctl">
+            <select id="size" aria-label="Rows per page">
+              <option value="25">25 per page</option>
+              <option value="50" selected>50 per page</option>
+              <option value="100">100 per page</option>
+            </select>
+            <span class="pager-nav">
+              <button type="button" class="btn" id="newest">Newest</button>
+              <button type="button" class="btn" id="newer">Newer</button>
+              <button type="button" class="btn" id="older">Older</button>
+            </span>
+          </span>
+        </nav>
+      </section>
     </main>
   </div>
+  <div id="drawer"></div>
 
   <script type="module" src="/requests.js"></script>
 </body>
