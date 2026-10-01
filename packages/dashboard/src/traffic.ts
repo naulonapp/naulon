@@ -116,6 +116,8 @@ export interface TrafficReport {
   next: RowCursor | null;
   /** Agent requests by outcome, the Requests page's ribbon. */
   outcomes: Record<Outcome, number>;
+  /** USDC taken on paid requests, and quoted to agents that walked away: what the page leads with. */
+  money: { earned: number; missed: number };
   /** Agent requests by weekday and hour, UTC: `heatmap[weekday][hour]`, Sunday = 0. */
   heatmap: number[][];
   /** Verdict counts across the MATCHED set (i.e. after the filter). */
@@ -410,9 +412,12 @@ export function buildTraffic(
 
   const byVerdict = zeroVerdicts();
   const outcomes: Record<Outcome, number> = { paid: 0, left: 0, free: 0, refused: 0 };
+  const money = { earned: 0, missed: 0 };
   for (const o of matched) {
     if (o.verdict in byVerdict) byVerdict[o.verdict] += 1;
     if (o.classifiedAs === "agent") outcomes[outcomeOf(o.verdict)] += 1;
+    if (o.verdict === "paid") money.earned += o.price ?? 0;
+    if (o.verdict === "denied") money.missed += o.price ?? 0;
   }
   const listed = who === "all" ? matched : matched.filter((o) => o.classifiedAs === who);
   const { page, next } = pageRows(listed, rowLimit, opts.after ?? null);
@@ -424,6 +429,7 @@ export function buildTraffic(
     matched: listed.length,
     next,
     outcomes,
+    money,
     heatmap: heatmapOf(matched),
     byVerdict,
     topPaths: rollupPaths(matched).slice(0, rollupLimit),

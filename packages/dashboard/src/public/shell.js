@@ -20,6 +20,10 @@ export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESCAPES[c])
 export const fmt6 = (n) => Number(n || 0).toFixed(6);
 /** Six-decimal micro-USDC with the sign. Use this wherever a figure is shown alone. */
 export const usd = (n) => "$" + fmt6(n);
+/** A headline amount: two to three decimals, like the hosted portal's money figures. The ledger's
+ *  six-decimal `usd` stays for rows, where sub-cent tolls need every digit. */
+export const usdLead = (n) =>
+  "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 3 });
 
 /** Middle-truncate an address or hash. Null-safe. */
 export const trunc = (a) => (a && a.length > 12 ? a.slice(0, 6) + "…" + a.slice(-4) : a || "—");

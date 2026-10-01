@@ -669,7 +669,7 @@ body {
    line — the same defect the old console's `.tile.wide` had — and, because two of the
    six used to be conditional, the columns did not line up from one row to the next.
    Every row now renders all six; a zero is information here ("0 blocked" is a fact). */
-.agent-nums { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0 10px; }
+.agent-nums { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0 10px; }
 .agent-nums .kv { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; }
 .agent-nums .kv .k { letter-spacing: 0.1em; font-size: 9.5px; white-space: nowrap; }
 .agent-nums .kv .v { font-size: 13px; }
@@ -821,10 +821,11 @@ body {
    Same four outcome colours as the portal's ribbon and chart, so a yellow band means "left at
    the price" on both. */
 :root { --o-paid: var(--primary); --o-left: var(--warning); --o-free: var(--muted-fg); --o-refused: var(--down); }
-.headline {
-  font-family: var(--font-serif); font-weight: 500; font-size: 26px; line-height: 1.3;
-  max-width: 44ch; margin: 0 0 22px; color: var(--fg);
-}
+.money-lead { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 40px; margin-bottom: 26px; }
+.money-lead .ml-k { margin: 0; font-size: 13px; color: var(--muted-fg); }
+.money-lead .ml-v { margin: 4px 0 0; font-family: var(--font-serif); font-weight: 500; font-size: 44px; line-height: 1.1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.money-lead .ml-v.pos { color: var(--primary); }
+.money-lead .ml-n { margin: 6px 0 0; font-size: 13px; color: var(--muted-fg); }
 .ribbon { display: flex; gap: 3px; height: 12px; border-radius: 3px; overflow: hidden; }
 .ribbon a { display: block; min-width: 6px; opacity: 0.9; transition: opacity var(--motion) var(--ease); }
 .ribbon a:hover { opacity: 1; }
@@ -837,7 +838,7 @@ body {
 .legend .sw { width: 8px; height: 8px; border-radius: 50%; }
 .legend .v { font-family: var(--font-serif); font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 2px; }
 .legend .v small { font-family: var(--font-sans); font-size: 11px; color: var(--muted-fg); margin-left: 6px; }
-@media (max-width: 720px) { .legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } .headline { font-size: 21px; } }
+@media (max-width: 720px) { .legend { grid-template-columns: repeat(2, minmax(0, 1fr)); } .money-lead { grid-template-columns: 1fr; } .money-lead .ml-v { font-size: 34px; } }
 
 .scroll-x { overflow-x: auto; contain: paint; }
 .dtable { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -902,3 +903,6 @@ body {
 .roll-pick:hover { background: var(--elev-2); }
 .roll-pick:last-child { border-bottom: 0; }
 .roll-pick:focus-visible { outline: 2px solid color-mix(in oklab, var(--primary) 60%, transparent); outline-offset: -2px; }
+/* An agent row is a way into that agent's requests. */
+.agent-link { color: inherit; text-decoration: none; transition: background var(--motion) var(--ease); }
+.agent-link:hover { background: var(--elev-2); }

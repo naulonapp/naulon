@@ -8,7 +8,7 @@
  * through esc() from shell.js before it touches innerHTML. The CSP forbids inline style
  * attributes, so widths and colours are set through the CSSOM after the markup lands.
  */
-import { $, esc, usd, rel, exactTime, emptyState, renderShell, poll, wireSeg, debounced, VERDICT_TITLE } from "./shell.js";
+import { $, esc, usd, usdLead, rel, exactTime, emptyState, renderShell, poll, wireSeg, debounced, VERDICT_TITLE } from "./shell.js";
 
 renderShell({ active: "requests" });
 
@@ -37,7 +37,18 @@ const EXTRACTION = { gate: "Markdown made by naulon", passthrough: "Markdown fro
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ROW_DAYS = [1, 2, 3, 4, 5, 6, 0];
 
-const state = { win: "24h", q: "", outcome: "", agent: "", slug: undefined, identity: "", who: false, size: 50 };
+// A link can open the page already narrowed (`/requests?agent=GPTBot&window=7d`, from Agents).
+const start = new URLSearchParams(location.search);
+const state = {
+  win: ["1h", "24h", "7d"].includes(start.get("window")) ? start.get("window") : "24h",
+  q: "",
+  outcome: ["paid", "left", "free", "refused"].includes(start.get("outcome")) ? start.get("outcome") : "",
+  agent: start.get("agent") || "",
+  slug: start.has("slug") ? start.get("slug") : undefined,
+  identity: "",
+  who: false,
+  size: 50,
+};
 // The cursor each visited page started at; the last entry is the page on screen.
 let trail = [null];
 let next = null;
@@ -62,11 +73,12 @@ function query() {
   return p.toString();
 }
 
-function renderHeadline(o) {
-  const requests = OUTCOMES.reduce((n, k) => n + (o[k] || 0), 0);
-  $("#headline").textContent = requests
-    ? `Agents made ${requests} request${requests === 1 ? "" : "s"}. ${o.paid} paid, and ${o.left} walked away at the price.`
-    : "No agent requests in this window yet.";
+/** Money first, each figure with the one line that makes it readable; the hosted audit page's lead. */
+function renderLead(o, money) {
+  $("#mEarned").textContent = usdLead(money.earned);
+  $("#mMissed").textContent = usdLead(money.missed);
+  $("#mEarnedNote").textContent = `from ${o.paid || 0} paid request${o.paid === 1 ? "" : "s"}`;
+  $("#mMissedNote").textContent = `${o.left || 0} request${o.left === 1 ? "" : "s"} saw the price and walked away`;
 }
 
 function renderRibbon(o) {
@@ -257,7 +269,7 @@ async function tick() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
     next = d.next || null;
-    renderHeadline(d.outcomes || {});
+    renderLead(d.outcomes || {}, d.money || { earned: 0, missed: 0 });
     renderRibbon(d.outcomes || {});
     renderPaths(d.topPaths || []);
     renderAgents(d.topAgents || []);
@@ -277,6 +289,7 @@ const restart = () => {
   void tick();
 };
 
+for (const b of $("#winSeg").querySelectorAll(".seg-btn")) b.classList.toggle("on", b.dataset.win === state.win);
 wireSeg($("#winSeg"), "win", (v) => {
   state.win = v;
   restart();

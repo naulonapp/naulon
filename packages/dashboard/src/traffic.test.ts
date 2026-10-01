@@ -259,6 +259,7 @@ test("buildTraffic lists agents unless asked for people, and the ribbon counts a
   const agents = buildTraffic(rows, { since: 0 }, NOW);
   assert.equal(agents.matched, 2);
   assert.deepEqual(agents.outcomes, { paid: 1, left: 1, free: 0, refused: 0 });
+  assert.deepEqual(agents.money, { earned: 0, missed: 0 });
   assert.equal(buildTraffic(rows, { since: 0 }, NOW, { who: "all" }).matched, 3);
 });
 

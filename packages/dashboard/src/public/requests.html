@@ -32,8 +32,11 @@
 
       <div id="notice" aria-live="polite"></div>
 
-      <section class="card hero-card" aria-labelledby="headline">
-        <p class="headline" id="headline">Reading the log…</p>
+      <section class="card hero-card" aria-label="Earnings and outcomes in this window">
+        <div class="money-lead">
+          <div><p class="ml-k">Earned</p><p class="ml-v pos" id="mEarned">—</p><p class="ml-n" id="mEarnedNote"></p></div>
+          <div><p class="ml-k">Left on the table</p><p class="ml-v" id="mMissed">—</p><p class="ml-n" id="mMissedNote"></p></div>
+        </div>
         <nav class="ribbon" id="ribbon" aria-label="Requests by outcome. Pick one to narrow the page to it."></nav>
         <div class="legend" id="legend"></div>
       </section>
