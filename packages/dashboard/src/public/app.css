@@ -327,6 +327,9 @@ body {
 .seg-btn:first-child { border-left: 0; }
 .seg-btn:hover { color: var(--fg); }
 .seg-btn.on { color: var(--primary); background: var(--primary-soft); }
+/* On paper the selected window read 4.38:1 (#0a7350 on its own 14% tint), under the 4.5:1 floor for
+   11.5px text. A darker ink of the same green clears it without changing which state it shows. */
+:root[data-theme="light"] .seg-btn.on { color: color-mix(in oklab, var(--primary) 78%, black); }
 
 /* The portal's empty-state shape: a dashed, tinted box with an icon tile. This used to be bare
    centred text on the page background, which read as a gap in the layout rather than a deliberate
@@ -906,3 +909,8 @@ body {
 /* An agent row is a way into that agent's requests. */
 .agent-link { color: inherit; text-decoration: none; transition: background var(--motion) var(--ease); }
 .agent-link:hover { background: var(--elev-2); }
+/* Seven counts fit side by side only on a wide screen: measured at 1024 and 390 px, "requests" and
+   "unserved" ran into the next column. Narrower, they wrap to two rows of four. */
+@media (max-width: 1180px) {
+  .agent-nums { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+}
