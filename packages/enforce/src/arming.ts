@@ -46,6 +46,22 @@ export interface ArmingStore {
   status(publisherId: string, now: number): ArmingStatus[];
 }
 
+/** One (publisher, operator) pair as a host persists it. Hour keys are hour indexes (epoch ms / 1h). */
+export interface ArmingPairState {
+  publisherId: string;
+  operatorId: string;
+  armed: boolean;
+  verifiedHours: Record<string, number>;
+  lastVerifiedAt?: number;
+  forgedSinceVerified: number;
+  disarmedAt?: number;
+}
+
+export interface MemoryArmingStoreOptions {
+  /** Called after every change to a pair, so a host can persist just the pairs that moved. */
+  onChange?: (publisherId: string, operatorId: string) => void;
+}
+
 interface Pair {
   armed: boolean;
   /** hour index → verified hits in that hour, within ARM_WINDOW_MS */
@@ -73,6 +89,8 @@ export function silenceThresholdMs(verifiedInWindow: number): number {
 
 export class MemoryArmingStore implements ArmingStore {
   private readonly pairs = new Map<string, Pair>();
+
+  constructor(private readonly opts: MemoryArmingStoreOptions = {}) {}
 
   private key(p: string, op: string): string {
     return `${p}\u0000${op}`;
@@ -105,22 +123,86 @@ export class MemoryArmingStore implements ArmingStore {
       if (c.check === "ip-verified") {
         const h = Math.floor(now / HOUR_MS);
         pair.verified.set(h, (pair.verified.get(h) ?? 0) + 1);
-        pair.lastVerifiedAt = now;
-        pair.forgedSinceVerified = 0;
+        // A hit reported late (a host batching reports) is counted but never rewinds the clock the
+        // disarm rule measures silence from, nor clears forged claims that came after it.
+        if (pair.lastVerifiedAt === undefined || now >= pair.lastVerifiedAt) {
+          pair.lastVerifiedAt = now;
+          pair.forgedSinceVerified = 0;
+        }
         if (!pair.armed && verifiedIn(pair, now) >= ARM_VERIFIED_MIN) pair.armed = true;
+      } else {
+        pair.forgedSinceVerified++;
+        if (pair.armed && pair.lastVerifiedAt !== undefined) {
+          const silence = now - pair.lastVerifiedAt;
+          if (pair.forgedSinceVerified >= DISARM_MIN_FORGED && silence >= silenceThresholdMs(verifiedIn(pair, now))) {
+            pair.armed = false;
+            pair.disarmedAt = now;
+            pair.verified.clear();
+            pair.forgedSinceVerified = 0;
+            delete pair.lastVerifiedAt;
+          }
+        }
+      }
+      this.opts.onChange?.(publisherId, c.operatorId);
+    }
+  }
+
+  exportPair(publisherId: string, operatorId: string): ArmingPairState | undefined {
+    const p = this.pairs.get(this.key(publisherId, operatorId));
+    if (!p) return undefined;
+    return {
+      publisherId,
+      operatorId,
+      armed: p.armed,
+      verifiedHours: Object.fromEntries([...p.verified].map(([h, n]) => [String(h), n])),
+      forgedSinceVerified: p.forgedSinceVerified,
+      ...(p.lastVerifiedAt !== undefined ? { lastVerifiedAt: p.lastVerifiedAt } : {}),
+      ...(p.disarmedAt !== undefined ? { disarmedAt: p.disarmedAt } : {}),
+    };
+  }
+
+  /**
+   * Restore persisted pairs. A malformed row or hour entry is skipped, never thrown.
+   *
+   * A pair already recorded in this store (claims seen before the host's load finished) is MERGED
+   * with the stored one rather than replaced, so neither side's evidence is lost: hour counts add,
+   * the later verified hit and the later disarm win, and the pair is armed if either side was or
+   * the combined count reaches ARM_VERIFIED_MIN. A merged pair is announced through `onChange`.
+   */
+  importPairs(rows: readonly ArmingPairState[]): void {
+    for (const row of rows) {
+      if (!row.publisherId || !/^[a-z0-9-]{1,64}$/.test(row.operatorId)) continue;
+      const verified = new Map<number, number>();
+      for (const [h, n] of Object.entries(row.verifiedHours ?? {})) {
+        const hour = Number(h);
+        if (Number.isInteger(hour) && Number.isInteger(n) && n > 0) verified.set(hour, n);
+      }
+      const stored: Pair = {
+        armed: row.armed === true,
+        verified,
+        forgedSinceVerified: Number.isInteger(row.forgedSinceVerified) ? row.forgedSinceVerified : 0,
+        ...(typeof row.lastVerifiedAt === "number" ? { lastVerifiedAt: row.lastVerifiedAt } : {}),
+        ...(typeof row.disarmedAt === "number" ? { disarmedAt: row.disarmedAt } : {}),
+      };
+      const k = this.key(row.publisherId, row.operatorId);
+      const live = this.pairs.get(k);
+      if (!live) {
+        this.pairs.set(k, stored);
         continue;
       }
-
-      pair.forgedSinceVerified++;
-      if (!pair.armed || pair.lastVerifiedAt === undefined) continue;
-      const silence = now - pair.lastVerifiedAt;
-      if (pair.forgedSinceVerified >= DISARM_MIN_FORGED && silence >= silenceThresholdMs(verifiedIn(pair, now))) {
-        pair.armed = false;
-        pair.disarmedAt = now;
-        pair.verified.clear();
-        pair.forgedSinceVerified = 0;
-        delete pair.lastVerifiedAt;
-      }
+      for (const [h, n] of stored.verified) live.verified.set(h, (live.verified.get(h) ?? 0) + n);
+      const lastStored = stored.lastVerifiedAt ?? -Infinity;
+      const lastLive = live.lastVerifiedAt ?? -Infinity;
+      // Forged claims since the last verified hit: the live count when live verified later,
+      // otherwise both sides' forged claims followed the stored verified hit.
+      if (lastStored > lastLive) live.forgedSinceVerified += stored.forgedSinceVerified;
+      if (lastStored > lastLive) live.lastVerifiedAt = lastStored;
+      if (stored.disarmedAt !== undefined && (live.disarmedAt ?? -Infinity) < stored.disarmedAt) live.disarmedAt = stored.disarmedAt;
+      const now = live.lastVerifiedAt ?? stored.lastVerifiedAt ?? 0;
+      // A disarm seen live after the stored verified hit is newer evidence than the stored armed flag.
+      const disarmedSince = live.disarmedAt !== undefined && live.disarmedAt > lastStored;
+      live.armed = live.armed || (stored.armed && !disarmedSince) || verifiedIn(live, now) >= ARM_VERIFIED_MIN;
+      this.opts.onChange?.(row.publisherId, row.operatorId);
     }
   }
 

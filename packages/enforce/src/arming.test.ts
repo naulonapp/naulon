@@ -100,3 +100,58 @@ test("one request naming two operators counts once for each", () => {
   assert.equal(s.isArmed("p", "google"), true);
   assert.equal(s.isArmed("p", "bing"), true);
 });
+
+test("a pair survives export and import, and every change is announced", () => {
+  const changed: string[] = [];
+  const a = new MemoryArmingStore({ onChange: (p, op) => changed.push(`${p}/${op}`) });
+  for (let i = 0; i < ARM_VERIFIED_MIN; i++) a.record("p", r("ip-verified"), T + i);
+  assert.equal(a.isArmed("p", "google"), true);
+  assert.equal(changed.length, ARM_VERIFIED_MIN);
+  assert.deepEqual([...new Set(changed)], ["p/google"]);
+
+  const row = a.exportPair("p", "google")!;
+  assert.equal(row.armed, true);
+  assert.equal(Object.values(row.verifiedHours).reduce((x, y) => x + y, 0), ARM_VERIFIED_MIN);
+
+  const b = new MemoryArmingStore();
+  b.importPairs([row]);
+  assert.equal(b.isArmed("p", "google"), true);
+  assert.deepEqual(b.status("p", T + 100), a.status("p", T + 100));
+  assert.equal(b.exportPair("p", "nobody"), undefined);
+});
+
+test("import ignores a malformed row instead of throwing", () => {
+  const b = new MemoryArmingStore();
+  b.importPairs([{ publisherId: "", operatorId: "google", armed: true, verifiedHours: {}, forgedSinceVerified: 0 }]);
+  b.importPairs([{ publisherId: "p", operatorId: "google", armed: true, verifiedHours: { x: 3 } as never, forgedSinceVerified: 0 }]);
+  assert.equal(b.isArmed("", "google"), false);
+  assert.equal(b.status("p", T)[0]?.verifiedInWindow ?? 0, 0);
+});
+
+test("import merges into a pair recorded before it, so no evidence from either side is lost", () => {
+  const stored = new MemoryArmingStore();
+  for (let i = 0; i < ARM_VERIFIED_MIN - 5; i++) stored.record("p", r("ip-verified"), T + i);
+  const row = stored.exportPair("p", "google")!;
+
+  const changed: string[] = [];
+  const live = new MemoryArmingStore({ onChange: (p, op) => changed.push(`${p}/${op}`) });
+  for (let i = 0; i < 5; i++) live.record("p", r("ip-verified"), T + 1_000 + i);
+  changed.length = 0;
+  live.importPairs([row]);
+  assert.equal(live.isArmed("p", "google"), true, "15 stored + 5 live arms");
+  assert.equal(live.exportPair("p", "google")!.lastVerifiedAt, T + 1_004);
+  assert.deepEqual(changed, ["p/google"], "a merged pair is announced so the host writes it back");
+
+  const armedRow = { ...row, armed: true };
+  const fresh = new MemoryArmingStore();
+  fresh.record("p", r("forged"), T + 2_000);
+  fresh.importPairs([armedRow]);
+  assert.equal(fresh.isArmed("p", "google"), true, "a stored armed pair stays armed");
+});
+
+test("a verified hit reported late never moves lastVerifiedAt backwards", () => {
+  const s = new MemoryArmingStore();
+  s.record("p", r("ip-verified"), T + 10_000);
+  s.record("p", r("ip-verified"), T);
+  assert.equal(s.exportPair("p", "google")!.lastVerifiedAt, T + 10_000);
+});
