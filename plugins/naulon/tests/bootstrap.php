@@ -38,6 +38,11 @@ if ( ! function_exists( 'esc_html' ) ) {
 		return htmlspecialchars( (string) $text, ENT_QUOTES, 'UTF-8' );
 	}
 }
+if ( ! function_exists( 'esc_html__' ) ) {
+	function esc_html__( $text, $domain = 'default' ) { // phpcs:ignore
+		return esc_html( $text );
+	}
+}
 if ( ! function_exists( 'number_format_i18n' ) ) {
 	function number_format_i18n( $number, $decimals = 0 ) { // phpcs:ignore
 		return number_format( (float) $number, (int) $decimals );
@@ -46,6 +51,16 @@ if ( ! function_exists( 'number_format_i18n' ) ) {
 if ( ! function_exists( 'wp_strip_all_tags' ) ) {
 	function wp_strip_all_tags( $text ) { // phpcs:ignore
 		return strip_tags( (string) $text ); // phpcs:ignore
+	}
+}
+if ( ! function_exists( 'esc_url' ) ) {
+	function esc_url( $url ) { // phpcs:ignore
+		return (string) $url;
+	}
+}
+if ( ! function_exists( 'wp_kses_post' ) ) {
+	function wp_kses_post( $data ) { // phpcs:ignore
+		return (string) $data;
 	}
 }
 if ( ! function_exists( 'sanitize_text_field' ) ) {
@@ -99,3 +114,4 @@ require_once __DIR__ . '/../includes/class-naulon-roles.php';
 // integers. Everything else in the class talks to options and hooks and lives in the wp-env
 // suite. See ObserverReportTest for why these two are worth the fast suite.
 require_once __DIR__ . '/../includes/class-naulon-observer.php';
+require_once __DIR__ . '/../includes/class-naulon-privacy.php';
