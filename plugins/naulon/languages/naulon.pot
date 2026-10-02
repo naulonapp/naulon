@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: naulon citation toll 0.6.0\n"
+"Project-Id-Version: naulon citation toll 0.6.1\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/naulon\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-09-26T08:03:58+00:00\n"
+"POT-Creation-Date: 2026-10-02T07:08:25+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: naulon\n"
@@ -31,7 +31,7 @@ msgstr ""
 
 #. Author of the plugin
 #: naulon.php
-#: includes/admin/class-naulon-admin-content.php:301
+#: includes/admin/class-naulon-admin-content.php:311
 #: includes/class-naulon-admin.php:81
 #: includes/class-naulon-admin.php:82
 msgid "naulon"
@@ -120,50 +120,50 @@ msgstr ""
 msgid "Only if your host puts a proxy or firewall in front of WordPress and documents the header it sets (for example Sucuri's X-Sucuri-ClientIP). Leave empty behind Cloudflare; it is detected."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:193
-#: includes/admin/class-naulon-admin-diagnostics.php:498
+#: includes/admin/class-naulon-admin-content.php:201
+#: includes/admin/class-naulon-admin-diagnostics.php:533
 #: includes/admin/class-naulon-admin-people.php:155
 msgid "Save"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:196
+#: includes/admin/class-naulon-admin-content.php:204
 msgid "Charged by default"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:212
+#: includes/admin/class-naulon-admin-content.php:220
 msgid "Credits route"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:216
+#: includes/admin/class-naulon-admin-content.php:224
 msgid "give your account the base, without /credits — it appends the article itself"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:218
+#: includes/admin/class-naulon-admin-content.php:226
 msgid "This route describes published articles and their payees, and nothing else — a draft or a private post answers 404 exactly like a post that does not exist. It is open by default because the control plane calls it from another host. A shared token is available if you would rather it were not open; set the same value on your account."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:222
+#: includes/admin/class-naulon-admin-content.php:230
 msgid "Shared token (leave empty to keep the route open)"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:228
+#: includes/admin/class-naulon-admin-content.php:236
 msgid "Save token"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:246
-#: includes/admin/class-naulon-admin-content.php:260
+#: includes/admin/class-naulon-admin-content.php:254
+#: includes/admin/class-naulon-admin-content.php:270
 msgid "Saved."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:321
+#: includes/admin/class-naulon-admin-content.php:331
 msgid "Let everyone read this one free"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:328
+#: includes/admin/class-naulon-admin-content.php:338
 msgid "Nobody credited on this post has a wallet on this site. If naulon holds one for them, their share is paid there; otherwise this post reads free."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-content.php:331
+#: includes/admin/class-naulon-admin-content.php:341
 msgid "Paid to:"
 msgstr ""
 
@@ -255,320 +255,328 @@ msgstr ""
 msgid "The last entries are not charged: they are crawlers this site checks against their published addresses. Your cache answers before this plugin runs, so a crawler it serves is never checked. Update your cache's list when these entries change."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:170
+#: includes/admin/class-naulon-admin-diagnostics.php:174
 msgid "Recent decisions"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:171
+#: includes/admin/class-naulon-admin-diagnostics.php:175
 msgid "Only machine requests are recorded. A reader’s visit is never logged here — not their address, not their browser, not the fact that they came at all."
 msgstr ""
 
 #. translators: 1: how many requests are in the window, 2: charged, 3: paid, 4: re-read with a license, 5: served free.
-#: includes/admin/class-naulon-admin-diagnostics.php:178
+#: includes/admin/class-naulon-admin-diagnostics.php:182
 #, php-format
 msgid "In the last %1$d machine requests: %2$d charged, %3$d paid, %4$d re-read with a license, %5$d served free."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:191
+#: includes/admin/class-naulon-admin-diagnostics.php:195
 msgid "No machine has asked for an article yet."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:197
+#: includes/admin/class-naulon-admin-diagnostics.php:201
 #: includes/admin/class-naulon-admin-earnings.php:201
 msgid "When"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:198
+#: includes/admin/class-naulon-admin-diagnostics.php:202
 msgid "Outcome"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:199
+#: includes/admin/class-naulon-admin-diagnostics.php:203
 #: includes/admin/class-naulon-admin-earnings.php:202
 msgid "Article"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:200
+#: includes/admin/class-naulon-admin-diagnostics.php:204
 msgid "Why"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:201
+#: includes/admin/class-naulon-admin-diagnostics.php:205
 msgid "Asked by"
 msgstr ""
 
 #. translators: %s: human time difference, e.g. "2 hours".
-#: includes/admin/class-naulon-admin-diagnostics.php:210
+#: includes/admin/class-naulon-admin-diagnostics.php:214
 #: includes/admin/class-naulon-admin-earnings.php:223
-#: includes/class-naulon-admin.php:594
+#: includes/class-naulon-admin.php:595
 #, php-format
 msgid "%s ago"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:224
+#: includes/admin/class-naulon-admin-diagnostics.php:228
 msgid "Clear"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:254
+#: includes/admin/class-naulon-admin-diagnostics.php:258
 msgid "Reported to your naulon account"
 msgstr ""
 
 #. translators: 1: how many decisions are waiting, 2: the error, e.g. "HTTP 401".
-#: includes/admin/class-naulon-admin-diagnostics.php:266
+#: includes/admin/class-naulon-admin-diagnostics.php:270
 #, php-format
 msgid "Could not report the last decisions to your naulon account (%2$s). %1$d waiting — they go with the next crawl, or within the hour. Your Audit page is missing them until then."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:268
+#: includes/admin/class-naulon-admin-diagnostics.php:272
 msgid "unknown error"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:281
+#: includes/admin/class-naulon-admin-diagnostics.php:285
 msgid "charged"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:283
+#: includes/admin/class-naulon-admin-diagnostics.php:287
 msgid "paid"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:285
+#: includes/admin/class-naulon-admin-diagnostics.php:289
 msgid "re-read with a license"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:287
+#: includes/admin/class-naulon-admin-diagnostics.php:291
 msgid "served free"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:302
+#: includes/admin/class-naulon-admin-diagnostics.php:321
+msgid "None yet. A crawler is armed after naulon has seen the real one 20 times at its published addresses within 14 days. Until then impostors are recorded and read free."
+msgstr ""
+
+#: includes/admin/class-naulon-admin-diagnostics.php:336
 msgid "Control plane"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:304
+#: includes/admin/class-naulon-admin-diagnostics.php:338
 msgid "Address"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:305
+#: includes/admin/class-naulon-admin-diagnostics.php:339
 msgid "Key"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:305
+#: includes/admin/class-naulon-admin-diagnostics.php:339
 #: includes/admin/class-naulon-admin-people.php:160
-#: includes/class-naulon-admin.php:440
+#: includes/class-naulon-admin.php:441
 msgid "none"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:306
+#: includes/admin/class-naulon-admin-diagnostics.php:340
 msgid "Verified host"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:306
+#: includes/admin/class-naulon-admin-diagnostics.php:340
 msgid "not verified"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:307
+#: includes/admin/class-naulon-admin-diagnostics.php:341
 msgid "Last status check"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:307
-#: includes/admin/class-naulon-admin-diagnostics.php:312
+#: includes/admin/class-naulon-admin-diagnostics.php:341
+#: includes/admin/class-naulon-admin-diagnostics.php:347
 msgid "never"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:308
+#: includes/admin/class-naulon-admin-diagnostics.php:342
 msgid "This domain is classified as"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:308
+#: includes/admin/class-naulon-admin-diagnostics.php:342
 msgid "not classified yet"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:310
+#: includes/admin/class-naulon-admin-diagnostics.php:343
+msgid "Impostors charged for"
+msgstr ""
+
+#: includes/admin/class-naulon-admin-diagnostics.php:345
 msgid "Last status error"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:312
+#: includes/admin/class-naulon-admin-diagnostics.php:347
 msgid "Last heartbeat"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:316
+#: includes/admin/class-naulon-admin-diagnostics.php:351
 msgid "Heartbeat note"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:319
+#: includes/admin/class-naulon-admin-diagnostics.php:354
 msgid "Next heartbeat"
 msgstr ""
 
 #. translators: %s: human time difference, e.g. "2 hours".
-#: includes/admin/class-naulon-admin-diagnostics.php:322
+#: includes/admin/class-naulon-admin-diagnostics.php:357
 #, php-format
 msgid "in %s"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:323
+#: includes/admin/class-naulon-admin-diagnostics.php:358
 msgid "not scheduled"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:326
+#: includes/admin/class-naulon-admin-diagnostics.php:361
 msgid "The heartbeat prices one real article every hour. That is what keeps your account from marking this site as a dead integration during a quiet week, and it is how a conflict with DNS-based enforcement is noticed."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:336
+#: includes/admin/class-naulon-admin-diagnostics.php:371
 msgid "This installation"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:338
+#: includes/admin/class-naulon-admin-diagnostics.php:373
 msgid "Site address"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:339
+#: includes/admin/class-naulon-admin-diagnostics.php:374
 msgid "Served over HTTPS"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:339
+#: includes/admin/class-naulon-admin-diagnostics.php:374
 msgid "yes"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:339
+#: includes/admin/class-naulon-admin-diagnostics.php:374
 msgid "no — ownership cannot be verified without it"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:341
+#: includes/admin/class-naulon-admin-diagnostics.php:376
 msgid "Permalinks"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:344
+#: includes/admin/class-naulon-admin-diagnostics.php:379
 msgid "plain — nothing can be tolled, and the ownership challenge cannot be served"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:346
+#: includes/admin/class-naulon-admin-diagnostics.php:381
 msgid "PHP"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:347
+#: includes/admin/class-naulon-admin-diagnostics.php:382
 msgid "WordPress"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:348
+#: includes/admin/class-naulon-admin-diagnostics.php:383
 msgid "Plugin"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:349
+#: includes/admin/class-naulon-admin-diagnostics.php:384
 msgid "WP-Cron"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:349
+#: includes/admin/class-naulon-admin-diagnostics.php:384
 msgid "disabled — run it from the system scheduler, or the heartbeat will not fire"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:349
+#: includes/admin/class-naulon-admin-diagnostics.php:384
 msgid "enabled"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:355
+#: includes/admin/class-naulon-admin-diagnostics.php:390
 msgid "Ownership challenge, as this server sees it"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:357
+#: includes/admin/class-naulon-admin-diagnostics.php:392
 msgid "URL"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:358
+#: includes/admin/class-naulon-admin-diagnostics.php:393
 msgid "Status"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:359
+#: includes/admin/class-naulon-admin-diagnostics.php:394
 msgid "Body"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:359
+#: includes/admin/class-naulon-admin-diagnostics.php:394
 msgid "(empty)"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:361
+#: includes/admin/class-naulon-admin-diagnostics.php:396
 msgid "Redirects to"
 msgstr ""
 
 #. translators: 1: installed version, 2: the newer version available.
-#: includes/admin/class-naulon-admin-diagnostics.php:392
+#: includes/admin/class-naulon-admin-diagnostics.php:427
 #, php-format
 msgid "%1$s — %2$s is available, install it from the Plugins screen"
 msgstr ""
 
 #. translators: %s: installed version.
-#: includes/admin/class-naulon-admin-diagnostics.php:404
+#: includes/admin/class-naulon-admin-diagnostics.php:439
 #, php-format
 msgid "%s — up to date"
 msgstr ""
 
 #. translators: %s: installed version.
-#: includes/admin/class-naulon-admin-diagnostics.php:411
+#: includes/admin/class-naulon-admin-diagnostics.php:446
 #, php-format
 msgid "%s — no update check has completed yet"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:456
+#: includes/admin/class-naulon-admin-diagnostics.php:491
 msgid "Your data if this plugin is deleted"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:460
+#: includes/admin/class-naulon-admin-diagnostics.php:495
 msgid "Deleting the plugin will erase this data"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:462
+#: includes/admin/class-naulon-admin-diagnostics.php:497
 msgid "Deleting the plugin keeps this data"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:467
+#: includes/admin/class-naulon-admin-diagnostics.php:502
 msgid "Author wallet addresses"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:469
+#: includes/admin/class-naulon-admin-diagnostics.php:504
 msgid "Settlements recorded"
 msgstr ""
 
 #. translators: 1: number of settlements, 2: total in USDC.
-#: includes/admin/class-naulon-admin-diagnostics.php:472
+#: includes/admin/class-naulon-admin-diagnostics.php:507
 #, php-format
 msgid "%1$s — %2$s USDC settled"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:477
+#: includes/admin/class-naulon-admin-diagnostics.php:512
 msgid "Posts with a toll choice saved"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:480
+#: includes/admin/class-naulon-admin-diagnostics.php:515
 msgid "WordPress removes a plugin's data before it removes its files, and it cannot be undone. By default this plugin keeps everything above when you delete it, so a mistaken Delete costs you nothing but a reinstall. Our own code goes either way: the cache guard and the hourly schedule are removed, because leaving them running for a plugin that is gone is a bug."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:483
+#: includes/admin/class-naulon-admin-diagnostics.php:518
 msgid "You have asked for full removal. Export first — the wallet addresses were typed in by hand, and the settlement record is the only copy outside the chain."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:489
+#: includes/admin/class-naulon-admin-diagnostics.php:524
 msgid "Export wallets and earnings"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:496
+#: includes/admin/class-naulon-admin-diagnostics.php:531
 msgid "Also erase my data when this plugin is deleted"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:509
+#: includes/admin/class-naulon-admin-diagnostics.php:544
 msgid "WordPress cannot update or delete this plugin"
 msgstr ""
 
 #. translators: %s: absolute directory path.
-#: includes/admin/class-naulon-admin-diagnostics.php:513
+#: includes/admin/class-naulon-admin-diagnostics.php:548
 #, php-format
 msgid "%s is not writable by the web server, and removing or replacing a file needs write permission on the directory that holds it — not on the file. Until that is fixed, an update will report that files could not be copied and a delete will report that the plugin could not be fully removed. It usually means the plugin was installed by a different user (over SSH, or as root), so the fix is to give the directory back to the user PHP runs as."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:547
+#: includes/admin/class-naulon-admin-diagnostics.php:582
 msgid "Cleared."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:573
+#: includes/admin/class-naulon-admin-diagnostics.php:608
 msgid "Saved. Deleting the plugin will now erase your wallets and earnings record — export a copy first."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-diagnostics.php:574
+#: includes/admin/class-naulon-admin-diagnostics.php:609
 msgid "Saved. Deleting the plugin will keep your wallets and earnings record."
 msgstr ""
 
@@ -1159,55 +1167,55 @@ msgstr ""
 msgid "This site is not connected to naulon yet. Finish Setup first, then approve."
 msgstr ""
 
-#: includes/class-naulon-admin.php:187
+#: includes/class-naulon-admin.php:188
 msgid "You do not have permission to view this page."
 msgstr ""
 
-#: includes/class-naulon-admin.php:260
+#: includes/class-naulon-admin.php:261
 msgid "Unknown action."
 msgstr ""
 
-#: includes/class-naulon-admin.php:272
+#: includes/class-naulon-admin.php:273
 msgid "You do not have permission to do that."
 msgstr ""
 
-#: includes/class-naulon-admin.php:439
+#: includes/class-naulon-admin.php:440
 msgid "Connection"
 msgstr ""
 
-#: includes/class-naulon-admin.php:440
+#: includes/class-naulon-admin.php:441
 msgid "connected"
 msgstr ""
 
-#: includes/class-naulon-admin.php:444
+#: includes/class-naulon-admin.php:445
 msgid "Domain"
 msgstr ""
 
-#: includes/class-naulon-admin.php:445
+#: includes/class-naulon-admin.php:446
 msgid "verified"
 msgstr ""
 
-#: includes/class-naulon-admin.php:445
+#: includes/class-naulon-admin.php:446
 msgid "unproven"
 msgstr ""
 
-#: includes/class-naulon-admin.php:449
+#: includes/class-naulon-admin.php:450
 msgid "Toll"
 msgstr ""
 
-#: includes/class-naulon-admin.php:450
+#: includes/class-naulon-admin.php:451
 msgid "charging agents"
 msgstr ""
 
-#: includes/class-naulon-admin.php:450
+#: includes/class-naulon-admin.php:451
 msgid "blocked"
 msgstr ""
 
-#: includes/class-naulon-admin.php:450
+#: includes/class-naulon-admin.php:451
 msgid "off"
 msgstr ""
 
-#: includes/class-naulon-admin.php:461
+#: includes/class-naulon-admin.php:462
 msgid "Paid out"
 msgstr ""
 
@@ -1283,95 +1291,95 @@ msgstr ""
 msgid "Harmless for the toll on its own — it caches queries, not whole responses."
 msgstr ""
 
-#: includes/class-naulon-cache.php:294
+#: includes/class-naulon-cache.php:303
 msgid "No published article on this site credits an author, so there is nothing to test with. Assign an author to a post and publish it."
 msgstr ""
 
 #. translators: %s: transport error.
-#: includes/class-naulon-cache.php:321
+#: includes/class-naulon-cache.php:330
 #, php-format
 msgid "This site could not fetch its own article (%s). That is usually a loopback restriction on the host rather than a caching problem."
 msgstr ""
 
-#: includes/class-naulon-cache.php:338
+#: includes/class-naulon-cache.php:347
 msgid "A crawler asking for this article was charged. Nothing between here and the answer is serving it a cached copy."
 msgstr ""
 
 #. translators: %d: HTTP status code.
-#: includes/class-naulon-cache.php:365
+#: includes/class-naulon-cache.php:374
 #, php-format
 msgid "A crawler asking for this article got %d, which is neither a toll nor the article."
 msgstr ""
 
-#: includes/class-naulon-cache.php:397
+#: includes/class-naulon-cache.php:406
 msgid "A crawler was served this article free because the toll is switched off, or this site is not connected and verified yet. Finish the steps above and test again."
 msgstr ""
 
-#: includes/class-naulon-cache.php:404
+#: includes/class-naulon-cache.php:413
 msgid "A crawler was served this article free because your naulon account says it is free. That is what a missing or wrong credits endpoint looks like from here: the control plane asks your site who wrote the article and where the money goes, gets nothing back, and treats it as a free read. Open your site in the naulon dashboard, check the credits endpoint under Tollable content, and test again. If the endpoint is right, this article may simply have no author wallet — which is a deliberate free read."
 msgstr ""
 
 #. translators: %d: HTTP status the control plane answered with.
-#: includes/class-naulon-cache.php:410
+#: includes/class-naulon-cache.php:419
 #, php-format
 msgid "A crawler was served this article free because the control plane could not price it (HTTP %d). The toll always fails open — a pricing outage never blocks a reader. Check the API key above, then test again."
 msgstr ""
 
-#: includes/class-naulon-cache.php:419
+#: includes/class-naulon-cache.php:428
 msgid "A crawler was served this article free even though your naulon account priced it. Something is answering before the toll runs — a page cache, a CDN rule, or a security plugin. The response headers below name the layer."
 msgstr ""
 
-#: includes/class-naulon-cache.php:447
+#: includes/class-naulon-cache.php:456
 msgid "Cloudflare served this from its own cache — cf-cache-status below says so — which means it answered without WordPress running at all. No setting in this plugin can reach that, so the fix is at Cloudflare: either stop caching article HTML (Cache Everything and APO are the settings that start it), or add a cache rule that bypasses the cache when the user agent is one of the crawlers you toll. Purge the cache afterwards, or the copies stored before the change keep being served."
 msgstr ""
 
-#: includes/class-naulon-cache.php:451
+#: includes/class-naulon-cache.php:460
 msgid "A CDN in front of this site answered from its cache — the x-cache header below says HIT — so WordPress never ran for that request. The fix belongs at that CDN: exclude article URLs from full-page caching, or bypass the cache for the crawler user agents you toll, then purge what it already stored."
 msgstr ""
 
-#: includes/class-naulon-cache.php:457
+#: includes/class-naulon-cache.php:466
 msgid "Cloudflare is in front of this site but did not answer this request from cache (cf-cache-status below), so the layer is inside WordPress — a page cache plugin, or a security plugin short-circuiting the request."
 msgstr ""
 
-#: includes/class-naulon-cache.php:500
+#: includes/class-naulon-cache.php:509
 msgid "(present)"
 msgstr ""
 
-#: includes/class-naulon-client.php:301
+#: includes/class-naulon-client.php:363
 msgid "This site's naulon key may not invite authors. Reconnect it from Setup to pick up the permission."
 msgstr ""
 
-#: includes/class-naulon-client.php:304
+#: includes/class-naulon-client.php:366
 msgid "naulon already has an author with that id or address for this site."
 msgstr ""
 
-#: includes/class-naulon-client.php:306
+#: includes/class-naulon-client.php:368
 msgid "naulon refused the invitation."
 msgstr ""
 
-#: includes/class-naulon-cron.php:262
+#: includes/class-naulon-cron.php:265
 msgid "No published article on this site credits an author, so there is nothing to price. Assign an author to a post and publish it."
 msgstr ""
 
 #. translators: %s: article title.
-#: includes/class-naulon-cron.php:276
+#: includes/class-naulon-cron.php:279
 #, php-format
 msgid "Your account priced “%s” free, so nothing is being tolled on it. That is the right answer when the article is marked free, or when nobody credited on it has a payout wallet — including on your naulon account. Check Content, and ask those authors to connect a wallet."
 msgstr ""
 
-#: includes/class-naulon-cron.php:327
+#: includes/class-naulon-cron.php:330
 msgid "The control plane rejected this API key (401). Nothing is being tolled until it is replaced."
 msgstr ""
 
 #. translators: %s: transport error.
-#: includes/class-naulon-cron.php:331
+#: includes/class-naulon-cron.php:334
 #: includes/class-naulon-verification.php:387
 #, php-format
 msgid "Could not reach the control plane: %s"
 msgstr ""
 
 #. translators: %d: HTTP status code.
-#: includes/class-naulon-cron.php:334
+#: includes/class-naulon-cron.php:337
 #: includes/class-naulon-verification.php:393
 #, php-format
 msgid "The control plane answered %d."

@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.6.0
+Stable tag: 0.6.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -150,6 +150,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.6.1 =
+* Diagnostics names a caught impostor even when it read free, calls an allowlisted crawler an allowed crawler rather than a person, and lists the companies whose crawlers' impostors your site charges.
+
 = 0.6.0 =
 * Requests that claim to be a known crawler are now checked against that crawler's published addresses. Once naulon has seen the real crawler on your site, an impostor using its name no longer reads for free.
 * New setting on the Content screen: the trusted client IP header, for sites behind a proxy or firewall other than Cloudflare.
@@ -226,6 +229,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.6.1 =
+Diagnostics now names a caught impostor even when it read free, and shows which crawlers' impostors your site charges.
+
 = 0.6.0 =
 A request that names Googlebot or another known crawler from an address outside that crawler's published list stops reading for free, once naulon has seen the real crawler on your site.
 
