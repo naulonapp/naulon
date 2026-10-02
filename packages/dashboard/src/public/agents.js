@@ -38,6 +38,8 @@ function renderSplit(s) {
   $("#sVerifiedPct").textContent = pct(s.verified, s.total);
   $("#sUnsignedPct").textContent = pct(s.unsigned, s.total);
   $("#sMasq").classList.toggle("bad", s.masquerade > 0);
+  $("#sForged").textContent = s.forged ?? 0;
+  $("#sForged").classList.toggle("bad", (s.forged ?? 0) > 0);
 
   // A masquerade is not a misconfiguration on the operator's side, so it gets a
   // statement of fact and no "fix" — there is nothing for them to change. Saying

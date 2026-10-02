@@ -14,6 +14,17 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.12.1
+
+No npm package changed. The WordPress plugin moves to 0.6.1; its own changelog says so. The
+self-host console ships with the gate.
+
+### Added
+- The self-host console counts impostor claims on Agents, marks them in Requests, and shows the
+  address check and the caller's network in the request drawer.
+- The WordPress plugin (0.6.1) names a caught impostor on Diagnostics even when it read free, and
+  lists the companies whose crawlers' impostors the site charges.
+
 ## v0.12.0
 
 `@naulon/shared` 0.6.5 → **0.6.6** and `@naulon/enforce` 0.7.1 → **0.8.0**. `@naulon/wayfarer`

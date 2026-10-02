@@ -442,7 +442,9 @@ export function buildTraffic(
 export interface AgentsReport {
   at: number;
   since: number;
-  split: { total: number; verified: number; unsigned: number; masquerade: number };
+  /** `forged` counts crawler claims from outside the operator's published ranges over every row:
+   *  an impostor on an unarmed site read free and is recorded as a person. */
+  split: { total: number; verified: number; unsigned: number; masquerade: number; forged: number };
   agents: AgentRow[];
 }
 
@@ -453,8 +455,9 @@ export function buildAgents(
 ): AgentsReport {
   const matched = filterObservations(observations, query);
   const agents = rollupAgents(matched);
-  const split = { total: 0, verified: 0, unsigned: 0, masquerade: 0 };
+  const split = { total: 0, verified: 0, unsigned: 0, masquerade: 0, forged: 0 };
   for (const o of matched) {
+    if (o.identityCheck === "forged") split.forged += 1;
     if (o.classifiedAs !== "agent") continue;
     split.total += 1;
     split[identityOf(o)] += 1;
