@@ -14,6 +14,19 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.12.2
+
+- `@naulon/wayfarer-mcp` 0.7.2: the README now has setup instructions for OpenCode, Codex and
+  Gemini CLI. No code changed.
+
+The WordPress plugin moves to 0.6.2; its own changelog says so.
+
+### Fixed
+- The WordPress plugin (0.6.2) discloses what approving an author's payout request sends to
+  naulon: the author's email address, their `wp-user-` id and the approver's email address. Its
+  readme listed every other outbound request but this one. Settings → Privacy now offers
+  suggested policy text listing everything the plugin sends.
+
 ## v0.12.1
 
 No npm package changed. The WordPress plugin moves to 0.6.1; its own changelog says so. The
