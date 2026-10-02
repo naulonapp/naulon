@@ -3,7 +3,7 @@
  * Plugin Name:       naulon citation toll
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
- * Version:           0.6.1
+ * Version:           0.6.2
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
@@ -36,7 +36,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NAULON_VERSION', '0.6.1' );
+define( 'NAULON_VERSION', '0.6.2' );
 define( 'NAULON_PLUGIN_FILE', __FILE__ );
 define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 
@@ -69,6 +69,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cron.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-access.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-profile.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-data.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-privacy.php';
 
 /**
  * Wire the plugin. Everything is hook-registration only — no work happens at load time, so a
@@ -93,6 +94,7 @@ function naulon_bootstrap() {
 		require_once NAULON_PLUGIN_DIR . 'includes/admin/class-naulon-admin-diagnostics.php';
 
 		Naulon_Admin::instance()->register();
+		Naulon_Privacy::instance()->register();
 		add_action( 'add_meta_boxes', array( 'Naulon_Admin_Content', 'add_meta_box' ) );
 		add_action( 'save_post', array( 'Naulon_Admin_Content', 'save_meta_box' ) );
 	}

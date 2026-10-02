@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.6.1
+Stable tag: 0.6.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -78,9 +78,17 @@ not one, to anywhere.
   the URL and slug of the requested article.
 * When an agent pays. Sent: your API key, the article URL, the payment the agent signed, and
   the wallet addresses credited on that article.
+* When an administrator or editor approves an author's request for a naulon payout account
+  (People screen). Sent: the author's email address, the author's id on this site
+  (`wp-user-` followed by their user number), and the email address of the person who
+  approved. naulon uses them to email the author an invitation. Nothing is sent for an author
+  who never asked, or whose request nobody approved.
 
 **What is never sent:** your article content, your readers, your visitor logs, and anything
 about human traffic. Human requests never contact the service at all.
+
+The plugin adds a suggested paragraph to Settings → Privacy that says all of this, for your own
+privacy policy.
 
 If you point the connectivity field at your own self-hosted gate instead of a key, the plugin
 talks only to that server and never to naulon.app.
@@ -149,6 +157,10 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 5. Diagnostics: the caching check, recent decisions, and connection health.
 
 == Changelog ==
+
+= 0.6.2 =
+* The External services section now says what an author approval sends: the author's email address, their id on this site, and the approver's email address. It had left this out.
+* Settings → Privacy now offers a suggested paragraph listing everything the plugin sends to naulon.
 
 = 0.6.1 =
 * Diagnostics names a caught impostor even when it read free, calls an allowlisted crawler an allowed crawler rather than a person, and lists the companies whose crawlers' impostors your site charges.
@@ -229,6 +241,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.6.2 =
+Discloses that approving an author's payout request sends their email address and yours to naulon, and adds suggested privacy-policy text under Settings → Privacy.
+
 = 0.6.1 =
 Diagnostics now names a caught impostor even when it read free, and shows which crawlers' impostors your site charges.
 
