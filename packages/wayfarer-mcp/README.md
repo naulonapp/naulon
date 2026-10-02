@@ -10,7 +10,7 @@ cite what it bought: the same budgeted buying loop the CLI agent runs, exposed
 as callable tools and slash commands.
 
 Works with **any MCP client**: Claude Code, Claude Desktop, Cursor, Windsurf,
-Cline, VS Code, or your own host. Setup for each is below.
+Cline, VS Code, OpenCode, Codex, Gemini CLI, or your own host. Setup for each is below.
 
 ---
 
@@ -127,6 +127,39 @@ Restart Claude Desktop. Prompts appear in the `+` / slash-command menu.
 Cline → MCP Servers → Configure (`cline_mcp_settings.json`), key `mcpServers`,
 same canonical block.
 
+### OpenCode
+
+`opencode.json` in your project root. OpenCode uses the `mcp` key, a `type` of
+`local`, and the command as one array:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "naulon": { "type": "local", "command": ["npx", "-y", "@naulon/wayfarer-mcp"] }
+  }
+}
+```
+
+Environment variables go under `environment`, not `env`.
+
+### Codex
+
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.naulon]
+command = "npx"
+args = ["-y", "@naulon/wayfarer-mcp"]
+```
+
+`codex mcp list` shows it as enabled.
+
+### Gemini CLI
+
+`~/.gemini/settings.json` (global) or `.gemini/settings.json` (per-project), key
+`mcpServers`, the same canonical block. `gemini mcp list` shows it connected.
+
 ### Any other MCP host
 
 Spawn the stdio binary and speak MCP over its stdio transport:
@@ -161,6 +194,20 @@ claude mcp add --scope user --transport http naulon \
   "mcpServers": {
     "naulon": {
       "type": "http",
+      "url": "https://<your-naulon-host>/_naulon/mcp",
+      "headers": { "Authorization": "Bearer <AGENT_TOKEN>" }
+    }
+  }
+}
+```
+
+```jsonc
+// OpenCode (opencode.json)
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "naulon": {
+      "type": "remote",
       "url": "https://<your-naulon-host>/_naulon/mcp",
       "headers": { "Authorization": "Bearer <AGENT_TOKEN>" }
     }
