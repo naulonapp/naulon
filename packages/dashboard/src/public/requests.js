@@ -197,11 +197,14 @@ function renderRows(rows, matched) {
     <tbody>${rows
       .map((o) => {
         const out = OUTCOME_OF[o.verdict] || "free";
-        const who = o.classifiedAs === "agent" ? esc(o.agent || o.verifiedAgent || o.agentUa || "unsigned agent") : "a person";
+        // An impostor on an unarmed site read free as a person; it is still a crawler claim.
+        const who = o.classifiedAs === "agent"
+          ? esc(o.agent || o.verifiedAgent || o.agentUa || "unsigned agent")
+          : o.claimedOperator ? `${esc(o.agent || o.agentUa || o.claimedOperator)} (claimed)` : "a person";
         return `<tr data-id="${esc(o.id)}">
           <td><span class="mono">${esc(rel(o.at))} ago</span></td>
           <td><button type="button" class="linkish" data-open="${esc(o.id)}"><span class="dot-o" data-o="${out}"></span>${esc(VERDICT_TITLE[o.verdict] || o.verdict)}</button></td>
-          <td>${who}${o.verified ? ` <span class="badge">✓</span>` : o.sigInvalid ? ` <span class="bad">spoofed</span>` : ""}</td>
+          <td>${who}${o.verified ? ` <span class="badge">✓</span>` : o.sigInvalid ? ` <span class="bad">spoofed</span>` : ""}${o.identityCheck === "forged" ? ` <span class="bad">impostor</span>` : ""}</td>
           <td><span class="path">${esc(o.path || (o.slug ? "/" + o.slug : "/"))}</span><span class="sub">${esc(o.host)}</span></td>
           <td class="num mono">${o.price != null ? usd(o.price) : "—"}</td>
         </tr>`;
@@ -236,10 +239,15 @@ function openDrawer(o) {
         <dl>
           ${fact("When", exactTime(o.at))}
           ${fact("Page", `${o.host}${o.path || (o.slug ? "/" + o.slug : "/")}`, true)}
-          ${fact("Caller", o.classifiedAs === "agent" ? o.agent : "a person")}
+          ${fact("Caller", o.classifiedAs === "agent" ? o.agent : o.claimedOperator ? `${o.agent || o.agentUa || o.claimedOperator} (claimed)` : "a person")}
+          ${o.identityCheck && o.identityCheck !== "signature"
+            ? fact("Address check", o.identityCheck === "forged"
+              ? `outside the crawler's published addresses${o.forgedFrom ? ` (network ${o.forgedFrom})` : ""}`
+              : o.identityCheck === "ip-verified" ? "inside the crawler's published addresses" : "not checked: no usable caller address, or no current address list")
+            : ""}
           ${fact("Identity", o.verified ? `signed by ${o.verifiedAgent}, verified` : o.sigInvalid ? "a signature was presented and failed" : "not signed; the name comes from the user agent")}
           ${fact("User agent", o.agentUa, true)}
-          ${fact("Why it counts as an agent", o.classifyReason, true)}
+          ${fact("How it was classified", (o.classifyReason || "").replace(/^human \(seo allowlist matched ("[^"]*")\)/, "allowed crawler (matched $1)"), true)}
           ${fact("Why it failed", o.failureReason)}
           ${fact("Sent by", o.referrerHost, true)}
           ${fact("Served as", EXTRACTION[o.extraction] || o.extraction)}

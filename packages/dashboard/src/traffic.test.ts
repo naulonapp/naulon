@@ -213,7 +213,7 @@ test("buildAgents splits identity and counts only agent traffic", () => {
     obs({ verdict: "denied", agentUa: "Liar", sigInvalid: true, price: usdc(0.01) }),
   ];
   const r = buildAgents(rows, { since: 0 }, NOW);
-  assert.deepEqual(r.split, { total: 3, verified: 1, unsigned: 1, masquerade: 1 });
+  assert.deepEqual(r.split, { total: 3, verified: 1, unsigned: 1, masquerade: 1, forged: 0 });
   assert.equal(r.agents.length, 3, "the human is not an agent row");
 });
 
@@ -273,4 +273,13 @@ test("filters narrow by outcome, agent, path and identity", () => {
   assert.equal(filterObservations(rows, { since: 0, agent: "GPTBot" }).length, 1);
   assert.equal(filterObservations(rows, { since: 0, slug: "a" }).length, 2);
   assert.equal(filterObservations(rows, { since: 0, identity: "verified" }).length, 1);
+});
+
+test("the agents split counts impostors over every row, people included", () => {
+  const rows = [
+    obs({ verdict: "served-free", classifiedAs: "human", identityCheck: "forged", claimedOperator: "google" }),
+    obs({ verdict: "denied", identityCheck: "forged", claimedOperator: "google" }),
+    obs({ verdict: "served-free", classifiedAs: "human", identityCheck: "ip-verified", claimedOperator: "google" }),
+  ];
+  assert.equal(buildAgents(rows, { since: 0 }, NOW).split.forged, 2);
 });

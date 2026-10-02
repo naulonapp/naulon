@@ -218,7 +218,7 @@ class Naulon_Admin_Diagnostics {
 			);
 			printf( '<td>%s</td>', esc_html( self::outcome_label( (string) $entry['action'] ) ) );
 			printf( '<td><code>%s</code></td>', esc_html( (string) $entry['slug'] ) );
-			printf( '<td class="naulon-muted">%s</td>', esc_html( (string) $entry['reason'] ) );
+			printf( '<td class="naulon-muted">%s</td>', esc_html( self::reason_label( (string) $entry['reason'] ) ) );
 			printf( '<td class="naulon-muted">%s</td>', esc_html( (string) $entry['ua'] ) );
 			echo '</tr>';
 		}
@@ -299,6 +299,36 @@ class Naulon_Admin_Diagnostics {
 	/**
 	 * @return void
 	 */
+	/**
+	 * The reason as a publisher reads it. The classifier says "human" for an allowlisted crawler
+	 * because it reads free like one; on this screen that reads as a person, which it is not.
+	 *
+	 * @param string $reason Stored decision reason.
+	 * @return string
+	 */
+	public static function reason_label( $reason ) {
+		return (string) preg_replace( '/^human \(seo allowlist matched ("[^"]*")\)/', 'allowed crawler (matched $1)', (string) $reason );
+	}
+
+	/**
+	 * The companies whose crawlers' impostors this site charges, or what arming waits for.
+	 *
+	 * @param string[] $armed Operator ids from the control plane's armed set.
+	 * @return string
+	 */
+	public static function armed_line( array $armed ) {
+		if ( empty( $armed ) ) {
+			return __( 'None yet. A crawler is armed after naulon has seen the real one 20 times at its published addresses within 14 days. Until then impostors are recorded and read free.', 'naulon' );
+		}
+		$names = array();
+		foreach ( Naulon_Identity::PROOF as $row ) {
+			if ( in_array( $row['id'], $armed, true ) && ! in_array( $row['operator'], $names, true ) ) {
+				$names[] = $row['operator'];
+			}
+		}
+		return implode( ', ', $names );
+	}
+
 	private static function render_connectivity() {
 		$settings = Naulon_Settings::all();
 		$next     = wp_next_scheduled( Naulon_Cron::EVENT );
@@ -310,6 +340,7 @@ class Naulon_Admin_Diagnostics {
 		self::kv( __( 'Verified host', 'naulon' ), Naulon_Settings::is_verified() ? Naulon_Verification::host() : __( 'not verified', 'naulon' ) );
 		self::kv_html( __( 'Last status check', 'naulon' ), Naulon_Admin::when( (string) $settings['status_checked_at'], __( 'never', 'naulon' ) ) );
 		self::kv( __( 'This domain is classified as', 'naulon' ), '' !== (string) $settings['status_mode'] ? (string) $settings['status_mode'] : __( 'not classified yet', 'naulon' ) );
+		self::kv( __( 'Impostors charged for', 'naulon' ), self::armed_line( Naulon_Rules::instance()->armed() ) );
 		if ( '' !== (string) $settings['status_error'] ) {
 			self::kv( __( 'Last status error', 'naulon' ), (string) $settings['status_error'] );
 		}
