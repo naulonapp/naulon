@@ -36,6 +36,13 @@ class Naulon_Admin {
 
 	const PAGE_DIAGNOSTICS = 'naulon-diagnostics';
 
+	/**
+	 * Where a payee withdraws. Batched settlement credits the paid address's Circle Gateway
+	 * balance, never the wallet itself, and naulon's public page is the way out: connect the
+	 * wallet that was paid, no account needed.
+	 */
+	const PAYEE_EARNINGS_URL = 'https://naulon.app/earnings';
+
 	/** The single admin-post action; the specific action rides in a field. */
 	const ACTION = 'naulon_admin';
 
@@ -594,6 +601,25 @@ class Naulon_Admin {
 				/* translators: %s: human time difference, e.g. "2 hours". */
 				sprintf( __( '%s ago', 'naulon' ), human_time_diff( $stamp ) )
 			)
+		);
+	}
+
+	/**
+	 * The way out for money this site's ledger shows as settled, as a link button.
+	 *
+	 * External, so it opens in a new tab and says so to a screen reader; primary when there is
+	 * something to withdraw, secondary otherwise.
+	 *
+	 * @param bool $primary Whether there is a settled amount to withdraw.
+	 * @return string HTML.
+	 */
+	public static function withdraw_link( $primary ) {
+		return sprintf(
+			'<a href="%1$s" class="button%2$s" target="_blank" rel="noopener noreferrer">%3$s <span aria-hidden="true">&#8599;</span><span class="screen-reader-text"> %4$s</span></a>',
+			esc_url( self::PAYEE_EARNINGS_URL ),
+			$primary ? ' button-primary' : '',
+			esc_html__( 'Withdraw on naulon', 'naulon' ),
+			esc_html__( '(opens in a new tab)', 'naulon' )
 		);
 	}
 

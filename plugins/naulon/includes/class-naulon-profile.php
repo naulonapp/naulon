@@ -78,7 +78,7 @@ class Naulon_Profile {
 				esc_attr__( 'A wallet address is 0x followed by 40 hex digits.', 'naulon' )
 			);
 			echo '<p class="description">';
-			echo esc_html__( 'Where agents pay you when they read your articles. Payment goes straight from the buyer to this address — this site never holds it, so there is nothing to withdraw and nobody to trust with it.', 'naulon' );
+			echo esc_html__( 'Where agents pay you when they read your articles. Payments settle to this address\'s own Circle Gateway balance rather than straight into the wallet, and only this wallet can withdraw them. Neither this site nor naulon can move that money.', 'naulon' );
 			echo '</p>';
 			if ( ! $valid ) {
 				echo '<p class="description naulon-warn">' . esc_html__( 'You have no wallet set here. Your posts still credit you, so if the service this site connects to holds a payout wallet for you, your share goes there. If it does not, your articles read free — nothing is charged for them and nothing is owed to you.', 'naulon' ) . '</p>';
@@ -91,10 +91,11 @@ class Naulon_Profile {
 		$this->render_access_row( $user, $editable );
 
 		if ( $valid && $this->may_see_earnings( $user ) ) {
+			$settled = Naulon_Ledger::total_for_wallet( $wallet, Naulon_Ledger::STATUS_SETTLED );
 			echo '<tr><th>' . esc_html__( 'Earned so far', 'naulon' ) . '</th><td>';
 			printf(
 				'<strong>%s</strong> %s',
-				esc_html( Naulon_Ledger::format_usdc( Naulon_Ledger::total_for_wallet( $wallet, Naulon_Ledger::STATUS_SETTLED ) ) ),
+				esc_html( Naulon_Ledger::format_usdc( $settled ) ),
 				esc_html__( 'USDC settled', 'naulon' )
 			);
 			$pending = Naulon_Ledger::total_for_wallet( $wallet, Naulon_Ledger::STATUS_PENDING );
@@ -106,7 +107,9 @@ class Naulon_Profile {
 				);
 			}
 			printf(
-				'<p class="description"><a href="%s">%s</a></p>',
+				'<p class="description">%s</p><p>%s <a href="%s">%s</a></p>',
+				esc_html__( 'Settled payments wait in this address\'s Gateway balance until you withdraw them on naulon by connecting this wallet.', 'naulon' ),
+				Naulon_Admin::withdraw_link( $settled > 0 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside.
 				esc_url( admin_url( 'admin.php?page=' . Naulon_Admin::PAGE_EARNINGS ) ),
 				esc_html__( 'See the payments', 'naulon' )
 			);
