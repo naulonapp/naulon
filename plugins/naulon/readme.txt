@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.6.2
+Stable tag: 0.6.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -33,7 +33,7 @@ The Setup screen has a **Test toll** button that asks your own site for one of y
 
 **Where the money goes**
 
-Payment is direct: the agent pays your authors. This plugin never takes custody of funds, never holds a balance, and never asks you to top anything up. There is no wallet on this site holding money.
+Payment is direct: the agent pays your authors. Each payment settles to the author's own Circle Gateway balance for the wallet address on their profile, and only that wallet can withdraw it, at https://naulon.app/earnings, with no naulon account needed. This plugin never takes custody of funds, never holds a balance, and never asks you to top anything up. There is no wallet on this site holding money.
 
 **Self-hosting**
 
@@ -158,6 +158,10 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.6.3 =
+* Authors' profiles and the Earnings screen now link to naulon's withdrawal page. Payments settle to each author's Circle Gateway balance, not straight into their wallet, and the plugin never said where to withdraw them.
+* Corrected the profile and Earnings text that said there was nothing to withdraw.
+
 = 0.6.2 =
 * The External services section now says what an author approval sends: the author's email address, their id on this site, and the approver's email address. It had left this out.
 * Settings → Privacy now offers a suggested paragraph listing everything the plugin sends to naulon.
@@ -241,6 +245,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.6.3 =
+Shows authors where to withdraw what readers paid them, and corrects text that said there was nothing to withdraw.
+
 = 0.6.2 =
 Discloses that approving an author's payout request sends their email address and yours to naulon, and adds suggested privacy-policy text under Settings → Privacy.
 

@@ -72,7 +72,17 @@ class Naulon_Admin_Earnings {
 			esc_html__( 'payments', 'naulon' )
 		);
 		echo '</div>';
-		echo '<p class="naulon-muted">' . esc_html__( 'Money moves from the buyer to the author directly. This site never holds it, and neither does anybody else — there is no balance to withdraw, because there is no pot.', 'naulon' ) . '</p>';
+		printf(
+			'<p class="naulon-muted">%s</p>',
+			sprintf(
+				/* translators: %s: a link to naulon's withdrawal page. */
+				esc_html__( 'Each payment settles to the paid author\'s own Circle Gateway balance, for the address they are paid at. This site never holds it, and neither does naulon. Authors withdraw it at %s by connecting that wallet.', 'naulon' ),
+				sprintf(
+					'<a href="%s" target="_blank" rel="noopener noreferrer">naulon.app/earnings</a>',
+					esc_url( Naulon_Admin::PAYEE_EARNINGS_URL )
+				)
+			) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- both parts escaped above.
+		);
 
 		// The figures above are what this site's people were paid. naulon's commission is a
 		// separate leg the BUYER paid us, so it is not in them — say so, with the number, rather
@@ -163,10 +173,11 @@ class Naulon_Admin_Earnings {
 			return;
 		}
 
+		$settled = Naulon_Ledger::total_for_wallet( $wallet, Naulon_Ledger::STATUS_SETTLED );
 		echo '<div class="naulon-figures">';
 		printf(
 			'<div class="naulon-figure"><span class="naulon-figure__value naulon-num">%s</span><span class="naulon-figure__label">%s</span></div>',
-			esc_html( Naulon_Ledger::format_usdc( Naulon_Ledger::total_for_wallet( $wallet, Naulon_Ledger::STATUS_SETTLED ) ) ),
+			esc_html( Naulon_Ledger::format_usdc( $settled ) ),
 			esc_html__( 'USDC settled', 'naulon' )
 		);
 		printf(
@@ -179,6 +190,11 @@ class Naulon_Admin_Earnings {
 		printf(
 			'<p class="naulon-muted">%s</p>',
 			esc_html__( 'These are the payments made to that address. If your naulon account holds a different payout address, anything settled there is shown in naulon, not here.', 'naulon' )
+		);
+		printf(
+			'<p>%s</p><p class="naulon-muted">%s</p>',
+			Naulon_Admin::withdraw_link( $settled > 0 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside.
+			esc_html__( 'Settled payments wait in that address\'s Gateway balance until you withdraw them. Connect the same wallet there; no account needed.', 'naulon' )
 		);
 		Naulon_Admin::card_close();
 

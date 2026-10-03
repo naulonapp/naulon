@@ -6,7 +6,7 @@
 
 A pay-per-read toll for the agentic web. Drop it in front of any site; AI agents
 and crawlers pay a USDC nanopayment to read or cite an article, and it settles
-straight to the author.
+to the author's own Circle Gateway balance, which only their wallet can withdraw.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](./LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-black.svg)
@@ -377,7 +377,9 @@ PAYMENT_MODE=gateway make wayfarer TOPIC="payment and passage"
 
 - **Seller (tollgate):** `BatchFacilitatorClient.verify` / `.settle` against the
   Arc GatewayWallet (`0x0077777d7EBA…`, network `eip155:5042002`, Arc testnet). No seller key,
-  because Gateway settles the buyer's deposit straight to the author. Custody-free.
+  because Gateway settles the buyer's deposit into the author's own Gateway balance. Custody-free:
+  only the author's wallet can withdraw it, at [naulon.app/earnings](https://naulon.app/earnings)
+  or with Circle's Gateway API directly. If you build an author screen, link the former there.
 - **Buyer (wayfarer):** `GatewayClient.deposit` once, then `.pay()` per citation
   runs the full deposit-backed 402 flow (gasless, batched, <500ms finality).
 - **One payment, one `payTo`.** x402 settles to a single address, so the on-chain
