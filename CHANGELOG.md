@@ -14,6 +14,16 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.12.4
+
+No `@naulon/*` package or plugin version changed. This release publishes the gate image again.
+
+### Fixed
+- The `ghcr.io/naulonapp/naulon` image has failed to build on every tag since v0.11.0, so
+  self-hosters were left on v0.10.0. `@naulon/wayfarer` imports `@naulon/extract`, which the
+  Dockerfile neither installed nor built. It does both now, and a test holds the Dockerfile to
+  the workspace list and the release order.
+
 ## v0.12.3
 
 No `@naulon/*` package changed. The WordPress plugin moves to 0.6.3; its own changelog says so.
