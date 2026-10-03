@@ -116,3 +116,18 @@ test("the release workflow publishes every public package, each after the ones i
     }
   }
 });
+
+test("the Dockerfile installs every workspace and builds the published packages in release order", () => {
+  const dockerfile = readFileSync(join(PACKAGES, "..", "Dockerfile"), "utf8");
+  // A workspace whose manifest is not copied before `npm ci` is never linked, so a package that
+  // imports it fails to typecheck inside the image only. @naulon/extract went missing this way and
+  // the ghcr image failed on every tag from v0.11.0 to v0.12.3 while every other check passed.
+  const copied = [...dockerfile.matchAll(/^COPY packages\/([\w-]+)\/package\.json/gm)].map((m) => m[1]!);
+  const workspaces = readdirSync(PACKAGES).filter((d) => existsSync(join(PACKAGES, d, "package.json")));
+  assert.deepEqual([...copied].sort(), [...workspaces].sort(), "Dockerfile copies every workspace manifest");
+
+  const built = [...dockerfile.matchAll(/npm run build -w @naulon\/([\w-]+)/g)].map((m) => m[1]!);
+  const workflow = readFileSync(join(PACKAGES, "..", ".github", "workflows", "release.yml"), "utf8");
+  const order = /PUBLISHED_PACKAGES:\s*"([^"]+)"/.exec(workflow)![1]!.trim().split(/\s+/);
+  assert.deepEqual(built, order, "Dockerfile builds the published packages in release.yml's order");
+});
