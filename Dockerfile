@@ -23,6 +23,7 @@ COPY package.json package-lock.json ./
 COPY packages/attribution/package.json   packages/attribution/
 COPY packages/dashboard/package.json     packages/dashboard/
 COPY packages/enforce/package.json       packages/enforce/
+COPY packages/extract/package.json       packages/extract/
 COPY packages/sdk/package.json           packages/sdk/
 COPY packages/shared/package.json        packages/shared/
 COPY packages/tollgate/package.json      packages/tollgate/
@@ -46,6 +47,7 @@ COPY tsconfig.base.json tsconfig.json ./
 RUN npm run build -w @naulon/sdk \
  && npm run build -w @naulon/shared \
  && npm run build -w @naulon/enforce \
+ && npm run build -w @naulon/extract \
  && npm run build -w @naulon/wayfarer \
  && npm run build -w @naulon/wayfarer-mcp
 
