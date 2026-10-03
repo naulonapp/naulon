@@ -14,6 +14,18 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.12.3
+
+No `@naulon/*` package changed. The WordPress plugin moves to 0.6.3; its own changelog says so.
+
+### Fixed
+- The WordPress plugin (0.6.3) shows authors where to withdraw what readers paid them. Payments
+  settle to each author's Circle Gateway balance, not straight into their wallet, and the
+  profile and Earnings screen said there was nothing to withdraw. Both now link to
+  naulon.app/earnings, where the paid wallet withdraws with no account.
+- The README said a toll settles "straight to the author". It settles to the author's own
+  Gateway balance, which only their wallet can withdraw.
+
 ## v0.12.2
 
 - `@naulon/wayfarer-mcp` 0.7.2: the README now has setup instructions for OpenCode, Codex and
