@@ -21,6 +21,14 @@ const SDK_NAME: Record<NetworkName, string> = {
   arcTestnet: "arcTestnet", baseSepolia: "baseSepolia",
 };
 
+// Chains where the SDK names an RPC endpoint that does not serve public traffic, and the working one
+// this registry uses instead. Both sides are pinned: when the SDK changes its value, this test fails
+// and the exception is reviewed rather than carried forward. `sepolia-preconf.base.org` answers 401
+// without credentials; `sepolia.base.org` is Base's public Sepolia endpoint.
+const RPC_DIVERGENCE: Partial<Record<NetworkName, { sdk: string; ours: string }>> = {
+  baseSepolia: { sdk: "https://sepolia-preconf.base.org", ours: "https://sepolia.base.org" },
+};
+
 // Narrow an unknown catch value to a Node.js error code, if it has one — avoids
 // an unsafe cast while still letting us distinguish "module not found" (a
 // legitimate skip) from every other import-time failure (real drift, must fail).
@@ -61,6 +69,12 @@ test("every NETWORKS entry matches the installed SDK CHAIN_CONFIGS (chainId/usdc
     // Compared only where the SDK states one. It omits `rpcUrl` for chains where its own client
     // falls back to viem's default endpoint, and asserting a disagreement against an absent value
     // would fail for chains nobody is wrong about.
-    if (sdk.rpcUrl) assert.equal(net.rpcUrl, sdk.rpcUrl, `${key} rpcUrl`);
+    const divergence = RPC_DIVERGENCE[key];
+    if (divergence) {
+      assert.equal(sdk.rpcUrl, divergence.sdk, `${key}: the SDK's rpcUrl changed, so review RPC_DIVERGENCE`);
+      assert.equal(net.rpcUrl, divergence.ours, `${key} rpcUrl`);
+    } else if (sdk.rpcUrl) {
+      assert.equal(net.rpcUrl, sdk.rpcUrl, `${key} rpcUrl`);
+    }
   }
 });
