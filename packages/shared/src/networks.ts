@@ -157,8 +157,11 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
   baseSepolia: {
     chainName: "baseSepolia", network: "eip155:84532", chainId: 84532,
     usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    // The token reports name "USDC", version "2", not the mainnet FiatToken "USD Coin" that
+    // `usdcDomain` falls back to; a signature over the fallback is rejected as invalid.
+    usdcName: "USDC", usdcVersion: "2",
     gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-    gatewayApiUrl: TESTNET_FACILITATOR, rpcUrl: "https://sepolia-preconf.base.org",
+    gatewayApiUrl: TESTNET_FACILITATOR, rpcUrl: "https://sepolia.base.org",
     testnet: true, explorer: "https://sepolia.basescan.org", modularChainName: "baseSepolia",
   },
   base: {
