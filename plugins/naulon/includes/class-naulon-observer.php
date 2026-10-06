@@ -96,11 +96,51 @@ class Naulon_Observer {
 	 * @param string $action free|pay|reread|settled|blocked.
 	 * @return string|null The verdict, or null when there is nothing for us to report.
 	 */
+	/**
+	 * Whether a crawler's stated price covered the ask: `within`, `over`, or null when it stated
+	 * none. Read from Cloudflare's pay-per-crawl headers, `crawler-max-price` first (the crawler's
+	 * own ceiling) and `crawler-exact-price` after. Reporting only: the answer never changes what
+	 * the request is served.
+	 *
+	 * @param string|null $max       The crawler-max-price header.
+	 * @param string|null $exact     The crawler-exact-price header.
+	 * @param int         $ask_micro The asking price in integer micro-USDC.
+	 * @return string|null
+	 */
+	public static function crawler_budget( $max, $exact, $ask_micro ) {
+		$declared = self::parse_crawler_price( $max );
+		if ( null === $declared ) {
+			$declared = self::parse_crawler_price( $exact );
+		}
+		if ( null === $declared ) {
+			return null;
+		}
+		return $declared >= (int) $ask_micro ? 'within' : 'over';
+	}
+
+	/**
+	 * `USD 0.001` as integer micro-USDC, or null for anything else. Six decimals at most, the
+	 * precision of USDC itself.
+	 *
+	 * @param string|null $value Header value.
+	 * @return int|null
+	 */
+	private static function parse_crawler_price( $value ) {
+		if ( ! is_string( $value ) || ! preg_match( '/^\s*USD\s+(\d+)(?:\.(\d{1,6}))?\s*$/i', $value, $m ) ) {
+			return null;
+		}
+		$frac = isset( $m[2] ) ? str_pad( $m[2], 6, '0' ) : '000000';
+		return (int) $m[1] * 1000000 + (int) $frac;
+	}
+
 	public static function verdict_for( $action ) {
 		switch ( (string) $action ) {
 			case 'free':
 				return 'served-free';
 			case 'pay':
+			case 'observed':
+				// An observed read is the same policy decision as a 402, served instead of
+				// refused. `observeOnly` on the report is what tells the two apart.
 				return 'denied';
 			case 'reread':
 				return 'agent-reread';
@@ -191,6 +231,17 @@ class Naulon_Observer {
 		$price = isset( $report['price_micro'] ) ? (int) $report['price_micro'] : 0;
 		if ( $price > 0 ) {
 			$shaped['priceMicro'] = $price;
+		}
+
+		if ( 'denied' === $verdict && isset( $report['crawler_budget'] ) && in_array( $report['crawler_budget'], array( 'within', 'over' ), true ) ) {
+			$shaped['crawlerBudget'] = $report['crawler_budget'];
+		}
+		if ( isset( $report['action'] ) && 'observed' === $report['action'] ) {
+			$shaped['observeOnly'] = true;
+			// A payment the site did not settle exists only while it observes.
+			if ( ! empty( $report['payment_presented'] ) ) {
+				$shaped['paymentPresented'] = true;
+			}
 		}
 
 		$ua     = isset( $report['ua'] ) ? substr( (string) $report['ua'], 0, self::MAX_UA ) : '';

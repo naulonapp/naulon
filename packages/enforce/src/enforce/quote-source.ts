@@ -104,6 +104,9 @@ export function httpQuoteSource(
       const q = new URLSearchParams({ resource: ctx.resource, slug, kind });
       // Only an identity this runtime verified is sent; the cloud prices that agent's own rules.
       if (ctx.verifiedAgent !== undefined) q.set("verifiedAgent", ctx.verifiedAgent);
+      // This runtime can observe, so it may be quoted a read with nobody to pay: priced for the
+      // report, never turned into a 402 (`decide`). A runtime that does not send this gets a 204.
+      q.set("observe", "1");
       let res: Response;
       try {
         res = await fetchImpl(`${quoteUrl}?${q}`, { headers: { authorization: `Bearer ${apiKey}` } });

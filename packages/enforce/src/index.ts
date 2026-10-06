@@ -28,6 +28,7 @@ export { build402, buildRequirements, bindingOf, MAX_TIMEOUT_SECONDS } from "./b
 // CF-trained crawler already speaks, while settlement stays x402/USDC. Exported from
 // `enforce` (not `tollgate`) so a self-hosting publisher using the SDK gets it too.
 export {
+  askMicroOf,
   CRAWLER_CHARGED_HEADER,
   CRAWLER_EXACT_PRICE_HEADER,
   CRAWLER_MAX_PRICE_HEADER,

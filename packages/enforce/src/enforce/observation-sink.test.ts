@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { httpObservationSink, type ObservationReport } from "./observation-sink.ts";
+import { batchingObservationSink, httpObservationSink, type ObservationReport } from "./observation-sink.ts";
 
 const report = (over?: Partial<ObservationReport>): ObservationReport => ({
   resource: "http://h/essays/x",
@@ -64,4 +64,57 @@ test("a refusal response is not an exception — it is swallowed like any other 
   const sink = httpObservationSink("http://cloud/o", "k", fetchImpl);
   assert.doesNotThrow(() => sink(report()));
   await settled();
+});
+
+
+const one = { resource: "https://h/essays/x", slug: "x", verdict: "denied" as const, classifiedAs: "agent" as const, at: 1 };
+
+test("batching: with waitUntil, reports in one request cycle go out as one array", async () => {
+  const bodies: unknown[] = [];
+  const waits: Promise<unknown>[] = [];
+  const fetchImpl = (async (_u: string, init: RequestInit) => {
+    bodies.push(JSON.parse(String(init.body)));
+    return new Response("{}", { status: 202 });
+  }) as unknown as typeof fetch;
+  const sink = batchingObservationSink("http://c/_naulon/observe", "k", { waitUntil: (p) => void waits.push(p), fetchImpl });
+  sink(one); sink(one); sink(one);
+  await Promise.all(waits);
+  assert.equal(bodies.length, 1);
+  assert.equal((bodies[0] as unknown[]).length, 3);
+});
+
+test("batching: without waitUntil it sends each report at once, like httpObservationSink", async () => {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    return new Response("{}", { status: 202 });
+  }) as unknown as typeof fetch;
+  const sink = batchingObservationSink("http://c/_naulon/observe", "k", { fetchImpl });
+  sink(one); sink(one);
+  await sink.flush();
+  assert.equal(calls, 2);
+});
+
+test("batching: a batch never exceeds maxBatch", async () => {
+  const sizes: number[] = [];
+  const waits: Promise<unknown>[] = [];
+  const fetchImpl = (async (_u: string, init: RequestInit) => {
+    sizes.push((JSON.parse(String(init.body)) as unknown[]).length);
+    return new Response("{}", { status: 202 });
+  }) as unknown as typeof fetch;
+  const sink = batchingObservationSink("http://c/_naulon/observe", "k", { waitUntil: (p) => void waits.push(p), fetchImpl, maxBatch: 2 });
+  for (let i = 0; i < 5; i++) sink(one);
+  await Promise.all(waits);
+  await sink.flush();
+  assert.deepEqual(sizes, [2, 2, 1]);
+});
+
+test("batching: a failing send is swallowed and reported to onError", async () => {
+  const errors: unknown[] = [];
+  const waits: Promise<unknown>[] = [];
+  const fetchImpl = (async () => { throw new Error("down"); }) as unknown as typeof fetch;
+  const sink = batchingObservationSink("http://c/_naulon/observe", "k", { waitUntil: (p) => void waits.push(p), fetchImpl, onError: (e) => void errors.push(e) });
+  sink(one);
+  await Promise.all(waits);
+  assert.equal(errors.length, 1);
 });

@@ -46,6 +46,7 @@ import {
   type JwkSet,
   type PublisherConfig,
   type TollKind,
+  chargesReads,
 } from "@naulon/shared";
 
 /**
@@ -467,6 +468,11 @@ export async function decide(input: DecideInput): Promise<Decision> {
   // licence scope and a spec-following client reading the RSL document match against.
   const q = await quote(publisher, slug, tollKind, matchTarget(raw.url), pricedAgent(verifiedAgent));
   if (!q) return { kind: "passthrough", verdict: "unknown-article", ...(obs.identity ? { obs } : {}) }; // unknown article — don't gate.
+  // Nobody to pay. Only an observing publisher is quoted like this, and it never sends the 402, so
+  // there are no legs to build. A charging runtime handed such a quote serves the read free, the
+  // same answer a missing quote gives, rather than advertise a payment with nowhere to go.
+  const payable = q.payees.length > 0;
+  if (!payable && chargesReads(publisher)) return { kind: "passthrough", verdict: "unknown-article", ...(obs.identity ? { obs } : {}) };
 
   // The resource identifier goes into a SIGNED quote, so it must be the URL the buyer
   // actually fetched — not the one this process observed. TLS terminates at the edge in
@@ -477,12 +483,9 @@ export async function decide(input: DecideInput): Promise<Decision> {
     publisher.gateScope?.mode === "site" || publisher.gateScope?.depth
       ? undefined
       : routeTemplateFor(new URL(raw.url).pathname, publisher.articlePrefixes ?? []);
-  const { legs, header } = build402(
-    q,
-    externalUrl(raw, { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS }),
-    now,
-    routeTemplate,
-  );
+  const { legs, header } = payable
+    ? build402(q, externalUrl(raw, { trustProxy: cfg.TRUST_PROXY, hops: cfg.TRUST_PROXY_HOPS }), now, routeTemplate)
+    : { legs: [], header: "" };
 
   const payment = raw.headers.get(PAYMENT_SIGNATURE_HEADER);
   if (payment) return { kind: "payment-presented", payment, legs, header, quote: q, tollKind, obs };

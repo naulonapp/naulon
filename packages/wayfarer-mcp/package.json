@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@naulon/shared": "^0.6.6",
+    "@naulon/shared": "^0.6.7",
     "@naulon/wayfarer": "^0.7.1",
     "zod": "^4.4.3"
   },

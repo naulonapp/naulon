@@ -380,6 +380,9 @@ class Naulon_Rules {
 			'forged'         => isset( $raw['forged'] ) && 'block' === $raw['forged'] ? 'block' : 'charge',
 			// `off` switches the identity check out entirely for this site.
 			'identityMode'   => isset( $raw['identityMode'] ) && 'off' === $raw['identityMode'] ? 'off' : 'auto',
+			// `observe` serves a priced read free and reports it. Anything else charges, so a
+			// malformed value can never switch the toll off.
+			'tollMode'       => isset( $raw['tollMode'] ) && 'observe' === $raw['tollMode'] ? 'observe' : 'charge',
 		);
 	}
 

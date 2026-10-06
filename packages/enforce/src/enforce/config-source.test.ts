@@ -310,3 +310,15 @@ test("the armed set and identityMode reach the SDK through the HTTP source, narr
   assert.equal((await load({ identity: "google" }))?.identity, undefined);
   assert.equal((await load({}))?.identity, undefined);
 });
+
+test("tollMode reaches the SDK narrowed: the two modes survive, anything else is dropped", async () => {
+  const load = async (tollMode: unknown) => {
+    const { fetchImpl } = planeReturning({ ...DOC, enforcement: { ...DOC.enforcement, tollMode } });
+    return httpPublisherConfigSource("http://cloud/_naulon/enforce-config", "nln_live_k", { fetchImpl }).load({ resource: RESOURCE });
+  };
+  assert.equal((await load("observe"))?.enforcement.tollMode, "observe");
+  assert.equal((await load("charge"))?.enforcement.tollMode, "charge");
+  for (const bad of ["OBSERVE", "enforce", "off", 1, null]) {
+    assert.equal((await load(bad))?.enforcement.tollMode, undefined, `sent ${String(bad)}`);
+  }
+});

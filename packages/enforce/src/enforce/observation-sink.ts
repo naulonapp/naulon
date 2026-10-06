@@ -52,6 +52,12 @@ export interface ObservationReport {
   claimedOperator?: string;
   /** On `forged` rows only: the caller's /24 or /48. Never a full address. */
   forgedFrom?: string;
+  /** The publisher was observing: served, nothing asked for or taken. */
+  observeOnly?: true;
+  /** Whether the crawler's stated price ceiling covered the ask. Absent when it stated none. */
+  crawlerBudget?: "within" | "over";
+  /** An observing publisher received a payment it did not settle. */
+  paymentPresented?: true;
   /** On a person's read, the host of the other site that sent them (`referrerHost` in
    *  `@naulon/shared`). Host only, never the referring URL. */
   referrerHost?: string;
@@ -100,4 +106,84 @@ export function httpObservationSink(
       onError(err);
     }
   };
+}
+
+/** The receiving endpoint's per-call cap. */
+const DEFAULT_MAX_BATCH = 50;
+
+/**
+ * Buffers reports and flushes them as one array per request cycle, through a `waitUntil` the
+ * host runtime provides (Next.js `after`, a Workers `ctx.waitUntil`). The host keeps the
+ * runtime alive until the flush resolves, which is what makes buffering safe in a serverless
+ * runtime. Without `waitUntil` it sends each report immediately, exactly as
+ * `httpObservationSink` does, because a timer-drained queue in a frozen runtime never drains.
+ */
+export function batchingObservationSink(
+  observeUrl: string,
+  apiKey: string,
+  opts: {
+    waitUntil?: (p: Promise<unknown>) => void;
+    maxBatch?: number;
+    fetchImpl?: typeof fetch;
+    onError?: (err: unknown) => void;
+  } = {},
+): ObservationReporter & { flush(): Promise<void> } {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const onError = opts.onError ?? (() => {});
+  const maxBatch = Math.max(1, Math.min(opts.maxBatch ?? DEFAULT_MAX_BATCH, DEFAULT_MAX_BATCH));
+  let queue: ObservationReport[] = [];
+  let scheduled: Promise<void> | null = null;
+  const inFlight = new Set<Promise<void>>();
+
+  const send = (body: ObservationReport[] | ObservationReport): Promise<void> => {
+    let p: Promise<void>;
+    try {
+      p = fetchImpl(observeUrl, {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+        .then(() => undefined)
+        .catch(onError);
+    } catch (err) {
+      onError(err);
+      return Promise.resolve();
+    }
+    inFlight.add(p);
+    void p.finally(() => inFlight.delete(p));
+    return p;
+  };
+
+  const drain = async (): Promise<void> => {
+    scheduled = null;
+    while (queue.length > 0) {
+      const batch = queue.slice(0, maxBatch);
+      queue = queue.slice(maxBatch);
+      await send(batch);
+    }
+  };
+
+  const reporter = ((report: ObservationReport) => {
+    try {
+      if (!opts.waitUntil) {
+        void send(report);
+        return;
+      }
+      queue.push(report);
+      if (!scheduled) {
+        // A microtask, so every report made while handling this request joins one batch.
+        scheduled = Promise.resolve().then(drain);
+        opts.waitUntil(scheduled);
+      }
+    } catch (err) {
+      onError(err);
+    }
+  }) as ObservationReporter & { flush(): Promise<void> };
+
+  reporter.flush = async () => {
+    if (scheduled) await scheduled;
+    await drain();
+    await Promise.all([...inFlight]);
+  };
+  return reporter;
 }

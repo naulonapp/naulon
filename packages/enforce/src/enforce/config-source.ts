@@ -47,6 +47,7 @@ export type PublisherEnforcementConfig = Partial<
     | "seoAllowlist"
     | "crawlerPolicy"
     | "identityMode"
+    | "tollMode"
     | "termsPolicy"
     | "licenceServer"
     | "fleetAgent"
@@ -228,6 +229,9 @@ function narrow(body: unknown): PublisherConfigDocument | null {
         typeof e["fleetPublisher"] === "string" && FLEET_PUBLISHER_ID.test(e["fleetPublisher"]) ? e["fleetPublisher"] : undefined,
       // `off` is the publisher opting out of the crawler identity check; anything else unknown is dropped.
       identityMode: e["identityMode"] === "off" || e["identityMode"] === "auto" ? e["identityMode"] : undefined,
+      // Only the two known modes survive; anything else is dropped so the site keeps charging.
+      tollMode:
+        e["tollMode"] === "observe" || e["tollMode"] === "charge" ? e["tollMode"] : undefined,
     }),
     // The operators this site is armed for. Named here or a real SDK site never arms: a field this
     // function does not list is dropped, and the static source used in tests skips this function.

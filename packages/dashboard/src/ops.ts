@@ -28,6 +28,12 @@ export interface OpsSummary {
   earnings: number;
   /** USDC left on the table (sum of `denied` + `payment-failed` prices). */
   earningsMissed: number;
+  /**
+   * Reads served while the publisher was observing. `atPrice` is an estimate (what those reads
+   * would cost at the publisher's price), never earnings. `signalledPayers` counts only reads
+   * whose crawler stated a budget covering the price or presented a payment.
+   */
+  demand: { reads: number; atPrice: number; signalledPayers: number };
   /** Newest-first, capped — the live request feed. */
   recent: ObservationEvent[];
   /**
@@ -78,6 +84,7 @@ export function summarizeOps(
   let humans = 0;
   let earnings = 0;
   let earningsMissed = 0;
+  const demand = { reads: 0, atPrice: 0, signalledPayers: 0 };
 
   for (const o of inWindow) {
     if (o.verdict in byVerdict) byVerdict[o.verdict] += 1;
@@ -92,7 +99,14 @@ export function summarizeOps(
     }
 
     if (o.verdict === "paid") earnings += o.price ?? 0;
-    if (o.verdict === "denied" || o.verdict === "payment-failed") earningsMissed += o.price ?? 0;
+    if (o.observeOnly) {
+      // Nothing was asked for, so nothing was missed: this is demand, reported apart.
+      demand.reads += 1;
+      demand.atPrice += o.price ?? 0;
+      if (o.crawlerBudget === "within" || o.paymentPresented) demand.signalledPayers += 1;
+    } else if (o.verdict === "denied" || o.verdict === "payment-failed") {
+      earningsMissed += o.price ?? 0;
+    }
   }
 
   const recent = [...inWindow].sort((a, b) => b.at - a.at).slice(0, recentLimit);
@@ -111,6 +125,7 @@ export function summarizeOps(
     humans,
     earnings,
     earningsMissed,
+    demand,
     recent,
     settled: {
       crossings: settledInWindow.length,

@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.6.3
+Stable tag: 0.6.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -158,6 +158,10 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.6.4 =
+* Observe mode. When your naulon dashboard is set to observe, AI agents read your posts free while the plugin prices each read and reports it, so you can see the demand before charging anyone. Payments are not taken while observing. Blocked crawlers stay blocked.
+* Reports whether a crawler's stated price (`crawler-max-price`) covered yours, on charged and observed reads alike.
+
 = 0.6.3 =
 * Authors' profiles and the Earnings screen now link to naulon's withdrawal page. Payments settle to each author's Circle Gateway balance, not straight into their wallet, and the plugin never said where to withdraw them.
 * Corrected the profile and Earnings text that said there was nothing to withdraw.
@@ -245,6 +249,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.6.4 =
+Needed for observe mode: without it, a site set to observe in the dashboard keeps charging agents.
+
 = 0.6.3 =
 Shows authors where to withdraw what readers paid them, and corrects text that said there was nothing to withdraw.
 

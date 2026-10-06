@@ -14,6 +14,24 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## Unreleased
+
+`@naulon/shared` 0.6.7, `@naulon/enforce` 0.8.1. The WordPress plugin moves to 0.6.4 for the same mode; its own changelog says so.
+
+### Added
+- Observe mode. `tollMode: "observe"` on a publisher serves reads that would get a 402 and
+  reports them with the price they would have paid, without taking any payment. Blocks and
+  prohibited uses are still refused. Unset means `charge`, so nothing changes until you opt in.
+- An observing publisher with nobody to pay yet is still priced, so a site can observe before it
+  sets up a wallet. The quote carries no payees and no 402 is ever built from it; a charging
+  publisher in the same state reads free, as before.
+- Observations carry `observeOnly`, `paymentPresented` and `crawlerBudget` (whether a crawler's
+  stated `crawler-max-price` covered the ask). `crawlerBudget` is recorded in both modes.
+- `batchingObservationSink` sends a request cycle's reports as one batch through a runtime's
+  `waitUntil`.
+- The self-hosted console shows observed reads apart from 402s, with demand at your price and
+  how many agents said they would pay. Observed reads no longer count as missed earnings.
+
 ## v0.12.4
 
 No `@naulon/*` package or plugin version changed. This release publishes the gate image again.
