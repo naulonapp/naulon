@@ -304,6 +304,10 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     // two replaced `no_session`, which is kept above for gates that still emit it.
     case "no_signer":
     case "wallet_unavailable":
+    // The account owner reported a change they did not make, and the signer refuses every payment
+    // until they lift the freeze. Only the owner can clear it, so asking again inside the run is the
+    // one thing guaranteed not to.
+    case "account_frozen":
       return { errorCode: "rejected", retryable: false };
     default:
       return null;
