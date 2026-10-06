@@ -539,3 +539,9 @@ test("probePrice stays back-compatible: the gated quote for a 402, null for anyt
     assert.equal(await probePrice("https://x.test/essays/a", "read", "tester"), null, "404 → null (legacy shape)");
   });
 });
+
+test("classifySignerRefusal stops on a frozen account instead of re-signing", () => {
+  const c = classifySignerRefusal("account_frozen — spending is frozen because a change on this account was reported");
+  assert.equal(c?.errorCode, "rejected", "the owner lifts a freeze; funding changes nothing");
+  assert.equal(c?.retryable, false);
+});
