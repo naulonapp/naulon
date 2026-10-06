@@ -93,3 +93,18 @@ test("httpQuoteSource: a 204 is NOT reported — it is the deliberate don't-gate
   assert.equal(await qs.quote({}, "essays/x", "read", ctx), null);
   assert.deepEqual(seen, []);
 });
+
+test("the hosted quote is asked with observe=1, so a site with nobody to pay can still be priced", async () => {
+  let asked = "";
+  const fetchImpl = (async (url: string | URL) => {
+    asked = String(url);
+    return new Response(null, { status: 204 });
+  }) as unknown as typeof fetch;
+  await httpQuoteSource("http://cloud/_naulon/quote", "nln_live_k", fetchImpl).quote(
+    { id: "p" } as never,
+    "x",
+    "read",
+    { resource: "http://h/essays/x" } as never,
+  );
+  assert.match(asked, /[?&]observe=1(&|$)/);
+});

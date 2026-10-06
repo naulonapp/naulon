@@ -120,7 +120,13 @@ function renderTiles(ops, observations) {
   if (settlementUnrecorded(ops)) return renderUnrecordedSettlement(ops);
   const v = ops.byVerdict || {};
   countUp($("#tHumans"), ops.humans ?? 0, false);
-  countUp($("#tDenied"), v["denied"] ?? 0, false);
+  // An observed read is a `denied` row that was served anyway, so it is shown apart from the 402s.
+  const d = ops.demand || { reads: 0, atPrice: 0, signalledPayers: 0 };
+  countUp($("#tDenied"), Math.max(0, (v["denied"] ?? 0) - d.reads), false);
+  $("#observedStat").hidden = d.reads === 0;
+  countUp($("#tObserved"), d.reads, false);
+  countUp($("#tDemand"), d.atPrice, true);
+  $("#tSignalled").textContent = String(d.signalledPayers);
   const blocked = v["blocked"] ?? 0;
   const b = $("#tBlocked");
   countUp(b, blocked, false);

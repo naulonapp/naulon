@@ -143,6 +143,9 @@ class Naulon_Client {
 		// requirements shape. Re-implementing that in PHP would be a second source of truth for
 		// how much each author is paid, and a rounding difference would not throw — it would
 		// quietly pay the wrong amount. So we do not implement it; we ask for the answer.
+		// This plugin can observe, so it may be quoted a read with nobody to pay: priced for the
+		// report, never sent as a 402 (Naulon_Enforcer::unpaid_decision).
+		$args['observe'] = '1';
 		if ( $build_402 ) {
 			$args['build'] = '402';
 		}

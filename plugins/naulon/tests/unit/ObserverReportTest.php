@@ -194,4 +194,57 @@ final class ObserverReportTest extends TestCase {
 		$this->assertContains( 'real', array_column( $buffer, 'n' ) );
 		$this->assertSame( Naulon_Observer::MAX_BATCH * 3 - 1, end( $buffer )['n'] );
 	}
+
+	public function test_an_observed_read_is_reported_as_denied_and_observe_only() {
+		$this->assertSame( 'denied', Naulon_Observer::verdict_for( 'observed' ) );
+		$shaped = Naulon_Observer::shape(
+			array(
+				'resource'          => 'https://blog.example/a',
+				'slug'              => 'a',
+				'action'            => 'observed',
+				'price_micro'       => 1000,
+				'payment_presented' => true,
+				'crawler_budget'    => 'within',
+			)
+		);
+		$this->assertTrue( $shaped['observeOnly'] );
+		$this->assertTrue( $shaped['paymentPresented'] );
+		$this->assertSame( 'within', $shaped['crawlerBudget'] );
+		$this->assertSame( 1000, $shaped['priceMicro'] );
+	}
+
+	public function test_a_402_carries_the_budget_but_never_observe_only() {
+		$shaped = Naulon_Observer::shape(
+			array( 'resource' => 'https://blog.example/a', 'action' => 'pay', 'price_micro' => 1000, 'crawler_budget' => 'over', 'payment_presented' => true )
+		);
+		$this->assertSame( 'over', $shaped['crawlerBudget'] );
+		$this->assertArrayNotHasKey( 'observeOnly', $shaped );
+		$this->assertArrayNotHasKey( 'paymentPresented', $shaped, 'a payment the site did not settle exists only while observing' );
+	}
+
+	/**
+	 * @dataProvider budgets
+	 * @param string|null $max      crawler-max-price.
+	 * @param string|null $exact    crawler-exact-price.
+	 * @param string|null $expected within|over|null.
+	 */
+	public function test_the_crawler_budget_is_read_from_the_cloudflare_headers( $max, $exact, $expected ) {
+		$this->assertSame( $expected, Naulon_Observer::crawler_budget( $max, $exact, 1000 ) );
+	}
+
+	/**
+	 * @return array<string, array{0:string|null, 1:string|null, 2:string|null}>
+	 */
+	public static function budgets() {
+		return array(
+			'nothing stated'                 => array( null, null, null ),
+			'a ceiling above the ask'        => array( 'USD 0.01', null, 'within' ),
+			'a ceiling equal to the ask'     => array( 'USD 0.001', null, 'within' ),
+			'a ceiling below the ask'        => array( 'USD 0.0001', null, 'over' ),
+			'the exact price as a fallback'  => array( null, 'USD 0.002', 'within' ),
+			'the ceiling wins over exact'    => array( 'USD 0.0001', 'USD 1', 'over' ),
+			'garbage is nothing stated'      => array( 'cheap', null, null ),
+			'too many decimals is nothing'   => array( 'USD 0.0000001', null, null ),
+		);
+	}
 }

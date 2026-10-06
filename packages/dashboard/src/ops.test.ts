@@ -145,3 +145,23 @@ test("no settled events means an honest zero, not a gap", () => {
   assert.equal(s.settled.crossings, 0);
   assert.equal(s.settled.usdc, 0);
 });
+
+const demandRow = (o: Partial<ObservationEvent>): ObservationEvent =>
+  ({ id: "x", publisherId: "p", host: "h", slug: "s", verdict: "denied", classifiedAs: "agent", at: 1_000, ...o }) as ObservationEvent;
+
+test("observe rows count as demand, never as missed earnings", () => {
+  const s = summarizeOps(
+    [
+      demandRow({ price: usdc(0.002) }), // enforce-mode denied: missed
+      demandRow({ price: usdc(0.001), observeOnly: true }),
+      demandRow({ price: usdc(0.001), observeOnly: true, crawlerBudget: "within" }),
+      demandRow({ price: usdc(0.001), observeOnly: true, paymentPresented: true }),
+      demandRow({ price: usdc(0.001), observeOnly: true, crawlerBudget: "over" }),
+    ],
+    2_000,
+  );
+  assert.ok(Math.abs(s.earningsMissed - 0.002) < 1e-9);
+  assert.equal(s.demand.reads, 4);
+  assert.ok(Math.abs(s.demand.atPrice - 0.004) < 1e-9);
+  assert.equal(s.demand.signalledPayers, 2, "within-budget and payment-presented, never over-budget");
+});

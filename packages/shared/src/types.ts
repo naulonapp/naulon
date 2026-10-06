@@ -279,6 +279,16 @@ export type ObservationVerdict =
   | "paid";
 
 /**
+ * What happened to a request, as far as every count and money figure is concerned. An observed read
+ * (`observeOnly`) is stored as `denied` because that is what the publisher's policy decided, but the
+ * publisher was observing, so the read was served and nothing was asked for: it is a free read, never
+ * a denial and never missed money. Demand is read from `observeOnly` directly.
+ */
+export function effectiveVerdict(o: Pick<ObservationEvent, "verdict" | "observeOnly">): ObservationVerdict {
+  return o.observeOnly ? "served-free" : o.verdict;
+}
+
+/**
  * The same vocabulary at RUNTIME — the one list anything that enumerates verdicts builds on.
  *
  * A union cannot be iterated, so every consumer that needed to count or render verdicts
@@ -370,6 +380,13 @@ export interface ObservationEvent {
   claimedOperator?: string;
   /** On `forged` rows only: the caller's /24 or /48. Never a full address. */
   forgedFrom?: string;
+  /** The publisher was observing: this read was served, and no payment was asked for or taken. */
+  observeOnly?: true;
+  /** On a priced agent read: whether the crawler's stated `crawler-max-price` /
+   *  `crawler-exact-price` covered the ask. Absent when it stated none. */
+  crawlerBudget?: "within" | "over";
+  /** An observing publisher received a payment it did not settle. */
+  paymentPresented?: true;
   /** The quoted price (paid → settled; denied/payment-failed → what they'd have paid = "earnings missed"). */
   price?: Usdc;
   /**

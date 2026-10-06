@@ -884,3 +884,121 @@ test("SDK: a person's request never fetches the ranges", async () => {
   await mw(new Request("http://h/essays/x", { headers: { "user-agent": "Mozilla/5.0 (Macintosh) Safari/605.1.15", accept: "text/html" } }));
   assert.equal(fetches, 0);
 });
+
+const observing = { ...opts, publisher: { ...opts.publisher, tollMode: "observe" as const } };
+
+test("observe: an agent that would get a 402 is served and reported as observe-only", async () => {
+  const { seen, observe } = reporter();
+  const mw = naulonMiddleware({ ...observing, observe: observe as never });
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0") }));
+  assert.equal(out.response, null);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.verdict, "denied");
+  assert.equal(seen[0]?.observeOnly, true);
+  assert.equal(seen[0]?.priceMicro, 5_000_000_000);
+});
+
+test("observe: a stated budget below the ask is recorded as over, and the read is still served", async () => {
+  const { seen, observe } = reporter();
+  const mw = naulonMiddleware({ ...observing, observe: observe as never });
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "crawler-max-price": "USD 0.01" }) }));
+  assert.equal(out.response, null);
+  assert.equal(seen[0]?.crawlerBudget, "over");
+});
+
+test("charge: the stated budget is recorded on the denied row too", async () => {
+  const { seen, observe } = reporter();
+  const mw = naulonMiddleware({ ...opts, observe: observe as never });
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "crawler-max-price": "USD 99999" }) }));
+  assert.equal(out.response?.status, 402);
+  assert.equal(seen[0]?.crawlerBudget, "within");
+  assert.equal(seen[0]?.observeOnly, undefined);
+});
+
+test("observe: a presented payment is not settled, the read is served and the payment is recorded", async () => {
+  const { seen, observe } = reporter();
+  let verifyCalls = 0;
+  const fakeFetch = (async (url: string | URL | Request) => {
+    if (String(url) === opts.verifyUrl) verifyCalls += 1;
+    return new Response("{}", { status: 200 });
+  }) as typeof fetch;
+  const mw = naulonMiddleware({ ...observing, fetchImpl: fakeFetch, observe: observe as never });
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "payment-signature": "e30=" }) }));
+  assert.equal(out.response, null);
+  assert.equal(verifyCalls, 0, "observe must never call /verify");
+  assert.equal(seen[0]?.paymentPresented, true);
+  assert.equal(seen[0]?.observeOnly, true);
+});
+
+test("observe: a blocked crawler is still refused", async () => {
+  const mw = naulonMiddleware({
+    ...observing,
+    publisher: { ...observing.publisher, crawlerPolicy: { allow: [], block: ["gptbot"] } },
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0") }));
+  assert.equal(out.response?.status, 403);
+});
+
+test("observe: a licence that did not entitle the read is served and recorded with its refusal", async () => {
+  const { seen, observe } = reporter();
+  const mw = naulonMiddleware({ ...observing, observe: observe as never });
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "x-naulon-license": "not.a.licence" }) }));
+  assert.equal(out.response, null);
+  assert.equal(seen[0]?.verdict, "denied");
+  assert.equal(seen[0]?.observeOnly, true);
+});
+
+test("observe: a presented RSL licence is never sent to the licence server, which could charge it", async () => {
+  const { seen, observe } = reporter();
+  const calls: string[] = [];
+  const fetchImpl = (async (url: string | URL) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({ active: true, permitted: true, license_jws: "jws-1", charged_micro: "5500" }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const mw = naulonMiddleware({
+    ...opts,
+    verifyUrl: "https://ls.example/_naulon/verify",
+    publisher: { ...opts.publisher, licenceServer: "https://ls.example/_naulon/olp", tollMode: "observe" },
+    fetchImpl,
+    observe,
+  } as never);
+  const out = await mw(licensedGet());
+  assert.equal(out.response, null);
+  assert.deepEqual(calls.filter((u) => u.startsWith("https://ls.example/_naulon/")), []);
+  assert.equal(seen[0]?.observeOnly, true);
+});
+
+test("observe: a site with nobody to pay is still priced, and the budget is judged against that price", async () => {
+  const { seen, observe } = reporter();
+  const nobody = localQuoteSource(async () =>
+    ({ slug: "essays/x", kind: "read", title: "X", price: 0.002, payees: [], extraLegs: [], coauthorSplit: false }) as never,
+  );
+  const mw = naulonMiddleware({ ...observing, quote: nobody, observe: observe as never });
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "crawler-max-price": "USD 0.001" }) }));
+  assert.equal(out.response, null);
+  assert.equal(seen[0]?.priceMicro, 2000);
+  assert.equal(seen[0]?.crawlerBudget, "over", "judged against the 0.002 price, not an empty leg list");
+});
+
+test("observe: an observed read is marked no-store, so a cache never replays it after charging starts", async () => {
+  const mw = naulonMiddleware(observing);
+  const out = await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0") }));
+  assert.equal(out.response, null);
+  assert.equal(out.setHeaders?.["cache-control"], "no-store");
+  const paid = await naulonMiddleware(observing)(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "payment-signature": "e30=" }) }));
+  assert.equal(paid.setHeaders?.["cache-control"], "no-store");
+});
+
+test("observe: a payee-less ask includes the fee leg, and a presented payment still records the budget", async () => {
+  const { seen, observe } = reporter();
+  const withFee = localQuoteSource(async () =>
+    ({ slug: "essays/x", kind: "read", title: "X", price: 0.001, payees: [], extraLegs: [{ role: "operator", payTo: `0x${"b".repeat(40)}`, amount: "100" }], coauthorSplit: false }) as never,
+  );
+  const mw = naulonMiddleware({ ...observing, quote: withFee, observe: observe as never });
+  // 1000 + 100 fee = 1100 micro; a 1000-micro ceiling no longer covers it.
+  await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "crawler-max-price": "USD 0.001" }) }));
+  assert.equal(seen[0]?.crawlerBudget, "over");
+  await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "crawler-max-price": "USD 0.01", "payment-signature": "e30=" }) }));
+  assert.equal(seen[1]?.paymentPresented, true);
+  assert.equal(seen[1]?.crawlerBudget, "within");
+});

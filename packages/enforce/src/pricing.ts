@@ -9,6 +9,7 @@
  */
 import {
   activeNetwork,
+  chargesReads,
   resolvePayees,
   resolvePriceRule,
   usdc,
@@ -156,7 +157,9 @@ export async function quote(
   // are dropped by resolvePayees; if that empties the list, a 402 here would take money with
   // nowhere to send it.
   const payees = resolvePayees(credits);
-  if (payees.length === 0) return undefined;
+  // An observing publisher still needs the price: it reports what the read would have cost, and
+  // it never builds a 402 from this quote (`decide` returns no legs for an empty payee list).
+  if (payees.length === 0 && chargesReads(publisher)) return undefined;
 
   const rule = resolvePriceRule(publisher.priceRules, path, verifiedAgent);
   const price = tollPriceUnder(publisher, kind, rule);

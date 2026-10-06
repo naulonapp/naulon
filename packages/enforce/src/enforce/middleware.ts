@@ -32,12 +32,13 @@ import {
   crawlerBudgetVerdict,
   declaredCrawlerBudget,
   formatCrawlerPrice,
+  askMicroOf,
   totalChargedMicro,
 } from "../crawlerPrice.ts";
 import { PAYMENT_BODY_CONTENT_TYPE, paymentRequiredBodyText } from "../paymentBody.ts";
 import { X402_MANIFEST_PATH } from "../discoverability.ts";
 import { headerSafe } from "../headerSafe.ts";
-import { claimsIn, externalUrl, getConfig, referrerHost, rslResponseHeaders, type JwkSet } from "@naulon/shared";
+import { chargesReads, claimsIn, externalUrl, getConfig, referrerHost, rslResponseHeaders, type TollMode, type JwkSet } from "@naulon/shared";
 import { sdkClientIp, type ClientIpOption } from "./clientIp.ts";
 import { decidingClaim } from "../identity.ts";
 import { httpCrawlerRangesSource } from "./rangesSource.ts";
@@ -357,7 +358,14 @@ export function naulonMiddleware(
     obs: DecideObs,
     verdict: ReportableVerdict,
     resource: string,
-    extra?: { kind?: "read" | "citation"; priceUsdc?: number; referrerHost?: string },
+    extra?: {
+      kind?: "read" | "citation";
+      priceUsdc?: number;
+      referrerHost?: string;
+      observeOnly?: true;
+      crawlerBudget?: "within" | "over" | null;
+      paymentPresented?: true;
+    },
   ): void => {
     if (!opts.observe) return;
     const r: ObservationReport = {
@@ -382,6 +390,9 @@ export function naulonMiddleware(
       if (decided) r.claimedOperator = decided;
     }
     if (obs.forgedFrom) r.forgedFrom = obs.forgedFrom;
+    if (extra?.observeOnly) r.observeOnly = true;
+    if (extra?.crawlerBudget) r.crawlerBudget = extra.crawlerBudget;
+    if (extra?.paymentPresented) r.paymentPresented = true;
     opts.observe(r);
   };
 
@@ -462,6 +473,8 @@ export function naulonMiddleware(
       // never 500 the publisher's site. The source has already reported it, loudly.
       return { response: null };
     }
+    // Observing: every decision runs and is reported, but no read is charged.
+    const observing = !chargesReads(publisher as { tollMode?: TollMode });
     const licenseVerification =
       resolveVerification && req.headers.get(LICENSE_HEADER)
         ? await resolveVerification((publisher as { licenseIdentity?: string }).licenseIdentity)
@@ -490,8 +503,7 @@ export function naulonMiddleware(
     // The 402 advertisement, shared by a read with no payment and a licence that did not permit it.
     type Unpaid = Extract<typeof d, { kind: "payment-required" | "licence-presented" }>;
     const paymentRequired = (unpaid: Unpaid, verdict?: string, licence?: { error: string; description?: string }): MiddlewareResult => {
-      report(unpaid.obs, "denied", resource, { kind: unpaid.tollKind, priceUsdc: unpaid.quote.price });
-      const askMicro = totalChargedMicro(unpaid.legs);
+      const askMicro = askMicroOf(unpaid.legs, unpaid.quote);
       // The SAME advertisement the hosted gate emits (`tollgate/app.ts`, the
       // payment-required branch): the Cloudflare pay-per-crawl price vocabulary a
       // crawler already speaks, and a body for every buyer that does not decode
@@ -505,6 +517,15 @@ export function naulonMiddleware(
         }),
         askMicro,
       );
+      report(unpaid.obs, "denied", resource, {
+        kind: unpaid.tollKind,
+        priceUsdc: unpaid.quote.price,
+        crawlerBudget: budget,
+        ...(observing ? { observeOnly: true as const } : {}),
+      });
+      // Observing: the decision is recorded and the read is served. No 402, no offer, and never
+      // stored: a cached copy would be replayed to agents after the site starts charging.
+      if (observing) return { response: null, setHeaders: { "cache-control": "no-store" } };
       return {
         response: new Response(
           paymentRequiredBodyText({ askMicro, publisher: url.host, endpoint: url.pathname, tollKind: unpaid.tollKind, ...(licence ? { licence } : {}) }),
@@ -567,7 +588,8 @@ export function naulonMiddleware(
       // a HEAD has no body to sell.
       case "licence-presented": {
         const server = (publisher as { licenceServer?: string }).licenceServer;
-        if (!server || req.method !== "GET") return paymentRequired(d);
+        // Observing never asks the licence server: a permitted licence is a charge.
+        if (observing || !server || req.method !== "GET") return paymentRequired(d);
         // The check carries this site's API key, so it goes only to the control plane this runtime
         // already settles through. A licence server anywhere else is not one this key may be sent to.
         if (!sameOrigin(server, opts.verifyUrl)) {
@@ -640,6 +662,23 @@ export function naulonMiddleware(
         return paymentRequired(d);
 
       case "payment-presented": {
+        if (observing) {
+          // Observing never settles: the signature is not forwarded and no money moves.
+          report(d.obs, "denied", resource, {
+            kind: d.tollKind,
+            priceUsdc: d.quote.price,
+            observeOnly: true,
+            paymentPresented: true,
+            crawlerBudget: crawlerBudgetVerdict(
+              declaredCrawlerBudget({
+                maxPrice: req.headers.get(CRAWLER_MAX_PRICE_HEADER),
+                exactPrice: req.headers.get(CRAWLER_EXACT_PRICE_HEADER),
+              }),
+              askMicroOf(d.legs, d.quote),
+            ),
+          });
+          return { response: null, setHeaders: { "cache-control": "no-store" } };
+        }
         // No `report(...)` on this branch, deliberately: the hosted /verify writes the
         // `paid` / `payment-failed` observation itself, from the settle outcome it owns.
         // Reporting it here too would double-count, and a client that can assert "paid"

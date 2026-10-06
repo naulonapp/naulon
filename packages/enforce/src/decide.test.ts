@@ -557,3 +557,17 @@ test("Bearer is not a licence: 402 as today", async () => {
   const d = await decideOn(tolledReq({ authorization: "Bearer tok123" }));
   assert.equal(d.kind, "payment-required");
 });
+
+test("a payee-less quote never builds a 402: observing gets the price with no legs, charging reads free", async () => {
+  const nobody = async () => ({ ...(await quoteOf()), payees: [] }) as any;
+  const req = () => new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } });
+  const observing = await decide({ raw: req(), host: "h", path: "/essays/x", publisher: { ...basePublisher, tollMode: "observe" }, now: 1, quote: nobody });
+  assert.equal(observing.kind, "payment-required");
+  if (observing.kind === "payment-required") {
+    assert.deepEqual(observing.legs, []);
+    assert.equal(observing.header, "");
+    assert.equal(observing.quote.price, 5000);
+  }
+  const charging = await decide({ raw: req(), host: "h", path: "/essays/x", publisher: basePublisher, now: 1, quote: nobody });
+  assert.equal(charging.kind, "passthrough");
+});

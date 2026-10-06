@@ -283,3 +283,20 @@ test("the agents split counts impostors over every row, people included", () => 
   ];
   assert.equal(buildAgents(rows, { since: 0 }, NOW).split.forged, 2);
 });
+
+test("an observed read is a free read on every traffic rollup, never a denial or missed money", () => {
+  const observed = [
+    obs({ verdict: "denied", observeOnly: true, slug: "a", price: usdc(0.002), at: Date.now() - 1000 }),
+    obs({ verdict: "denied", observeOnly: true, slug: "a", price: usdc(0.002), at: Date.now() - 1000 }),
+  ];
+  const [path] = rollupPaths(observed);
+  assert.equal(path!.denied, 0);
+  assert.equal(path!.missed, 0);
+  assert.equal(path!.servedFree, 2);
+  const [agent] = rollupAgents(observed);
+  assert.equal(agent!.denied ?? 0, 0);
+  const cause = missedByCause(observed);
+  assert.equal(JSON.stringify(cause).includes("0.002"), false, JSON.stringify(cause));
+  const report = buildTraffic(observed, { since: 0 }, Date.now());
+  assert.equal(report.money.missed, 0);
+});

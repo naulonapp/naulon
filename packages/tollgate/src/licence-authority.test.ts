@@ -268,3 +268,13 @@ test("an authority that throws answers 503 with retry-after, still buyable over 
   assert.equal(originHits, 0);
   assert.equal(f.reports.length, 0);
 });
+
+test("observe: a presented licence is never sent to the authority, which could charge it", async () => {
+  const f = fakeAuthority(charge());
+  const observing: PublisherResolver = { async resolve(host) { return host === HOST ? { ...PUB, tollMode: "observe" } : undefined; } };
+  const app = createApp(observing, { licenceAuthority: f.authority });
+  const res = await app.request("/essays/observed", { headers: AGENT });
+  assert.equal(res.status, 200);
+  assert.equal(f.calls.length, 0, "an observing site must never ask the authority");
+  assert.deepEqual(f.reports, []);
+});

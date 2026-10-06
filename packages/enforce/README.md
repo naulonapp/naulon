@@ -113,6 +113,36 @@ managed control plane, or your own self-hosted `POST /_naulon/verify` +
 `GET /_naulon/quote`. The middleware never holds funds: it forwards the buyer's
 signed payment to `verifyUrl`, which settles buyer → author directly.
 
+## Observe mode
+
+Set `tollMode: "observe"` on the publisher to see which agents read what before you charge
+anyone. Every decision runs as usual: the request is classified, the crawler's identity is checked
+and the read is priced. The read is then served instead of answered with a 402, and reported as a
+`denied` observation with `observeOnly: true` and the price it would have paid.
+
+- No payment is taken. A request that presents one is served without settling and reported with
+  `paymentPresented: true`. A presented licence is not redeemed either.
+- Explicit blocks and prohibited uses are still refused with a 403. Observe stops charging, never a
+  refusal you configured.
+- When a crawler states a ceiling with `crawler-max-price` or `crawler-exact-price`, the
+  observation records `crawlerBudget: "within"` or `"over"`. That is the closest thing to "this
+  agent would have paid" a site can measure without asking it to. Charge mode records it too.
+- A read with nobody to pay yet is still priced while observing, so you can observe before you set up
+  a wallet. Charging in that state serves the read free, as it always has.
+- Unset means `charge`, so upgrading changes nothing until you opt in.
+
+Reports go out one request each by default. On a runtime that can keep working after the response
+is sent, batch them with `batchingObservationSink` and hand it the runtime's `waitUntil`:
+
+```ts
+import { after } from "next/server";
+import { batchingObservationSink } from "@naulon/enforce";
+
+const observe = batchingObservationSink(`${plane}/_naulon/observe`, key, { waitUntil: after });
+```
+
+Without `waitUntil` it sends each report immediately, like `httpObservationSink`.
+
 ## Crawler identity
 
 A user-agent is free text. A scraper that sends `Googlebot/2.1` on a site that lets Googlebot read

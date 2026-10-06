@@ -277,3 +277,15 @@ test("tollPrice and quote price a verified agent by its own rule, and nobody els
   assert.equal(q?.pricedFor, "chatgpt.com", "the quote names whose rule priced it");
   assert.equal((await quote(p, "on-passage", "read", "/essays/on-passage"))?.pricedFor, undefined);
 });
+
+test("observing: credits with nobody payable still price the read, with no payees", async () => {
+  const q = await quote(publisher({ credits: delegatedOnly, tollMode: "observe" }), "unrouted", "read");
+  assert.ok(q, "an observing site needs the price even with nobody to pay");
+  assert.deepEqual(q.payees, []);
+  assert.ok(q.price > 0);
+});
+
+test("observing never overrides a 404: an article the credits source refuses stays unpriced", async () => {
+  const q = await quote(publisher({ credits: delegatedOnly, tollMode: "observe" }), "not-an-article", "read");
+  assert.equal(q, undefined);
+});

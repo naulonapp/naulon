@@ -12,7 +12,7 @@
  * Everything here is pure: observations and a clock in, plain data out. No fs, no
  * config, no Date.now — so every branch is testable without a gate or a log file.
  */
-import { agentKey, OBSERVATION_VERDICTS, registryCrawler } from "@naulon/shared";
+import { effectiveVerdict, agentKey, OBSERVATION_VERDICTS, registryCrawler } from "@naulon/shared";
 import type { ObservationEvent, ObservationVerdict } from "@naulon/shared";
 
 /** How an agent's identity was established. The Agents page is built on this split. */
@@ -201,8 +201,8 @@ export function filterObservations(observations: readonly ObservationEvent[], q:
   const needle = q.q?.trim().toLowerCase();
   return observations.filter((o) => {
     if (o.at < q.since) return false;
-    if (q.verdict && o.verdict !== q.verdict) return false;
-    if (q.outcome && outcomeOf(o.verdict) !== q.outcome) return false;
+    if (q.verdict && effectiveVerdict(o) !== q.verdict) return false;
+    if (q.outcome && outcomeOf(effectiveVerdict(o)) !== q.outcome) return false;
     if (q.agent && agentKeyOf(o) !== q.agent) return false;
     if (q.slug !== undefined && o.slug !== q.slug) return false;
     if (q.identity && (o.classifiedAs !== "agent" || identityOf(o) !== q.identity)) return false;
@@ -228,16 +228,16 @@ export function rollupPaths(observations: readonly ObservationEvent[]): PathRow[
     }
     row.requests += 1;
     const price = o.price ?? 0;
-    if (o.verdict === "paid") {
+    if (effectiveVerdict(o) === "paid") {
       row.paid += 1;
       row.earned += price;
-    } else if (o.verdict === "denied") {
+    } else if (effectiveVerdict(o) === "denied") {
       row.denied += 1;
       row.missed += price;
-    } else if (o.verdict === "payment-failed") {
+    } else if (effectiveVerdict(o) === "payment-failed") {
       row.paymentFailed += 1;
       row.missed += price;
-    } else if (o.verdict === "served-free" || o.verdict === "agent-reread") {
+    } else if (effectiveVerdict(o) === "served-free" || effectiveVerdict(o) === "agent-reread") {
       row.servedFree += 1;
     }
   }
@@ -289,7 +289,8 @@ export function rollupAgents(observations: readonly ObservationEvent[]): AgentRo
     const price = o.price ?? 0;
     // Exhaustive: an outcome with no column raised `requests` and nothing else, so a row could not
     // add up to its own total. `unservable` was that outcome.
-    switch (o.verdict) {
+    const verdict = effectiveVerdict(o);
+    switch (verdict) {
       case "paid":
         row.paid += 1;
         row.earned += price;
@@ -313,7 +314,7 @@ export function rollupAgents(observations: readonly ObservationEvent[]): AgentRo
         row.free += 1;
         break;
       default: {
-        const unhandled: never = o.verdict;
+        const unhandled: never = verdict;
         void unhandled;
       }
     }
@@ -332,7 +333,7 @@ export function missedByCause(observations: readonly ObservationEvent[]): Missed
   };
   const paths = new Map<string, MissedByCause["byPath"][number]>();
   for (const o of observations) {
-    if (o.verdict !== "denied" && o.verdict !== "payment-failed") continue;
+    if (effectiveVerdict(o) !== "denied" && effectiveVerdict(o) !== "payment-failed") continue;
     const slug = o.slug || "(non-article)";
     let row = paths.get(slug);
     if (!row) {
@@ -340,7 +341,7 @@ export function missedByCause(observations: readonly ObservationEvent[]): Missed
       paths.set(slug, row);
     }
     const price = o.price ?? 0;
-    if (o.verdict === "denied") {
+    if (effectiveVerdict(o) === "denied") {
       out.denied.requests += 1;
       out.denied.usdc += price;
       row.denied += 1;
@@ -414,10 +415,10 @@ export function buildTraffic(
   const outcomes: Record<Outcome, number> = { paid: 0, left: 0, free: 0, refused: 0 };
   const money = { earned: 0, missed: 0 };
   for (const o of matched) {
-    if (o.verdict in byVerdict) byVerdict[o.verdict] += 1;
-    if (o.classifiedAs === "agent") outcomes[outcomeOf(o.verdict)] += 1;
-    if (o.verdict === "paid") money.earned += o.price ?? 0;
-    if (o.verdict === "denied") money.missed += o.price ?? 0;
+    if (effectiveVerdict(o) in byVerdict) byVerdict[effectiveVerdict(o)] += 1;
+    if (o.classifiedAs === "agent") outcomes[outcomeOf(effectiveVerdict(o))] += 1;
+    if (effectiveVerdict(o) === "paid") money.earned += o.price ?? 0;
+    if (effectiveVerdict(o) === "denied") money.missed += o.price ?? 0;
   }
   const listed = who === "all" ? matched : matched.filter((o) => o.classifiedAs === who);
   const { page, next } = pageRows(listed, rowLimit, opts.after ?? null);

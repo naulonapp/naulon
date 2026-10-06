@@ -235,6 +235,12 @@ class Naulon_Enforcer {
 			$this->no_store();
 			return;
 		}
+		if ( 'observed' === $decision['action'] ) {
+			// Served while observing. Never stored: a cached copy would be replayed to agents after
+			// the site starts charging.
+			$this->no_store();
+			return;
+		}
 		// 'free' — a human, a non-article, an unpriced resource, or a degraded control plane.
 	}
 
@@ -307,13 +313,87 @@ class Naulon_Enforcer {
 					'reason'        => null === $this->agent_verdict ? $decision['reason'] : $this->agent_verdict['reason'],
 					'price_micro'   => isset( $decision['price_micro'] ) ? (int) $decision['price_micro'] : 0,
 					'classified_as' => null === $this->agent_verdict ? 'agent' : $this->agent_verdict['kind'],
-					'identity'      => $this->identity,
-					'forged_from'   => $this->forged_from,
+					'identity'          => $this->identity,
+					'forged_from'       => $this->forged_from,
+					'crawler_budget'    => isset( $decision['crawler_budget'] ) ? $decision['crawler_budget'] : null,
+					'payment_presented' => ! empty( $decision['payment_presented'] ),
 				)
 			);
 		}
 
 		return $decision;
+	}
+
+	/**
+	 * The asking price of a built 402 in integer micro-USDC: the legs when there are any, otherwise
+	 * the quote's own price plus its fee legs (an observing site with nobody to pay has no legs).
+	 *
+	 * @param array $built The built 402: header, legs and quote.
+	 * @return int
+	 */
+	public static function ask_micro( array $built ) {
+		if ( ! empty( $built['legs'] ) ) {
+			return Naulon_Observer::legs_total( $built['legs'] );
+		}
+		$quoted = isset( $built['quote']['price'] ) && is_numeric( $built['quote']['price'] ) ? (float) $built['quote']['price'] : 0.0;
+		$fees   = 0;
+		if ( isset( $built['quote']['extraLegs'] ) && is_array( $built['quote']['extraLegs'] ) ) {
+			foreach ( $built['quote']['extraLegs'] as $leg ) {
+				if ( is_array( $leg ) && isset( $leg['amount'] ) && ctype_digit( (string) $leg['amount'] ) ) {
+					$fees += (int) $leg['amount'];
+				}
+			}
+		}
+		// Price plus fee legs: what a buyer would be debited once the site charges.
+		return (int) round( $quoted * 1000000 ) + $fees;
+	}
+
+	/**
+	 * The decision for a priced read that carries no settled payment. Charging answers it with the
+	 * 402. Observing serves it instead, with the price it would have asked and whether a payment
+	 * was presented: the payment is never settled, so no money moves.
+	 *
+	 * @param array       $built             The built 402: header and legs.
+	 * @param bool        $observing         The site meters rather than charges.
+	 * @param bool        $payment_presented A payment header arrived with the request.
+	 * @param string|null $crawler_budget    within|over|null, from the crawler's stated price.
+	 * @param string      $reason            Why the read is priced, for the log.
+	 * @return array
+	 */
+	public static function unpaid_decision( array $built, $observing, $payment_presented, $crawler_budget, $reason ) {
+		// No legs means nobody to pay. Only an observing site is quoted like that. A charging site in
+		// that state reads free rather than send an empty 402.
+		if ( empty( $built['legs'] ) && ! $observing ) {
+			return array(
+				'action'  => 'free',
+				'header'  => '',
+				'receipt' => '',
+				'license' => '',
+				'reason'  => 'nobody to pay',
+			);
+		}
+		$price = self::ask_micro( $built );
+		if ( $observing ) {
+			return array(
+				'action'            => 'observed',
+				'header'            => '',
+				'receipt'           => '',
+				'license'           => '',
+				'reason'            => 'observing; ' . $reason,
+				'price_micro'       => $price,
+				'crawler_budget'    => $crawler_budget,
+				'payment_presented' => (bool) $payment_presented,
+			);
+		}
+		return array(
+			'action'         => 'pay',
+			'header'         => $built['header'],
+			'receipt'        => '',
+			'license'        => '',
+			'reason'         => $reason,
+			'price_micro'    => $price,
+			'crawler_budget' => $crawler_budget,
+		);
 	}
 
 	/**
@@ -436,15 +516,21 @@ class Naulon_Enforcer {
 		}
 
 		$payment = $this->header( self::PAYMENT_HEADER );
-		if ( '' === $payment ) {
+		$budget  = Naulon_Observer::crawler_budget(
+			$this->header( 'crawler-max-price' ),
+			$this->header( 'crawler-exact-price' ),
+			self::ask_micro( $built )
+		);
+		$rules = Naulon_Rules::instance()->get( false );
+		// Observing never settles: a presented payment is recorded and the read is served.
+		if ( '' === $payment || ( is_array( $rules ) && 'observe' === $rules['tollMode'] ) ) {
 			return $this->logged(
-				array(
-					'action'      => 'pay',
-					'header'      => $built['header'],
-					'receipt'     => '',
-					'license'     => '',
-					'reason'      => 'agent (' . $this->agent_verdict['reason'] . ')',
-					'price_micro' => Naulon_Observer::legs_total( $built['legs'] ),
+				self::unpaid_decision(
+					$built,
+					is_array( $rules ) && 'observe' === $rules['tollMode'],
+					'' !== $payment,
+					$budget,
+					'agent (' . $this->agent_verdict['reason'] . ')'
 				),
 				$post,
 				$slug
@@ -547,7 +633,9 @@ class Naulon_Enforcer {
 		// settle: handing a cached nonce to a second agent would make its payment fail against
 		// an already-spent nonce. So we look at what we actually received rather than assuming
 		// a mode, and skip the cache when a nonce is present.
-		if ( ! self::carries_nonce( $built['legs'] ) ) {
+		// Nor a quote with nobody to pay (an observing site with no wallet): once the owner adds one and
+		// starts charging, a cached empty quote would keep serving those pages free until it expired.
+		if ( ! empty( $built['legs'] ) && ! self::carries_nonce( $built['legs'] ) ) {
 			set_transient( $cache_key, $built, self::QUOTE_TTL );
 		}
 		return $built;

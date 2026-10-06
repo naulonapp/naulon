@@ -57,6 +57,7 @@ import {
   referrerHost,
   callerIp,
   claimsIn,
+  chargesReads,
 } from "@naulon/shared";
 import {
   decide,
@@ -138,6 +139,7 @@ import {
   formatCrawlerPrice,
   settledChargedMicro,
   totalChargedMicro,
+  askMicroOf,
   PAYMENT_BODY_CONTENT_TYPE,
   paymentRequiredBodyText,
   headerSafe,
@@ -1043,7 +1045,19 @@ export function createApp(
     // Audit plane: one observation per gated-route decision, built from the facts
     // decide() carried back (telemetry only, never gates). Default sink off → no-op.
     // `at` is stamped per emit, exactly as before the extraction.
-    const emitObs = (obs: DecideObs, v: ObservationVerdict, extra?: { kind?: TollKind; price?: Usdc; failureReason?: PaymentFailureReason; delivery?: Delivered }): void =>
+    const emitObs = (
+      obs: DecideObs,
+      v: ObservationVerdict,
+      extra?: {
+        kind?: TollKind;
+        price?: Usdc;
+        failureReason?: PaymentFailureReason;
+        delivery?: Delivered;
+        observeOnly?: true;
+        crawlerBudget?: "within" | "over" | null;
+        paymentPresented?: true;
+      },
+    ): void =>
       observe({
         id: randomUUID(),
         publisherId: publisher.id,
@@ -1066,6 +1080,9 @@ export function createApp(
         // Only ever set on `payment-failed` — the other verdicts have no failure to explain.
         failureReason: extra?.failureReason,
         ...deliveryFacts(extra?.delivery),
+        ...(extra?.observeOnly ? { observeOnly: true as const } : {}),
+        ...(extra?.crawlerBudget ? { crawlerBudget: extra.crawlerBudget } : {}),
+        ...(extra?.paymentPresented ? { paymentPresented: true as const } : {}),
         at: Date.now(),
       });
 
@@ -1395,13 +1412,13 @@ export function createApp(
       case "licence-presented":
         // GET only. A HEAD carries no body to sell, and a standing licence must not be charged for a
         // probe the buyer never saw; anything else is not a read at all.
-        if (licenceAuthority && raw.method === "GET") return serveLicence(d, licenceAuthority);
+        // Observing never redeems a licence: a permitted licence is a charge.
+        if (licenceAuthority && raw.method === "GET" && chargesReads(publisher)) return serveLicence(d, licenceAuthority);
       // falls through
       // Machine, no payment: 402 with the requirement in the PAYMENT-REQUIRED
       // header. Link points an agent at the toll manifest (discoverability).
       case "payment-required": {
-        emitObs(d.obs, "denied", { kind: d.tollKind, price: usdc(d.quote.price) });
-        const askMicro = totalChargedMicro(d.legs);
+        const askMicro = askMicroOf(d.legs, d.quote);
         // A Cloudflare-trained crawler states its ceiling on the request. Reading it
         // does NOT change the answer — a 402 either way, because naulon settles over
         // x402/USDC and cannot auto-charge the way a Cloudflare-proxied origin does.
@@ -1414,6 +1431,15 @@ export function createApp(
           }),
           askMicro,
         );
+        if (!chargesReads(publisher)) {
+          // Observing: the decision is recorded and the read is proxied. No 402, no offer. Never
+          // cached, so a later agent is not served this copy after the publisher starts charging.
+          emitObs(d.obs, "denied", { kind: d.tollKind, price: usdc(d.quote.price), crawlerBudget: budget, observeOnly: true });
+          const res = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+          res.headers.set("X-Naulon-Verdict", headerSafe(`observed (${d.obs.classifyReason})`));
+          return stampGateCacheHeaders(res, { noStore: true });
+        }
+        emitObs(d.obs, "denied", { kind: d.tollKind, price: usdc(d.quote.price), crawlerBudget: budget });
         return stampGateCacheHeaders(
           // The body is the ADVERTISEMENT — price, terms, where the real obligation is —
           // in the vendor-neutral shape a non-x402 crawler can read. It used to be zero
@@ -1432,8 +1458,23 @@ export function createApp(
       }
 
       // Machine WITH a payment: fetch what we sold, verify + settle (custody-free), then serve.
-      case "payment-presented":
+      case "payment-presented": {
+        if (!chargesReads(publisher)) {
+          // Observing never settles: the signature is not forwarded and no money moves.
+          const budget = crawlerBudgetVerdict(
+            declaredCrawlerBudget({
+              maxPrice: raw.headers.get(CRAWLER_MAX_PRICE_HEADER) ?? undefined,
+              exactPrice: raw.headers.get(CRAWLER_EXACT_PRICE_HEADER) ?? undefined,
+            }),
+            askMicroOf(d.legs, d.quote),
+          );
+          emitObs(d.obs, "denied", { kind: d.tollKind, price: usdc(d.quote.price), observeOnly: true, paymentPresented: true, crawlerBudget: budget });
+          const res = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+          res.headers.set("X-Naulon-Verdict", headerSafe("observed (payment not taken)"));
+          return stampGateCacheHeaders(res, { noStore: true });
+        }
         return settleAndServe(d, d.payment, {});
+      }
     }
   };
 

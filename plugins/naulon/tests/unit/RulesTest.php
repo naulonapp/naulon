@@ -201,4 +201,12 @@ class RulesTest extends TestCase {
 		$this->assertSame( array(), Naulon_Rules::armed_from( null, self::T0 ) );
 		$this->assertLessThan( 72 * 3600, Naulon_Rules::ARMED_MAX_AGE );
 	}
+
+	public function test_normalize_keeps_the_toll_mode_only_as_observe_or_charge() {
+		$this->assertSame( 'observe', $this->rules( array( 'tollMode' => 'observe' ) )['tollMode'] );
+		$this->assertSame( 'charge', $this->rules( array( 'tollMode' => 'charge' ) )['tollMode'] );
+		// Anything else charges: a malformed mode must never switch the toll off.
+		$this->assertSame( 'charge', $this->rules( array( 'tollMode' => 'OBSERVE' ) )['tollMode'] );
+		$this->assertSame( 'charge', $this->rules( array() )['tollMode'] );
+	}
 }

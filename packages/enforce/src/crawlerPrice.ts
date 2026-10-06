@@ -125,6 +125,20 @@ export function totalChargedMicro(legs: readonly { requirements: { amount: strin
 }
 
 /**
+ * The asking price of a priced read, in micro-USDC: the legs when there are any, otherwise the
+ * quote's own price plus its fee legs. An observing publisher with nobody to pay is quoted with no
+ * legs, and its ask is still what a buyer would be debited once it charges.
+ */
+export function askMicroOf(
+  legs: readonly { requirements: { amount: string } }[],
+  quote: { price: number; extraLegs?: readonly { amount: string }[] },
+): bigint {
+  if (legs.length > 0) return totalChargedMicro(legs);
+  const fees = (quote.extraLegs ?? []).reduce((sum, leg) => sum + toMicro(leg.amount), 0n);
+  return BigInt(Math.round(quote.price * 1_000_000)) + fees;
+}
+
+/**
  * What the buyer ACTUALLY authorized — the quoted total minus every leg they never signed.
  *
  * `totalChargedMicro` is the ASK. Since naulon#73 the gate honours a stock x402 client that signs

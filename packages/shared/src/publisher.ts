@@ -191,6 +191,12 @@ export interface PublisherConfig {
    */
   identityMode?: "off" | "auto";
   /**
+   * Whether reads this publisher prices are charged. `charge` (default): an unpaid agent read
+   * gets a 402. `observe`: the same decision runs and is reported, but the read is served and no
+   * payment is taken. Explicit blocks and prohibited uses are refused in both modes.
+   */
+  tollMode?: TollMode;
+  /**
    * The usage terms the publisher DECLARED, carried into the RSL document.
    *
    * The sibling of `crawlerPolicy`, one axis over: that one decides who may read, this one
@@ -320,4 +326,15 @@ export interface PublisherResolver {
    * to an unknown host (it must not leak another publisher's config or misroute).
    */
   resolve(host: string): Promise<PublisherConfig | undefined>;
+}
+
+/** Charge reads, or meter them without charging. */
+export type TollMode = "charge" | "observe";
+
+/**
+ * True unless the publisher chose `observe`. Anything else, including a value a parser should
+ * have dropped, charges: a malformed mode must never switch a toll off.
+ */
+export function chargesReads(p: { tollMode?: TollMode }): boolean {
+  return p.tollMode !== "observe";
 }
