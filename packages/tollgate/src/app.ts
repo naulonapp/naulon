@@ -74,6 +74,8 @@ import {
   licensing,
   quote,
   revocations,
+  classifyRequester,
+  type DecideInput,
 } from "@naulon/enforce";
 import { get as getEvent } from "./eventLog.ts";
 import { observe } from "./observationLog.ts";
@@ -81,6 +83,8 @@ import { clientKeyOf, rateLimit } from "./rateLimit.ts";
 import { admitIngress, EDGE_AUTH_HEADER, edgeSecretDigest, lastForwardedElement, isIngressHost, namedSiteOf, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
 import { DEFAULT_TOLL_TERMS, settleAndAttribute } from "./settle.ts";
 import { deliverForAgent, varyOnAccept, type Delivered } from "./deliver.ts";
+import { stampGateCacheHeaders } from "./cacheHeaders.ts";
+import { throughContentExit } from "./contentExit.ts";
 import { prefersMarkdown } from "@naulon/extract";
 import { envPublisherResolver } from "./publisher.ts";
 
@@ -313,37 +317,12 @@ function forwardHeaders(req: Request, clientIp: string, originHost: string): Hea
 // Re-exported here because it is part of this module's published surface.
 export { headerSafe };
 
-/**
- * Cache discipline for gateable-route decisions. Every response on a gateable
- * route is User-Agent-dependent — the same URL yields a human 200, an agent 402,
- * or a blocked 403 — so a shared cache keying on URL alone could serve a human's
- * 200 to an agent (a free read) or an agent's 402/403 to a human (a paywall on
- * the open web, the exact failure the classifier is biased against).
- * `Vary: User-Agent` partitions any compliant cache; it is MERGED into an
- * origin-set Vary, never clobbering one. Money-bearing states (402 quotes carry
- * a fresh validity window, 403 blocks, licensed rereads, paid content) also get
- * `Cache-Control: no-store` — they are per-request artifacts, not documents. The
- * human free read keeps the origin's own Cache-Control: page cacheability
- * belongs to the publisher, and Vary alone keeps agents out of that cache entry.
- * Passthrough routes (suspended, non-article, unknown-article) are untouched —
- * they serve the same bytes to every caller.
- */
 /** The delivery half of a `paid` or `agent-reread` observation. */
 function deliveryFacts(d: Delivered | undefined): { extraction?: "gate" | "passthrough" | "raw"; servedBytes?: number; sourceBytes?: number } {
   if (!d) return {};
   return { ...(d.extraction ? { extraction: d.extraction } : {}), servedBytes: d.bytes.byteLength, sourceBytes: d.sourceBytes };
 }
 
-function stampGateCacheHeaders(res: Response, opts: { noStore: boolean }): Response {
-  const vary = res.headers.get("vary");
-  const hasUa =
-    vary
-      ?.split(",")
-      .some((v) => v.trim() === "*" || v.trim().toLowerCase() === "user-agent") ?? false;
-  if (!hasUa) res.headers.set("Vary", vary ? `${vary}, User-Agent` : "User-Agent");
-  if (opts.noStore) res.headers.set("Cache-Control", "no-store");
-  return res;
-}
 
 /**
  * The outcome of one upstream proxy fetch — status + an optional mitigation
@@ -1012,7 +991,7 @@ export function createApp(
     // build402 AND the settle/event/mint tail, so the advertised validity window
     // and the settled payment share one timestamp.
     const now = Date.now();
-    const d = await decide({
+    const decideInput: DecideInput = {
       raw: raw,
       host,
       path,
@@ -1032,7 +1011,8 @@ export function createApp(
             },
           }
         : {}),
-    });
+    };
+    const d = await decide(decideInput);
     const decidedObs = d.kind === "passthrough" ? (d.verdict === "unknown-article" ? d.obs : undefined) : d.obs;
     if (decidedObs?.identity) {
       try {
@@ -1373,9 +1353,18 @@ export function createApp(
 
     switch (d.kind) {
       // Non-article OR unknown-article: pure passthrough, no observation.
-      case "passthrough":
+      case "passthrough": {
         if (d.verdict === "unknown-article" && d.obs) emitObs(d.obs, "served-free");
-        return proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+        const upstream = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
+        // A route that hands out article text (a CMS's API or feed) is stripped for anyone the
+        // article page would charge, decided by the same rules (`contentExit.ts`).
+        return throughContentExit({
+          upstream,
+          url: new URL(raw.url),
+          classify: () => classifyRequester(decideInput, path),
+          materialize: materializeBody,
+        });
+      }
 
       // Publisher-refused crawler: 403 before any content leaves.
       case "blocked": {

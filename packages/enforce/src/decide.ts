@@ -19,7 +19,7 @@
  */
 import { matchUaFragment, type RequestSignals, type Verdict } from "./agentDetect.ts";
 import { classifyWithIdentity, type IdentityInput, type IdentityResult } from "./identity.ts";
-import { verifyBotAuth, type RequestFacts, type BotAuthOptions } from "./botAuth.ts";
+import { verifyBotAuth, type RequestFacts, type BotAuthOptions, type VerifiedAgent } from "./botAuth.ts";
 import { build402, PAYMENT_SIGNATURE_HEADER, type SettlementLegReq } from "./build402.ts";
 import type { Quote } from "./pricing.ts";
 import { licensing } from "./license.ts";
@@ -314,22 +314,27 @@ export interface DecideInput {
   identity?: IdentityInput;
 }
 
-export async function decide(input: DecideInput): Promise<Decision> {
-  const { raw, host, path, publisher, now, quote } = input;
+/** A requester the toll charges: no free or refusal rule applied. */
+export interface MachineStanding {
+  kind: "machine";
+  obs: DecideObs;
+  verifiedAgent: VerifiedAgent | null;
+}
 
-  const slug =
-    publisher.gateScope?.mode === "site"
-      ? slugFromSitePath(path, publisher.gateScope.excludePrefixes, {
-          includeExtensions: publisher.gateScope.includeExtensions,
-        })
-      : slugFromPath(path, publisher.articlePrefixes, {
-          // Absent gateScope IS prefix mode, so read the depth off the union only when it is
-          // actually the prefixes variant. Undefined ⇒ "segment", unchanged.
-          depth: publisher.gateScope?.mode === "prefixes" ? publisher.gateScope.depth : undefined,
-        });
-
-  // Non-article routes: pure passthrough (assets, home, RSS...).
-  if (!slug) return { kind: "passthrough", verdict: "non-article" };
+/**
+ * Who is asking, and every rule that settles a read before a price is looked up, in the toll's order:
+ * the gate's own signed origin pull, the publisher's block list, crawler identity, a prohibited use,
+ * a person, and a site that gives `ai-input` away. Returns the settled Decision, or the machine the
+ * toll goes on to price.
+ *
+ * One function, used by `decide()` and by the content exits (`content-exits.ts`), so every door into
+ * an article applies the same rules to the same requester.
+ */
+export async function classifyRequester(
+  input: Pick<DecideInput, "raw" | "host" | "publisher" | "botAuthOpts" | "viaIngress" | "identity">,
+  slug: string,
+): Promise<Decision | MachineStanding> {
+  const { raw, host, publisher } = input;
 
   // Web Bot Auth: verify cryptographic identity once per gateable request.
   // Unsigned requests short-circuit to "absent" inside the verifier — zero cost.
@@ -433,6 +438,33 @@ export async function decide(input: DecideInput): Promise<Decision> {
   if (publisher.termsPolicy?.["ai-input"] === "free") {
     return { kind: "free", verdict: "agent (ai-input free by the site's terms)", obs };
   }
+
+  return { kind: "machine", obs, verifiedAgent };
+}
+
+export async function decide(input: DecideInput): Promise<Decision> {
+  const { raw, host, path, publisher, now, quote } = input;
+
+  const slug =
+    publisher.gateScope?.mode === "site"
+      ? slugFromSitePath(path, publisher.gateScope.excludePrefixes, {
+          includeExtensions: publisher.gateScope.includeExtensions,
+        })
+      : slugFromPath(path, publisher.articlePrefixes, {
+          // Absent gateScope IS prefix mode, so read the depth off the union only when it is
+          // actually the prefixes variant. Undefined ⇒ "segment", unchanged.
+          depth: publisher.gateScope?.mode === "prefixes" ? publisher.gateScope.depth : undefined,
+        });
+
+  // Non-article routes: pure passthrough (assets, home, RSS...).
+  if (!slug) return { kind: "passthrough", verdict: "non-article" };
+
+  // Who is asking, and the free and refusal rules that apply to them, in the toll's order. The same
+  // function answers the gate's other content exits (`contentExitStanding`), so a side door can
+  // never treat a requester differently from the article page.
+  const standing = await classifyRequester(input, slug);
+  if (standing.kind !== "machine") return standing;
+  const { obs, verifiedAgent } = standing;
 
   // Machine. What's it asking for?
   const tollKind: TollKind = raw.headers.get("x-naulon-kind") === "citation" ? "citation" : "read";

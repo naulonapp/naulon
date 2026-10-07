@@ -11,6 +11,7 @@
 // The decision surface + its wire re-exports (PAYMENT_* headers, PaymentRequirements,
 // SettlementLegReq, PAYMENT_LINK_HEADER, Quote, TollKind).
 export * from "./decide.ts";
+export * from "./content-exits.ts";
 
 // Classification, Web Bot Auth, nonce replay guard, holder-of-key proof.
 export * from "./agentDetect.ts";
