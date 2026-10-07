@@ -14,6 +14,16 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.12.7
+
+No `@naulon/*` package or plugin version changed. This release rebuilds the gate image on patched
+dependencies.
+
+### Security
+- The gate image takes hono 4.13.13, proxy-addr 2.0.8, @modelcontextprotocol/sdk 1.32.1, fast-uri
+  3.1.8 and ip-address 10.7.3, clearing the critical proxy-addr advisory and the high MCP SDK and
+  fast-uri ones.
+
 ## v0.12.6
 
 `@naulon/shared` 0.6.7, `@naulon/enforce` 0.8.1, `@naulon/wayfarer` 0.7.2, `@naulon/wayfarer-mcp` 0.7.3.
