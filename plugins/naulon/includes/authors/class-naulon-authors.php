@@ -175,7 +175,8 @@ class Naulon_Authors {
 					$e['name'] = $user->display_name;
 				}
 			} else {
-				$title = get_the_title( $e['guest_id'] );
+				// Only a published post's title is ever a public byline.
+				$title = 'publish' === get_post_status( $e['guest_id'] ) ? get_the_title( $e['guest_id'] ) : '';
 				if ( is_string( $title ) && '' !== $title ) {
 					$e['name'] = $title;
 				}

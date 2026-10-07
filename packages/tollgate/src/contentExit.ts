@@ -44,8 +44,18 @@ export async function throughContentExit(input: ContentExitInput): Promise<Respo
   }
   const body = await buffered.text();
   const stripped = exit.strip(body, buffered.headers.get("content-type") ?? "", input.url);
-  // Not this exit's shape (an error page, an empty list): nothing to strip, served as it came.
-  if (stripped === null) return stampGateCacheHeaders(new Response(body, buffered), { noStore: true });
+  if (stripped === null) {
+    // A successful body an unambiguous exit cannot read is a format variant, and serving it would
+    // hand out the text this exists to protect. An error page, or an exit that may be an ordinary
+    // page on another kind of site, is served as it came.
+    const ok = buffered.status >= 200 && buffered.status < 300 && body.trim() !== "";
+    if (ok && exit.failClosed) {
+      return stampGateCacheHeaders(new Response(null, { status: 403, headers: { [CONTENT_EXIT_HEADER]: `${exit.id}; unreadable` } }), {
+        noStore: true,
+      });
+    }
+    return stampGateCacheHeaders(new Response(body, buffered), { noStore: true });
+  }
 
   const headers = new Headers(buffered.headers);
   // A new body: the origin's length and validators describe a different one.

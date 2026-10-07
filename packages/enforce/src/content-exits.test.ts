@@ -69,5 +69,20 @@ test("REST: asking for only id and content does not dodge the strip (decided by 
 
 test("REST: the comments route keeps its text, it is not the article", () => {
   const body = JSON.stringify([{ id: 9, post: 1, content: { rendered: "<p>A comment.</p>" } }]);
-  assert.equal(WORDPRESS_REST.strip(body, "application/json", u("/wp-json/wp/v2/comments?post=1")), null);
+  assert.equal(WORDPRESS_REST.strip(body, "application/json", u("/wp-json/wp/v2/comments?post=1")), body);
+});
+
+test("REST: the PATH_INFO spelling and any letter case reach the exit", () => {
+  for (const p of ["/index.php/wp-json/wp/v2/posts", "/WP-JSON/wp/v2/posts", "/?rest_route=/WP/V2/posts"]) {
+    assert.equal(contentExitFor(u(p))?.id, "wordpress-rest", p);
+  }
+});
+
+test("REST: a JSONP answer (?_jsonp=cb, on by default) is stripped inside its callback", () => {
+  const body = `/**/cb(${JSON.stringify([{ id: 1, content: { rendered: "<p>Full text of A.</p>" }, excerpt: { rendered: "T" } }])})`;
+  const out = WORDPRESS_REST.strip(body, "application/javascript; charset=UTF-8", u("/wp-json/wp/v2/posts?_jsonp=cb"))!;
+  assert.ok(out.startsWith("/**/cb(") && out.endsWith(")"));
+  assert.ok(!out.includes("Full text"));
+  assert.equal(WORDPRESS_REST.failClosed, true, "a REST body the exit cannot read is refused, never served");
+  assert.ok(!WORDPRESS_FEED.failClosed, "a /feed/ page on another kind of site is an ordinary page");
 });

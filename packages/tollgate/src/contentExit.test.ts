@@ -42,7 +42,11 @@ function app(over: Partial<PublisherConfig> = {}) {
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request) => {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
-  if (url.pathname.startsWith("/wp-json/") || url.searchParams.get("rest_route")) {
+  if (url.searchParams.get("_jsonp")) {
+    return new Response(`/**/${url.searchParams.get("_jsonp")}(${POSTS})`, { status: 200, headers: { "content-type": "application/javascript; charset=UTF-8" } });
+  }
+  if (url.searchParams.get("_format") === "weird") return new Response("Full text of A, in a format nobody expected", { status: 200, headers: { "content-type": "text/plain" } });
+  if (url.pathname.startsWith("/wp-json/") || url.pathname.startsWith("/index.php/wp-json/") || url.searchParams.get("rest_route")) {
     return new Response(POSTS, { status: 200, headers: { "content-type": "application/json; charset=UTF-8", etag: '"v1"' } });
   }
   if (url.pathname.includes("/feed")) return new Response(FEED, { status: 200, headers: { "content-type": "application/rss+xml; charset=UTF-8" } });
@@ -100,4 +104,20 @@ test("a route that is not an exit is the origin's response, untouched", async ()
   const res = await get("/", GPTBOT);
   assert.equal(await res.text(), "<html>home</html>");
   assert.equal(res.headers.get("x-naulon-exit"), null);
+});
+
+test("an agent asking for JSONP or the PATH_INFO spelling gets the strip too", async () => {
+  for (const path of ["/wp-json/wp/v2/posts?_jsonp=cb", "/index.php/wp-json/wp/v2/posts"]) {
+    const res = await get(path, GPTBOT);
+    assert.ok(!(await res.text()).includes("Full text"), path);
+    assert.equal(res.headers.get("x-naulon-exit"), "wordpress-rest", path);
+  }
+});
+
+test("a successful REST body the exit cannot read is refused to an agent, not served", async () => {
+  const res = await get("/wp-json/wp/v2/posts?_format=weird", GPTBOT);
+  assert.equal(res.status, 403);
+  assert.equal(await res.text(), "");
+  const person = await get("/wp-json/wp/v2/posts?_format=weird", BROWSER);
+  assert.ok((await person.text()).includes("Full text"), "a person still reads it");
 });

@@ -22,6 +22,13 @@ export interface ContentExit {
    * error page, an unexpected format). A null answer serves the origin's response unchanged.
    */
   strip(body: string, contentType: string, url: URL): string | null;
+  /**
+   * Refuse a successful response this exit cannot strip, instead of serving it. Set where the route
+   * is unambiguously the platform's (WordPress's `/wp/v2/` API), so an unreadable body can only be a
+   * format variant that would otherwise leak. Unset where the same path may be an ordinary page on
+   * another kind of site (a `/feed/` page that is not a WordPress feed).
+   */
+  failClosed?: boolean;
 }
 
 /**
@@ -55,31 +62,43 @@ function stripBodies(node: unknown): void {
   }
 }
 
-/** The `/wp/v2/...` route of a REST request, under either spelling, or null. */
+/**
+ * The `/wp/v2/...` route of a REST request, or null. WordPress answers the API under three
+ * spellings: `/wp-json/…`, `/index.php/wp-json/…` (PATH_INFO, on servers without rewrites) and
+ * `?rest_route=…`. Compared lower-case with repeated slashes collapsed, as a server would route it.
+ */
 function routeOf(url: URL): string | null {
-  const path = url.pathname.replace(/\/+/g, "/");
-  if (path.startsWith("/wp-json/wp/v2/")) return path.slice("/wp-json".length);
-  const rest = (url.searchParams.get("rest_route") ?? "").replace(/\/+/g, "/");
+  const path = url.pathname.replace(/\/+/g, "/").toLowerCase();
+  for (const prefix of ["/wp-json", "/index.php/wp-json"]) {
+    if (path.startsWith(`${prefix}/wp/v2/`)) return path.slice(prefix.length);
+  }
+  const rest = (url.searchParams.get("rest_route") ?? "").replace(/\/+/g, "/").toLowerCase();
   return rest.startsWith("/wp/v2/") ? rest : null;
 }
+
+/** WordPress's JSONP answer (`?_jsonp=cb`, on by default): `/**\/cb(<json>)`. */
+const JSONP = /^\s*(\/\*\*\/)?\s*([A-Za-z_$][\w.$]*)\(([\s\S]*)\)\s*;?\s*$/;
 
 export const WORDPRESS_REST: ContentExit = {
   id: "wordpress-rest",
   matches(url) {
     return routeOf(url) !== null;
   },
+  failClosed: true,
   strip(body, contentType, url) {
-    if (!/json/i.test(contentType)) return null;
     // Comments carry `content` too, and it is the commenter's text, not the article.
-    if (/^\/wp\/v2\/comments(\/|$)/.test(routeOf(url) ?? "")) return null;
+    if (/^\/wp\/v2\/comments(\/|$)/.test(routeOf(url) ?? "")) return body;
+    const jsonp = /javascript/i.test(contentType) ? JSONP.exec(body) : null;
+    if (!jsonp && !/json/i.test(contentType)) return null;
     let parsed: unknown;
     try {
-      parsed = JSON.parse(body);
+      parsed = JSON.parse(jsonp ? jsonp[3]! : body);
     } catch {
       return null;
     }
     stripBodies(parsed);
-    return JSON.stringify(parsed);
+    const json = JSON.stringify(parsed);
+    return jsonp ? `${jsonp[1] ?? ""}${jsonp[2]}(${json})` : json;
   },
 };
 
