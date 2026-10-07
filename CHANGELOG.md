@@ -14,7 +14,7 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
-## Unreleased
+## v0.12.5
 
 `@naulon/shared` 0.6.7, `@naulon/enforce` 0.8.1. The WordPress plugin moves to 0.6.4 for the same mode; its own changelog says so.
 
