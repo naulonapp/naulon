@@ -14,6 +14,22 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.12.8
+
+`@naulon/enforce` 0.9.0. The WordPress plugin moves to 0.6.5; its own changelog says so.
+
+### Added
+- `classifyRequester`: the free and refusal rules `decide()` applies before a price, as one
+  function, so every route into an article treats a requester the same way.
+- Content exits (`CONTENT_EXITS`, `contentExitFor`). The gate strips article text from WordPress's
+  REST API (`/wp-json/wp/v2/`, `/index.php/wp-json/`, `?rest_route=`, JSONP) and feeds for anyone
+  the article page would charge, and serves them whole to anyone it serves free. Every answer on
+  those routes carries `Vary: User-Agent`; a stripped one is never stored.
+
+### Security
+- An agent could read a charged WordPress article free through the REST API or a feed. A REST
+  body the exit cannot read is now refused rather than served.
+
 ## v0.12.7
 
 No `@naulon/*` package or plugin version changed. This release rebuilds the gate image on patched
