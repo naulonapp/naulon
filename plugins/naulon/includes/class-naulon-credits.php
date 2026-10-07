@@ -84,6 +84,129 @@ class Naulon_Credits {
 				),
 			)
 		);
+
+		register_rest_route(
+			self::NAMESPACE_V1,
+			'/catalog',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'catalog' ),
+				// Public, as the naulon catalog contract asks. It lists only what `is_tollable` lets
+				// the credits endpoint describe (published, no password, not opted out), which the
+				// site's own sitemap and feed already publish, and it never carries a wallet. The
+				// optional credits token guards wallets and unpublished slugs, neither of which is here.
+				'permission_callback' => '__return_true',
+			)
+		);
+	}
+
+	/** Posts per catalog page. */
+	const CATALOG_PAGE = 100;
+
+	/**
+	 * The naulon catalog contract: every post the credits endpoint would charge for, with its exact
+	 * slug and every author under the id that endpoint pays. `{ entries, nextCursor }`, paged with
+	 * `?cursor=`. The teaser is the post's own excerpt only, never text taken from the body.
+	 *
+	 * @param WP_REST_Request $request The request.
+	 * @return WP_REST_Response
+	 */
+	public function catalog( $request ) {
+		$page  = self::page_from_cursor( (string) $request->get_param( 'cursor' ) );
+		$query = new WP_Query(
+			array(
+				'post_type'           => $this->tollable_post_types(),
+				'post_status'         => 'publish',
+				'has_password'        => false,
+				'posts_per_page'      => self::CATALOG_PAGE,
+				'paged'               => $page,
+				'orderby'             => 'ID',
+				'order'               => 'ASC',
+				'ignore_sticky_posts' => true,
+			)
+		);
+
+		$entries = array();
+		foreach ( $query->posts as $post ) {
+			if ( ! $this->is_tollable( $post ) ) {
+				continue;
+			}
+			$authors = $this->catalog_authors( $post );
+			if ( empty( $authors ) ) {
+				continue; // the credits endpoint answers 404 for it, so listing it would sell nothing.
+			}
+			$entry   = array(
+				'slug'        => Naulon_Slug::canonicalize( $this->canonical_slug_for( $post ) ),
+				'title'       => wp_strip_all_tags( get_the_title( $post ) ),
+				'url'         => get_permalink( $post ),
+				'authors'     => $authors,
+				'publishedAt' => get_post_time( 'c', true, $post ),
+			);
+			$excerpt = trim( wp_strip_all_tags( (string) $post->post_excerpt ) );
+			if ( '' !== $excerpt ) {
+				$entry['summary'] = function_exists( 'mb_substr' ) ? mb_substr( $excerpt, 0, 500 ) : substr( $excerpt, 0, 500 );
+			}
+			$entries[] = $entry;
+		}
+
+		$body = array( 'entries' => $entries );
+		if ( $page < (int) $query->max_num_pages ) {
+			$body['nextCursor'] = self::cursor_for_page( $page + 1 );
+		}
+		$response = new WP_REST_Response( $body, 200 );
+		$response->header( 'Cache-Control', 'public, max-age=300' );
+		return $response;
+	}
+
+	/**
+	 * The authors a catalog entry names: the same ids, in the same order, as the credits endpoint
+	 * pays for the post, each with a display name. Never a wallet.
+	 *
+	 * @param WP_Post $post The post.
+	 * @return array[] Each {id, name}.
+	 */
+	private function catalog_authors( $post ) {
+		$names = array();
+		foreach ( Naulon_Authors::for_post( $post ) as $a ) {
+			if ( isset( $a['name'] ) ) {
+				$names[ Naulon_Authors::author_id( $a ) ] = $a['name'];
+			}
+		}
+		$out = array();
+		foreach ( $this->contributors_for( $post ) as $c ) {
+			$id   = $c['authorId'];
+			$name = isset( $names[ $id ] ) ? $names[ $id ] : '';
+			if ( '' === $name && preg_match( '/^wp-user-(\d+)$/', $id, $m ) ) {
+				$user = get_userdata( (int) $m[1] );
+				$name = $user ? $user->display_name : '';
+			}
+			$out[] = array(
+				'id'   => $id,
+				'name' => '' !== $name ? $name : $id,
+			);
+		}
+		return $out;
+	}
+
+	/**
+	 * Page number from an opaque cursor; a missing or unreadable one is the first page.
+	 *
+	 * @param string $cursor The cursor.
+	 * @return int
+	 */
+	public static function page_from_cursor( $cursor ) {
+		$decoded = base64_decode( $cursor, true );
+		return ( false !== $decoded && ctype_digit( $decoded ) && (int) $decoded > 0 ) ? (int) $decoded : 1;
+	}
+
+	/**
+	 * The opaque cursor for a page number.
+	 *
+	 * @param int $page The page.
+	 * @return string
+	 */
+	public static function cursor_for_page( $page ) {
+		return base64_encode( (string) (int) $page );
 	}
 
 	/**
@@ -201,16 +324,25 @@ class Naulon_Credits {
 	 * @return array[] Zero or more {authorId, weight?, wallet}.
 	 */
 	public function contributors_for( $post ) {
-		$raw = array(
-			array(
-				'user_id' => (int) $post->post_author,
-				'weight'  => 1.0,
-			),
-		);
+		// Every byline a multi-author plugin records, each an equal share; else the post's one author.
+		$raw = array();
+		foreach ( Naulon_Authors::for_post( $post ) as $author ) {
+			$author['weight'] = 1.0;
+			$raw[]            = $author;
+		}
+		if ( empty( $raw ) ) {
+			$raw = array(
+				array(
+					'user_id' => (int) $post->post_author,
+					'weight'  => 1.0,
+				),
+			);
+		}
 
 		/**
-		 * Filter the contributor list before wallets are resolved. Co-Authors Plus and the
-		 * native contributors box both feed in here.
+		 * Filter the contributor list before wallets are resolved. Each entry is
+		 * {user_id, weight} for a WordPress user, or {guest_id, weight} for a Co-Authors Plus
+		 * guest author with no linked account.
 		 *
 		 * @param array[] $raw  Each {user_id:int, weight:float}.
 		 * @param WP_Post $post The post.
@@ -219,11 +351,23 @@ class Naulon_Credits {
 
 		$out = array();
 		foreach ( $raw as $entry ) {
+			$weight = isset( $entry['weight'] ) ? (float) $entry['weight'] : 1.0;
+			// A guest author has no WordPress account, so no profile wallet: it is named without one
+			// (delegated), and the site's own choice for unclaimed shares decides where that share goes.
+			if ( isset( $entry['guest_id'] ) && ! isset( $entry['user_id'] ) ) {
+				if ( $weight > 0 ) {
+					$guest = array( 'authorId' => Naulon_Authors::author_id( $entry ) );
+					if ( 1.0 !== $weight ) {
+						$guest['weight'] = $weight;
+					}
+					$out[] = $guest;
+				}
+				continue;
+			}
 			if ( ! isset( $entry['user_id'] ) ) {
 				continue;
 			}
 			$user_id = (int) $entry['user_id'];
-			$weight  = isset( $entry['weight'] ) ? (float) $entry['weight'] : 1.0;
 			// A non-positive weight means "takes nothing", and the only truthful way to say that
 			// in this contract is to omit the contributor: the upstream schema is
 			// `weight: z.number().positive()`, so a literal 0 would be REJECTED and take the whole
@@ -236,7 +380,7 @@ class Naulon_Credits {
 				continue;
 			}
 			$wallet      = get_user_meta( $user_id, self::USER_WALLET_META, true );
-			$contributor = array( 'authorId' => 'wp-user-' . $user_id );
+			$contributor = array( 'authorId' => Naulon_Authors::author_id( array( 'user_id' => $user_id ) ) );
 			// No wallet here ⇒ named without one (delegated). Dropping them was indistinguishable
 			// from a solo-authored post, so an author who set a wallet on the platform and none here
 			// was never paid and never told.

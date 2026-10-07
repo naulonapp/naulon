@@ -3,7 +3,7 @@
  * Plugin Name:       naulon citation toll
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
- * Version:           0.6.4
+ * Version:           0.6.5
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
@@ -36,7 +36,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NAULON_VERSION', '0.6.4' );
+define( 'NAULON_VERSION', '0.6.5' );
 define( 'NAULON_PLUGIN_FILE', __FILE__ );
 define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 
@@ -51,6 +51,11 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-settings.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-client.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-challenge.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-verification.php';
+require_once NAULON_PLUGIN_DIR . 'includes/authors/interface-naulon-byline-source.php';
+require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-byline-molongui.php';
+require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-byline-publishpress.php';
+require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-byline-coauthors-plus.php';
+require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-authors.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-license.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
@@ -64,6 +69,11 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-log.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-observer.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-enforcer.php';
+require_once NAULON_PLUGIN_DIR . 'includes/exits/interface-naulon-content-exit.php';
+require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exits.php';
+require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exit-rest.php';
+require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exit-feed.php';
+require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exit-archive.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cache.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cron.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-access.php';
@@ -80,6 +90,8 @@ function naulon_bootstrap() {
 	Naulon_Credits::instance()->register();
 	Naulon_License::instance()->register();
 	Naulon_Enforcer::instance()->register();
+	// The other doors to the same articles: REST, feeds and listing pages.
+	Naulon_Exits::instance()->register();
 	Naulon_Cron::instance()->register();
 	Naulon_Profile::instance()->register();
 

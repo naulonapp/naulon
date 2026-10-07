@@ -91,6 +91,12 @@ require_once __DIR__ . '/../includes/admin/class-naulon-admin-content.php';
 // Only the DEFAULT_API_BASE constant is exercised here — reading it needs no WordPress, and
 // getting it wrong tells every publisher their key was rejected. See ControlPlaneAddressTest.
 require_once __DIR__ . '/../includes/class-naulon-settings.php';
+// Only the pure normalizers are exercised here: they read the objects and meta values a
+// multi-author plugin hands them, and nothing else. See CoauthorsTest.
+require_once __DIR__ . '/../includes/authors/interface-naulon-byline-source.php';
+require_once __DIR__ . '/../includes/authors/class-naulon-authors.php';
+// Only the cursor helpers of the catalog endpoint are exercised here.
+require_once __DIR__ . '/../includes/class-naulon-credits.php';
 // Only `merge_vary` is exercised here — a pure string merge over a header value. The header it
 // produces is what stops a shared cache replaying a human's free 200 to a crawler. See CacheVaryTest.
 require_once __DIR__ . '/../includes/class-naulon-enforcer.php';
