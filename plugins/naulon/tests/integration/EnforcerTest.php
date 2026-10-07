@@ -325,16 +325,39 @@ class EnforcerTest extends WP_UnitTestCase {
 
 	// ── First-party ──────────────────────────────────────────────────────────────────────
 
-	public function test_the_sites_own_front_end_is_never_tolled() {
-		$this->as_agent(); // even with a bot-shaped UA
-		$_SERVER['HTTP_X_WP_NONCE'] = 'a-nonce';
+	public function test_a_signed_in_user_is_the_sites_own_front_end() {
+		$this->as_agent(); // even with a bot-shaped UA: the editor's REST calls must never be tolled
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'editor' ) ) );
 		$this->assertSame( 'free', $this->decide()['action'] );
 	}
 
-	public function test_a_same_origin_referer_is_first_party() {
+	// Headers any client can send are not first party: each was a one-header way to read every
+	// article free.
+
+	public function test_a_nonce_header_alone_is_not_first_party() {
+		$this->as_agent();
+		$_SERVER['HTTP_X_WP_NONCE'] = 'a-nonce';
+		$this->assertSame( 'pay', $this->decide()['action'] );
+	}
+
+	public function test_a_real_logged_out_nonce_is_not_first_party() {
+		// WordPress gives every logged-out visitor the same `wp_rest` nonce, and themes print it.
+		$this->as_agent();
+		wp_set_current_user( 0 );
+		$_SERVER['HTTP_X_WP_NONCE'] = wp_create_nonce( 'wp_rest' );
+		$this->assertSame( 'pay', $this->decide()['action'] );
+	}
+
+	public function test_a_same_origin_referer_is_not_first_party() {
 		$this->as_agent();
 		$_SERVER['HTTP_REFERER'] = home_url( '/some-page/' );
-		$this->assertSame( 'free', $this->decide()['action'] );
+		$this->assertSame( 'pay', $this->decide()['action'] );
+	}
+
+	public function test_a_same_origin_origin_header_is_not_first_party() {
+		$this->as_agent();
+		$_SERVER['HTTP_ORIGIN'] = home_url();
+		$this->assertSame( 'pay', $this->decide()['action'] );
 	}
 
 	public function test_a_cross_origin_referer_is_not_first_party() {

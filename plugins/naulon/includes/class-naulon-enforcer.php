@@ -55,6 +55,13 @@ class Naulon_Enforcer {
 	/** @var array|null Memoized decision for this request. */
 	private $decision = null;
 
+	/**
+	 * The rules' verdict on who is asking, memoized per request (`requester()`).
+	 *
+	 * @var array|null
+	 */
+	private $requester = null;
+
 	/** @var array|null How the classifier read this request. Kept so the audit report can say
 	 *  WHY a machine was called a machine, without classifying a second time. */
 	private $agent_verdict = null;
@@ -245,6 +252,57 @@ class Naulon_Enforcer {
 	}
 
 	/**
+	 * The dashboard's rules applied to who is asking, once per request: the classifier, crawler
+	 * identity and `Naulon_Rules::access`, in the gate's own order. The article page and every
+	 * content exit read this same answer, so a side door can never treat a requester differently.
+	 *
+	 * A request the plugin's own classifier calls a person reads the stored rules without a fetch,
+	 * so a reader never waits on the control plane; a machine may refresh them.
+	 *
+	 * @return array {access: array, identity_ctx: array|null}
+	 */
+	private function requester() {
+		if ( null !== $this->requester ) {
+			return $this->requester;
+		}
+		$signals     = Naulon_Agent::signals_from_request();
+		$looks_human = 'human' === Naulon_Agent::classify( $signals, $this->policy() )['kind'];
+		// The identity check runs only when the user-agent names a crawler, which is the only
+		// case signals_from_request() derives a client address for. Ranges and the armed set are
+		// both read from stored copies, never fetched here.
+		$identity_ctx = null;
+		if ( array_key_exists( 'client_ip', $signals ) ) {
+			$identity_ctx = array(
+				'compiled'  => Naulon_Ranges::instance()->current(),
+				'client_ip' => $signals['client_ip'],
+				'now'       => time(),
+				'armed'     => Naulon_Rules::instance()->armed(),
+			);
+		}
+		$access              = Naulon_Rules::access( $signals, Naulon_Rules::instance()->get( ! $looks_human ), $this->policy(), $identity_ctx );
+		$this->requester = array(
+			'access'       => $access,
+			'identity_ctx' => $identity_ctx,
+		);
+		return $this->requester;
+	}
+
+	/**
+	 * Would the toll charge whoever is asking? True for a machine no rule lets read free, and for a
+	 * refused one. False for a person, the site's own front end, the gate's own origin pull, and a
+	 * crawler the rules free. Local only: no control-plane call, so a content exit can ask it once
+	 * per request and then decide per post from `Naulon_Credits`.
+	 *
+	 * @return bool
+	 */
+	public function charges_requester() {
+		if ( ! $this->is_active() || $this->is_first_party() || $this->is_fleet_pull() ) {
+			return false;
+		}
+		return 'free' !== $this->requester()['access']['action'];
+	}
+
+	/**
 	 * The decision. Pure-ish: it reads the request and may call the control plane, but it never
 	 * writes a response. Memoized per request so the HTML and feed guards cannot double-settle.
 	 *
@@ -429,21 +487,9 @@ class Naulon_Enforcer {
 		// control plane could not be read, leave every step exactly as it was before they existed.
 		// A request the plugin's own classifier calls a person reads the stored rules without a
 		// fetch, so a reader never waits on the control plane; a machine may refresh them.
-		$signals      = Naulon_Agent::signals_from_request();
-		$looks_human  = 'human' === Naulon_Agent::classify( $signals, $this->policy() )['kind'];
-		// The identity check runs only when the user-agent names a crawler, which is the only
-		// case signals_from_request() derives a client address for. Ranges and the armed set are
-		// both read from stored copies, never fetched here.
-		$identity_ctx = null;
-		if ( array_key_exists( 'client_ip', $signals ) ) {
-			$identity_ctx = array(
-				'compiled'  => Naulon_Ranges::instance()->current(),
-				'client_ip' => $signals['client_ip'],
-				'now'       => time(),
-				'armed'     => Naulon_Rules::instance()->armed(),
-			);
-		}
-		$access              = Naulon_Rules::access( $signals, Naulon_Rules::instance()->get( ! $looks_human ), $this->policy(), $identity_ctx );
+		$requester           = $this->requester();
+		$access              = $requester['access'];
+		$identity_ctx        = $requester['identity_ctx'];
 		$this->agent_verdict = null !== $access['verdict'] ? $access['verdict'] : array( 'kind' => 'agent', 'reason' => $access['reason'], 'confidence' => 1.0 );
 		$this->identity      = $access['identity'];
 		$this->forged_from   = '';
@@ -692,22 +738,15 @@ class Naulon_Enforcer {
 	 * @return bool
 	 */
 	public function is_first_party() {
+		// A signed-in user. On a REST request WordPress itself makes this true only when the cookie
+		// arrives with a valid `wp_rest` nonce, so the site's editor is covered here.
+		//
+		// Nothing a client merely sends counts: not an X-WP-Nonce (WordPress gives every
+		// logged-out visitor the same one, and many themes print it into public pages), not an
+		// Origin or Referer naming this site. Each was a one-header way to read every article
+		// free. The site's own front end runs in a person's browser, which reads free anyway.
 		if ( is_user_logged_in() ) {
 			return true;
-		}
-		if ( '' !== $this->header( 'X-WP-Nonce' ) ) {
-			return true;
-		}
-		$home = wp_parse_url( home_url(), PHP_URL_HOST );
-		foreach ( array( 'Origin', 'Referer' ) as $name ) {
-			$value = $this->header( $name );
-			if ( '' === $value ) {
-				continue;
-			}
-			$host = wp_parse_url( $value, PHP_URL_HOST );
-			if ( is_string( $host ) && is_string( $home ) && strtolower( $host ) === strtolower( $home ) ) {
-				return true;
-			}
 		}
 		/**
 		 * Filter the first-party verdict — the escape hatch for a headless front end on another
@@ -827,7 +866,7 @@ class Naulon_Enforcer {
 	 *
 	 * @return void
 	 */
-	private function no_store() {
+	public function no_store() {
 		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
 			// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant, recognized by name.
 			define( 'DONOTCACHEPAGE', true );
@@ -859,7 +898,7 @@ class Naulon_Enforcer {
 	 *
 	 * @return void
 	 */
-	private function vary_user_agent() {
+	public function vary_user_agent() {
 		if ( headers_sent() ) {
 			return;
 		}
@@ -948,6 +987,7 @@ class Naulon_Enforcer {
 	 */
 	public function reset() {
 		$this->decision      = null;
+		$this->requester     = null;
 		$this->agent_verdict = null;
 		$this->identity      = null;
 		$this->forged_from   = '';

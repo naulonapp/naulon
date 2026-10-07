@@ -189,6 +189,77 @@ class CreditsRouteTest extends WP_UnitTestCase {
 		$this->assertSame( 0.9, $data['contributors'][2]['weight'] );
 	}
 
+	public function test_a_guest_author_is_named_without_a_wallet_beside_a_paid_co_author() {
+		$this->publish( $this->paid_author, 'with-a-guest' );
+		$primary = $this->paid_author;
+
+		add_filter(
+			'naulon_post_contributors',
+			function () use ( $primary ) {
+				return array(
+					array( 'user_id' => $primary, 'weight' => 1.0 ),
+					// A Co-Authors Plus guest with no account: no profile, so no wallet here.
+					array( 'guest_id' => 90, 'weight' => 1.0 ),
+				);
+			}
+		);
+
+		$data = $this->get_credits( 'blog/with-a-guest' )->get_data();
+		remove_all_filters( 'naulon_post_contributors' );
+
+		$this->assertCount( 2, $data['contributors'] );
+		$this->assertSame( self::WALLET_A, $data['contributors'][0]['wallet'] );
+		$this->assertSame( 'wp-guest-90', $data['contributors'][1]['authorId'] );
+		$this->assertArrayNotHasKey( 'wallet', $data['contributors'][1] );
+	}
+
+	private function get_catalog( $cursor = null ) {
+		$request = new WP_REST_Request( 'GET', '/naulon/v1/catalog' );
+		if ( null !== $cursor ) {
+			$request->set_param( 'cursor', $cursor );
+		}
+		return rest_get_server()->dispatch( $request );
+	}
+
+	public function test_the_catalog_lists_what_the_credits_endpoint_charges_for_under_the_same_ids() {
+		$listed = $this->publish( $this->paid_author, 'listed' );
+		wp_update_post( array( 'ID' => $listed, 'post_excerpt' => 'A teaser.' ) );
+		$free = $this->publish( $this->paid_author, 'opted-out' );
+		update_post_meta( $free, Naulon_Credits::POST_TOLL_META, 'free' );
+		self::factory()->post->create( array( 'post_author' => $this->paid_author, 'post_name' => 'draft', 'post_status' => 'draft' ) );
+
+		$response = $this->get_catalog();
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertSame( 'public, max-age=300', $response->get_headers()['Cache-Control'] );
+		$by_slug = array();
+		foreach ( $response->get_data()['entries'] as $entry ) {
+			$by_slug[ $entry['slug'] ] = $entry;
+		}
+
+		$this->assertArrayHasKey( 'blog/listed', $by_slug );
+		$this->assertArrayNotHasKey( 'blog/opted-out', $by_slug, 'an opted-out post is not sold, so not listed' );
+		$this->assertArrayNotHasKey( 'blog/draft', $by_slug, 'an unpublished post is never described' );
+		$entry = $by_slug['blog/listed'];
+		$this->assertSame( 'A teaser.', $entry['summary'] );
+		$this->assertArrayNotHasKey( 'wallet', $entry['authors'][0], 'the catalog never carries a wallet' );
+
+		// The id the catalog lists is the id the credits endpoint pays.
+		$paid = $this->get_credits( 'blog/listed' )->get_data()['contributors'];
+		$this->assertSame( array_column( $paid, 'authorId' ), array_column( $entry['authors'], 'id' ) );
+	}
+
+	public function test_the_catalog_pages_with_an_opaque_cursor() {
+		for ( $i = 0; $i < Naulon_Credits::CATALOG_PAGE + 1; $i++ ) {
+			$this->publish( $this->paid_author, 'page-post-' . $i );
+		}
+		$first = $this->get_catalog()->get_data();
+		$this->assertArrayHasKey( 'nextCursor', $first );
+		$second = $this->get_catalog( $first['nextCursor'] )->get_data();
+		$this->assertArrayNotHasKey( 'nextCursor', $second );
+		$slugs = array_merge( array_column( $first['entries'], 'slug' ), array_column( $second['entries'], 'slug' ) );
+		$this->assertSame( count( $slugs ), count( array_unique( $slugs ) ), 'no post is listed twice across pages' );
+	}
+
 	public function test_a_zero_weight_contributor_is_omitted_rather_than_paid_a_full_share() {
 		// The upstream schema is `weight: z.number().positive()`, so a literal 0 would be rejected
 		// and take the whole document down with it — every contributor on the article. Omitting

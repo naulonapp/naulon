@@ -34,14 +34,15 @@ class Naulon_Access {
 	const STATE_INVITED   = 'invited';
 
 	/**
-	 * The naulon author id for a WordPress user. The SAME expression `contributors_for` emits, and
-	 * that is the whole point — a second spelling of it here would reintroduce the mismatch.
+	 * The naulon author id for a WordPress user. Delegates to `Naulon_Authors::author_id`, the one
+	 * spelling the credits and catalog endpoints both emit; a second spelling here would reintroduce
+	 * the mismatch.
 	 *
 	 * @param int $user_id WordPress user id.
 	 * @return string
 	 */
 	public static function author_id( $user_id ) {
-		return 'wp-user-' . (int) $user_id;
+		return Naulon_Authors::author_id( array( 'user_id' => (int) $user_id ) );
 	}
 
 	/**

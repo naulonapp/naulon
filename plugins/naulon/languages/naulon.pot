@@ -2,7 +2,7 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: naulon citation toll 0.6.4\n"
+"Project-Id-Version: naulon citation toll 0.6.5\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/naulon\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1627,4 +1627,8 @@ msgstr ""
 
 #: includes/class-naulon-wallet.php:85
 msgid "That is the burn address — anything sent there is destroyed. Use the wallet you actually control."
+msgstr ""
+
+#: includes/exits/class-naulon-exit-archive.php:51
+msgid "Read the full article"
 msgstr ""
