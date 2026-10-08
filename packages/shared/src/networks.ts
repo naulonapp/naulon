@@ -147,7 +147,9 @@ export const NETWORKS: Record<NetworkName, SettlementNetwork> = {
     // itself "USDC"/"2", NOT the mainnet FiatToken "USD Coin".
     usdcName: "USDC", usdcVersion: "2",
     gatewayWallet: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
-    gatewayApiUrl: TESTNET_FACILITATOR, rpcUrl: "https://rpc.testnet.arc.network",
+    // Arc serves its public RPC from arc.io. The arc.network host answers every caller with a
+    // Cloudflare 1106 "access denied", which reads like an IP ban but is the retired endpoint.
+    gatewayApiUrl: TESTNET_FACILITATOR, rpcUrl: "https://rpc.testnet.arc.io",
     // Blockscout explorer — verified live (the memo settle above was confirmed here).
     testnet: true, explorer: "https://testnet.arcscan.app", modularChainName: "arcTestnet",
     // Arc ships the Memo + CallFrom predeploys; Base does not — gated on presence,
