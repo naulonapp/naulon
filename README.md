@@ -10,7 +10,7 @@ to the author's own Circle Gateway balance, which only their wallet can withdraw
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](./LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-black.svg)
-[![Built on Arc Network](https://img.shields.io/badge/built_on-Arc_Network-black.svg)](https://docs.arc.network/)
+[![Built on Arc Network](https://img.shields.io/badge/built_on-Arc_Network-black.svg)](https://docs.arc.io/)
 
 </div>
 
@@ -26,7 +26,7 @@ old coin you paid to cross.
 The toll is what keeps the work open: machines subsidize the free human read.
 
 Built on the [Circle](https://www.circle.com/) nanopayment rail, Arc-first on
-[Arc Network](https://docs.arc.network/), with the wider set of Circle Gateway
+[Arc Network](https://docs.arc.io/), with the wider set of Circle Gateway
 chains in the network registry, so a single read can cost a fraction of a cent
 and still settle.
 

@@ -27,6 +27,9 @@ const SDK_NAME: Record<NetworkName, string> = {
 // without credentials; `sepolia.base.org` is Base's public Sepolia endpoint.
 const RPC_DIVERGENCE: Partial<Record<NetworkName, { sdk: string; ours: string }>> = {
   baseSepolia: { sdk: "https://sepolia-preconf.base.org", ours: "https://sepolia.base.org" },
+  // The SDK still names the retired arc.network host, which refuses every request with a
+  // Cloudflare 1106. Arc's docs list rpc.testnet.arc.io. Drop this entry once the SDK moves.
+  arcTestnet: { sdk: "https://rpc.testnet.arc.network", ours: "https://rpc.testnet.arc.io" },
 };
 
 // Narrow an unknown catch value to a Node.js error code, if it has one — avoids
