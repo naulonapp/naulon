@@ -488,6 +488,12 @@ const SERVER_INSTRUCTIONS = [
   "`explorerTxUrl` is present. Never build an explorer link yourself. `settlementRefKind: \"mock\"`",
   "means the settlement was SIMULATED and no money moved — never present it as a payment.",
   "",
+  "QUOTE WITH PROOF. When you quote a source word for word, link its proof as `proofUrl` followed by",
+  "`#quote=` and the exact words you quoted, percent-encoded, at most 1000 characters: for example",
+  "`https://naulon.app/verify?host=example.com&jti=abc#quote=two%20horns%20and%20a%20disk`. The proof",
+  "page then checks that passage against the text the licence paid for as soon as it opens. Never add",
+  "it to a paraphrase or a summary: the check would report the words as missing.",
+  "",
   "CONTENT FORMAT. Reads return the article as markdown by default, with `article` (title, byline,",
   "date, canonical URL, words, approxTokens). `extraction` says how it was produced: `gate` means the",
   "licence hash covers exactly this text; `client` means this client converted HTML after delivery, so",
@@ -1300,7 +1306,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .describe(
             "CITE THIS beside the source. The page a reader opens to see this read's citation record checked against the " +
               "publisher's published keys, in their own browser — it shows the author who was paid, the amount and the " +
-              "on-chain settlement, and naulon is never asked whether it is valid.",
+              "on-chain settlement, and naulon is never asked whether it is valid. When you quote this source word for " +
+              "word, append `#quote=` and the quoted words, percent-encoded, and the page checks the quote too.",
           ),
         recordUrl: z
           .string()
@@ -1709,7 +1716,13 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         article: ARTICLE_OUTPUT,
         extraction: EXTRACTION_OUTPUT,
         licenseId: z.string().optional(),
-        proofUrl: z.string().optional().describe("CITE THIS beside the source — the same proof page the original pay returned."),
+        proofUrl: z
+          .string()
+          .optional()
+          .describe(
+            "CITE THIS beside the source — the same proof page the original pay returned. When you quote this source " +
+              "word for word, append `#quote=` and the quoted words, percent-encoded, and the page checks the quote too.",
+          ),
         recordUrl: z.string().optional().describe("The gate's permanent citation record for the settlement behind this licence."),
         terms: z
           .array(z.string())
