@@ -3118,3 +3118,16 @@ test("no covering period, or a lookup that fails, pays as before", async () => {
     });
   }
 });
+
+test("the quote-with-proof example is a link whose fragment reads back as the quote", async () => {
+  const client = await connectedClient();
+  const text = client.getInstructions() ?? "";
+  assert.match(text, /QUOTE WITH PROOF/);
+  const example = /`(https:\/\/[^`]*#quote=[^`]*)`/.exec(text)?.[1];
+  assert.ok(example, "the rule carries a worked example");
+  const url = new URL(example);
+  // The quote rides in the fragment, which no server receives; the query names only the record.
+  assert.equal(url.searchParams.get("quote"), null);
+  assert.ok(url.searchParams.get("host") && url.searchParams.get("jti"));
+  assert.equal(new URLSearchParams(url.hash.slice(1)).get("quote"), "two horns and a disk");
+});
