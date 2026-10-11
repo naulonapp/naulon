@@ -148,6 +148,7 @@ import {
   paymentRequiredBodyText,
   headerSafe,
 } from "@naulon/enforce";
+import type { FreeReason } from "@naulon/shared";
 
 // Global license POLICY (online check) + settlement network coordinates are
 // gate-operator settings, read where they're used (here for /licenses + the
@@ -1036,6 +1037,7 @@ export function createApp(
         observeOnly?: true;
         crawlerBudget?: "within" | "over" | null;
         paymentPresented?: true;
+        freeReason?: FreeReason;
       },
     ): void =>
       observe({
@@ -1063,6 +1065,8 @@ export function createApp(
         ...(extra?.observeOnly ? { observeOnly: true as const } : {}),
         ...(extra?.crawlerBudget ? { crawlerBudget: extra.crawlerBudget } : {}),
         ...(extra?.paymentPresented ? { paymentPresented: true as const } : {}),
+        // Agents only: a person reads free because they are a person, which needs no reason.
+        ...(extra?.freeReason && obs.classifiedAs === "agent" ? { freeReason: extra.freeReason } : {}),
         at: Date.now(),
       });
 
@@ -1354,7 +1358,7 @@ export function createApp(
     switch (d.kind) {
       // Non-article OR unknown-article: pure passthrough, no observation.
       case "passthrough": {
-        if (d.verdict === "unknown-article" && d.obs) emitObs(d.obs, "served-free");
+        if (d.verdict === "unknown-article" && d.obs) emitObs(d.obs, "served-free", { freeReason: "unpriced" });
         const upstream = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
         // A route that hands out article text (a CMS's API or feed) is stripped for anyone the
         // article page would charge, decided by the same rules (`contentExit.ts`).
@@ -1386,7 +1390,7 @@ export function createApp(
       // Humans read free, forever. Set the verdict on the proxied Response itself
       // (a fresh Response from proxyToOrigin doesn't inherit c.header()).
       case "free": {
-        emitObs(d.obs, "served-free");
+        emitObs(d.obs, "served-free", d.because ? { freeReason: d.because } : undefined);
         const res = await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning);
         res.headers.set("X-Naulon-Verdict", headerSafe(d.verdict));
         return stampGateCacheHeaders(res, { noStore: false });

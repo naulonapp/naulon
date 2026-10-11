@@ -33,6 +33,8 @@ test("human UA → free", async () => {
   });
   const d = await decide({ raw: req, host: "h", path: "/essays/x", publisher: basePublisher, now: 1, quote: quoteOf });
   assert.equal(d.kind, "free");
+  // A person needs no reason to read free; the field is for agents.
+  if (d.kind === "free") assert.equal(d.because, undefined);
 });
 
 test("agent, no payment → payment-required (402 legs+header)", async () => {
@@ -512,7 +514,10 @@ test("a free ai-input serves an agent without a quote", async () => {
     quote: async () => { quoted = true; return quoteOf(); },
   });
   assert.equal(d.kind, "free");
-  if (d.kind === "free") assert.equal(d.obs.classifiedAs, "agent");
+  if (d.kind === "free") {
+    assert.equal(d.obs.classifiedAs, "agent");
+    assert.equal(d.because, "terms", "the read says the site's terms made it free");
+  }
   assert.equal(quoted, false, "a free term must never reach the price");
 });
 

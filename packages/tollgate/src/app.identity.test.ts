@@ -116,6 +116,8 @@ test("a forged claim on an article nobody is credited for still leaves an audit 
   assert.equal(row.identityCheck, "forged");
   assert.equal(row.forgedFrom, "9.9.9.0/24");
   assert.equal(row.verdict, "served-free");
+  // Why it was free, which `classifyReason` (who the reader is) cannot say.
+  assert.equal(row.freeReason, "unpriced");
 });
 
 test("an agent with no crawler claim on an untolled article still writes nothing", async () => {

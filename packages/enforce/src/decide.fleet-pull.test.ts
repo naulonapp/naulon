@@ -100,7 +100,10 @@ const run = (raw: Request, fleetAgent?: string, fleetPublisher?: string) =>
 test("the fleet's pull, signed over this path, is served free", async () => {
   const d = await run(pull(), FLEET);
   assert.equal(d.kind, "free");
-  if (d.kind === "free") assert.equal(d.verdict, "fleet-pull");
+  if (d.kind === "free") {
+    assert.equal(d.verdict, "fleet-pull");
+    assert.equal(d.because, "fleet");
+  }
 });
 
 test("the same pull on a runtime with no fleet agent (the gate itself) is charged", async () => {
