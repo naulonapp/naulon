@@ -254,6 +254,16 @@ export interface PaymentEvidence {
  * space ("who is reading/scraping me without paying") is the audit product; the
  * settlement ledger structurally can't see it.
  */
+/**
+ * Why an agent read was served free. `classifyReason` says WHO the reader is; this says why it paid
+ * nothing, which is a different question: a crawler on the site's charge list still reads free
+ * when the site's terms give `ai-input` away.
+ *  - `unpriced`: the page has no price (the credits source does not toll it).
+ *  - `terms`:    the site's terms make AI reading free.
+ *  - `fleet`:    the gate's own signed origin pull.
+ */
+export type FreeReason = "unpriced" | "terms" | "fleet";
+
 export type ObservationVerdict =
   /** Read free — a human, or a crawler the publisher allow-listed (e.g. search). */
   | "served-free"
@@ -382,6 +392,9 @@ export interface ObservationEvent {
   forgedFrom?: string;
   /** The publisher was observing: this read was served, and no payment was asked for or taken. */
   observeOnly?: true;
+  /** On an agent's `served-free` row: why nothing was charged. Absent on a human read (people
+   *  always read free) and on rows written before the field existed. */
+  freeReason?: FreeReason;
   /** On a priced agent read: whether the crawler's stated `crawler-max-price` /
    *  `crawler-exact-price` covered the ask. Absent when it stated none. */
   crawlerBudget?: "within" | "over";

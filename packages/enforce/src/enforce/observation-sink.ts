@@ -18,6 +18,7 @@
  */
 import type { IdentityCheck } from "@naulon/shared";
 import type { LicenceRefusal, TollKind } from "../decide.ts";
+import type { FreeReason } from "@naulon/shared";
 
 /** The verdicts a publisher's own runtime witnesses (and no one else does). */
 export type ReportableVerdict = "served-free" | "agent-reread" | "denied" | "blocked";
@@ -54,6 +55,8 @@ export interface ObservationReport {
   forgedFrom?: string;
   /** The publisher was observing: served, nothing asked for or taken. */
   observeOnly?: true;
+  /** On an agent's `served-free` report: why nothing was charged (`FreeReason`). */
+  freeReason?: FreeReason;
   /** Whether the crawler's stated price ceiling covered the ask. Absent when it stated none. */
   crawlerBudget?: "within" | "over";
   /** An observing publisher received a payment it did not settle. */

@@ -236,6 +236,7 @@ test("a human read is reported as served-free — the negative space the audit s
   assert.equal(seen.length, 1);
   assert.equal(seen[0]?.verdict, "served-free");
   assert.equal(seen[0]?.classifiedAs, "human");
+  assert.equal(seen[0]?.freeReason, undefined, "a person reads free without needing a reason");
 });
 
 test("a human read carries the referring host, and an agent read never does", async () => {
@@ -871,6 +872,7 @@ test("SDK: a forged Googlebot loses its free read only when the config document 
   assert.equal(untolled.seen.length, before + 1);
   assert.equal(untolled.seen.at(-1)?.identityCheck, "forged");
   assert.equal(untolled.seen.at(-1)?.verdict, "served-free");
+  assert.equal(untolled.seen.at(-1)?.freeReason, "unpriced");
   assert.ok(rangeFetches >= 2);
 });
 

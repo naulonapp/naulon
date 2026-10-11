@@ -89,6 +89,7 @@ test("a human read, an agent denial, and an agent payment each emit the right ob
 
   assert.ok(free, "a served-free observation for the human");
   assert.equal(free!.classifiedAs, "human");
+  assert.equal(free!.freeReason, undefined, "a person reads free without needing a reason");
   assert.equal(free!.slug, "on-stillness");
 
   assert.ok(den, "a denied observation for the unpaid agent");
@@ -136,3 +137,4 @@ test("observations are scoped to the resolved publisher (publisherId stamped)", 
     assert.ok(typeof o.publisherId === "string" && o.publisherId.length > 0, "every observation is attributed");
   }
 });
+

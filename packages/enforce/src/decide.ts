@@ -48,6 +48,7 @@ import {
   type TollKind,
   chargesReads,
 } from "@naulon/shared";
+import type { FreeReason } from "@naulon/shared";
 
 /**
  * How a re-read license is verified when the deployment MINTING the license is not
@@ -265,7 +266,7 @@ export type Decision =
    * while ordinary agent traffic on untolled pages stays out of the publisher's figures.
    */
   | { kind: "passthrough"; verdict: "unknown-article"; obs?: DecideObs }
-  | { kind: "free"; verdict: string; obs: DecideObs }
+  | { kind: "free"; verdict: string; obs: DecideObs; because?: Exclude<FreeReason, "unpriced"> }
   | { kind: "blocked"; frag: string; obs: DecideObs }
   | { kind: "prohibited"; term: ProhibitedTerm; reason: string; obs: DecideObs }
   | { kind: "reread"; tollKind: TollKind; obs: DecideObs }
@@ -357,6 +358,7 @@ export async function classifyRequester(
     return {
       kind: "free",
       verdict: "fleet-pull",
+      because: "fleet",
       obs: { slug, classifiedAs: "agent", classifyReason: "origin pull signed by the gate", verified: true, verifiedAgent: verifiedAgent.agent },
     };
   }
@@ -436,7 +438,7 @@ export async function classifyRequester(
   // under it pays nothing: the licence says free and the wire must not say otherwise. Checked after
   // the prohibition, so a refused training crawler stays refused on a site that gives reads away.
   if (publisher.termsPolicy?.["ai-input"] === "free") {
-    return { kind: "free", verdict: "agent (ai-input free by the site's terms)", obs };
+    return { kind: "free", verdict: "agent (ai-input free by the site's terms)", obs, because: "terms" };
   }
 
   return { kind: "machine", obs, verifiedAgent };

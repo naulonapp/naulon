@@ -47,6 +47,7 @@ import { introspectLicence } from "@naulon/sdk/rsl";
 import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
 import type { DecideObs } from "../decide.ts";
 import type { ObservationReport, ObservationReporter, ReportableVerdict } from "./observation-sink.ts";
+import type { FreeReason } from "@naulon/shared";
 
 export interface NaulonMiddlewareOptionsBase {
   /**
@@ -365,6 +366,7 @@ export function naulonMiddleware(
       observeOnly?: true;
       crawlerBudget?: "within" | "over" | null;
       paymentPresented?: true;
+      freeReason?: FreeReason;
     },
   ): void => {
     if (!opts.observe) return;
@@ -377,6 +379,7 @@ export function naulonMiddleware(
       agent: agentOf(obs),
     };
     if (extra?.kind !== undefined) r.kind = extra.kind;
+    if (extra?.freeReason !== undefined && obs.classifiedAs === "agent") r.freeReason = extra.freeReason;
     if (extra?.referrerHost !== undefined && obs.classifiedAs === "human") r.referrerHost = extra.referrerHost;
     // Whole USDC → integer micro-USDC on the wire. Rounded, never floored: the figure is
     // "what this request would have paid", and a sub-micro price is a real toll.
@@ -551,7 +554,7 @@ export function naulonMiddleware(
       // the publisher's traffic figures. The one exception is an untolled article read by a
       // request naming a crawler: decide() carries its obs so a forged claim stays visible.
       case "passthrough":
-        if (d.verdict === "unknown-article" && d.obs) report(d.obs, "served-free", resource);
+        if (d.verdict === "unknown-article" && d.obs) report(d.obs, "served-free", resource, { freeReason: "unpriced" });
         return { response: null };
 
       // Human, or a free re-read on a license already paid for: the app renders locally.
@@ -560,6 +563,7 @@ export function naulonMiddleware(
         // count one read twice and keep this runtime's heartbeat fresh on traffic it never decided.
         if (d.verdict !== "fleet-pull") {
           report(d.obs, "served-free", resource, {
+            ...(d.because ? { freeReason: d.because } : {}),
             // The site's own host as the reader saw it, the same one `resource` names.
             referrerHost: referrerHost(req.headers.get("referer"), new URL(resource).host),
           });
