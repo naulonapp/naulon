@@ -1038,6 +1038,7 @@ export function createApp(
         crawlerBudget?: "within" | "over" | null;
         paymentPresented?: true;
         freeReason?: FreeReason;
+        licenseJti?: string;
       },
     ): void =>
       observe({
@@ -1067,6 +1068,8 @@ export function createApp(
         ...(extra?.paymentPresented ? { paymentPresented: true as const } : {}),
         // Agents only: a person reads free because they are a person, which needs no reason.
         ...(extra?.freeReason && obs.classifiedAs === "agent" ? { freeReason: extra.freeReason } : {}),
+        // Only a paid read settled as a ledger row, so only it can name one.
+        ...(v === "paid" && extra?.licenseJti ? { licenseJti: extra.licenseJti } : {}),
         at: Date.now(),
       });
 
@@ -1270,7 +1273,12 @@ export function createApp(
       });
 
       // Audit plane: the paid outcome on the same timeline as denials/free reads.
-      emitObs(p.obs, "paid", { kind: p.quote.kind, price: usdc(p.quote.price), ...(delivery ? { delivery } : {}) });
+      emitObs(p.obs, "paid", {
+        kind: p.quote.kind,
+        price: usdc(p.quote.price),
+        ...(delivery ? { delivery } : {}),
+        ...(settled.eventId ? { licenseJti: settled.eventId } : {}),
+      });
 
       // Reuse the response we already hold on the safe-method path; only a non-GET reaches the
       // origin here (see the ordering note above).
