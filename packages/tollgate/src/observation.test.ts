@@ -100,6 +100,17 @@ test("a human read, an agent denial, and an agent payment each emit the right ob
   assert.ok(pay, "a paid observation for the settled agent");
   assert.equal(pay!.classifiedAs, "agent");
   assert.ok(typeof pay!.price === "number" && pay!.price > 0, "paid carries the settled price");
+
+  // The paid row names the ledger row it settled as, whose id is the licence jti, so a trace can
+  // open the payment it describes. No other verdict has a ledger row to name.
+  const ledger = (await readFile(process.env.EVENTS_PATH!, "utf8"))
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => JSON.parse(l) as { id: string; slug: string });
+  assert.ok(pay!.licenseJti, "paid carries the licence it was sold under");
+  assert.ok(ledger.some((e) => e.id === pay!.licenseJti && e.slug === "on-stillness"), "the jti is a real ledger row");
+  assert.equal(den!.licenseJti, undefined, "a denied read has no licence");
+  assert.equal(free!.licenseJti, undefined, "a free read has no licence");
 });
 
 // PROD 2026-08-03 — the audit plane counted four `payment-failed` rows and could not say why, so a

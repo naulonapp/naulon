@@ -400,6 +400,12 @@ export interface ObservationEvent {
   crawlerBudget?: "within" | "over";
   /** An observing publisher received a payment it did not settle. */
   paymentPresented?: true;
+  /**
+   * On a `paid` row: the id of the ledger row the payment settled as, which is also the licence
+   * `jti`. It joins the read to its payment, payees and terms, and to the public record at
+   * `/licenses/:jti/record`. Absent on every other verdict and on rows written before the field.
+   */
+  licenseJti?: string;
   /** The quoted price (paid → settled; denied/payment-failed → what they'd have paid = "earnings missed"). */
   price?: Usdc;
   /**
