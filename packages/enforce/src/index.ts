@@ -60,6 +60,7 @@ export {
   type GuideStep,
 } from "./agentGuide.ts";
 export { FAILURE_DETAIL_MAX, paymentFailureDetail, type PaymentFailureDetail } from "./paymentRemedy.ts";
+export { negotiate402Format, render402, type Body402Format } from "./render402.ts";
 export {
   PAYMENT_BODY_CONTENT_TYPE,
   paymentRequiredBody,
