@@ -11,15 +11,27 @@ import { FLEET_DIRECTORY_URL, FLEET_VERIFY_URL } from "./fleet.ts";
 /** The OSS guide to paying any naulon 402 from any x402 client. A fleet overrides it with its own. */
 export const OSS_BUYER_GUIDE_URL = "https://naulonapp.github.io/naulon/buying/#paying-from-any-x402-client";
 
-/** A URL a 402 hands to a stranger's agent, and through it to a person: http(s) only, because
- *  `z.string().url()` alone accepts `javascript:` and `data:`, which an HTML 402 would render as a
- *  link. It is also written verbatim into `Link: <…>; rel="help"`, where `<`, `>`, `,`, `;`, a
- *  quote or whitespace would corrupt the header or make every 402 throw. */
+/**
+ * Whether a URL is safe to hand to a stranger's agent, and through it to a person, from a 402:
+ * http(s) only, because a bare URL check accepts `javascript:` and `data:`, which an HTML 402 would
+ * render as a link; and free of `<`, `>`, `,`, `;`, a quote and whitespace, because it is written
+ * verbatim into `Link: <…>; rel="help"`, where those would corrupt the header or make the 402 throw.
+ * One rule for boot config and for links that arrive on a quote from another process.
+ */
+export function isLinkSafeWebUrl(v: unknown): v is string {
+  if (typeof v !== "string" || !/^https?:\/\//i.test(v) || /[<>,;"\s]/.test(v)) return false;
+  try {
+    new URL(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const webUrl = z
   .string()
   .url()
-  .refine((v) => /^https?:\/\//i.test(v), { message: "must be an http(s) URL" })
-  .refine((v) => !/[<>,;"\s]/.test(v), { message: "must not contain < > , ; \" or whitespace (it is written into a Link header)" });
+  .refine(isLinkSafeWebUrl, { message: "must be an http(s) URL with no < > , ; \" or whitespace (it is written into a Link header)" });
 
 // Find the repo root by walking UP from the cwd until we hit the workspace root
 // (marked by package-lock.json). We anchor on cwd, not import.meta.url, because

@@ -533,7 +533,7 @@ export function naulonMiddleware(
         resource: { url: freeUrl, title: p.quote.title },
         tollKind: p.tollKind,
         legs: p.legs,
-        links: guideLinks(manifestUrl()),
+        links: guideLinks(manifestUrl(), undefined, p.quote.buyerLinks),
       });
       const body = paymentRequiredBody({
         askMicro,

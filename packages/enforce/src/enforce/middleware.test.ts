@@ -1124,3 +1124,19 @@ test("a refused payment whose reason is not a string still answers 402 with a re
   assert.equal(body.failure.code, "settlement_failed");
   assert.equal(body.failure.detail, "payment rejected");
 });
+
+test("an in-app 402 links the buyer guide its control plane priced with, not the local default", async () => {
+  const fleetQuote = localQuoteSource(async () =>
+    ({
+      slug: "essays/x", kind: "read", title: "X", price: 5000,
+      payees: [{ address: `0x${"a".repeat(40)}`, shareBps: 10000 }], extraLegs: [], coauthorSplit: false,
+      buyerLinks: { guide: "https://fleet.example/for-buyers", fund: "https://fleet.example/buyer" },
+    }) as never,
+  );
+  const mw = naulonMiddleware({ ...opts, quote: fleetQuote });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.match(out.response?.headers.get("link") ?? "", /<https:\/\/fleet\.example\/for-buyers>; rel="help"$/);
+  const body = (await out.response!.json()) as Refusal & { links: { guide: string; fund?: string } };
+  assert.equal(body.links.guide, "https://fleet.example/for-buyers");
+  assert.equal(body.links.fund, "https://fleet.example/buyer");
+});

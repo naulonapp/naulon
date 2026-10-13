@@ -8,7 +8,7 @@
  * it lands in a body with a size budget and in a markdown rendering.
  */
 import type { PaymentFailureReason } from "@naulon/shared";
-import type { AgentGuide } from "./agentGuide.ts";
+import { networkPhrase, type AgentGuide } from "./agentGuide.ts";
 
 /** Cap on `detail`. Facilitator errors are a line or two; anything longer is noise or a dump. */
 export const FAILURE_DETAIL_MAX = 500;
@@ -45,7 +45,7 @@ export function paymentFailureDetail(reason: PaymentFailureReason, raw: string, 
     authorization_invalid: `The signature does not match the offer. Sign accepts[0] from the latest PAYMENT-REQUIRED header exactly as given (payTo, amount, network ${network.caip}) and retry inside its validity window.`,
     malformed_payment:
       "The PAYMENT-SIGNATURE header could not be read. Send base64 JSON: one signed object, or an array with one entry per naulonLegs leg, in order.",
-    network_unsupported: `This toll settles on ${network.name} (${network.caip}) only. Sign for that network and retry.`,
+    network_unsupported: `This toll settles on ${networkPhrase(network)} only. Sign for that network and retry.`,
     settlement_failed: `Settlement failed for a reason the gate does not recognise. Retry once; if it fails again, see ${guide.links.guide}.`,
   };
   return { code: reason, x402Code: X402_CODE[reason], remedy: remedy[reason], detail: boundedDetail(raw) };

@@ -8,6 +8,7 @@
  * chooses a rendering and never changes who pays. Every 402 rendered this way must carry
  * `Vary: Accept`, which the emitters set.
  */
+import { networkPhrase } from "./agentGuide.ts";
 import { PAYMENT_BODY_CONTENT_TYPE, type PaymentRequiredBody } from "./paymentBody.ts";
 
 export type Body402Format = "json" | "markdown" | "html";
@@ -45,12 +46,20 @@ type GuidedBody = PaymentRequiredBody & Required<Pick<PaymentRequiredBody, "forY
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
+/**
+ * Text from outside this gate (a publisher's title, a facilitator's error) made inert in markdown:
+ * no link or image syntax, no raw HTML, no code span. URLs are left readable, since `[`, `]`, `<`,
+ * `>` and backticks do not occur in the ones this body carries.
+ */
+const mdText = (s: string): string =>
+  s.replace(/[[\]`]/g, (c) => `\\${c}`).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 function markdown(b: GuidedBody): string {
   const h = b.howToPay;
-  const lines = ["# Payment required", "", b.forYourUser.text, ""];
-  if (b.failure) lines.push("## Why the payment was refused", "", b.failure.remedy, "", `Detail: ${b.failure.detail}`, "");
-  lines.push("## For an AI assistant", "", b.message, "");
-  lines.push("## How to pay", "", `Price: ${h.price} in USDC on ${h.network.name} (${h.network.caip}), asset ${h.asset.address}.`, "");
+  const lines = ["# Payment required", "", mdText(b.forYourUser.text), ""];
+  if (b.failure) lines.push("## Why the payment was refused", "", mdText(b.failure.remedy), "", `Detail: ${mdText(b.failure.detail)}`, "");
+  lines.push("## For an AI assistant", "", mdText(b.message), "");
+  lines.push("## How to pay", "", `Price: ${h.price} in USDC on ${networkPhrase(h.network)}, asset ${h.asset.address}.`, "");
   for (const l of h.legs) lines.push(`- ${l.role}: ${l.atomic} atomic USDC${l.inAccepts ? " (accepts[0])" : " (naulonLegs)"}`);
   lines.push("");
   h.steps.forEach((s, i) => {
@@ -80,7 +89,7 @@ function html(b: GuidedBody): string {
     `<body><main><h1>Payment required</h1><p>${esc(b.forYourUser.text)}</p>`,
     `<p>${link(b.forYourUser.readFreeUrl, "Read it free in a browser")}</p>`,
     failure,
-    `<h2>How an agent pays</h2><p>${esc(h.price)} in USDC on ${esc(h.network.name)} (${esc(h.network.caip)}).</p><ol>${steps}</ol>`,
+    `<h2>How an agent pays</h2><p>${esc(h.price)} in USDC on ${esc(networkPhrase(h.network))}.</p><ol>${steps}</ol>`,
     `<p>${link(b.links.guide, "Guide")} · ${link(b.links.manifest, "Terms")}${extra ? ` · ${extra}` : ""}</p>`,
     `</main></body></html>`,
   ].join("");

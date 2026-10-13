@@ -152,6 +152,7 @@ import {
   paymentRequiredBody,
   render402,
   headerSafe,
+  type BuyerLinks,
 } from "@naulon/enforce";
 import type { FreeReason } from "@naulon/shared";
 
@@ -1268,7 +1269,7 @@ export function createApp(
         const askMicro = totalChargedMicro(p.legs);
         const refusal = agentRefusal({
           raw, host, base: viaIngress ? machineBase(host) : undefined,
-          title: p.quote.title, tollKind: p.tollKind, legs: p.legs, askMicro,
+          quote: p.quote, tollKind: p.tollKind, legs: p.legs, askMicro,
           failure: { reason: classifyPaymentFailure(settled.error), detail: settled.error ?? "" },
         });
         return stampGateCacheHeaders(
@@ -1351,16 +1352,22 @@ export function createApp(
         // Still buyable over x402 when the licence cannot be used: the refusal carries the same
         // advertisement a 402 does. Never on `in_flight`, where a charge for this URL is running and
         // an x402 offer would invite a second payment for the same read.
+        // The RSL `error` stays first and unchanged, because an RSL client keys on it; the x402 guide
+        // follows it, so a crawler that cannot use its licence is told how to buy the read instead.
+        let guideKeys: Pick<ReturnType<typeof agentGuide>, "forYourUser" | "howToPay" | "links"> | undefined;
         if (verdict.status === 402 || verdict.error === "licence_server_unavailable") {
+          const base = viaIngress ? machineBase(host) : undefined;
+          const guide = guideFor(raw, host, base, p.quote, p.tollKind, p.legs);
+          guideKeys = { forYourUser: guide.forYourUser, howToPay: guide.howToPay, links: guide.links };
           headers[PAYMENT_REQUIRED_HEADER] = p.header;
           headers[CRAWLER_PRICE_HEADER] = formatCrawlerPrice(totalChargedMicro(p.legs));
-          headers.Link = paymentLinkHeader(viaIngress ? machineBase(host) : undefined, getConfig().BUYER_GUIDE_URL);
+          headers.Link = paymentLinkHeader(base, guide.links.guide);
         }
         if (verdict.status === 503) headers["retry-after"] = "2";
         emitObs(p.obs, "denied", { kind: p.tollKind, price: usdc(p.quote.price) });
         return stampGateCacheHeaders(
           c.json(
-            { error: verdict.error, ...(verdict.description ? { error_description: verdict.description } : {}) },
+            { error: verdict.error, ...(verdict.description ? { error_description: verdict.description } : {}), ...guideKeys },
             verdict.status,
             headers,
           ),
@@ -1460,7 +1467,7 @@ export function createApp(
         emitObs(d.obs, "denied", { kind: d.tollKind, price: usdc(d.quote.price), crawlerBudget: budget });
         const refusal = agentRefusal({
           raw, host, base: viaIngress ? machineBase(host) : undefined,
-          title: d.quote.title, tollKind: d.tollKind, legs: d.legs, askMicro,
+          quote: d.quote, tollKind: d.tollKind, legs: d.legs, askMicro,
         });
         return stampGateCacheHeaders(
           // The body is the ADVERTISEMENT — price, terms, where the real obligation is —
@@ -1523,6 +1530,23 @@ export function canonicalResource(host: string, pathname: string): string {
   return `${scheme}://${host.toLowerCase()}${pathname}`;
 }
 
+/** The agent guide for one tolled request: the page it names, and the links its quote carries. */
+function guideFor(
+  raw: Request,
+  host: string,
+  base: MachineUrlBase | undefined,
+  quote: { title: string; buyerLinks?: BuyerLinks },
+  tollKind: TollKind,
+  legs: Parameters<typeof agentGuide>[0]["legs"],
+) {
+  return agentGuide({
+    resource: { url: canonicalResource(host, new URL(raw.url).pathname), title: quote.title },
+    tollKind,
+    legs,
+    links: guideLinks(manifestUrl(base), undefined, quote.buyerLinks),
+  });
+}
+
 /**
  * The agent-readable refusal both 402 branches answer with: the guide built from the legs this 402
  * carries, the body, and the rendering the caller's `Accept` asked for. One function, so a refused
@@ -1532,19 +1556,14 @@ function agentRefusal(input: {
   raw: Request;
   host: string;
   base: MachineUrlBase | undefined;
-  title: string;
+  quote: { title: string; buyerLinks?: BuyerLinks };
   tollKind: TollKind;
   legs: Parameters<typeof agentGuide>[0]["legs"];
   askMicro: bigint;
   failure?: { reason: PaymentFailureReason; detail: string };
 }): { text: string; contentType: string; link: string } {
   const endpoint = new URL(input.raw.url).pathname;
-  const guide = agentGuide({
-    resource: { url: canonicalResource(input.host, endpoint), title: input.title },
-    tollKind: input.tollKind,
-    legs: input.legs,
-    links: guideLinks(manifestUrl(input.base)),
-  });
+  const guide = guideFor(input.raw, input.host, input.base, input.quote, input.tollKind, input.legs);
   const body = paymentRequiredBody({
     askMicro: input.askMicro,
     publisher: input.host,

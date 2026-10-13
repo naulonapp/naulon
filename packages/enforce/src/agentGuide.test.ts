@@ -132,3 +132,29 @@ test("a URL too long to quote is never clipped: the relay text refers to it and 
   assert.ok(!t.includes("https://blog.example/"), "no partial URL");
   assert.ok(t.includes("USD 0.0011"));
 });
+
+test("guide links prefer the quote's links, and drop any that are not safe web URLs", () => {
+  const cfg = { BUYER_GUIDE_URL: "https://local.example/g" };
+  assert.deepEqual(
+    guideLinks("/m", cfg, { guide: "https://fleet.example/g", fund: "https://fleet.example/buyer", mcp: "https://gate.fleet.example/mcp" }),
+    { guide: "https://fleet.example/g", manifest: "/m", fund: "https://fleet.example/buyer", mcp: "https://gate.fleet.example/mcp" },
+  );
+  assert.deepEqual(
+    guideLinks("/m", cfg, { guide: "javascript:alert(1)", fund: "https://ok.example/a>b", mcp: "data:text/html,x" }),
+    { guide: "https://local.example/g", manifest: "/m" },
+  );
+});
+
+test("the relay text sends a person to wallet setup when there is one, else to the guide", () => {
+  const withFund = agentGuide({ ...input, links: { ...links, fund: "https://fleet.example/buyer" } }).forYourUser.text;
+  assert.ok(withFund.includes("https://fleet.example/buyer"));
+  assert.ok(!withFund.includes(links.guide));
+  assert.ok(agentGuide(input).forYourUser.text.includes(links.guide));
+});
+
+test("an unknown network is named once, not twice", () => {
+  const odd: SettlementLegReq = { role: "author", requirements: { ...req("1000", "0xa"), network: "eip155:999999" } };
+  const e = headerError([odd], links.guide);
+  assert.ok(e.includes("on eip155:999999 via") || e.includes("on eip155:999999."), e);
+  assert.doesNotMatch(e, /\(eip155:999999\)/);
+});

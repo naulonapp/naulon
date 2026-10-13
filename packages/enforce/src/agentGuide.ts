@@ -10,7 +10,8 @@
  * be passed on verbatim, which names the free URL first (humans read free) and the price second.
  * An agent that can pay reads `howToPay`, which states in words what is otherwise only in base64.
  */
-import { getConfig, networkByCaip2, type NetworkName, type TollKind } from "@naulon/shared";
+import { getConfig, isLinkSafeWebUrl, networkByCaip2, type NetworkName, type TollKind } from "@naulon/shared";
+import type { BuyerLinks } from "./pricing.ts";
 import type { SettlementLegReq } from "./build402.ts";
 import { formatCrawlerPrice, toMicro, totalChargedMicro } from "./crawlerPrice.ts";
 
@@ -81,6 +82,11 @@ export function networkLabel(caip: string): { name: string; testnet: boolean } {
   return { name: NETWORK_LABEL[net.chainName], testnet: net.testnet };
 }
 
+/** A network as prose: "Arc (eip155:5042)", or the bare id when no name is known for it. */
+export function networkPhrase(net: { caip: string; name: string }): string {
+  return net.name === net.caip ? net.caip : `${net.name} (${net.caip})`;
+}
+
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`);
 
@@ -129,13 +135,13 @@ export function guideSteps(o: {
 
 /** The relay sentence. Clauses drop, title first, before the cap breaks. A URL is quoted whole or
  *  not at all: past `URL_INLINE_MAX` the sentence points at the link the person asked about. */
-function forYourUserText(title: string, url: string, price: string, what: string, guide: string): string {
+function forYourUserText(title: string, url: string, price: string, what: string, setupUrl: string): string {
   const where = url.length <= URL_INLINE_MAX ? `at ${url}` : "at the link you asked about";
   const named = title ? `"${title}" is free to read in a browser ${where}.` : `This page is free to read in a browser ${where}.`;
   const anon = `This page is free to read in a browser ${where}.`;
   const bare = "This page is free to read in a browser at the link you asked about.";
   const cost = `An AI agent pays ${price} per ${what}.`;
-  const setup = `To let an assistant pay for pages like this, see ${guide}.`;
+  const setup = `To let an assistant pay for pages like this, see ${setupUrl}.`;
   for (const candidate of [`${named} ${cost} ${setup}`, `${anon} ${cost} ${setup}`, `${named} ${cost}`, `${anon} ${cost}`]) {
     if (candidate.length <= FOR_YOUR_USER_MAX) return candidate;
   }
@@ -148,7 +154,9 @@ export function agentGuide(input: AgentGuideInput): AgentGuide {
   const what = input.tollKind === "citation" ? "citation" : "read";
   return {
     forYourUser: {
-      text: forYourUserText(title, input.resource.url, r.price, what, input.links.guide),
+      // A person is sent to set up a wallet when the deployment has that page; the guide is
+      // written for whoever builds the agent, so it is the fallback, not the first choice.
+      text: forYourUserText(title, input.resource.url, r.price, what, input.links.fund ?? input.links.guide),
       readFreeUrl: input.resource.url,
       title,
     },
@@ -186,22 +194,35 @@ export function agentGuide(input: AgentGuideInput): AgentGuide {
 export function headerError(legs: readonly SettlementLegReq[], guideUrl: string): string {
   const r = describeRail(legs);
   const via = r.gateway ? ` via Circle Gateway; deposit to the Gateway Wallet ${r.contract} first` : "";
-  const head = `Payment required: ${r.price} in USDC on ${r.net.name} (${r.req.network})${via}.`;
+  const head = `Payment required: ${r.price} in USDC on ${networkPhrase({ caip: r.req.network, name: r.net.name })}${via}.`;
   for (const candidate of [`${head} Humans read free in a browser. Guide: ${guideUrl}`, `${head} Humans read free in a browser.`]) {
     if (candidate.length <= HEADER_ERROR_MAX) return candidate;
   }
   return clip(head, HEADER_ERROR_MAX);
 }
 
-/** The one config read: the deployment's buyer links, with fund and MCP only when set. */
+/**
+ * The links a 402 names. A quote's links win, because the runtime that priced the quote knows the
+ * deployment and a publisher's runtime does not; each one is used only if it is a link-safe web URL,
+ * since it crossed a process boundary unchecked. The local config fills whatever the quote lacks.
+ */
 export function guideLinks(
   manifest: string,
   cfg: { BUYER_GUIDE_URL: string; BUYER_FUND_URL?: string | undefined; BUYER_MCP_URL?: string | undefined } = getConfig(),
+  fromQuote?: Partial<BuyerLinks>,
 ): AgentGuideLinks {
+  const pick = (q: unknown, local: string | undefined): string | undefined => (isLinkSafeWebUrl(q) ? q : local);
+  const fund = pick(fromQuote?.fund, cfg.BUYER_FUND_URL);
+  const mcp = pick(fromQuote?.mcp, cfg.BUYER_MCP_URL);
   return {
-    guide: cfg.BUYER_GUIDE_URL,
+    guide: pick(fromQuote?.guide, cfg.BUYER_GUIDE_URL) ?? cfg.BUYER_GUIDE_URL,
     manifest,
-    ...(cfg.BUYER_FUND_URL ? { fund: cfg.BUYER_FUND_URL } : {}),
-    ...(cfg.BUYER_MCP_URL ? { mcp: cfg.BUYER_MCP_URL } : {}),
+    ...(fund ? { fund } : {}),
+    ...(mcp ? { mcp } : {}),
   };
+}
+
+/** The guide URL a quote carries when it is safe to use, else this runtime's own. */
+export function quoteGuideUrl(quote: { buyerLinks?: Partial<BuyerLinks> }, fallback: string): string {
+  return isLinkSafeWebUrl(quote.buyerLinks?.guide) ? quote.buyerLinks.guide : fallback;
 }

@@ -82,6 +82,21 @@ export interface Quote {
    * quote from an older control plane; `build402` then falls back to its own `PAYMENT_MODE`.
    */
   paymentMode?: "mock" | "gateway";
+  /**
+   * Where a 402 built from this quote sends an agent to learn to pay, from the PRICING runtime's
+   * config, for the same reason as `paymentMode`: a publisher's own runtime never sets these, so it
+   * would link the generic guide instead of the deployment's. Optional on the TYPE only, for a quote
+   * from an older control plane; the builder then uses its own config. Untrusted on arrival: every
+   * reader passes it through `isLinkSafeWebUrl`.
+   */
+  buyerLinks?: BuyerLinks;
+}
+
+/** The buyer-facing links a deployment publishes: always a guide, a wallet and an MCP server when set. */
+export interface BuyerLinks {
+  guide: string;
+  fund?: string;
+  mcp?: string;
 }
 
 /**
@@ -201,6 +216,10 @@ export async function quote(
     // are one fact; they travel together or neither is trustworthy.
     network: publisher.settlementNetwork ?? activeNetwork().chainName,
     paymentMode: getConfig().PAYMENT_MODE,
+    buyerLinks: (() => {
+      const c = getConfig();
+      return { guide: c.BUYER_GUIDE_URL, ...(c.BUYER_FUND_URL ? { fund: c.BUYER_FUND_URL } : {}), ...(c.BUYER_MCP_URL ? { mcp: c.BUYER_MCP_URL } : {}) };
+    })(),
     ...(rule?.agent !== undefined ? { pricedFor: rule.agent } : {}),
   };
 }

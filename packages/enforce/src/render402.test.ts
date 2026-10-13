@@ -48,7 +48,8 @@ test("JSON is today's serialization byte for byte", () => {
 test("markdown leads with the relay text and carries every step and link", () => {
   const r = render402("text/markdown", body);
   assert.equal(r.contentType, "text/markdown; charset=utf-8");
-  assert.ok(r.text.startsWith(`# Payment required\n\n${body.forYourUser!.text}`));
+  assert.ok(r.text.startsWith("# Payment required\n\n"));
+  assert.ok(r.text.split("\n")[2]!.includes("&lt;script&gt;"), "the relay text leads, with the publisher's title made inert");
   for (const s of body.howToPay!.steps) assert.ok(r.text.includes(s.do));
   for (const u of ["https://g.example", "https://f.example", "https://m.example/mcp", "/.well-known/x402"]) assert.ok(r.text.includes(u), u);
 });
@@ -74,4 +75,17 @@ test("a body without a guide always renders as JSON", () => {
   const plain = paymentRequiredBody({ askMicro: 1100n, publisher: "e", endpoint: "/x", tollKind: "read" });
   assert.equal(render402("text/html", plain).contentType, PAYMENT_BODY_CONTENT_TYPE);
   assert.equal(render402("text/markdown", plain).text, JSON.stringify(plain, null, 2));
+});
+
+test("markdown neutralises link and HTML syntax in publisher and facilitator text", () => {
+  const g = agentGuide({
+    resource: { url: "https://e.example/x", title: "[click](https://evil.example) <img src=x> `code`" }, tollKind: "read",
+    legs: [leg], links: { guide: "https://g.example", manifest: "/m" },
+  });
+  const failure = paymentFailureDetail("settlement_failed", "see [here](https://evil.example) <b>", g);
+  const md = render402("text/markdown", paymentRequiredBody({ askMicro: 1100n, publisher: "e", endpoint: "/x", tollKind: "read", guide: g, failure })).text;
+  assert.ok(!md.includes("[click](https://evil.example)"));
+  assert.ok(!md.includes("[here](https://evil.example)"));
+  assert.ok(!md.includes("<img"));
+  assert.ok(!md.includes("<b>"));
 });

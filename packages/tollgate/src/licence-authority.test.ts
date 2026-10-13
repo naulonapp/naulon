@@ -155,7 +155,9 @@ test("authority 402: the refusal still carries PAYMENT-REQUIRED so the crawler c
   const res = await app.request("/essays/a", { headers: AGENT });
   assert.equal(res.status, 402);
   assert.equal(res.headers.get(PAYMENT_REQUIRED_HEADER), f.calls[0]!.header);
-  assert.deepEqual(await res.json(), { error: "price_rose" });
+  const body = (await res.json()) as Record<string, unknown>;
+  assert.equal(Object.keys(body)[0], "error");
+  assert.equal(body.error, "price_rose");
   assert.equal(res.headers.get("www-authenticate"), null);
 });
 
@@ -284,4 +286,16 @@ test("authority 402: the refusal points at the buyer guide as rel=help", async (
   const app = createApp(resolver, { licenceAuthority: f.authority });
   const res = await app.request("/essays/a", { headers: AGENT });
   assert.match(res.headers.get("link") ?? "", /rel="payment".*>; rel="help"$/);
+});
+
+test("authority 402: the RSL error stays, and the refusal also explains how to buy over x402", async () => {
+  const f = fakeAuthority(() => ({ ok: false, status: 402, error: "price_rose", description: "the price moved" }));
+  const app = createApp(resolver, { licenceAuthority: f.authority });
+  const res = await app.request("/essays/a", { headers: AGENT });
+  const body = (await res.json()) as { error: string; error_description?: string; howToPay?: unknown; forYourUser?: { text: string } };
+  assert.equal(body.error, "price_rose", "an RSL client keys on this code");
+  assert.equal(body.error_description, "the price moved");
+  assert.ok(body.howToPay, "and an x402 buyer is told how to pay");
+  assert.ok(body.forYourUser?.text.includes("/essays/a"));
+  assert.match(res.headers.get("vary") ?? "", /user-agent/i);
 });

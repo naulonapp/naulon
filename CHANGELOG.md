@@ -31,10 +31,16 @@ tags and the auto-generated notes on each GitHub Release.
   carries `Vary: Accept`.
 - `Link` names the buyer guide as `rel="help"` after the manifest's `rel="payment"`.
 - `/.well-known/x402` adds `howToPay` and `links`.
+- A quote carries `buyerLinks` from the runtime that priced it, the way it carries `paymentMode`, so
+  an in-app site's 402 links the deployment's guide and wallet page rather than its own defaults.
+  Links read off a quote are checked with `isLinkSafeWebUrl` (`@naulon/shared`) before use.
+- A licence the authority refuses with `402` keeps its RSL `error` first and adds the same
+  `forYourUser`, `howToPay` and `links`, so the crawler can buy the read over x402 instead.
 - Config: `BUYER_GUIDE_URL` (defaults to the paying guide in these docs), `BUYER_FUND_URL` and
   `BUYER_MCP_URL`, all http(s) only.
 - `agentGuide`, `headerError`, `render402`, `negotiate402Format`, `paymentFailureDetail`,
-  `manifestUrl` are exported from `@naulon/enforce`.
+  `manifestUrl`, `networkPhrase`, `quoteGuideUrl` and the `BuyerLinks` type are exported from
+  `@naulon/enforce`.
 
 ### Changed
 - A refused payment answers with the same guided body plus `failure`: the classified `code`, the

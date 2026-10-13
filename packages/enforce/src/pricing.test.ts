@@ -168,6 +168,13 @@ test("quote stamps the pricing runtime's payment mode", async () => {
   assert.equal(q.paymentMode, getConfig().PAYMENT_MODE);
 });
 
+test("quote stamps the pricing runtime's buyer links, so a publisher's runtime never guesses them", async () => {
+  const q = await quote(publisher(), "on-passage", "read");
+  assert.ok(q);
+  assert.equal(q.buyerLinks?.guide, getConfig().BUYER_GUIDE_URL);
+  assert.equal("fund" in (q.buyerLinks ?? {}), getConfig().BUYER_FUND_URL !== undefined);
+});
+
 test("an explicit per-tenant chain still beats the runtime default", async () => {
   const other = activeNetwork().chainName === "base" ? "arcTestnet" : "base";
   const q = await quote(publisher({ settlementNetwork: other }), "on-passage", "read");

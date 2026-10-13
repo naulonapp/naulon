@@ -55,6 +55,8 @@ export {
   HEADER_ERROR_MAX,
   headerError,
   networkLabel,
+  networkPhrase,
+  quoteGuideUrl,
   type AgentGuide,
   type AgentGuideInput,
   type AgentGuideLinks,
@@ -76,7 +78,7 @@ export {
 export { headerSafe } from "./headerSafe.ts";
 
 // Pricing (the `quote` value; the `Quote` type comes through `./decide.ts`).
-export { quote, tollPrice } from "./pricing.ts";
+export { quote, tollPrice, type BuyerLinks } from "./pricing.ts";
 
 // Revocation, discoverability manifest. The licence signing key lives in `@naulon/tollgate`.
 export { revocations, type RevocationStore } from "./revocation.ts";
