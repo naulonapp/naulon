@@ -84,20 +84,25 @@ test("a very long URL drops clauses before it breaks a cap", () => {
   const long = `https://ingress.example/${"a".repeat(380)}`;
   const g = agentGuide({ ...input, resource: { url: long, title: "T" } });
   assert.ok(g.forYourUser.text.length <= FOR_YOUR_USER_MAX);
-  assert.ok(headerError(input.legs, long, links.guide).length <= HEADER_ERROR_MAX);
 });
 
-test("the x402 error names price, network, deposit, free URL and guide", () => {
-  const e = headerError(input.legs, url, links.guide);
+test("the x402 error names price, network, deposit and guide, and says humans read free", () => {
+  const e = headerError(input.legs, links.guide);
   assert.ok(e.startsWith("Payment required: USD 0.0011 in USDC on Arc (eip155:5042)"));
   assert.ok(e.includes(GW));
-  assert.ok(e.includes(url));
+  assert.ok(e.includes("Humans read free"));
   assert.ok(e.includes(links.guide));
   assert.ok(e.length <= HEADER_ERROR_MAX);
 });
 
+test("a guide URL too long for the cap is dropped, never clipped into a wrong URL", () => {
+  const e = headerError(input.legs, `https://guide.example/${"g".repeat(300)}`);
+  assert.ok(e.length <= HEADER_ERROR_MAX);
+  assert.doesNotMatch(e, /guide\.example/);
+});
+
 test("a non-gateway error says nothing about Circle", () => {
-  const e = headerError([{ role: "author", requirements: req("1000", "0xa", false) }], url, links.guide);
+  const e = headerError([{ role: "author", requirements: req("1000", "0xa", false) }], links.guide);
   assert.doesNotMatch(e, /Circle|Gateway/);
 });
 
@@ -116,5 +121,5 @@ test("guide links include fund and MCP only when configured", () => {
 
 test("no legs is a bug, not an empty guide", () => {
   assert.throws(() => agentGuide({ ...input, legs: [] }), /at least one leg/);
-  assert.throws(() => headerError([], url, links.guide), /at least one leg/);
+  assert.throws(() => headerError([], links.guide), /at least one leg/);
 });

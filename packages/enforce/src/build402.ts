@@ -26,6 +26,7 @@ import {
 import { issueNonce, type NonceBinding } from "./nonce.ts";
 import { bazaarExtension, serviceMetadata } from "./bazaar.ts";
 import type { Quote } from "./pricing.ts";
+import { headerError } from "./agentGuide.ts";
 
 const cfg = getConfig();
 
@@ -161,6 +162,9 @@ export function build402(quote: Quote, resourceUrl: string, now: number, routeTe
   const mimeType = "text/html";
   const paymentRequired: Record<string, unknown> = {
     x402Version: 2,
+    // x402 v2 `error`, "human-readable error message explaining why payment is required": the one
+    // sentence a header-only client reads, so it names the network, the deposit and the guide.
+    error: headerError(legs, cfg.BUYER_GUIDE_URL),
     resource: {
       url: resourceUrl,
       // Publisher-neutral: this gate is multi-tenant, so the 402 a buyer sees must

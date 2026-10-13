@@ -175,17 +175,14 @@ export function agentGuide(input: AgentGuideInput): AgentGuide {
 /**
  * The x402 v2 `PaymentRequired.error`: "human-readable error message explaining why payment is
  * required" (spec §5.1.2). The one sentence a header-only x402 client is guaranteed to read, so it
- * carries the network and the deposit. Clauses drop before the cap breaks.
+ * carries the network, the deposit and the guide. It does not repeat the page URL: `resource.url`
+ * sits beside it in the same object, and spending the cap on it would push the guide out.
  */
-export function headerError(legs: readonly SettlementLegReq[], resourceUrl: string, guideUrl: string): string {
+export function headerError(legs: readonly SettlementLegReq[], guideUrl: string): string {
   const r = describeRail(legs);
   const via = r.gateway ? ` via Circle Gateway; deposit to the Gateway Wallet ${r.contract} first` : "";
   const head = `Payment required: ${r.price} in USDC on ${r.net.name} (${r.req.network})${via}.`;
-  for (const candidate of [
-    `${head} Humans read free at ${resourceUrl}. Guide: ${guideUrl}`,
-    `${head} Humans read free. Guide: ${guideUrl}`,
-    `${head} Humans read free.`,
-  ]) {
+  for (const candidate of [`${head} Humans read free in a browser. Guide: ${guideUrl}`, `${head} Humans read free in a browser.`]) {
     if (candidate.length <= HEADER_ERROR_MAX) return candidate;
   }
   return clip(head, HEADER_ERROR_MAX);

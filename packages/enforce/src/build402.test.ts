@@ -7,7 +7,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { activeNetwork, usdc, walletAddress } from "@naulon/shared";
-import { buildRequirements } from "./build402.ts";
+import { build402, buildRequirements } from "./build402.ts";
+import { HEADER_ERROR_MAX } from "./agentGuide.ts";
 import type { Quote } from "./pricing.ts";
 
 const WALLET = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -36,4 +37,15 @@ test("buildRequirements falls back to activeNetwork when the quote omits network
   const r = buildRequirements(quote());
   assert.equal(r.network, activeNetwork().network); // fleet default (SETTLEMENT_NETWORK)
   assert.equal(r.asset, activeNetwork().usdc);
+});
+
+test("the challenge carries a human-readable x402 error naming price, network and guide", () => {
+  const { header } = build402(quote(), "https://example.com/essays/on-passage", Date.now());
+  const pr = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+  assert.deepEqual(Object.keys(pr).slice(0, 3), ["x402Version", "error", "resource"], "x402 v2 field order");
+  assert.match(pr.error, /^Payment required: USD 0\.001 in USDC on /);
+  assert.ok(pr.error.includes(activeNetwork().network));
+  assert.ok(pr.error.includes("Guide: https://"));
+  assert.equal(pr.resource.url, "https://example.com/essays/on-passage", "the free URL travels in resource.url");
+  assert.ok(pr.error.length <= HEADER_ERROR_MAX);
 });
