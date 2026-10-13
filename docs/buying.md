@@ -103,3 +103,27 @@ at `WAYFARER_LICENSE_PATH`, so a re-read spans runs.
 Running with no credentials at all settles in mock mode: the whole loop works, nothing
 moves on-chain. Set `PAYMENT_MODE=gateway` with a funded `BUYER_PRIVATE_KEY` to pay for
 real. Every variable named here is in [configuration.md](./configuration.md).
+
+## Paying from any x402 client
+
+A tolled page answers an automated request with `402`. You do not need naulon's tools to pay it.
+
+1. **Read the offer.** `PAYMENT-REQUIRED` is base64 JSON (x402 v2). `accepts[0]` names the network
+   (a CAIP-2 id such as `eip155:5042`, which is Arc), the USDC contract, the amount in atomic units
+   (6 decimals) and the recipient. Its `error` field and the JSON body's `howToPay` say the same in
+   words.
+2. **Fund once, on that network.** When `accepts[0].extra.name` is `GatewayWalletBatched`, payment
+   draws on a Circle Gateway balance, not on your wallet. Deposit USDC into the Gateway Wallet
+   contract named in `extra.verifyingContract`, on that chain, before your first payment. Circle's
+   nanopayments guide covers the deposit: https://developers.circle.com/gateway/nanopayments
+3. **Sign and retry.** Sign `accepts[0]` and repeat the request with the base64 payload in the
+   `PAYMENT-SIGNATURE` header. One signed object pays the author and is served. When the 402
+   carries a `naulonLegs` extension, an array with one signed payload per leg, in order, pays the
+   whole ask.
+
+A refused payment answers `402` again with `failure.code`, a `failure.remedy` saying what to change,
+and the facilitator's own words in `failure.detail`.
+
+If you are an assistant that cannot pay, the body's `forYourUser.text` is written for you to pass
+on: people read every tolled page free in a browser. Send `Accept: text/markdown` to get the whole
+402 as prose.
