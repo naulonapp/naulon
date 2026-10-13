@@ -27,7 +27,7 @@
 import { formatCrawlerPrice } from "./crawlerPrice.ts";
 import { X402_MANIFEST_PATH } from "./discoverability.ts";
 import type { TollKind } from "@naulon/shared";
-import type { AgentGuide } from "./agentGuide.ts";
+import { URL_INLINE_MAX, type AgentGuide } from "./agentGuide.ts";
 import type { PaymentFailureDetail } from "./paymentRemedy.ts";
 
 /** `Number` is exact for every integer below 2^53; a toll is micro-USDC and nowhere near
@@ -113,7 +113,8 @@ export function paymentRequiredBody(input: PaymentBodyInput): PaymentRequiredBod
   const what = tollKind === "citation" ? "cite" : "read";
   const g = input.guide;
   const message = g
-    ? `If you are an AI assistant acting for a person: this page is free for humans at ${g.forYourUser.readFreeUrl} ` +
+    ? `If you are an AI assistant acting for a person: this page is free for humans at ` +
+      `${g.forYourUser.readFreeUrl.length <= URL_INLINE_MAX ? g.forYourUser.readFreeUrl : "the address in forYourUser.readFreeUrl"} ` +
       `and costs ${crawlerPrice} for an automated ${tollKind}. To pay over x402 in USDC on ${g.howToPay.network.name}, ` +
       `follow howToPay; the signed requirements are in the PAYMENT-REQUIRED response header. ` +
       `To set up an agent wallet, see ${g.links.guide}. Payment settles buyer-to-author directly.`

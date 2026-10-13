@@ -123,3 +123,12 @@ test("no legs is a bug, not an empty guide", () => {
   assert.throws(() => agentGuide({ ...input, legs: [] }), /at least one leg/);
   assert.throws(() => headerError([], links.guide), /at least one leg/);
 });
+
+test("a URL too long to quote is never clipped: the relay text refers to it and keeps the price", () => {
+  const long = `https://blog.example/${"p".repeat(1500)}`;
+  const t = agentGuide({ ...input, resource: { url: long, title: "T" } }).forYourUser.text;
+  assert.ok(t.length <= FOR_YOUR_USER_MAX);
+  assert.doesNotMatch(t, /…/);
+  assert.ok(!t.includes("https://blog.example/"), "no partial URL");
+  assert.ok(t.includes("USD 0.0011"));
+});

@@ -12,11 +12,14 @@ import { FLEET_DIRECTORY_URL, FLEET_VERIFY_URL } from "./fleet.ts";
 export const OSS_BUYER_GUIDE_URL = "https://naulonapp.github.io/naulon/buying/#paying-from-any-x402-client";
 
 /** A URL a 402 hands to a stranger's agent, and through it to a person: http(s) only, because
- *  `z.string().url()` alone accepts `javascript:` and `data:`, which an HTML 402 would render as a link. */
+ *  `z.string().url()` alone accepts `javascript:` and `data:`, which an HTML 402 would render as a
+ *  link. It is also written verbatim into `Link: <…>; rel="help"`, where `<`, `>`, `,`, `;`, a
+ *  quote or whitespace would corrupt the header or make every 402 throw. */
 const webUrl = z
   .string()
   .url()
-  .refine((v) => /^https?:\/\//i.test(v), { message: "must be an http(s) URL" });
+  .refine((v) => /^https?:\/\//i.test(v), { message: "must be an http(s) URL" })
+  .refine((v) => !/[<>,;"\s]/.test(v), { message: "must not contain < > , ; \" or whitespace (it is written into a Link header)" });
 
 // Find the repo root by walking UP from the cwd until we hit the workspace root
 // (marked by package-lock.json). We anchor on cwd, not import.meta.url, because

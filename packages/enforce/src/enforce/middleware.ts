@@ -508,6 +508,10 @@ export function naulonMiddleware(
     // The agent-readable 402, the same one the hosted gate answers with: the guide built from this
     // 402's legs, the body, and the rendering the caller's Accept asked for. A refused or
     // unconfirmed payment carries `failure`, so the payer can retry from this response alone.
+    const freeUrl = (() => {
+      const r = new URL(resource);
+      return `${r.origin}${r.pathname}`;
+    })();
     type Priced = Extract<typeof d, { kind: "payment-required" | "licence-presented" | "payment-presented" }>;
     const refusal = (
       p: Priced,
@@ -516,7 +520,9 @@ export function naulonMiddleware(
     ): Response => {
       const askMicro = askMicroOf(p.legs, p.quote);
       const guide = agentGuide({
-        resource: { url: `${url.origin}${url.pathname}`, title: p.quote.title },
+        // The same external URL the signed 402 names (`resource`, proxy-aware), never raw `req.url`:
+        // behind a TLS-terminating proxy that would say http:// beside a signed https://.
+        resource: { url: freeUrl, title: p.quote.title },
         tollKind: p.tollKind,
         legs: p.legs,
         links: guideLinks(manifestUrl()),
@@ -537,8 +543,10 @@ export function naulonMiddleware(
           [PAYMENT_REQUIRED_HEADER]: p.header,
           [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
           "content-type": out.contentType,
-          // The body is negotiated, so a cache between here and the buyer must key on Accept.
-          Vary: "Accept",
+          // Never stored, and keyed on both inputs that shape it: who asked (a human reads free)
+          // and how they asked (the body is negotiated). The hosted gate stamps the same pair.
+          "cache-control": "no-store",
+          Vary: "Accept, User-Agent",
           Link: paymentLinkHeader(undefined, guide.links.guide),
           ...headers,
         },
@@ -767,7 +775,8 @@ export function naulonMiddleware(
           if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
           return { response: null, setHeaders };
         }
-        const reason = body.error ?? "payment rejected";
+        // Off the wire unchecked: anything but a string is treated as no reason at all.
+        const reason = typeof body.error === "string" && body.error ? body.error : "payment rejected";
         return { response: refusal(d, { failure: { reason: classifyPaymentFailure(reason), detail: reason } }) };
       }
     }

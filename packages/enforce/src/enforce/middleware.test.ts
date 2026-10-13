@@ -1056,3 +1056,43 @@ test("an unreachable /verify answers 402 with a retryable remedy, not a bare str
   assert.equal(body.failure.code, "settlement_failed");
   assert.equal(body.failure.detail, "verify unreachable");
 });
+
+// ── Final-review fixes ─────────────────────────────────────────────────────────
+test("behind a trusted TLS proxy the free URL matches the signed resource, scheme included", async () => {
+  const { resetConfig } = await import("@naulon/shared");
+  process.env.TRUST_PROXY = "true";
+  resetConfig();
+  try {
+    const mw = naulonMiddleware(opts);
+    const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "x-forwarded-proto": "https" } }));
+    const body = (await out.response!.json()) as Refusal;
+    // The proxy-aware URL, the one `resource` names. (Not compared to the signed header here:
+    // decide.ts reads TRUST_PROXY at import, before this test flips it; in a deployment both
+    // read the same environment at boot.)
+    assert.equal(body.forYourUser.readFreeUrl, "https://h/essays/x");
+  } finally {
+    delete process.env.TRUST_PROXY;
+    resetConfig();
+  }
+});
+
+test("an in-app 402 is never stored and varies on both User-Agent and Accept", async () => {
+  const mw = naulonMiddleware(opts);
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(out.response?.headers.get("cache-control"), "no-store");
+  const vary = (out.response?.headers.get("vary") ?? "").toLowerCase();
+  assert.ok(vary.includes("accept") && vary.includes("user-agent"), vary);
+});
+
+test("a refused payment whose reason is not a string still answers 402 with a remedy", async () => {
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ ok: false, error: { code: 7 } }), { status: 402 })) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
+  const out = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
+  );
+  assert.equal(out.response?.status, 402);
+  const body = (await out.response!.json()) as Refusal;
+  assert.equal(body.failure.code, "settlement_failed");
+  assert.equal(body.failure.detail, "payment rejected");
+});

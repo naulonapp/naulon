@@ -158,3 +158,9 @@ test("a malformed buyer URL fails loud at boot", () => {
   assert.deepEqual([...new Set(issuePaths({ BUYER_GUIDE_URL: "not a url" }))], ["BUYER_GUIDE_URL"]);
   assert.deepEqual([...new Set(issuePaths({ BUYER_FUND_URL: "javascript:alert(1)" }))], ["BUYER_FUND_URL"]);
 });
+
+test("a buyer URL that would corrupt a Link header is refused at boot", () => {
+  for (const bad of ["https://g.example/a>b", "https://g.example/a,b", "https://g.example/a;b", 'https://g.example/a"b', "https://g.example/a b"]) {
+    assert.deepEqual([...new Set(issuePaths({ BUYER_GUIDE_URL: bad }))], ["BUYER_GUIDE_URL"], bad);
+  }
+});

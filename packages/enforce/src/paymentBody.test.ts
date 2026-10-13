@@ -120,3 +120,13 @@ test("the serialized body with a guide and a failure stays under 3 KB", () => {
   const failure = paymentFailureDetail("settlement_failed", "x".repeat(200), guide);
   assert.ok(Buffer.byteLength(paymentRequiredBodyText({ ...base, askMicro: 3000n, guide, failure })) < 3072);
 });
+
+test("a very long URL appears only where it must, so the body grows by it at most twice", () => {
+  const url = `https://example.com/${"p".repeat(1500)}`;
+  const g = agentGuide({ resource: { url, title: "X" }, tollKind: "read", legs: [leg("3000")], links: { guide: "https://g.example", manifest: "/m" } });
+  const b = paymentRequiredBody({ ...base, endpoint: new URL(url).pathname, askMicro: 3000n, guide: g });
+  assert.ok(!b.message.includes(url), "the message refers to readFreeUrl instead");
+  assert.ok(!b.forYourUser!.text.includes(url));
+  assert.equal(b.forYourUser!.readFreeUrl, url, "the full URL still travels, once");
+  assert.ok(Buffer.byteLength(paymentRequiredBodyText({ ...base, endpoint: new URL(url).pathname, askMicro: 3000n, guide: g })) < 3072 + 2 * url.length);
+});

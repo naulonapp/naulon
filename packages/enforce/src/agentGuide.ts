@@ -19,6 +19,9 @@ export const FOR_YOUR_USER_MAX = 400;
 /** Cap on the x402 `error` field, which rides base64-encoded inside a response header. */
 export const HEADER_ERROR_MAX = 300;
 const TITLE_MAX = 120;
+/** Longest URL quoted inside prose. Past it the prose refers to `readFreeUrl`, which always carries
+ *  the URL whole: a clipped URL is a wrong URL, and a long one would crowd out the price. */
+export const URL_INLINE_MAX = 200;
 /** Circle's buyer-side guide to the deposit a `GatewayWalletBatched` payment draws on. */
 export const CIRCLE_GATEWAY_DOCS = "https://developers.circle.com/gateway/nanopayments";
 
@@ -124,17 +127,19 @@ export function guideSteps(o: {
   return steps;
 }
 
-/** The relay sentence. Clauses drop, title first, before the cap breaks; the URL is never cut
- *  unless nothing else is left, because a clipped URL is a wrong URL. */
+/** The relay sentence. Clauses drop, title first, before the cap breaks. A URL is quoted whole or
+ *  not at all: past `URL_INLINE_MAX` the sentence points at the link the person asked about. */
 function forYourUserText(title: string, url: string, price: string, what: string, guide: string): string {
-  const named = title ? `"${title}" is free to read in a browser at ${url}.` : `This page is free to read in a browser at ${url}.`;
-  const anon = `This page is free to read in a browser at ${url}.`;
+  const where = url.length <= URL_INLINE_MAX ? `at ${url}` : "at the link you asked about";
+  const named = title ? `"${title}" is free to read in a browser ${where}.` : `This page is free to read in a browser ${where}.`;
+  const anon = `This page is free to read in a browser ${where}.`;
+  const bare = "This page is free to read in a browser at the link you asked about.";
   const cost = `An AI agent pays ${price} per ${what}.`;
   const setup = `To let an assistant pay for pages like this, see ${guide}.`;
   for (const candidate of [`${named} ${cost} ${setup}`, `${anon} ${cost} ${setup}`, `${named} ${cost}`, `${anon} ${cost}`]) {
     if (candidate.length <= FOR_YOUR_USER_MAX) return candidate;
   }
-  return clip(`${anon} ${cost}`, FOR_YOUR_USER_MAX);
+  return `${bare} ${cost}`;
 }
 
 export function agentGuide(input: AgentGuideInput): AgentGuide {
