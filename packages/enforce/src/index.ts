@@ -46,6 +46,20 @@ export {
 // established, so a buyer written against that library can price a naulon origin with no
 // naulon code. The signed obligation stays in the PAYMENT-REQUIRED header.
 export {
+  agentGuide,
+  CIRCLE_GATEWAY_DOCS,
+  FOR_YOUR_USER_MAX,
+  guideLinks,
+  guideSteps,
+  HEADER_ERROR_MAX,
+  headerError,
+  networkLabel,
+  type AgentGuide,
+  type AgentGuideInput,
+  type AgentGuideLinks,
+  type GuideStep,
+} from "./agentGuide.ts";
+export {
   PAYMENT_BODY_CONTENT_TYPE,
   paymentRequiredBody,
   paymentRequiredBodyText,
