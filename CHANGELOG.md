@@ -14,9 +14,21 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
-## Unreleased
+## v0.13.0
 
-`@naulon/shared` and `@naulon/enforce` change; the release that ships this names their versions.
+`@naulon/shared` 0.6.7 → **0.6.8**, `@naulon/enforce` 0.9.0 → **0.10.0** and
+`@naulon/wayfarer-mcp` 0.7.3 → **0.7.4**. `@naulon/wayfarer` moves to **0.7.3** only to require
+`@naulon/shared` 0.6.8; its code is unchanged. `@naulon/sdk` and `@naulon/extract` are unchanged.
+
+### Breaking
+- `licensing` and `Licensing` are exported from `@naulon/tollgate`, not `@naulon/enforce`. The
+  package a publisher installs no longer creates a signing key at load or asks for one: only a
+  deployment that mints licences holds the key.
+- `licenseEntitlesRead` takes the verifier, `{ jwks, issuer }`, as its fifth argument instead of the
+  publisher identity, and `decide()` never falls back to a module key. Without a verifier, every
+  presented licence is refused as `no_verifier`.
+- The middleware always checks a licence against the minting gate's JWKS. `licenseVerification`
+  now only tunes that check (`jwksUrl`, `issuer`, `cacheTtlMs`); there is no local-key mode.
 
 ### Added
 - Every 402 explains itself to an agent that has never seen naulon. The JSON body adds
@@ -50,6 +62,28 @@ tags and the auto-generated notes on each GitHub Release.
 - The in-app middleware's refused and unconfirmed payments used to answer `{ error }` with no
   `PAYMENT-REQUIRED`, so a payer could not retry from that response. They now carry the offer and
   the same `failure` block.
+- Observations of an agent's free read carry `freeReason`: `unpriced` (the page has no price),
+  `terms` (the site's terms make AI reading free) or `fleet` (the gate's own signed origin pull). A
+  person's free read carries none.
+- A paid observation carries `licenseJti`, the id of the licence the payment settled as.
+- The quote carries `paymentMode`, and `build402` prefers it over the local `PAYMENT_MODE`.
+- `@naulon/wayfarer-mcp` tells an agent to put a verbatim passage on a proof link as `#quote=`, so
+  the verify page checks it on arrival. The fragment never reaches a server.
+
+### Fixed
+- An in-app site on a live rail advertised a mock replay nonce, because it read `PAYMENT_MODE` from
+  its own env, which defaults to mock. It now uses the mode the quote was priced under.
+- `withNaulon` did not start on Cloudflare Workers without `TOLLGATE_SECRET`, because the nonce
+  secret was minted at load. It is minted on first use, and only mock mode needs it.
+- An empty `TOLLGATE_SECRET` is treated as unset rather than as an empty HMAC key.
+- An in-app site re-charged a paid reader on every re-read when `licenseVerification` was unset.
+  Licences are now always checked against the minting gate's keys.
+- The JWKS preflight ran at construction, which edge runtimes refuse, so a Worker logged a healthy
+  JWKS as unreachable on every cold start. It runs on the first crawler or licensed request.
+- The 402 `message` sends wallet setup to the deployment's wallet page when it has one, matching
+  `forYourUser`. The guide is the fallback.
+- Arc testnet uses `rpc.testnet.arc.io`. The old `arc.network` host answers every caller with
+  Cloudflare error 1106.
 
 ## v0.12.8
 
