@@ -117,7 +117,7 @@ export function paymentRequiredBody(input: PaymentBodyInput): PaymentRequiredBod
       `${g.forYourUser.readFreeUrl.length <= URL_INLINE_MAX ? g.forYourUser.readFreeUrl : "the address in forYourUser.readFreeUrl"} ` +
       `and costs ${crawlerPrice} for an automated ${tollKind}. To pay over x402 in USDC on ${g.howToPay.network.name}, ` +
       `follow howToPay; the signed requirements are in the PAYMENT-REQUIRED response header. ` +
-      `To set up an agent wallet, see ${g.links.guide}. Payment settles buyer-to-author directly.`
+      `To set up an agent wallet, see ${g.links.fund ?? g.links.guide}. Payment settles buyer-to-author directly.`
     : `This request was classified as an automated agent, and this resource is tolled. ` +
       `Humans read free. To ${what} it, pay ${crawlerPrice} over x402 in USDC: the signed ` +
       `payment requirements are in the PAYMENT-REQUIRED response header, and ${X402_MANIFEST_PATH} ` +

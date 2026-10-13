@@ -100,6 +100,15 @@ test("with a guide the message speaks to a relaying assistant and still names th
   assert.ok(m.includes("https://g.example"));
 });
 
+test("the message sends wallet setup to the fund page when there is one, else to the guide", () => {
+  const funded = agentGuide({
+    resource: { url: "https://example.com/essays/x", title: "X" }, tollKind: "read",
+    legs: [leg("3000")], links: { guide: "https://g.example", manifest: "/.well-known/x402", fund: "https://f.example/buyer" },
+  });
+  assert.match(paymentRequiredBody({ ...base, askMicro: 3000n, guide: funded }).message, /set up an agent wallet, see https:\/\/f\.example\/buyer\./);
+  assert.match(paymentRequiredBody({ ...base, askMicro: 3000n, guide }).message, /set up an agent wallet, see https:\/\/g\.example\./);
+});
+
 test("a citation with a guide still says citation", () => {
   assert.match(paymentRequiredBody({ ...base, askMicro: 3000n, tollKind: "citation", guide }).message, /automated citation/);
 });
