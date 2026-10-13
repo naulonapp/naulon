@@ -57,11 +57,11 @@ function get(ua: string, path = "/essays/piece", extra: Record<string, string> =
   return app.request(path, { headers: { host: "cache.example", "user-agent": ua, accept: "text/html", ...extra } });
 }
 
-test("agent 402 is uncacheable and varies on UA", async () => {
+test("agent 402 is uncacheable and varies on UA and on Accept (its body is negotiated)", async () => {
   const res = await get("GPTBot/1.0");
   assert.equal(res.status, 402);
   assert.equal(res.headers.get("cache-control"), "no-store");
-  assert.equal(res.headers.get("vary"), "User-Agent");
+  assert.equal(res.headers.get("vary"), "Accept, User-Agent");
 });
 
 test("blocked 403 is uncacheable and varies on UA", async () => {

@@ -64,6 +64,9 @@ A few rules are enforced across variables rather than on one of them:
 | `CREDITS_API_TOKEN` | unset | Bearer token sent with that request, if your endpoint is not public. |
 | `CREDITS_FIXTURES` | `examples/meridian/credits.json` | Local JSON credits file used when `CREDITS_API_URL` is unset. |
 | `CRAWLER_POLICY_PATH` | `data/crawler-policy.json` | Per-crawler allow / charge / block policy. Absent or unreadable means classifier defaults, which is what every deploy has today. See [crawler-policy.md](./crawler-policy.md). |
+| `BUYER_GUIDE_URL` | the OSS paying guide | Where a 402 sends an agent to learn to pay: the body's `links.guide`, the `rel="help"` link and the x402 `error` field. Must be http(s). |
+| `BUYER_FUND_URL` | unset | Where a person sets up an agent wallet. Named in the 402 only when set. |
+| `BUYER_MCP_URL` | unset | An MCP server an agent can install to buy from this gate. Named in the 402 only when set. |
 
 ## Hardening
 

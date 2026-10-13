@@ -46,6 +46,25 @@ export {
 // established, so a buyer written against that library can price a naulon origin with no
 // naulon code. The signed obligation stays in the PAYMENT-REQUIRED header.
 export {
+  agentGuide,
+  URL_INLINE_MAX,
+  CIRCLE_GATEWAY_DOCS,
+  FOR_YOUR_USER_MAX,
+  guideLinks,
+  guideSteps,
+  HEADER_ERROR_MAX,
+  headerError,
+  networkLabel,
+  networkPhrase,
+  quoteGuideUrl,
+  type AgentGuide,
+  type AgentGuideInput,
+  type AgentGuideLinks,
+  type GuideStep,
+} from "./agentGuide.ts";
+export { FAILURE_DETAIL_MAX, paymentFailureDetail, type PaymentFailureDetail } from "./paymentRemedy.ts";
+export { negotiate402Format, render402, type Body402Format } from "./render402.ts";
+export {
   PAYMENT_BODY_CONTENT_TYPE,
   paymentRequiredBody,
   paymentRequiredBodyText,
@@ -59,11 +78,11 @@ export {
 export { headerSafe } from "./headerSafe.ts";
 
 // Pricing (the `quote` value; the `Quote` type comes through `./decide.ts`).
-export { quote, tollPrice } from "./pricing.ts";
+export { quote, tollPrice, type BuyerLinks } from "./pricing.ts";
 
 // Revocation, discoverability manifest. The licence signing key lives in `@naulon/tollgate`.
 export { revocations, type RevocationStore } from "./revocation.ts";
-export { X402_MANIFEST_PATH, buildX402Manifest, paymentLinkHeader, type MachineUrlBase, type X402Manifest, type PriceLeg, type BuyerTotal } from "./discoverability.ts";
+export { X402_MANIFEST_PATH, buildX402Manifest, manifestUrl, paymentLinkHeader, type MachineUrlBase, type X402Manifest, type PriceLeg, type BuyerTotal } from "./discoverability.ts";
 
 // In-app enforcement middleware (framework-agnostic). The Next adapter is `./next`.
 // `observation-sink` is the fourth of the four `./enforce/*` modules and was the one

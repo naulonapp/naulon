@@ -145,9 +145,14 @@ import {
   settledChargedMicro,
   totalChargedMicro,
   askMicroOf,
-  PAYMENT_BODY_CONTENT_TYPE,
-  paymentRequiredBodyText,
+  agentGuide,
+  guideLinks,
+  manifestUrl,
+  paymentFailureDetail,
+  paymentRequiredBody,
+  render402,
   headerSafe,
+  type BuyerLinks,
 } from "@naulon/enforce";
 import type { FreeReason } from "@naulon/shared";
 
@@ -1251,20 +1256,30 @@ export function createApp(
         await prefetched?.body?.cancel().catch(() => {});
         // Refused at verify means nothing was broadcast; any later failure may have moved money.
         await outcome(settled.stage === "verify" ? "unpaid" : "ambiguous");
-        // Carry WHY, classified. `settled.error` goes to the buyer in the 402 body below (they are
-        // entitled to the detail); the publisher's audit row gets the closed-set reason, so a
+        // Carry WHY, classified. `settled.error` goes to the buyer as `failure.detail` below (they
+        // are entitled to it); the publisher's audit row gets the closed-set reason, so a
         // counterparty address or leg amount can never reach it.
         emitObs(p.obs, "payment-failed", {
           kind: p.tollKind,
           price: usdc(p.quote.price),
           failureReason: classifyPaymentFailure(settled.error),
         });
+        // The buyer gets the classified reason, a remedy naming the network this toll settles on,
+        // and the facilitator's own words as `failure.detail`, beside the same offer to retry.
+        const askMicro = totalChargedMicro(p.legs);
+        const refusal = agentRefusal({
+          raw, host, base: viaIngress ? machineBase(host) : undefined,
+          quote: p.quote, tollKind: p.tollKind, legs: p.legs, askMicro,
+          failure: { reason: classifyPaymentFailure(settled.error), detail: settled.error ?? "" },
+        });
         return stampGateCacheHeaders(
-          c.json({ error: settled.error }, 402, {
+          c.body(refusal.text, 402, {
             [PAYMENT_REQUIRED_HEADER]: p.header,
             // Still the ASK, not a charge — settlement failed, so nothing was taken.
-            [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(totalChargedMicro(p.legs)),
-            Link: paymentLinkHeader(viaIngress ? machineBase(host) : undefined),
+            [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
+            "content-type": refusal.contentType,
+            Vary: "Accept",
+            Link: refusal.link,
           }),
           { noStore: true },
         );
@@ -1337,16 +1352,22 @@ export function createApp(
         // Still buyable over x402 when the licence cannot be used: the refusal carries the same
         // advertisement a 402 does. Never on `in_flight`, where a charge for this URL is running and
         // an x402 offer would invite a second payment for the same read.
+        // The RSL `error` stays first and unchanged, because an RSL client keys on it; the x402 guide
+        // follows it, so a crawler that cannot use its licence is told how to buy the read instead.
+        let guideKeys: Pick<ReturnType<typeof agentGuide>, "forYourUser" | "howToPay" | "links"> | undefined;
         if (verdict.status === 402 || verdict.error === "licence_server_unavailable") {
+          const base = viaIngress ? machineBase(host) : undefined;
+          const guide = guideFor(raw, host, base, p.quote, p.tollKind, p.legs);
+          guideKeys = { forYourUser: guide.forYourUser, howToPay: guide.howToPay, links: guide.links };
           headers[PAYMENT_REQUIRED_HEADER] = p.header;
           headers[CRAWLER_PRICE_HEADER] = formatCrawlerPrice(totalChargedMicro(p.legs));
-          headers.Link = paymentLinkHeader(viaIngress ? machineBase(host) : undefined);
+          headers.Link = paymentLinkHeader(base, guide.links.guide);
         }
         if (verdict.status === 503) headers["retry-after"] = "2";
         emitObs(p.obs, "denied", { kind: p.tollKind, price: usdc(p.quote.price) });
         return stampGateCacheHeaders(
           c.json(
-            { error: verdict.error, ...(verdict.description ? { error_description: verdict.description } : {}) },
+            { error: verdict.error, ...(verdict.description ? { error_description: verdict.description } : {}), ...guideKeys },
             verdict.status,
             headers,
           ),
@@ -1444,15 +1465,21 @@ export function createApp(
           return stampGateCacheHeaders(res, { noStore: true });
         }
         emitObs(d.obs, "denied", { kind: d.tollKind, price: usdc(d.quote.price), crawlerBudget: budget });
+        const refusal = agentRefusal({
+          raw, host, base: viaIngress ? machineBase(host) : undefined,
+          quote: d.quote, tollKind: d.tollKind, legs: d.legs, askMicro,
+        });
         return stampGateCacheHeaders(
           // The body is the ADVERTISEMENT — price, terms, where the real obligation is —
           // in the vendor-neutral shape a non-x402 crawler can read. It used to be zero
           // bytes, which told a buyer that does not decode PAYMENT-REQUIRED nothing at all.
-          c.body(paymentRequiredBodyText({ askMicro, publisher: host, endpoint: new URL(raw.url).pathname, tollKind: d.tollKind }), 402, {
+          c.body(refusal.text, 402, {
             [PAYMENT_REQUIRED_HEADER]: d.header,
             [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
-            "content-type": PAYMENT_BODY_CONTENT_TYPE,
-            Link: paymentLinkHeader(viaIngress ? machineBase(host) : undefined),
+            "content-type": refusal.contentType,
+            // The body is negotiated, so a cache between here and the buyer must key on Accept.
+            Vary: "Accept",
+            Link: refusal.link,
             "X-Naulon-Verdict": headerSafe(
               `agent (${d.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,
             ),
@@ -1501,6 +1528,51 @@ export const app = createApp();
 export function canonicalResource(host: string, pathname: string): string {
   const scheme = /^(localhost|127\.|\[::1\])/i.test(host) ? "http" : "https";
   return `${scheme}://${host.toLowerCase()}${pathname}`;
+}
+
+/** The agent guide for one tolled request: the page it names, and the links its quote carries. */
+function guideFor(
+  raw: Request,
+  host: string,
+  base: MachineUrlBase | undefined,
+  quote: { title: string; buyerLinks?: BuyerLinks },
+  tollKind: TollKind,
+  legs: Parameters<typeof agentGuide>[0]["legs"],
+) {
+  return agentGuide({
+    resource: { url: canonicalResource(host, new URL(raw.url).pathname), title: quote.title },
+    tollKind,
+    legs,
+    links: guideLinks(manifestUrl(base), undefined, quote.buyerLinks),
+  });
+}
+
+/**
+ * The agent-readable refusal both 402 branches answer with: the guide built from the legs this 402
+ * carries, the body, and the rendering the caller's `Accept` asked for. One function, so a refused
+ * payment and an unpaid read can never explain the toll differently.
+ */
+function agentRefusal(input: {
+  raw: Request;
+  host: string;
+  base: MachineUrlBase | undefined;
+  quote: { title: string; buyerLinks?: BuyerLinks };
+  tollKind: TollKind;
+  legs: Parameters<typeof agentGuide>[0]["legs"];
+  askMicro: bigint;
+  failure?: { reason: PaymentFailureReason; detail: string };
+}): { text: string; contentType: string; link: string } {
+  const endpoint = new URL(input.raw.url).pathname;
+  const guide = guideFor(input.raw, input.host, input.base, input.quote, input.tollKind, input.legs);
+  const body = paymentRequiredBody({
+    askMicro: input.askMicro,
+    publisher: input.host,
+    endpoint,
+    tollKind: input.tollKind,
+    guide,
+    ...(input.failure ? { failure: paymentFailureDetail(input.failure.reason, input.failure.detail, guide) } : {}),
+  });
+  return { ...render402(input.raw.headers.get("accept"), body), link: paymentLinkHeader(input.base, guide.links.guide) };
 }
 
 /** Set on every response served through an admitted crawler route, naming the site. */

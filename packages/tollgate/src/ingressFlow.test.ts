@@ -295,7 +295,9 @@ const ALPHA_Q = "?host=www.alpha.example";
 test("a 402 through the ingress links an absolute manifest URL that names the site", async () => {
   const res = await viaIngress("/essays/linked");
   assert.equal(res.status, 402);
-  assert.equal(res.headers.get("link"), `<${ABS}/.well-known/x402${ALPHA_Q}>; rel="payment"; type="application/json"`);
+  // The manifest is absolute and names the site; the buyer guide follows as rel="help".
+  assert.ok(res.headers.get("link")?.startsWith(`<${ABS}/.well-known/x402${ALPHA_Q}>; rel="payment"; type="application/json", <`));
+  assert.match(res.headers.get("link") ?? "", />; rel="help"$/);
 });
 
 test("the manifest answers for the site both through the CDN and by ?host=, with absolute URLs", async () => {
@@ -351,7 +353,7 @@ test("the gate's own routes answer on the ingress, and nothing else does without
 test("on any other host the 402 link and the manifest URLs stay relative", async () => {
   const res = await app.request("/essays/relative", { headers: { host: "p.example", "user-agent": GPTBOT } });
   assert.equal(res.status, 402);
-  assert.equal(res.headers.get("link"), '</.well-known/x402>; rel="payment"; type="application/json"');
+  assert.ok(res.headers.get("link")?.startsWith('</.well-known/x402>; rel="payment"; type="application/json", <'));
   const m = (await (await app.request("/.well-known/x402", { headers: { host: "p.example" } })).json()) as { license: Record<string, string> };
   assert.equal(m.license.verify, "/licenses/{jti}");
   assert.equal(m.license.jwks, "/.well-known/naulon-jwks.json");

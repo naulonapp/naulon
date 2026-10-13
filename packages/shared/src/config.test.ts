@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { configSchema, getConfig, resetConfig } from "./config.ts";
+import { configSchema, getConfig, OSS_BUYER_GUIDE_URL, resetConfig } from "./config.ts";
 
 function issuePaths(env: Record<string, string>): string[] {
   const r = configSchema.safeParse(env);
@@ -132,4 +132,35 @@ test("dual-mode + arc env vars parse and default to undefined", () => {
   const c2 = getConfig();
   assert.equal(c2.CIRCLE_API_KEY_TESTNET, "test-key");
   assert.equal(c2.ARC_RPC_URL, "https://arc.example/rpc");
+});
+
+test("the buyer guide defaults to the OSS guide and the fleet links are optional", () => {
+  const r = configSchema.safeParse({});
+  assert.ok(r.success);
+  assert.equal(r.data.BUYER_GUIDE_URL, OSS_BUYER_GUIDE_URL);
+  assert.equal(r.data.BUYER_FUND_URL, undefined);
+  assert.equal(r.data.BUYER_MCP_URL, undefined);
+});
+
+test("a fleet can point buyers at its own guide, wallet and MCP mount", () => {
+  const r = configSchema.safeParse({
+    BUYER_GUIDE_URL: "https://fleet.example/docs/for-buyers",
+    BUYER_FUND_URL: "https://fleet.example/buyer",
+    BUYER_MCP_URL: "https://gate.fleet.example/_naulon/mcp",
+  });
+  assert.ok(r.success);
+  assert.equal(r.data.BUYER_GUIDE_URL, "https://fleet.example/docs/for-buyers");
+  assert.equal(r.data.BUYER_FUND_URL, "https://fleet.example/buyer");
+  assert.equal(r.data.BUYER_MCP_URL, "https://gate.fleet.example/_naulon/mcp");
+});
+
+test("a malformed buyer URL fails loud at boot", () => {
+  assert.deepEqual([...new Set(issuePaths({ BUYER_GUIDE_URL: "not a url" }))], ["BUYER_GUIDE_URL"]);
+  assert.deepEqual([...new Set(issuePaths({ BUYER_FUND_URL: "javascript:alert(1)" }))], ["BUYER_FUND_URL"]);
+});
+
+test("a buyer URL that would corrupt a Link header is refused at boot", () => {
+  for (const bad of ["https://g.example/a>b", "https://g.example/a,b", "https://g.example/a;b", 'https://g.example/a"b', "https://g.example/a b"]) {
+    assert.deepEqual([...new Set(issuePaths({ BUYER_GUIDE_URL: bad }))], ["BUYER_GUIDE_URL"], bad);
+  }
 });

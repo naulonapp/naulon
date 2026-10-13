@@ -20,7 +20,6 @@ import {
   decide,
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
-  PAYMENT_LINK_HEADER,
   LICENSE_HEADER,
   type LicenseVerification,
 } from "../decide.ts";
@@ -35,10 +34,13 @@ import {
   askMicroOf,
   totalChargedMicro,
 } from "../crawlerPrice.ts";
-import { PAYMENT_BODY_CONTENT_TYPE, paymentRequiredBodyText } from "../paymentBody.ts";
-import { X402_MANIFEST_PATH } from "../discoverability.ts";
+import { PAYMENT_BODY_CONTENT_TYPE, paymentRequiredBody } from "../paymentBody.ts";
+import { manifestUrl, paymentLinkHeader, X402_MANIFEST_PATH } from "../discoverability.ts";
+import { agentGuide, guideLinks } from "../agentGuide.ts";
+import { paymentFailureDetail } from "../paymentRemedy.ts";
+import { render402 } from "../render402.ts";
 import { headerSafe } from "../headerSafe.ts";
-import { chargesReads, claimsIn, externalUrl, getConfig, referrerHost, rslResponseHeaders, type TollMode, type JwkSet } from "@naulon/shared";
+import { chargesReads, claimsIn, classifyPaymentFailure, externalUrl, getConfig, referrerHost, rslResponseHeaders, type PaymentFailureReason, type TollMode, type JwkSet } from "@naulon/shared";
 import { sdkClientIp, type ClientIpOption } from "./clientIp.ts";
 import { decidingClaim } from "../identity.ts";
 import { httpCrawlerRangesSource } from "./rangesSource.ts";
@@ -511,6 +513,54 @@ export function naulonMiddleware(
         : {}),
     });
 
+    // The agent-readable 402, the same one the hosted gate answers with: the guide built from this
+    // 402's legs, the body, and the rendering the caller's Accept asked for. A refused or
+    // unconfirmed payment carries `failure`, so the payer can retry from this response alone.
+    const freeUrl = (() => {
+      const r = new URL(resource);
+      return `${r.origin}${r.pathname}`;
+    })();
+    type Priced = Extract<typeof d, { kind: "payment-required" | "licence-presented" | "payment-presented" }>;
+    const refusal = (
+      p: Priced,
+      extras: { licence?: { error: string; description?: string }; failure?: { reason: PaymentFailureReason; detail: string } },
+      headers: Record<string, string> = {},
+    ): Response => {
+      const askMicro = askMicroOf(p.legs, p.quote);
+      const guide = agentGuide({
+        // The same external URL the signed 402 names (`resource`, proxy-aware), never raw `req.url`:
+        // behind a TLS-terminating proxy that would say http:// beside a signed https://.
+        resource: { url: freeUrl, title: p.quote.title },
+        tollKind: p.tollKind,
+        legs: p.legs,
+        links: guideLinks(manifestUrl(), undefined, p.quote.buyerLinks),
+      });
+      const body = paymentRequiredBody({
+        askMicro,
+        publisher: url.host,
+        endpoint: url.pathname,
+        tollKind: p.tollKind,
+        guide,
+        ...(extras.licence ? { licence: extras.licence } : {}),
+        ...(extras.failure ? { failure: paymentFailureDetail(extras.failure.reason, extras.failure.detail, guide) } : {}),
+      });
+      const out = render402(req.headers.get("accept"), body);
+      return new Response(out.text, {
+        status: 402,
+        headers: {
+          [PAYMENT_REQUIRED_HEADER]: p.header,
+          [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
+          "content-type": out.contentType,
+          // Never stored, and keyed on both inputs that shape it: who asked (a human reads free)
+          // and how they asked (the body is negotiated). The hosted gate stamps the same pair.
+          "cache-control": "no-store",
+          Vary: "Accept, User-Agent",
+          Link: paymentLinkHeader(undefined, guide.links.guide),
+          ...headers,
+        },
+      });
+    };
+
     // The 402 advertisement, shared by a read with no payment and a licence that did not permit it.
     type Unpaid = Extract<typeof d, { kind: "payment-required" | "licence-presented" }>;
     const paymentRequired = (unpaid: Unpaid, verdict?: string, licence?: { error: string; description?: string }): MiddlewareResult => {
@@ -538,21 +588,11 @@ export function naulonMiddleware(
       // stored: a cached copy would be replayed to agents after the site starts charging.
       if (observing) return { response: null, setHeaders: { "cache-control": "no-store" } };
       return {
-        response: new Response(
-          paymentRequiredBodyText({ askMicro, publisher: url.host, endpoint: url.pathname, tollKind: unpaid.tollKind, ...(licence ? { licence } : {}) }),
-          {
-            status: 402,
-            headers: {
-              [PAYMENT_REQUIRED_HEADER]: unpaid.header,
-              [CRAWLER_PRICE_HEADER]: formatCrawlerPrice(askMicro),
-              "content-type": PAYMENT_BODY_CONTENT_TYPE,
-              Link: PAYMENT_LINK_HEADER,
-              "X-Naulon-Verdict": headerSafe(
-                verdict ?? `agent (${unpaid.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,
-              ),
-            },
-          },
-        ),
+        response: refusal(unpaid, licence ? { licence } : {}, {
+          "X-Naulon-Verdict": headerSafe(
+            verdict ?? `agent (${unpaid.obs.classifyReason})${budget ? `; ${budget} crawler budget` : ""}`,
+          ),
+        }),
       };
     };
 
@@ -728,7 +768,7 @@ export function naulonMiddleware(
         } catch {
           // /verify unreachable → refuse this paid attempt (fail-closed on the
           // payment leg: we can't confirm settlement, so we can't serve paid).
-          return { response: new Response(JSON.stringify({ error: "verify unreachable" }), { status: 402, headers: { "content-type": "application/json" } }) };
+          return { response: refusal(d, { failure: { reason: "settlement_failed", detail: "verify unreachable" } }) };
         }
 
         if (status === 200 && body.ok) {
@@ -743,12 +783,9 @@ export function naulonMiddleware(
           if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
           return { response: null, setHeaders };
         }
-        return {
-          response: new Response(JSON.stringify({ error: body.error ?? "payment rejected" }), {
-            status: 402,
-            headers: { "content-type": "application/json" },
-          }),
-        };
+        // Off the wire unchecked: anything but a string is treated as no reason at all.
+        const reason = typeof body.error === "string" && body.error ? body.error : "payment rejected";
+        return { response: refusal(d, { failure: { reason: classifyPaymentFailure(reason), detail: reason } }) };
       }
     }
   };

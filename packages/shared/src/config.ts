@@ -8,6 +8,31 @@ import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
 import { FLEET_DIRECTORY_URL, FLEET_VERIFY_URL } from "./fleet.ts";
 
+/** The OSS guide to paying any naulon 402 from any x402 client. A fleet overrides it with its own. */
+export const OSS_BUYER_GUIDE_URL = "https://naulonapp.github.io/naulon/buying/#paying-from-any-x402-client";
+
+/**
+ * Whether a URL is safe to hand to a stranger's agent, and through it to a person, from a 402:
+ * http(s) only, because a bare URL check accepts `javascript:` and `data:`, which an HTML 402 would
+ * render as a link; and free of `<`, `>`, `,`, `;`, a quote and whitespace, because it is written
+ * verbatim into `Link: <…>; rel="help"`, where those would corrupt the header or make the 402 throw.
+ * One rule for boot config and for links that arrive on a quote from another process.
+ */
+export function isLinkSafeWebUrl(v: unknown): v is string {
+  if (typeof v !== "string" || !/^https?:\/\//i.test(v) || /[<>,;"\s]/.test(v)) return false;
+  try {
+    new URL(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const webUrl = z
+  .string()
+  .url()
+  .refine(isLinkSafeWebUrl, { message: "must be an http(s) URL with no < > , ; \" or whitespace (it is written into a Link header)" });
+
 // Find the repo root by walking UP from the cwd until we hit the workspace root
 // (marked by package-lock.json). We anchor on cwd, not import.meta.url, because
 // this package is symlinked into node_modules/@naulon/shared — under
@@ -315,6 +340,13 @@ export const configSchema = z.object({
   // page verifies a self-hosted gate's records too — which is why it is the default here rather
   // than something a self-hoster must stand up before their citations carry a link.
   VERIFY_PAGE_URL: z.string().url().default(FLEET_VERIFY_URL),
+  // Where an agent that meets a 402 learns to pay. Named in the 402 body, its rel="help" link and
+  // the x402 `error` field, so a buyer that has never heard of naulon has one place to start.
+  BUYER_GUIDE_URL: webUrl.default(OSS_BUYER_GUIDE_URL),
+  // Optional: where a person sets up an agent wallet, and an MCP mount an agent can install. Unset
+  // means the 402 does not mention them.
+  BUYER_FUND_URL: webUrl.optional(),
+  BUYER_MCP_URL: webUrl.optional(),
   // RSS/sitemap discovery. If set, the agent discovers from the publisher's live
   // feed instead of a CATALOG_URL. Precedence: RSS_URL > PUBLISHER_URL > CATALOG_URL,
   // then selectSource() throws — there is no bundled-demo fallback. rssSource reads
