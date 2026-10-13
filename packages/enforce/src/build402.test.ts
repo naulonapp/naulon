@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { activeNetwork, usdc, walletAddress } from "@naulon/shared";
-import { buildRequirements } from "./build402.ts";
+import { build402, buildRequirements } from "./build402.ts";
 import type { Quote } from "./pricing.ts";
 
 const WALLET = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -36,4 +36,21 @@ test("buildRequirements falls back to activeNetwork when the quote omits network
   const r = buildRequirements(quote());
   assert.equal(r.network, activeNetwork().network); // fleet default (SETTLEMENT_NETWORK)
   assert.equal(r.asset, activeNetwork().usdc);
+});
+
+// The mode a quote was priced under travels with it, like `network`: a publisher's own runtime
+// builds the 402 from a quote the control plane priced, and its local env defaults to mock.
+function acceptsOf(header: string): Array<{ extra: Record<string, unknown> }> {
+  return (JSON.parse(Buffer.from(header, "base64").toString("utf8")) as { accepts: Array<{ extra: Record<string, unknown> }> }).accepts;
+}
+
+test("build402 issues no nonce for a quote priced in gateway mode, whatever the local env says", () => {
+  const built = build402(quote({ paymentMode: "gateway" }), "https://site.test/essays/x", 1_000);
+  for (const a of acceptsOf(built.header)) assert.equal("nonce" in a.extra, false);
+  for (const leg of built.legs) assert.equal("nonce" in leg.requirements.extra, false);
+});
+
+test("build402 issues a nonce for a quote priced in mock mode", () => {
+  const built = build402(quote({ paymentMode: "mock" }), "https://site.test/essays/x", 1_000);
+  for (const a of acceptsOf(built.header)) assert.equal(typeof a.extra.nonce, "string");
 });

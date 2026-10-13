@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   activeNetwork,
+  getConfig,
   usdc,
   walletAddress,
   type ArticleCredits,
@@ -159,6 +160,12 @@ test("quote stamps the pricing runtime's active network when the publisher decla
   assert.ok(q);
   assert.equal(q.network, activeNetwork().chainName);
   assert.ok(q.network !== undefined, "a quote must never leave the chain to the reader to guess");
+});
+
+test("quote stamps the pricing runtime's payment mode", async () => {
+  const q = await quote(publisher(), "on-passage", "read");
+  assert.ok(q);
+  assert.equal(q.paymentMode, getConfig().PAYMENT_MODE);
 });
 
 test("an explicit per-tenant chain still beats the runtime default", async () => {
