@@ -72,7 +72,7 @@ A few rules are enforced across variables rather than on one of them:
 
 | Variable | Default | What it does |
 |---|---|---|
-| `TOLLGATE_SECRET` | unset | HMAC secret signing 402 payment nonces. Unset mints an ephemeral one at boot: fine for a single instance, wrong for several, and it invalidates outstanding nonces on restart. |
+| `TOLLGATE_SECRET` | unset | HMAC secret signing 402 payment nonces. Only mock mode signs nonces. Unset or empty mints an ephemeral one on the first 402: fine for a single instance, wrong for several, and it invalidates outstanding nonces on restart. |
 | `NONCE_TTL_SECONDS` | `300` | How long an issued 402 nonce stays valid. This is also the replay window. |
 | `RATE_LIMIT_RPM` | `120` | Sustained per-client request ceiling. `0` disables rate limiting. |
 | `RATE_LIMIT_BURST` | `40` | Short bursts absorbed above the sustained rate. |

@@ -36,7 +36,7 @@ const { resetConfig, usdc, walletAddress, NETWORKS, verifyLicense, licenseGrant 
 type CitationLicenseClaims = Extract<ReturnType<typeof verifyLicense>, { ok: true }>["claims"];
 resetConfig();
 const { settleAndAttribute } = await import("./settle.ts");
-const { licensing } = await import("@naulon/enforce");
+const { licensing } = await import("./licensing.ts");
 const { bindingOf, issueNonce } = await import("@naulon/enforce");
 
 const PAYEE = walletAddress("0x1111111111111111111111111111111111111111");

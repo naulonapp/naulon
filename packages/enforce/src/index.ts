@@ -78,8 +78,7 @@ export { headerSafe } from "./headerSafe.ts";
 // Pricing (the `quote` value; the `Quote` type comes through `./decide.ts`).
 export { quote, tollPrice } from "./pricing.ts";
 
-// Licensing, revocation, discoverability manifest.
-export { licensing, type Licensing } from "./license.ts";
+// Revocation, discoverability manifest. The licence signing key lives in `@naulon/tollgate`.
 export { revocations, type RevocationStore } from "./revocation.ts";
 export { X402_MANIFEST_PATH, buildX402Manifest, manifestUrl, paymentLinkHeader, type MachineUrlBase, type X402Manifest, type PriceLeg, type BuyerTotal } from "./discoverability.ts";
 

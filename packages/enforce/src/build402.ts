@@ -153,7 +153,8 @@ export function build402(quote: Quote, resourceUrl: string, now: number, routeTe
   // echoes it back, we consume it). Gateway mode needs none — the deposit-backed
   // settle is the replay guard. Mutates each leg's requirements in place (leg 0 is
   // `requirements`, so the returned value keeps its nonce, as before).
-  if (cfg.PAYMENT_MODE === "mock") {
+  const mock = (quote.paymentMode ?? cfg.PAYMENT_MODE) === "mock";
+  if (mock) {
     for (const leg of legs) {
       leg.requirements.extra = { ...leg.requirements.extra, nonce: issueNonce(bindingOf(leg.requirements), now) };
     }
@@ -204,7 +205,7 @@ export function build402(quote: Quote, resourceUrl: string, now: number, routeTe
           role: l.role,
           payTo: l.requirements.payTo,
           amount: l.requirements.amount,
-          ...(cfg.PAYMENT_MODE === "mock" ? { nonce: l.requirements.extra.nonce } : {}),
+          ...(mock ? { nonce: l.requirements.extra.nonce } : {}),
         })),
       },
     };
