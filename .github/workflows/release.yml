@@ -12,9 +12,11 @@ name: Release (npm)
 # the ones already published (e.g. re-tagging when only wayfarer-mcp bumped).
 #
 # Trigger: push a tag like `v0.2.0`, or run manually (workflow_dispatch).
-# Auth: repo secret NPM_TOKEN (an npm automation token with publish rights on the
-# @naulon scope). setup-node wires it into ~/.npmrc via NODE_AUTH_TOKEN — the token
-# is never echoed. Provenance is on (public repo → verifiable supply-chain link).
+# Auth: npm trusted publishing. Each published package names this repo and this
+# workflow file as its trusted publisher on npmjs.com, and `npm publish` trades the
+# job's OIDC token (id-token: write) for a short-lived publish credential, so there is
+# no long-lived token to store or expire. Provenance is on (public repo, verifiable
+# supply-chain link).
 
 on:
   push:
@@ -23,7 +25,7 @@ on:
 
 permissions:
   contents: write # create the GitHub Release + attach tarballs
-  id-token: write # required for npm provenance
+  id-token: write # npm trusted publishing and provenance
 
 jobs:
   publish:
@@ -213,7 +215,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: "https://registry.npmjs.org"
+
+      # Trusted publishing needs npm 11.5.1 or later; Node 22 ships npm 10.
+      - name: Use an npm that can publish over OIDC
+        run: npm install -g npm@^11.5.1 && npm --version
 
       - name: Install dependencies
         run: npm ci
@@ -289,8 +294,6 @@ jobs:
           # Dependency order matters: a package published before one it depends on would name a
           # version nobody can install yet.
           for pkg in $PUBLISHED_PACKAGES; do publish "$pkg"; done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Second home for the exact build artifacts: a GitHub Release with the
       # published .tgz attached (identical to what npm serves). npm stays the
