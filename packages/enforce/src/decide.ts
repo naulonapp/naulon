@@ -55,9 +55,10 @@ import type { FreeReason } from "@naulon/shared";
  * this process. In proxy mode the gate mints AND verifies with one local key, so the
  * module-global `licensing` (from `LICENSE_SIGNING_KEY`) is both. But an IN-APP
  * enforcer (API mode: the publisher runs `decide()` in its own runtime and settles
- * money via the hosted gate's `/verify`) receives licenses SIGNED BY THE GATE — its
- * local `licensing` is `null` (a consuming site sets no signing key), so without this
- * seam `licenseEntitlesRead` fails closed and every licensed re-read 402s. Injecting
+ * money via the hosted gate's `/verify`) receives licenses SIGNED BY THE GATE, while its
+ * local `licensing` is either `null` or an ephemeral key this runtime generated (with
+ * `LICENSES_ENABLED` on by default and no `LICENSE_SIGNING_KEY`). Neither verifies a gate
+ * licence, so without this seam every licensed re-read 402s. Injecting
  * the gate's published JWKS (`/.well-known/naulon-jwks.json`) + the issuer the gate
  * stamped lets the in-app enforcer verify a gate-minted license locally. Absent ⇒ the
  * module-global `licensing` path, byte-identical to before (proxy mode / the gate itself).
@@ -306,8 +307,8 @@ export interface DecideInput {
   /** Web-Bot-Auth options (e.g. `allowInsecureHttp` on a dev/plaintext origin). */
   botAuthOpts?: BotAuthOptions;
   /** API mode — verify a re-read license against the MINTING gate's JWKS + issuer
-   *  instead of the local `licensing` (which is null in a consuming site, so every
-   *  licensed re-read would otherwise 402). Absent ⇒ proxy-mode behavior, unchanged. */
+   *  instead of the local `licensing`, which a consuming site never holds the gate's key in, so
+   *  every licensed re-read would otherwise 402. Absent ⇒ proxy-mode behavior, unchanged. */
   licenseVerification?: LicenseVerification;
   /** The gate admitted this request through an authenticated crawler-route ingress. */
   viaIngress?: boolean;
