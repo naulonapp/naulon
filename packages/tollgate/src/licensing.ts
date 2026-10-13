@@ -4,6 +4,10 @@
  * an ephemeral one with a warning) and exposes the JWK Set the gate publishes at
  * /.well-known/naulon-jwks.json. `null` when LICENSES_ENABLED=false.
  *
+ * It lives in the gate, not in `@naulon/enforce`, because only a deployment that MINTS
+ * licences may hold the key. A publisher's own runtime only verifies, against the keys the
+ * minting gate publishes, so the package it installs carries no signing key at all.
+ *
  * Minting + the re-read entitlement (which use `licensing.key`) land in P2; P1
  * publishes the public key so verifiers can be wired up first.
  */

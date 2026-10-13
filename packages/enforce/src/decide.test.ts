@@ -105,12 +105,10 @@ test("observed variants carry obs facts for the caller's audit plane", async () 
 });
 
 // ── API-mode license re-read: verify against the MINTING gate's JWKS ─────────────
-// The bug (MCP-HELD-1): an in-app enforcer (API mode) receives a license SIGNED BY THE
-// HOSTED GATE, but licenseEntitlesRead verified it against the local module-global
-// `licensing` — which is null in a consuming site (no LICENSE_SIGNING_KEY). So every
-// licensed re-read fell through to a fresh 402, re-charging a paid reader. The
-// `licenseVerification` seam lets the in-app decide() verify a gate-minted license
-// against the gate's published JWKS + the issuer it stamped.
+// An in-app enforcer (API mode) receives a licence SIGNED BY THE HOSTED GATE and holds no
+// signing key of its own, so the only thing it can check that licence against is what the
+// caller hands decide(): the gate's published JWKS and the issuer it stamped. With nothing
+// handed in, every presented licence is refused as `no_verifier`, never silently.
 
 const GATE_KEY = loadSigningKey(); // stands in for the hosted gate's LICENSE_SIGNING_KEY
 const GATE_JWKS = jwksOf([GATE_KEY]); // what /.well-known/naulon-jwks.json serves
@@ -149,9 +147,9 @@ const NOW = REAL_NOW; // decide's build402 clock (license verify uses the real c
 const agentReread = (jws: string) =>
   new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", [LICENSE_HEADER]: jws } });
 
-test("API mode: a gate-minted license WITHOUT the verifier 402s (the bug — local licensing can't verify it)", async () => {
-  // No licenseVerification, and the test process has no LICENSE_SIGNING_KEY → licensing is
-  // null → the license cannot be verified here → falls through to payment-required.
+test("API mode: a gate-minted license WITHOUT a verifier 402s, refused as no_verifier", async () => {
+  // No licenseVerification: decide() has no key to fall back to, so the licence cannot be
+  // verified here and the read falls through to payment-required.
   const d = await decide({
     raw: agentReread(gateLicense(GATE_ISS)),
     host: "h",

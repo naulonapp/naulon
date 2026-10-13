@@ -150,17 +150,19 @@ test("licence verification is ON when the option is absent: an in-app site has n
   assert.equal(out.response, null, "a reader who paid re-reads free without the site opting in");
 });
 
-test("licenseVerification: false checks licences against this runtime's own key, and fetches nothing", async () => {
-  let fetches = 0;
-  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
-    if (String(input).includes("naulon-jwks.json")) fetches++;
-    return new Response(JSON.stringify(GATE_JWKS), { status: 200 });
-  }) as unknown as typeof fetch;
-  const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: false });
-  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": mintFor("x") } }));
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(out.response?.status, 402, "the gate's licence does not verify against a key this runtime made up");
-  assert.equal(fetches, 0);
+test("the package a publisher installs creates no licence signing key and exports none", async () => {
+  // A publisher's runtime only verifies. Loading the package with licensing on (the default) and
+  // no LICENSE_SIGNING_KEY used to mint an ephemeral key and tell the publisher to configure one.
+  const { spawnSync } = await import("node:child_process");
+  const indexPath = new URL("../index.ts", import.meta.url).pathname;
+  const run = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "--input-type=module", "-e", `const m = await import(${JSON.stringify(indexPath)}); process.stdout.write(String("licensing" in m));`],
+    { env: { PATH: process.env.PATH, NODE_ENV: "test", PAYMENT_MODE: "mock" }, encoding: "utf8" },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "false", "no signing key is exported");
+  assert.doesNotMatch(run.stderr, /LICENSE_SIGNING_KEY/, "and none is generated at load");
 });
 
 // The boot probe exists because the failure it catches is otherwise invisible: an API-mode site

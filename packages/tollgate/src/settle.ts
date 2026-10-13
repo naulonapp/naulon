@@ -28,7 +28,8 @@ import {
   type LicenseTerm,
   type PublisherConfig,
 } from "@naulon/shared";
-import { licensing, type Quote, type SettlementLegReq } from "@naulon/enforce";
+import type { Quote, SettlementLegReq } from "@naulon/enforce";
+import { licensing } from "./licensing.ts";
 import { record } from "./eventLog.ts";
 import { emitSettlementWebhook } from "./webhookSink.ts";
 import { verifyAndSettle } from "./x402.ts";

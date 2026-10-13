@@ -108,12 +108,11 @@ export interface NaulonMiddlewareOptionsBase {
    * hosted gate, so this in-app enforcer must verify it against the GATE's published
    * JWKS — not its own (absent) signing key. Without this, `decide()` cannot verify a
    * gate-minted license and every licensed re-read 402s (re-charging a paid reader).
-   * On by default (JWKS URL derived from `verifyUrl`, issuer from `publisher.licenseIdentity`):
-   * an in-app site has no signing key of its own, so leaving it off re-charges every paid reader.
-   * `false` verifies against this runtime's own `LICENSE_SIGNING_KEY` instead, which is right only
-   * for a runtime that also mints the licences.
+   * Always on, and these only tune it (JWKS URL derived from `verifyUrl`, issuer from
+   * `publisher.licenseIdentity`): an in-app site holds no signing key, so the minting gate's
+   * published keys are the only thing a licence can be checked against.
    */
-  licenseVerification?: false | {
+  licenseVerification?: {
     /** The gate's JWKS URL. Default: `${new URL(verifyUrl).origin}/.well-known/naulon-jwks.json`. */
     jwksUrl?: string;
     /** The `iss`/`aud` the gate stamps for this publisher. Default: `publisher.licenseIdentity`. */
@@ -287,9 +286,8 @@ export function naulonMiddleware(
   // API-mode license verification: a cached fetcher for the minting gate's JWKS. Built
   // once; each request reuses the cached keys until the TTL lapses, then refetches. On a
   // refetch failure the last-good JWKS is kept (stale-if-error) so a gate hiccup never
-  // turns a paid re-read into a 402. Undefined only when the caller passes `false`.
+  // turns a paid re-read into a 402.
   const resolveVerification = (() => {
-    if (opts.licenseVerification === false) return undefined;
     const lv = opts.licenseVerification ?? {};
     const jwksUrl = lv.jwksUrl ?? `${new URL(opts.verifyUrl).origin}/.well-known/naulon-jwks.json`;
     const ttl = lv.cacheTtlMs ?? 600_000;
@@ -478,7 +476,7 @@ export function naulonMiddleware(
     const armed = new Set(remoteDoc?.identity?.armed ?? []);
     // Only a UA that names a crawler reaches the ranges or the address, so a person costs nothing.
     const claimsCrawler = claimsIn(req.headers.get("user-agent") ?? "").length > 0;
-    if (claimsCrawler || req.headers.get(LICENSE_HEADER)) resolveVerification?.preflight();
+    if (claimsCrawler || req.headers.get(LICENSE_HEADER)) resolveVerification.preflight();
     const publisher = resolvePublisher(opts.publisher, remote);
     if (!publisher) {
       // Neither a control-plane document nor a local floor: nothing is in scope, so there
@@ -489,7 +487,7 @@ export function naulonMiddleware(
     // Observing: every decision runs and is reported, but no read is charged.
     const observing = !chargesReads(publisher as { tollMode?: TollMode });
     const licenseVerification =
-      resolveVerification && req.headers.get(LICENSE_HEADER)
+      req.headers.get(LICENSE_HEADER)
         ? await resolveVerification.resolve((publisher as { licenseIdentity?: string }).licenseIdentity)
         : undefined;
     const d = await decide({

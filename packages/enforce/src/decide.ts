@@ -22,7 +22,6 @@ import { classifyWithIdentity, type IdentityInput, type IdentityResult } from ".
 import { verifyBotAuth, type RequestFacts, type BotAuthOptions, type VerifiedAgent } from "./botAuth.ts";
 import { build402, PAYMENT_SIGNATURE_HEADER, type SettlementLegReq } from "./build402.ts";
 import type { Quote } from "./pricing.ts";
-import { licensing } from "./license.ts";
 import { revocations } from "./revocation.ts";
 import { verifyPopProof } from "./pop.ts";
 import { matchTarget } from "@naulon/sdk/rsl";
@@ -51,17 +50,13 @@ import {
 import type { FreeReason } from "@naulon/shared";
 
 /**
- * How a re-read license is verified when the deployment MINTING the license is not
- * this process. In proxy mode the gate mints AND verifies with one local key, so the
- * module-global `licensing` (from `LICENSE_SIGNING_KEY`) is both. But an IN-APP
- * enforcer (API mode: the publisher runs `decide()` in its own runtime and settles
- * money via the hosted gate's `/verify`) receives licenses SIGNED BY THE GATE, while its
- * local `licensing` is either `null` or an ephemeral key this runtime generated (with
- * `LICENSES_ENABLED` on by default and no `LICENSE_SIGNING_KEY`). Neither verifies a gate
- * licence, so without this seam every licensed re-read 402s. Injecting
- * the gate's published JWKS (`/.well-known/naulon-jwks.json`) + the issuer the gate
- * stamped lets the in-app enforcer verify a gate-minted license locally. Absent ⇒ the
- * module-global `licensing` path, byte-identical to before (proxy mode / the gate itself).
+ * The keys a re-read licence is checked against, and the issuer it must name. Always
+ * supplied by the caller, because only the caller knows who minted the licence: the gate
+ * passes its own key's JWKS and the publisher's `licenseIdentity`; an in-app enforcer (the
+ * publisher's own runtime, which mints nothing) passes the JWKS the minting gate publishes at
+ * `/.well-known/naulon-jwks.json` and the issuer that gate stamped. There is no fallback to a
+ * key this process happens to hold: checking a gate's licence against a key the runtime made
+ * up refuses every valid one and charges the reader twice.
  */
 export interface LicenseVerification {
   /** The minting authority's public keys — the gate's JWKS, fetched from its well-known. */
@@ -130,24 +125,15 @@ export async function licenseEntitlesRead(
   slug: string,
   requestedKind: TollKind,
   req: Request,
-  identity: string,
-  /** Verify against the MINTING gate's JWKS + issuer instead of the local `licensing`
-   *  (API mode — the license was signed by the hosted gate, not this process). Absent
-   *  ⇒ the module-global `licensing` + `identity`, unchanged (proxy mode / the gate). */
-  verification?: LicenseVerification,
+  /** The minting deployment's keys and issuer. Absent ⇒ nothing here can verify a licence. */
+  verification: LicenseVerification | undefined,
 ): Promise<LicenceCheck> {
-  // Effective verifier: the injected gate JWKS + issuer (API mode) wins; else the local
-  // signing key's JWKS + the publisher identity (proxy mode). No local key AND no injected
-  // verifier ⇒ nothing can verify a license here.
-  //
-  // Still fails closed; no longer fails silent. This branch is a DEPLOYMENT fault, not a
-  // buyer fault, and it refuses valid licences wholesale — see {@link LicenceRefusal}.
-  const jwks = verification?.jwks ?? licensing?.jwks;
-  if (!jwks) return refused("no_verifier");
-  // The identity that pins BOTH the license iss/aud AND the holder-of-key proof to the
-  // minting deployment. In API mode this is the gate's stamped issuer, not the in-app
-  // publisher default — using the wrong one is exactly the mismatch that 402s a valid license.
-  const expected = verification?.issuer ?? identity;
+  // Fails closed, and not silently: this branch is a DEPLOYMENT fault, not a buyer fault, and
+  // it refuses valid licences wholesale — see {@link LicenceRefusal}.
+  if (!verification) return refused("no_verifier");
+  // `expected` pins BOTH the licence iss/aud AND the holder-of-key proof to the minting
+  // deployment. Using any other identity is exactly the mismatch that 402s a valid licence.
+  const { jwks, issuer: expected } = verification;
   const r = verifyLicense(jws, {
     now: Date.now(),
     expectedIssuer: expected,
@@ -306,9 +292,8 @@ export interface DecideInput {
   ) => Promise<Quote | null | undefined>;
   /** Web-Bot-Auth options (e.g. `allowInsecureHttp` on a dev/plaintext origin). */
   botAuthOpts?: BotAuthOptions;
-  /** API mode — verify a re-read license against the MINTING gate's JWKS + issuer
-   *  instead of the local `licensing`, which a consuming site never holds the gate's key in, so
-   *  every licensed re-read would otherwise 402. Absent ⇒ proxy-mode behavior, unchanged. */
+  /** The keys and issuer a presented licence is checked against (see {@link LicenseVerification}).
+   *  Absent ⇒ every presented licence is refused as `no_verifier`, and said so loudly. */
   licenseVerification?: LicenseVerification;
   /** The gate admitted this request through an authenticated crawler-route ingress. */
   viaIngress?: boolean;
@@ -481,7 +466,6 @@ export async function decide(input: DecideInput): Promise<Decision> {
       slug,
       tollKind,
       raw,
-      publisher.licenseIdentity,
       input.licenseVerification,
     );
     if (check.ok) return { kind: "reread", tollKind, obs };
@@ -494,7 +478,7 @@ export async function decide(input: DecideInput): Promise<Decision> {
       console.error(
         "[naulon] a Citation License was presented but this deployment has NO verifier — " +
           "every valid licence will be refused and every agent charged twice. " +
-          "In API mode set `licenseVerification` and ensure the config carries `licenseIdentity`.",
+          "Check that this runtime can fetch the minting gate's JWKS and that its config carries `licenseIdentity`.",
       );
     }
   }
