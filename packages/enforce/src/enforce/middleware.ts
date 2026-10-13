@@ -108,8 +108,9 @@ export interface NaulonMiddlewareOptionsBase {
    * hosted gate, so this in-app enforcer must verify it against the GATE's published
    * JWKS — not its own (absent) signing key. Without this, `decide()` cannot verify a
    * gate-minted license and every licensed re-read 402s (re-charging a paid reader).
-   * Pass `{}` to enable with defaults (JWKS URL derived from `verifyUrl`, issuer from
-   * `publisher.licenseIdentity`). Absent ⇒ proxy-mode behavior, unchanged.
+   * Always on, and these only tune it (JWKS URL derived from `verifyUrl`, issuer from
+   * `publisher.licenseIdentity`): an in-app site holds no signing key, so the minting gate's
+   * published keys are the only thing a licence can be checked against.
    */
   licenseVerification?: {
     /** The gate's JWKS URL. Default: `${new URL(verifyUrl).origin}/.well-known/naulon-jwks.json`. */
@@ -285,10 +286,9 @@ export function naulonMiddleware(
   // API-mode license verification: a cached fetcher for the minting gate's JWKS. Built
   // once; each request reuses the cached keys until the TTL lapses, then refetches. On a
   // refetch failure the last-good JWKS is kept (stale-if-error) so a gate hiccup never
-  // turns a paid re-read into a 402. Absent option ⇒ resolver is undefined (proxy mode).
+  // turns a paid re-read into a 402.
   const resolveVerification = (() => {
-    const lv = opts.licenseVerification;
-    if (!lv) return undefined;
+    const lv = opts.licenseVerification ?? {};
     const jwksUrl = lv.jwksUrl ?? `${new URL(opts.verifyUrl).origin}/.well-known/naulon-jwks.json`;
     const ttl = lv.cacheTtlMs ?? 600_000;
     let cached: JwkSet | undefined;
@@ -297,29 +297,45 @@ export function naulonMiddleware(
     // from a literal at mount time. Pinning iss/aud to a hand-written constant is how a
     // licence stops verifying the day the control plane restyles what it stamps — and the
     // symptom is a paid reader being charged twice, which nobody reports as a bug.
-    // Boot preflight. `licenseVerification` being CONFIGURED is a statement that this site
-    // intends to honour paid re-reads; if the keys it needs are unreachable, every one of them
-    // 402s and the publisher's buyers are silently charged twice. One fetch at startup turns
-    // that from an invoice-time discovery into a deploy-time log line. Never throws: a JWKS
-    // blip must not take down a publisher's site (the per-request path is stale-if-error).
-    void (async () => {
-      try {
-        const res = await doFetch(jwksUrl, { headers: { accept: "application/json" } });
-        if (!res.ok) {
-          console.error(`[naulon] license verification preflight FAILED: ${jwksUrl} -> HTTP ${res.status}. Paid re-reads will be refused.`);
-          return;
+
+    // One JWKS fetch in flight at a time, so the first request's probe and a re-read arriving with
+    // it share the round trip. Resolves to null on success, or the reason it failed.
+    let inflight: Promise<string | null> | undefined;
+    const refresh = (): Promise<string | null> => {
+      inflight ??= (async (): Promise<string | null> => {
+        try {
+          const res = await doFetch(jwksUrl, { headers: { accept: "application/json" } });
+          if (!res.ok) return `-> HTTP ${res.status}`;
+          cached = (await res.json()) as JwkSet;
+          fetchedAt = clock();
+          return null;
+        } catch (err) {
+          return `unreachable (${err instanceof Error ? err.message : String(err)})`;
         }
-        cached = (await res.json()) as JwkSet;
-        fetchedAt = clock();
-      } catch (err) {
-        console.error(
-          `[naulon] license verification preflight FAILED: ${jwksUrl} unreachable (${err instanceof Error ? err.message : String(err)}). Paid re-reads will be refused.`,
-        );
-      }
-    })();
+      })().finally(() => {
+        inflight = undefined;
+      });
+      return inflight;
+    };
+
+    // Preflight. If the keys this site needs are unreachable, every paid re-read 402s and the
+    // publisher's buyers are silently charged twice; one fetch turns that from an invoice-time
+    // discovery into a log line. It runs on the first request that could carry a re-read (a crawler,
+    // or anything presenting a licence), so a person still costs nothing, and never at construction: an edge
+    // runtime (Cloudflare Workers) refuses I/O outside a request handler, and a probe that failed
+    // for that reason would report a healthy JWKS as unreachable on every cold start. Never
+    // throws: a JWKS blip must not take down a publisher's site (the lookup is stale-if-error).
+    let probed = false;
+    const preflight = (): void => {
+      if (probed) return;
+      probed = true;
+      void refresh().then((failure) => {
+        if (failure) console.error(`[naulon] license verification preflight FAILED: ${jwksUrl} ${failure}. Paid re-reads will be refused.`);
+      });
+    };
 
     let warnedMissingIdentity = false;
-    return async (issuer: string | undefined): Promise<LicenseVerification | undefined> => {
+    const resolve = async (issuer: string | undefined): Promise<LicenseVerification | undefined> => {
       // Without an issuer we cannot pin iss/aud, so verification would be unsafe — skip
       // (the re-read falls through to the normal 402 path, same as an unconfigured mount).
       //
@@ -336,20 +352,11 @@ export function naulonMiddleware(
         }
         return undefined;
       }
-      const fresh = cached && clock() - fetchedAt < ttl;
-      if (!fresh) {
-        try {
-          const res = await doFetch(jwksUrl, { headers: { accept: "application/json" } });
-          if (res.ok) {
-            cached = (await res.json()) as JwkSet;
-            fetchedAt = clock();
-          }
-        } catch {
-          // keep `cached` (stale-if-error); if there was never a good fetch, cached stays undefined.
-        }
-      }
+      // A failed refresh keeps `cached` (stale-if-error); with no good fetch ever, it stays undefined.
+      if (!(cached && clock() - fetchedAt < ttl)) await refresh();
       return cached ? { jwks: cached, issuer } : undefined;
     };
+    return { preflight, resolve };
   })();
 
   // Build one report from the facts `decide()` already carried back. `DecideObs` exists
@@ -469,6 +476,7 @@ export function naulonMiddleware(
     const armed = new Set(remoteDoc?.identity?.armed ?? []);
     // Only a UA that names a crawler reaches the ranges or the address, so a person costs nothing.
     const claimsCrawler = claimsIn(req.headers.get("user-agent") ?? "").length > 0;
+    if (claimsCrawler || req.headers.get(LICENSE_HEADER)) resolveVerification.preflight();
     const publisher = resolvePublisher(opts.publisher, remote);
     if (!publisher) {
       // Neither a control-plane document nor a local floor: nothing is in scope, so there
@@ -479,8 +487,8 @@ export function naulonMiddleware(
     // Observing: every decision runs and is reported, but no read is charged.
     const observing = !chargesReads(publisher as { tollMode?: TollMode });
     const licenseVerification =
-      resolveVerification && req.headers.get(LICENSE_HEADER)
-        ? await resolveVerification((publisher as { licenseIdentity?: string }).licenseIdentity)
+      req.headers.get(LICENSE_HEADER)
+        ? await resolveVerification.resolve((publisher as { licenseIdentity?: string }).licenseIdentity)
         : undefined;
     const d = await decide({
       raw: req,

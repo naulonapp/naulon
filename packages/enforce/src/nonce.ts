@@ -25,16 +25,25 @@ import { getConfig, supabaseRest } from "@naulon/shared";
 
 const cfg = getConfig();
 
-const secret =
-  cfg.TOLLGATE_SECRET ??
-  (() => {
-    const ephemeral = randomBytes(32).toString("hex");
-    console.warn(
-      "[tollgate] TOLLGATE_SECRET not set — using an ephemeral nonce secret. " +
-        "Outstanding 402s are invalidated on restart; set TOLLGATE_SECRET for stability/multi-instance.",
-    );
-    return ephemeral;
-  })();
+// Resolved on first use, never at load: an edge runtime (Cloudflare Workers) refuses random values
+// outside a request handler, and only mock mode issues nonces at all, so a gateway-mode runtime never
+// needs a secret. An empty value is unset, the same rule `config.ts` applies to required keys: an
+// empty HMAC key would let anyone mint a valid nonce.
+let secret: string | undefined;
+function nonceSecret(): string {
+  if (secret === undefined) {
+    if (cfg.TOLLGATE_SECRET) {
+      secret = cfg.TOLLGATE_SECRET;
+    } else {
+      secret = randomBytes(32).toString("hex");
+      console.warn(
+        "[tollgate] TOLLGATE_SECRET not set — using an ephemeral nonce secret. " +
+          "Outstanding 402s are invalidated on restart; set TOLLGATE_SECRET for stability/multi-instance.",
+      );
+    }
+  }
+  return secret;
+}
 
 const ttlMs = cfg.NONCE_TTL_SECONDS * 1000;
 
@@ -46,7 +55,7 @@ export interface NonceBinding {
 }
 
 function sign(expMs: number, rand: string, b: NonceBinding): string {
-  return createHmac("sha256", secret)
+  return createHmac("sha256", nonceSecret())
     .update(`${expMs}.${rand}.${b.amount}.${b.payTo}.${b.network}`)
     .digest("hex");
 }

@@ -71,13 +71,13 @@ import {
   paymentLinkHeader,
   type MachineUrlBase,
   X402_MANIFEST_PATH,
-  licensing,
   quote,
   revocations,
   classifyRequester,
   type DecideInput,
 } from "@naulon/enforce";
 import { get as getEvent } from "./eventLog.ts";
+import { licensing } from "./licensing.ts";
 import { observe } from "./observationLog.ts";
 import { clientKeyOf, rateLimit } from "./rateLimit.ts";
 import { admitIngress, EDGE_AUTH_HEADER, edgeSecretDigest, lastForwardedElement, isIngressHost, namedSiteOf, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
@@ -109,6 +109,7 @@ export { outstandingLegMicro, legPayer } from "./pendingLegs.ts";
 // the settle primitives + the
 // shared settlement tail (`settleAndAttribute`) for its hosted /verify.
 export { decide, LICENSE_HEADER } from "@naulon/enforce";
+export { licensing, type Licensing } from "./licensing.ts";
 export type { Decision, DecideInput, DecideObs } from "@naulon/enforce";
 export { settleAndAttribute, type SettleResult, type SettleArgs } from "./settle.ts";
 // The ingress host rules, for an embedder serving its own routes on the ingress host.
@@ -1000,6 +1001,8 @@ export function createApp(
       now,
       quote,
       botAuthOpts: { allowInsecureHttp: cfg.BOT_AUTH_ALLOW_HTTP },
+      // This deployment minted the licence, so it verifies against its own published key.
+      ...(licensing ? { licenseVerification: { jwks: licensing.jwks, issuer: publisher.licenseIdentity } } : {}),
       ...(viaIngress ? { viaIngress: true } : {}),
       // Only a UA that names a crawler reaches the ranges, so a person's request costs nothing here.
       ...(claimsIn(raw.headers.get("user-agent") ?? "").length > 0

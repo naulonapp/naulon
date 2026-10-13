@@ -127,9 +127,7 @@ test("API mode: middleware fetches the gate JWKS and a gate-minted license re-re
   }) as unknown as typeof fetch;
 
   const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
-  // The boot probe fetches the JWKS once at construction (and warms the cache as a side effect).
-  // Settle it before counting, so this asserts caching rather than a race between the two.
-  await new Promise((r) => setTimeout(r, 0));
+  // The first request's probe and the re-read's own lookup share one round trip.
   const reread = () =>
     mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": mintFor("x") } }));
 
@@ -142,11 +140,36 @@ test("API mode: middleware fetches the gate JWKS and a gate-minted license re-re
   assert.equal(jwksHits, 1, "the JWKS is cached — no per-request refetch");
 });
 
+test("licence verification is ON when the option is absent: an in-app site has no signing key of its own", async () => {
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
+    if (String(input).includes("/.well-known/naulon-jwks.json")) return new Response(JSON.stringify(GATE_JWKS), { status: 200 });
+    throw new Error(`unexpected fetch ${String(input)}`);
+  }) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, fetchImpl });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": mintFor("x") } }));
+  assert.equal(out.response, null, "a reader who paid re-reads free without the site opting in");
+});
+
+test("the package a publisher installs creates no licence signing key and exports none", async () => {
+  // A publisher's runtime only verifies. Loading the package with licensing on (the default) and
+  // no LICENSE_SIGNING_KEY used to mint an ephemeral key and tell the publisher to configure one.
+  const { spawnSync } = await import("node:child_process");
+  const indexPath = new URL("../index.ts", import.meta.url).pathname;
+  const run = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "--input-type=module", "-e", `const m = await import(${JSON.stringify(indexPath)}); process.stdout.write(String("licensing" in m));`],
+    { env: { PATH: process.env.PATH, NODE_ENV: "test", PAYMENT_MODE: "mock" }, encoding: "utf8" },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, "false", "no signing key is exported");
+  assert.doesNotMatch(run.stderr, /LICENSE_SIGNING_KEY/, "and none is generated at load");
+});
+
 // The boot probe exists because the failure it catches is otherwise invisible: an API-mode site
 // whose verifier cannot resolve refuses every valid licence and charges every agent twice, with
 // no log, no observation and no distinct verdict. A probe that stayed quiet when it failed would
 // reproduce exactly that, so BOTH directions are asserted.
-test("API mode: an unreachable JWKS is reported at BOOT, not discovered from an invoice", async () => {
+test("API mode: an unreachable JWKS is reported on the first request, not discovered from an invoice", async () => {
   const errs: string[] = [];
   const realError = console.error;
   console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
@@ -154,24 +177,28 @@ test("API mode: an unreachable JWKS is reported at BOOT, not discovered from an 
     const fetchImpl = (async () => {
       throw new Error("getaddrinfo ENOTFOUND gate.example");
     }) as unknown as typeof fetch;
-    naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+    const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(errs, [], "construction does no I/O: an edge runtime refuses fetch() at load");
+    await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
     await new Promise((r) => setTimeout(r, 0));
   } finally {
     console.error = realError;
   }
   assert.ok(
     errs.some((e) => /preflight FAILED/i.test(e) && /re-reads will be refused/i.test(e)),
-    `boot must say the keys are unreachable AND what it costs; got ${JSON.stringify(errs)}`,
+    `the first request must say the keys are unreachable AND what it costs; got ${JSON.stringify(errs)}`,
   );
 });
 
-test("API mode: a reachable JWKS boots SILENT — the probe is not noise", async () => {
+test("API mode: a reachable JWKS stays SILENT — the probe is not noise", async () => {
   const errs: string[] = [];
   const realError = console.error;
   console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
   try {
     const fetchImpl = (async () => new Response(JSON.stringify(GATE_JWKS), { status: 200 })) as unknown as typeof fetch;
-    naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+    const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+    await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
     await new Promise((r) => setTimeout(r, 0));
   } finally {
     console.error = realError;
@@ -179,24 +206,25 @@ test("API mode: a reachable JWKS boots SILENT — the probe is not noise", async
   assert.deepEqual(errs, [], "a healthy deployment must log nothing, or the warning stops being read");
 });
 
-test("API mode: the hot path (no license header) adds NO JWKS fetch beyond the boot probe", async () => {
+test("API mode: the hot path (no license header) adds NO JWKS fetch beyond the first-request probe", async () => {
   let jwksHits = 0;
   const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
     if (String(input).includes("naulon-jwks.json")) jwksHits++;
     return new Response(JSON.stringify(GATE_JWKS), { status: 200 });
   }) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
-  // Configuring `licenseVerification` now costs ONE fetch at construction: a site that declares it
-  // honours paid re-reads is told at deploy if the keys it needs are unreachable, rather than
-  // discovering it from a buyer who was charged twice. Let it settle before counting.
   await new Promise((r) => setTimeout(r, 0));
-  const afterBoot = jwksHits;
-  assert.ok(afterBoot <= 1, "the boot probe fetches at most once");
-  // The invariant that actually matters is per-REQUEST laziness: a human read and a first-time
-  // agent 402 carry no license, so they must add nothing.
+  assert.equal(jwksHits, 0, "construction fetches nothing");
+  // A person costs nothing. The first crawler request costs ONE probe fetch, so a site is told at
+  // its first agent read, not by a buyer who was charged twice; requests without a license add
+  // nothing beyond it.
   await mw(new Request("http://h/essays/x", { headers: { "user-agent": "Mozilla/5.0 (real browser)" } }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(jwksHits, 0, "a person's request fetches nothing");
   await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
-  assert.equal(jwksHits, afterBoot, "no license presented ⇒ the hot path fetches nothing");
+  await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(jwksHits, 1, "the probe fetches once; requests without a license add nothing");
 });
 
 // ── Audit plane ───────────────────────────────────────────────────────────────

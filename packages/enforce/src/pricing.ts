@@ -10,6 +10,7 @@
 import {
   activeNetwork,
   chargesReads,
+  getConfig,
   resolvePayees,
   resolvePriceRule,
   usdc,
@@ -74,6 +75,13 @@ export interface Quote {
    * question, which includes who it was asked for.
    */
   pricedFor?: string;
+  /**
+   * The payment mode the quote was priced under. Only `mock` puts a replay nonce in the 402, and a
+   * runtime that did not do the pricing must not decide that from its own env, whose default is
+   * `mock`: it would advertise a test-mode field on a live site. Optional on the TYPE only, for a
+   * quote from an older control plane; `build402` then falls back to its own `PAYMENT_MODE`.
+   */
+  paymentMode?: "mock" | "gateway";
 }
 
 /**
@@ -192,6 +200,7 @@ export async function quote(
     // advertised testnet USDC to paying agents. The price and the chain it is payable on
     // are one fact; they travel together or neither is trustworthy.
     network: publisher.settlementNetwork ?? activeNetwork().chainName,
+    paymentMode: getConfig().PAYMENT_MODE,
     ...(rule?.agent !== undefined ? { pricedFor: rule.agent } : {}),
   };
 }
