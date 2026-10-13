@@ -278,3 +278,10 @@ test("observe: a presented licence is never sent to the authority, which could c
   assert.equal(f.calls.length, 0, "an observing site must never ask the authority");
   assert.deepEqual(f.reports, []);
 });
+
+test("authority 402: the refusal points at the buyer guide as rel=help", async () => {
+  const f = fakeAuthority(() => ({ ok: false, status: 402, error: "price_rose" }));
+  const app = createApp(resolver, { licenceAuthority: f.authority });
+  const res = await app.request("/essays/a", { headers: AGENT });
+  assert.match(res.headers.get("link") ?? "", /rel="payment".*>; rel="help"$/);
+});

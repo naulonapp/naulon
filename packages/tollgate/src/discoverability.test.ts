@@ -14,7 +14,7 @@ process.env.LICENSES_ENABLED = "true";
 process.env.RATE_LIMIT_RPM = "0";
 
 const { app } = await import("./app.ts");
-const { buildX402Manifest, PAYMENT_LINK_HEADER, build402, totalChargedMicro, quote: priceQuote } = await import("@naulon/enforce");
+const { buildX402Manifest, PAYMENT_LINK_HEADER, paymentLinkHeader, manifestUrl, build402, totalChargedMicro, quote: priceQuote } = await import("@naulon/enforce");
 const { usdc, walletAddress } = await import("@naulon/shared");
 type PublisherConfig = import("@naulon/shared").PublisherConfig;
 
@@ -250,8 +250,10 @@ test("GET /.well-known/x402 serves the manifest for the served host", async () =
 test("a 402 carries the Link: rel=payment pointer to the manifest", async () => {
   const res = await app.request("/essays/on-stillness", { headers: { "x-naulon-agent": "tester" } });
   assert.equal(res.status, 402);
-  assert.equal(res.headers.get("Link"), PAYMENT_LINK_HEADER);
+  // The manifest first, then the buyer guide as rel="help".
+  assert.ok(res.headers.get("Link")?.startsWith(`${PAYMENT_LINK_HEADER}, <`));
   assert.match(res.headers.get("Link") ?? "", /\/\.well-known\/x402>;\s*rel="payment"/);
+  assert.match(res.headers.get("Link") ?? "", />; rel="help"$/);
 });
 
 test("a human request is not tolled and gets no payment Link", async () => {
@@ -342,4 +344,18 @@ test("a manifest without stated terms carries no agentReads field", () => {
 test("an agent-bound rule is never advertised as a section price", () => {
   const m = buildX402Manifest({ ...fixturePublisher(), priceRules: [{ pattern: "/", priceUsdc: 0.2, agent: "chatgpt.com" }] });
   assert.equal(m.payment.price.rules, undefined);
+});
+
+test("the Link header adds a help relation only when given one", () => {
+  assert.equal(paymentLinkHeader(), PAYMENT_LINK_HEADER);
+  assert.equal(paymentLinkHeader(undefined, "https://g.example"), `${PAYMENT_LINK_HEADER}, <https://g.example>; rel="help"`);
+  assert.equal(
+    paymentLinkHeader({ origin: "https://ingress.example", host: "blog.example" }, "https://g.example"),
+    `<https://ingress.example/.well-known/x402?host=blog.example>; rel="payment"; type="application/json", <https://g.example>; rel="help"`,
+  );
+});
+
+test("the manifest URL is relative on the site and absolute through ingress", () => {
+  assert.equal(manifestUrl(), "/.well-known/x402");
+  assert.equal(manifestUrl({ origin: "https://ingress.example/", host: "blog.example" }), "https://ingress.example/.well-known/x402?host=blog.example");
 });

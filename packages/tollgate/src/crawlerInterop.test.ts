@@ -205,3 +205,58 @@ test("the body advertises but never obligates — the signed requirements stay i
   assert.ok(!text.includes("nonce"), "no signed material is duplicated into the advertisement");
   assert.match(text, /PAYMENT-REQUIRED/, "but the body says where to find it");
 });
+
+interface GuidedBody {
+  error: string;
+  forYourUser: { text: string };
+  howToPay: { steps: { id: string }[] };
+  failure: { remedy: string; detail: string };
+}
+
+test("a 402 carries the agent guide, a help link, and varies on Accept", async () => {
+  const res = await app.request("/essays/on-stillness", { headers: AGENT });
+  assert.equal(res.status, 402);
+  assert.match(res.headers.get("link") ?? "", /rel="payment".*rel="help"/);
+  assert.match(res.headers.get("vary") ?? "", /accept/i);
+  const body = (await res.json()) as GuidedBody;
+  assert.deepEqual(Object.keys(body).slice(0, 3), ["error", "message", "offer"]);
+  assert.ok(body.forYourUser.text.includes("/essays/on-stillness"));
+  // The guide follows the wire: this rail advertises GatewayWalletBatched, so it leads with the deposit.
+  assert.deepEqual(body.howToPay.steps.map((s) => s.id), ["fund", "sign", "retry"]);
+  const pr = JSON.parse(Buffer.from(res.headers.get(PAYMENT_REQUIRED_HEADER)!, "base64").toString("utf8"));
+  assert.match(pr.error, /^Payment required: /);
+});
+
+test("an agent asking for markdown gets the same 402 as markdown", async () => {
+  const res = await app.request("/essays/on-stillness", { headers: { ...AGENT, accept: "text/markdown" } });
+  assert.equal(res.status, 402);
+  assert.match(res.headers.get("content-type") ?? "", /^text\/markdown/);
+  assert.ok(res.headers.get(PAYMENT_REQUIRED_HEADER), "the obligation still rides the header");
+  assert.ok((await res.text()).startsWith("# Payment required"));
+});
+
+test("a browser Accept on an agent request is still a 402, rendered as HTML", async () => {
+  const res = await app.request("/essays/on-stillness", {
+    headers: { ...AGENT, accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
+  });
+  assert.equal(res.status, 402);
+  assert.match(res.headers.get("content-type") ?? "", /^text\/html/);
+  assert.match(await res.text(), /<meta name="robots" content="noindex">/);
+});
+
+test("a refused payment answers with a remedy, the raw detail, and the offer to retry", async () => {
+  const quoted = await app.request("/essays/on-stillness", { headers: AGENT });
+  const accepts = JSON.parse(Buffer.from(quoted.headers.get(PAYMENT_REQUIRED_HEADER)!, "base64").toString("utf8")).accepts[0];
+  const res = await app.request("/essays/on-stillness", {
+    headers: { ...AGENT, [PAYMENT_SIGNATURE_HEADER]: buildMockSignature(PAYER, "1", accepts.extra.nonce) },
+  });
+  assert.equal(res.status, 402);
+  assert.ok(res.headers.get(PAYMENT_REQUIRED_HEADER));
+  assert.match(res.headers.get("link") ?? "", /rel="help"/);
+  const body = (await res.json()) as GuidedBody;
+  assert.equal(body.error, "payment_required");
+  assert.ok(body.failure.remedy.length > 20);
+  assert.equal(typeof body.failure.detail, "string");
+  assert.ok(body.failure.detail.length > 0);
+  assert.ok(body.howToPay);
+});

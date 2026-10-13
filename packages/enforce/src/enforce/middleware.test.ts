@@ -1004,3 +1004,55 @@ test("observe: a payee-less ask includes the fee leg, and a presented payment st
   assert.equal(seen[1]?.paymentPresented, true);
   assert.equal(seen[1]?.crawlerBudget, "within");
 });
+
+// ── The agent-readable 402 on the in-app path ───────────────────────────────────
+interface Refusal {
+  error: string;
+  forYourUser: { readFreeUrl: string };
+  howToPay: { steps: { id: string }[] };
+  failure: { code: string; detail: string };
+}
+test("in-app 402 carries the agent guide, a help link, and varies on Accept", async () => {
+  const mw = naulonMiddleware(opts);
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
+  assert.equal(out.response?.status, 402);
+  assert.match(out.response?.headers.get("link") ?? "", /rel="payment".*rel="help"/);
+  assert.match(out.response?.headers.get("vary") ?? "", /accept/i);
+  const body = (await out.response!.json()) as Refusal;
+  assert.equal(body.forYourUser.readFreeUrl, "http://h/essays/x");
+  assert.ok(body.howToPay.steps.some((s) => s.id === "sign"));
+});
+
+test("in-app 402 renders as markdown when asked", async () => {
+  const mw = naulonMiddleware(opts);
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", accept: "text/markdown" } }));
+  assert.match(out.response?.headers.get("content-type") ?? "", /^text\/markdown/);
+  assert.ok((await out.response!.text()).startsWith("# Payment required"));
+});
+
+test("a payment /verify refused answers with the offer, a remedy and the raw reason", async () => {
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ ok: false, error: "insufficient_balance" }), { status: 402 })) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
+  const out = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
+  );
+  assert.equal(out.response?.status, 402);
+  assert.ok(out.response?.headers.get("PAYMENT-REQUIRED"), "a refused payer can retry from this response alone");
+  const body = (await out.response!.json()) as Refusal;
+  assert.equal(body.error, "payment_required");
+  assert.equal(body.failure.code, "insufficient_funds");
+  assert.equal(body.failure.detail, "insufficient_balance");
+});
+
+test("an unreachable /verify answers 402 with a retryable remedy, not a bare string", async () => {
+  const fakeFetch = (async () => { throw new Error("ECONNREFUSED"); }) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
+  const out = await mw(
+    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
+  );
+  assert.equal(out.response?.status, 402);
+  const body = (await out.response!.json()) as Refusal;
+  assert.equal(body.failure.code, "settlement_failed");
+  assert.equal(body.failure.detail, "verify unreachable");
+});

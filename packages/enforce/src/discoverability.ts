@@ -64,10 +64,19 @@ function machineUrl(base: MachineUrlBase, path: string, named = true): string {
   return named ? `${url}?host=${encodeURIComponent(base.host)}` : url;
 }
 
-/** The `Link` header for a 402: relative when the gate fronts the site, absolute otherwise. */
-export function paymentLinkHeader(base?: MachineUrlBase): string {
-  if (!base) return PAYMENT_LINK_HEADER;
-  return `<${machineUrl(base, X402_MANIFEST_PATH)}>; rel="payment"; type="application/json"`;
+/** The manifest URL a 402 names: relative when the gate fronts the site, absolute via ingress. */
+export function manifestUrl(base?: MachineUrlBase): string {
+  return base ? machineUrl(base, X402_MANIFEST_PATH) : X402_MANIFEST_PATH;
+}
+
+/**
+ * The `Link` header for a 402 (RFC 8288): the manifest as `payment`, and the buyer guide as `help`
+ * when the caller has one. Both relations are IANA-registered, so a generic agent can follow the
+ * guide without parsing the body.
+ */
+export function paymentLinkHeader(base?: MachineUrlBase, help?: string): string {
+  const payment = `<${manifestUrl(base)}>; rel="payment"; type="application/json"`;
+  return help ? `${payment}, <${help}>; rel="help"` : payment;
 }
 
 /**
