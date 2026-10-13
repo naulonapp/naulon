@@ -14,6 +14,37 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## Unreleased
+
+`@naulon/shared` and `@naulon/enforce` change; the release that ships this names their versions.
+
+### Added
+- Every 402 explains itself to an agent that has never seen naulon. The JSON body adds
+  `forYourUser` (one sentence an assistant can pass to its person: the page is free to read in a
+  browser at this URL, and what an agent pays), `howToPay` (the network in words, the Circle Gateway
+  deposit when the rail needs one, which leg `accepts[0]` covers, and the sign and retry steps) and
+  `links`. `error`, `message` and `offer` keep their keys and meaning.
+- The x402 `error` field in `PAYMENT-REQUIRED` is set: price, network, the deposit, and the guide.
+  It is the one sentence a client that reads only the header is sure to see.
+- `Accept: text/markdown` (or `text/plain`) returns the same 402 as prose, and a browser-shaped
+  `Accept` returns a page marked `noindex`. No preference returns JSON, unchanged. Every 402 now
+  carries `Vary: Accept`.
+- `Link` names the buyer guide as `rel="help"` after the manifest's `rel="payment"`.
+- `/.well-known/x402` adds `howToPay` and `links`.
+- Config: `BUYER_GUIDE_URL` (defaults to the paying guide in these docs), `BUYER_FUND_URL` and
+  `BUYER_MCP_URL`, all http(s) only.
+- `agentGuide`, `headerError`, `render402`, `negotiate402Format`, `paymentFailureDetail`,
+  `manifestUrl` are exported from `@naulon/enforce`.
+
+### Changed
+- A refused payment answers with the same guided body plus `failure`: the classified `code`, the
+  nearest x402 `x402Code`, a `remedy` naming the network the toll settles on, and the facilitator's
+  text as `detail`. The hosted gate used to answer `{ error: "<facilitator text>" }`; read
+  `failure.detail` for that string now.
+- The in-app middleware's refused and unconfirmed payments used to answer `{ error }` with no
+  `PAYMENT-REQUIRED`, so a payer could not retry from that response. They now carry the offer and
+  the same `failure` block.
+
 ## v0.12.8
 
 `@naulon/enforce` 0.9.0. The WordPress plugin moves to 0.6.5; its own changelog says so.
