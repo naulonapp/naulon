@@ -359,3 +359,22 @@ test("the manifest URL is relative on the site and absolute through ingress", ()
   assert.equal(manifestUrl(), "/.well-known/x402");
   assert.equal(manifestUrl({ origin: "https://ingress.example/", host: "blog.example" }), "https://ingress.example/.well-known/x402?host=blog.example");
 });
+
+test("the manifest says how to pay, in words, on the same rail the 402 advertises", () => {
+  const m = buildX402Manifest(fixturePublisher());
+  assert.equal(m.howToPay.protocol, "x402 v2");
+  assert.equal(m.howToPay.network.caip, m.payment.network);
+  assert.equal(m.howToPay.asset.address, m.payment.asset);
+  const ids = m.howToPay.steps.map((s) => s.id);
+  assert.deepEqual(ids, ["fund", "sign", "retry"], "the 402 always carries GatewayWalletBatched, so the deposit leads");
+  assert.ok(m.howToPay.steps.find((s) => s.id === "fund")!.contract);
+  assert.match(m.howToPay.steps.find((s) => s.id === "sign")!.do, /naulonLegs/);
+});
+
+test("the manifest links the buyer guide and itself", () => {
+  const m = buildX402Manifest(fixturePublisher());
+  assert.match(m.links.guide, /^https:\/\//);
+  assert.equal(m.links.manifest, "/.well-known/x402");
+  const via = buildX402Manifest(fixturePublisher(), undefined, { origin: "https://ingress.example", host: "blog.example" });
+  assert.equal(via.links.manifest, "https://ingress.example/.well-known/x402?host=blog.example");
+});

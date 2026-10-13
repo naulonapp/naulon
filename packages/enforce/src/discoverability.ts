@@ -15,7 +15,8 @@
  * Everything here derives from the resolved `PublisherConfig` + the Arc network
  * constants — no new per-publisher seam.
  */
-import { activeNetwork, getConfig, issuerHost, toAtomicUsdc, usdc, type PublisherConfig, type SettlementNetwork, type TollKind } from "@naulon/shared";
+import { activeNetwork, gatewayExtra, getConfig, issuerHost, toAtomicUsdc, usdc, type PublisherConfig, type SettlementNetwork, type TollKind } from "@naulon/shared";
+import { guideLinks, guideSteps, networkLabel, type AgentGuideLinks, type GuideStep } from "./agentGuide.ts";
 // The manifest MUST advertise the same validity window the real 402 does, so import it rather than
 // re-declaring it (see the note at the old constant's site below).
 import { MAX_TIMEOUT_SECONDS } from "./build402.ts";
@@ -209,6 +210,18 @@ export interface X402Manifest {
   };
   /** Public catalog enumeration endpoint, advertised when the publisher sets one. */
   catalog?: { url: string };
+  /**
+   * The payment in words, built by the same `guideSteps` the 402 body uses. Article-agnostic, so it
+   * carries no legs: the sign step covers both the single-object and the per-leg-array shapes.
+   */
+  howToPay: {
+    protocol: "x402 v2";
+    network: { caip: string; name: string; testnet: boolean };
+    asset: { symbol: "USDC"; address: string; decimals: 6 };
+    steps: GuideStep[];
+  };
+  /** Where an agent learns to pay, and this manifest's own URL. */
+  links: AgentGuideLinks;
 }
 
 // (MAX_TIMEOUT_SECONDS is imported from build402.ts above.)
@@ -328,5 +341,27 @@ export function buildX402Manifest(
       identity: publisher.licenseIdentity,
     },
     ...(publisher.catalogUrl ? { catalog: { url: publisher.catalogUrl } } : {}),
+    howToPay: manifestHowToPay(net),
+    links: guideLinks(manifestUrl(base)),
+  };
+}
+
+/** The manifest's `howToPay`, judged from the same `gatewayExtra` every 402 on this network carries,
+ *  so the manifest and the 402 can never disagree about whether a deposit comes first. */
+function manifestHowToPay(net: SettlementNetwork): X402Manifest["howToPay"] {
+  const extra = gatewayExtra(net);
+  const label = networkLabel(net.network);
+  const contract = typeof extra.verifyingContract === "string" ? extra.verifyingContract : undefined;
+  return {
+    protocol: "x402 v2",
+    network: { caip: net.network, ...label },
+    asset: { symbol: "USDC", address: net.usdc, decimals: 6 },
+    steps: guideSteps({
+      gateway: extra.name === "GatewayWalletBatched" && contract !== undefined,
+      networkName: label.name,
+      ...(contract ? { contract } : {}),
+      scheme: "exact",
+      multiLeg: "when-present",
+    }),
   };
 }
