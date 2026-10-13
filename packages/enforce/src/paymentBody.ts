@@ -8,14 +8,15 @@
  * price, no terms and no way to find either. Measured on the one live tenant
  * 2026-09-03: `402`, no body, no `crawler-price`.
  *
- * THE SHAPE IS DELIBERATELY SOMEONE ELSE'S. `@crawlertoll/core` — the Apache-2.0
- * vendor-neutral middleware that sits under Cloudflare PPC / TollBit / Skyfire /
- * Stripe ACP — answers a toll with `{error, message, offer}` and documents "the body
- * is the source of truth; the headers are the on-the-wire convenience". Mirroring its
- * `PaymentOffer` field-for-field means a buyer written against THAT library prices a
- * naulon origin with no naulon code, which is the whole point of speaking a rail we
- * did not invent. naulon specifics live under `offer.metadata`, which is exactly what
- * that field is for ("custom fields the rail wants to surface").
+ * THE SHAPE: `{error, message, offer}`, with naulon specifics under `offer.metadata`: a
+ * vendor-neutral offer a crawler can price with no naulon code. It was modelled on a CrawlerToll
+ * offer, but that package was not on npm or GitHub when checked on 2026-10-13, so the shape is our
+ * own contract now and changes to it are additive only.
+ *
+ * THE AGENT GUIDE: when the emitter passes one, `forYourUser`, `howToPay` and `links` follow the
+ * offer (see `agentGuide.ts`), and `message` is rewritten to be relayed verbatim by an assistant
+ * that cannot pay. A refused payment adds `failure` last. With no guide the body is byte-identical
+ * to what it was before the guide existed.
  *
  * WHAT IT IS NOT: the authoritative payment payload. That stays in `PAYMENT-REQUIRED`
  * — signed, nonce-bound, per-leg. The body advertises; the header obligates. A client
@@ -26,6 +27,8 @@
 import { formatCrawlerPrice } from "./crawlerPrice.ts";
 import { X402_MANIFEST_PATH } from "./discoverability.ts";
 import type { TollKind } from "@naulon/shared";
+import type { AgentGuide } from "./agentGuide.ts";
+import type { PaymentFailureDetail } from "./paymentRemedy.ts";
 
 /** `Number` is exact for every integer below 2^53; a toll is micro-USDC and nowhere near
  *  it. Guarded rather than assumed, because a silently-rounded price is a lie about money. */
@@ -70,6 +73,13 @@ export interface PaymentRequiredBody {
    *  when one was presented. The read is still for sale over x402, which is why this is a 402. */
   licence_error?: string;
   licence_error_description?: string;
+  /** Written to be passed to a person verbatim. Present when the emitter passed a guide. */
+  forYourUser?: AgentGuide["forYourUser"];
+  /** The payment in words: network, asset, legs, and the fund, sign and retry steps. */
+  howToPay?: AgentGuide["howToPay"];
+  links?: AgentGuide["links"];
+  /** Why a presented payment was refused, and what to change. Only on a refused payment. */
+  failure?: PaymentFailureDetail;
 }
 
 export interface PaymentBodyInput {
@@ -81,6 +91,10 @@ export interface PaymentBodyInput {
   endpoint: string;
   tollKind: TollKind;
   licence?: { error: string; description?: string };
+  /** The agent guide for this 402. Omit it and the body is today's three keys. */
+  guide?: AgentGuide;
+  /** A refused payment's classified reason and remedy. */
+  failure?: PaymentFailureDetail;
 }
 
 /** Content type for every 402 body this builds. */
@@ -97,15 +111,21 @@ export function paymentRequiredBody(input: PaymentBodyInput): PaymentRequiredBod
 
   const crawlerPrice = formatCrawlerPrice(askMicro);
   const what = tollKind === "citation" ? "cite" : "read";
-
-  return {
-    error: "payment_required",
-    message:
-      `This request was classified as an automated agent, and this resource is tolled. ` +
+  const g = input.guide;
+  const message = g
+    ? `If you are an AI assistant acting for a person: this page is free for humans at ${g.forYourUser.readFreeUrl} ` +
+      `and costs ${crawlerPrice} for an automated ${tollKind}. To pay over x402 in USDC on ${g.howToPay.network.name}, ` +
+      `follow howToPay; the signed requirements are in the PAYMENT-REQUIRED response header. ` +
+      `To set up an agent wallet, see ${g.links.guide}. Payment settles buyer-to-author directly.`
+    : `This request was classified as an automated agent, and this resource is tolled. ` +
       `Humans read free. To ${what} it, pay ${crawlerPrice} over x402 in USDC: the signed ` +
       `payment requirements are in the PAYMENT-REQUIRED response header, and ${X402_MANIFEST_PATH} ` +
       `on this host describes the terms. Payment settles buyer-to-author directly; nobody ` +
-      `custodies it in between.`,
+      `custodies it in between.`;
+
+  return {
+    error: "payment_required",
+    message,
     offer: {
       rail: RAIL,
       priceMicros: Number(askMicro),
@@ -126,6 +146,8 @@ export function paymentRequiredBody(input: PaymentBodyInput): PaymentRequiredBod
           ...(input.licence.description ? { licence_error_description: input.licence.description } : {}),
         }
       : {}),
+    ...(g ? { forYourUser: g.forYourUser, howToPay: g.howToPay, links: g.links } : {}),
+    ...(input.failure ? { failure: input.failure } : {}),
   };
 }
 

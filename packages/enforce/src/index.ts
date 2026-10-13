@@ -59,6 +59,7 @@ export {
   type AgentGuideLinks,
   type GuideStep,
 } from "./agentGuide.ts";
+export { FAILURE_DETAIL_MAX, paymentFailureDetail, type PaymentFailureDetail } from "./paymentRemedy.ts";
 export {
   PAYMENT_BODY_CONTENT_TYPE,
   paymentRequiredBody,
