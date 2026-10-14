@@ -51,3 +51,45 @@ test("segmentation is linear in the text, so a long document cannot stall it", (
   assert.equal(s.length, 40_000);
   assert.ok(ms < 1_000, `took ${Math.round(ms)}ms for ${text.length} characters`);
 });
+
+/** The original, slice-based rules: the reference the linear version must match exactly. */
+function referenceSegment(text: string): string[] {
+  const ABBR = new Set(["al", "e.g", "i.e", "etc", "Fig", "Figs", "fig", "figs", "Eq", "Eqs", "eq", "eqs", "Ref", "Refs", "ref", "refs",
+    "No", "no", "Vol", "vol", "pp", "p", "vs", "cf", "Dr", "Mr", "Mrs", "Ms", "Prof", "St", "Jr", "Sr", "approx", "ca", "resp", "Sect",
+    "sect", "Suppl", "suppl", "Tab", "tab", "Ch", "ch", "Inc", "Ltd", "Co", "Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Sept",
+    "Oct", "Nov", "Dec"]);
+  const t = normalizeText(text);
+  if (!t) return [];
+  const out: string[] = [];
+  let start = 0;
+  for (const m of t.matchAll(/[.?!]+["'”’)\]]*(?=\s)/gu)) {
+    const end = m.index + m[0].length;
+    if (!/^\s+[\p{Lu}\p{N}"'“‘(\[]/u.test(t.slice(end))) continue;
+    if (m[0].startsWith(".") && !m[0].startsWith("..")) {
+      const token = /(\S+)$/.exec(t.slice(0, m.index))?.[1]?.replace(/^[(\["'“‘]+/u, "") ?? "";
+      if (ABBR.has(token) || /^\p{Lu}$/u.test(token)) continue;
+    }
+    out.push(t.slice(start, end).trim());
+    start = end;
+  }
+  const rest = t.slice(start).trim();
+  if (rest) out.push(rest);
+  return out;
+}
+
+test("the linear segmentation matches the reference rules exactly, including pathological tokens", () => {
+  const cases = [
+    `x ${"(".repeat(40)}e.g. The next one.`,
+    `z${"(".repeat(40)}e.g. The next one.`,
+    `z${"\u201c".repeat(31)}J. Then.`,
+    `${"(".repeat(40)}J. K. Rowling. Then.`,
+    `${"a".repeat(50)}e.g. Next. ${"“".repeat(35)}Fig. 3 here.`,
+    "Smith et al. (2020) measured 3.5 mg/kg in vivo. Fig. 2 shows e.g. the dose. J. K. Rowling wrote it. Was it? Yes!",
+  ];
+  // A seeded generator over the characters that matter, so the comparison covers shapes nobody wrote down.
+  let seed = 20261014;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32);
+  const alphabet = ["a", "B", "J", ".", ".", "?", "!", " ", " ", "(", "\"", "“", ")", "e.g", "Fig", "al", "3", "’"];
+  for (let i = 0; i < 2000; i++) cases.push(Array.from({ length: 5 + Math.floor(rnd() * 60) }, () => alphabet[Math.floor(rnd() * alphabet.length)]).join(""));
+  for (const c of cases) assert.deepEqual(segmentSentences(c), referenceSegment(c), JSON.stringify(c));
+});

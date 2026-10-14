@@ -25,14 +25,17 @@ const ABBREVIATIONS = new Set([
 const BOUNDARY = /[.?!]+["'\u201d\u2019)\]]*(?=\s)/gu;
 /** What may open a new sentence, matched in place at the boundary (sticky), never on a slice. */
 const OPENER = /\s+[\p{Lu}\p{N}"'\u201c\u2018(\[]/uy;
-/** Longer than any abbreviation; the backward scan for the token stops here. */
-const MAX_TOKEN = 32;
 const LEADING_OPENERS = /^[(\["'\u201c\u2018]+/u;
 
-/** The token that ends just before the full stop at `stopAt`, found by scanning back to whitespace. */
+/**
+ * The whole token that ends just before the full stop at `stopAt`, found by scanning back to
+ * whitespace. Unbounded on purpose: a boundary needs whitespace after it, so each token is scanned
+ * once and the scans sum to the length of the text. A cap would change which token is compared for
+ * a long token, and with it the sentences, so two parties would derive different leaves.
+ */
 function tokenBefore(text: string, stopAt: number): string {
   let i = stopAt;
-  while (i > 0 && stopAt - i < MAX_TOKEN && !/\s/u.test(text[i - 1]!)) i--;
+  while (i > 0 && !/\s/u.test(text[i - 1]!)) i--;
   return text.slice(i, stopAt).replace(LEADING_OPENERS, "");
 }
 
