@@ -93,3 +93,12 @@ test("the linear segmentation matches the reference rules exactly, including pat
   for (let i = 0; i < 2000; i++) cases.push(Array.from({ length: 5 + Math.floor(rnd() * 60) }, () => alphabet[Math.floor(rnd() * alphabet.length)]).join(""));
   for (const c of cases) assert.deepEqual(segmentSentences(c), referenceSegment(c), JSON.stringify(c));
 });
+
+test("a long run of terminators with no space after it stays linear", () => {
+  for (const run of [".".repeat(100_000), "?!".repeat(50_000), `${".".repeat(50_000)})`.repeat(2)]) {
+    const t0 = performance.now();
+    segmentSentences(`Start ${run}x end.`);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 500, `took ${Math.round(ms)}ms`);
+  }
+});

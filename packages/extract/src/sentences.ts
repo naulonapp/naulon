@@ -21,8 +21,11 @@ const ABBREVIATIONS = new Set([
   "Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Sept", "Oct", "Nov", "Dec",
 ]);
 
-/** A terminator run, any closing quotes or brackets after it, then the whitespace that follows. */
-const BOUNDARY = /[.?!]+["'\u201d\u2019)\]]*(?=\s)/gu;
+/** A terminator run, any closing quotes or brackets after it, then the whitespace that follows.
+ *  Matched only from the START of a run (the lookbehind): retried at every offset inside a long run
+ *  with no whitespace after it, the pattern was quadratic. A suffix of a run can only match where
+ *  the whole run would, so the boundaries are unchanged. */
+const BOUNDARY = /(?<![.?!])[.?!]+["'\u201d\u2019)\]]*(?=\s)/gu;
 /** What may open a new sentence, matched in place at the boundary (sticky), never on a slice. */
 const OPENER = /\s+[\p{Lu}\p{N}"'\u201c\u2018(\[]/uy;
 const LEADING_OPENERS = /^[(\["'\u201c\u2018]+/u;
