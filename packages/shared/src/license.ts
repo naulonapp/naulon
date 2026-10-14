@@ -28,8 +28,6 @@ import {
   createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
-  sign,
-  verify,
   type KeyObject,
 } from "node:crypto";
 import { toAtomicUsdc } from "./networks.ts";
@@ -37,6 +35,8 @@ import { matchesPublisherPattern } from "@naulon/sdk/rsl";
 import { primaryPayee, type TieBreak } from "./attribution.ts";
 import type { AttributedEvent, AuthorShare, PaymentEvidence, TermsDocument } from "./types.ts";
 import type { EventMandate } from "./licence-authority.ts";
+import type { ReadAttestation } from "./attest.ts";
+import { signCompact, verifyCompact } from "./jws.ts";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -122,6 +122,8 @@ export interface NaulonClaim {
   evidence?: PaymentEvidence;
   /** Present when the read was charged under a standing authorization rather than signed at request time. */
   mandate?: EventMandate;
+  /** Replayed from the event row of a recorded read: which copy was read and what it said. */
+  attest?: ReadAttestation;
 }
 
 /**
@@ -279,10 +281,6 @@ function parsePrivateKey(secret: string): KeyObject {
 
 // ── Mint ──────────────────────────────────────────────────────────────────────
 
-function b64urlJson(value: unknown): string {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-}
-
 /** Deterministic canonical JSON of payees (sorted, fixed field order) for hashing. */
 function canonicalPayees(payees: AuthorShare[]): string {
   const sorted = [...payees].sort(
@@ -341,7 +339,12 @@ function baseClaims(input: MintInput, iat: number): CitationLicenseClaims {
     network: input.network,
     settlementRef: event.settlementRef,
   };
-  if (input.payeesMode === "hashed") {
+  // A recorded read (one carrying `attest`) pays no one, and its record must still mint, so it names
+  // no payee. Every other row mints exactly as it always has: a record is replayed from its row for
+  // years and must not change bytes.
+  if (event.attest && event.payees.length === 0) {
+    // nothing to name
+  } else if (input.payeesMode === "hashed") {
     naulon.payeesHash = createHash("sha256").update(canonicalPayees(event.payees)).digest("base64url");
     naulon.payTo = primaryPayee(event.payees, input.tieBreak);
   } else {
@@ -358,6 +361,7 @@ function baseClaims(input: MintInput, iat: number): CitationLicenseClaims {
   if (event.termsDocument) naulon.termsDocument = event.termsDocument;
   if (event.evidence) naulon.evidence = event.evidence;
   if (event.mandate) naulon.mandate = event.mandate;
+  if (event.attest) naulon.attest = event.attest;
 
   return {
     iss: input.issuer,
@@ -377,17 +381,11 @@ function signClaims(payload: CitationLicenseClaims, input: MintInput, key: Signi
   if (input.popBindAddress) {
     payload.cnf = { "naulon:addr": input.popBindAddress.toLowerCase() };
   }
-  const header = { alg: "EdDSA", typ: "JWT", kid: key.kid };
-  const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;
-  const sig = sign(null, Buffer.from(signingInput, "ascii"), key.privateKey);
-  return `${signingInput}.${sig.toString("base64url")}`;
+  return signCompact("JWT", payload, key);
 }
 
 // ── Verify ──────────────────────────────────────────────────────────────────
 
-const BASE64URL = /^[A-Za-z0-9_-]+$/;
-// JOSE header params that change how a token is interpreted — reject them all.
-const FORBIDDEN_HEADER_PARAMS = ["crit", "jku", "x5u", "jwk", "x5c"];
 /** Negative clock-skew tolerance (seconds) on nbf/iat only. */
 const SKEW_SECONDS = 60;
 
@@ -405,58 +403,10 @@ export function verifyLicense(
   jws: string,
   opts: { now: number; expectedIssuer: string; expectedAudience: string; jwks: JwkSet },
 ): VerifyResult {
-  if (typeof jws !== "string" || jws.length === 0) return fail("empty token");
-  if (jws.length > 4096) return fail("token too large");
-
-  const parts = jws.split(".");
-  if (parts.length !== 3) return fail("malformed token (need 3 segments)");
-  const [h, p, s] = parts as [string, string, string];
-  if (!BASE64URL.test(h) || !BASE64URL.test(p) || !BASE64URL.test(s)) {
-    return fail("non-base64url segment");
-  }
-
-  let header: Record<string, unknown>;
-  try {
-    header = JSON.parse(Buffer.from(h, "base64url").toString("utf8")) as Record<string, unknown>;
-  } catch {
-    return fail("undecodable header");
-  }
-  // Pin the algorithm — never select the verify routine from the header. This
-  // rejects alg:"none" and any HMAC (HS256-with-the-public-key) forgery.
-  if (header.alg !== "EdDSA") return fail("unsupported alg (only EdDSA)");
-  if (header.typ !== "JWT") return fail("unexpected typ");
-  for (const param of FORBIDDEN_HEADER_PARAMS) {
-    if (param in header) return fail(`forbidden header param: ${param}`);
-  }
-  const kid = header.kid;
-  if (typeof kid !== "string") return fail("missing kid");
-
-  const jwk = opts.jwks.keys.find((k) => k.kid === kid);
-  if (!jwk) return fail("kid not in JWKS");
-  let publicKey: KeyObject;
-  try {
-    publicKey = createPublicKey({ key: jwk, format: "jwk" });
-  } catch {
-    return fail("invalid JWKS key");
-  }
-
-  // Verify over the LITERAL received bytes — not a re-serialized payload.
-  const sigBytes = Buffer.from(s, "base64url");
-  let valid = false;
-  try {
-    valid = verify(null, Buffer.from(`${h}.${p}`, "ascii"), publicKey, sigBytes);
-  } catch {
-    return fail("verification error");
-  }
-  if (!valid) return fail("invalid signature");
-
+  const checked = verifyCompact(jws, "JWT", opts.jwks);
+  if (!checked.ok) return fail(checked.error);
   // Only now is it safe to read claims.
-  let claims: CitationLicenseClaims;
-  try {
-    claims = JSON.parse(Buffer.from(p, "base64url").toString("utf8")) as CitationLicenseClaims;
-  } catch {
-    return fail("undecodable payload");
-  }
+  const claims = checked.payload as CitationLicenseClaims;
 
   if (claims.iss !== opts.expectedIssuer) return fail("issuer mismatch");
   if (claims.aud !== opts.expectedAudience) return fail("audience mismatch");
