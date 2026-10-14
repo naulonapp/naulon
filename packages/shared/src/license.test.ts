@@ -9,6 +9,7 @@ import { createHmac } from "node:crypto";
 import {
   jwksOf,
   loadSigningKey,
+  mintCitationRecord,
   mintLicense,
   publicJwk,
   retiredJwks,
@@ -21,6 +22,7 @@ import {
   type SigningKey,
 } from "./license.ts";
 import type { AttributedEvent, AuthorShare, Usdc, WalletAddress } from "./types.ts";
+import type { ReadAttestation } from "./attest.ts";
 
 const KEY: SigningKey = loadSigningKey(); // ephemeral is fine for tests
 const JWKS: JwkSet = jwksOf([KEY]);
@@ -256,4 +258,40 @@ test("retiredJwks derives the same kid a live key would, and refuses a malformed
   assert.equal(retired!.kid, live.kid, "a record signed before the rotation must still find its key");
   assert.equal(retired!.x, x);
   assert.throws(() => retiredJwks(["not-a-key"]), /32-byte base64url/);
+});
+
+const ATTEST: ReadAttestation = {
+  v: 1,
+  work: "doi:10.1093/nar/gkab1112",
+  copyUrl: "https://academic.oup.com/nar/article/50/D1/D439/6430488",
+  finalUrl: "https://academic.oup.com/nar/article/50/D1/D439/6430488",
+  bodySha256: "a".repeat(64),
+  textSha256: "b".repeat(64),
+  textRoot: "c".repeat(64),
+  leaves: 412,
+  extractor: "@naulon/extract@0.2.0",
+  licenceRaw: "https://creativecommons.org/licenses/by/4.0/",
+  ladder: 2,
+  fetchedAt: "2026-10-14T09:00:00Z",
+};
+
+test("a record replays attest from the row and names no payee when nobody was paid", () => {
+  const recorded: AttributedEvent = { ...event, payees: [], amount: 0 as Usdc, settlementRef: "", attest: ATTEST };
+  for (const payeesMode of ["full", "hashed"] as const) {
+    const jws = mintCitationRecord({ ...mintInput, event: recorded, payeesMode }, KEY, NOW);
+    const r = verifyLicense(jws, verifyOpts);
+    assert.ok(r.ok, payeesMode);
+    if (!r.ok) continue;
+    assert.deepEqual(r.claims.naulon.attest, ATTEST);
+    assert.equal(r.claims.naulon.payTo, undefined);
+    assert.equal(r.claims.naulon.payeesHash, undefined);
+    assert.equal(r.claims.naulon.payees, undefined);
+    assert.equal(r.claims.naulon.amount, "0");
+    assert.equal(r.claims.naulon.grant, "none");
+  }
+});
+
+test("a row without attest mints no attest claim", () => {
+  const jws = mintCitationRecord(mintInput, KEY, NOW);
+  assert.equal("attest" in (decodePart(jws, 1).naulon as Record<string, unknown>), false);
 });

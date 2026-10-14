@@ -37,6 +37,7 @@ import { matchesPublisherPattern } from "@naulon/sdk/rsl";
 import { primaryPayee, type TieBreak } from "./attribution.ts";
 import type { AttributedEvent, AuthorShare, PaymentEvidence, TermsDocument } from "./types.ts";
 import type { EventMandate } from "./licence-authority.ts";
+import type { ReadAttestation } from "./attest.ts";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -122,6 +123,8 @@ export interface NaulonClaim {
   evidence?: PaymentEvidence;
   /** Present when the read was charged under a standing authorization rather than signed at request time. */
   mandate?: EventMandate;
+  /** Replayed from the event row of a recorded read: which copy was read and what it said. */
+  attest?: ReadAttestation;
 }
 
 /**
@@ -341,7 +344,10 @@ function baseClaims(input: MintInput, iat: number): CitationLicenseClaims {
     network: input.network,
     settlementRef: event.settlementRef,
   };
-  if (input.payeesMode === "hashed") {
+  // A recorded read pays no one. `primaryPayee` throws on an empty list, and the record must still mint.
+  if (event.payees.length === 0) {
+    // nothing to name
+  } else if (input.payeesMode === "hashed") {
     naulon.payeesHash = createHash("sha256").update(canonicalPayees(event.payees)).digest("base64url");
     naulon.payTo = primaryPayee(event.payees, input.tieBreak);
   } else {
@@ -358,6 +364,7 @@ function baseClaims(input: MintInput, iat: number): CitationLicenseClaims {
   if (event.termsDocument) naulon.termsDocument = event.termsDocument;
   if (event.evidence) naulon.evidence = event.evidence;
   if (event.mandate) naulon.mandate = event.mandate;
+  if (event.attest) naulon.attest = event.attest;
 
   return {
     iss: input.issuer,

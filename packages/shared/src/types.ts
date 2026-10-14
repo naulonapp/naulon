@@ -15,6 +15,7 @@ import type { IdentityCheck } from "./crawlerProof.ts";
 import type { WalletAddress, ArticleCredits, Contributor, CreditsResolver } from "@naulon/sdk";
 import type { PaymentFailureReason } from "./paymentfailure.ts";
 import type { LicenceFacts } from "./licence-facts.ts";
+import type { ReadAttestation } from "./attest.ts";
 import type { EventMandate } from "./licence-authority.ts";
 export { walletAddress };
 export type { WalletAddress, ArticleCredits, Contributor, CreditsResolver };
@@ -206,6 +207,8 @@ export interface AttributedEvent {
    * request time. See `EventMandate`.
    */
   mandate?: EventMandate;
+  /** Present only on a read that was recorded rather than bought: what the reader saw. */
+  attest?: ReadAttestation;
   /** epoch ms — passed in by the caller (no ambient clock in shared code). */
   at: number;
 }
