@@ -42,3 +42,12 @@ test("segmentation is deterministic, total and lossless up to whitespace", () =>
   assert.deepEqual(segmentSentences(""), []);
   assert.deepEqual(segmentSentences("No terminator at all"), ["No terminator at all"]);
 });
+
+test("segmentation is linear in the text, so a long document cannot stall it", () => {
+  const text = "Observation one was made. Fig. 2 shows it. ".repeat(20_000);
+  const t0 = performance.now();
+  const s = segmentSentences(text);
+  const ms = performance.now() - t0;
+  assert.equal(s.length, 40_000);
+  assert.ok(ms < 1_000, `took ${Math.round(ms)}ms for ${text.length} characters`);
+});

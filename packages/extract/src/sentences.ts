@@ -22,19 +22,32 @@ const ABBREVIATIONS = new Set([
 ]);
 
 /** A terminator run, any closing quotes or brackets after it, then the whitespace that follows. */
-const BOUNDARY = /[.?!]+["'”’)\]]*(?=\s)/gu;
-/** What may open a new sentence. */
-const OPENER = /^\s+[\p{Lu}\p{N}"'“‘(\[]/u;
+const BOUNDARY = /[.?!]+["'\u201d\u2019)\]]*(?=\s)/gu;
+/** What may open a new sentence, matched in place at the boundary (sticky), never on a slice. */
+const OPENER = /\s+[\p{Lu}\p{N}"'\u201c\u2018(\[]/uy;
+/** Longer than any abbreviation; the backward scan for the token stops here. */
+const MAX_TOKEN = 32;
+const LEADING_OPENERS = /^[(\["'\u201c\u2018]+/u;
+
+/** The token that ends just before the full stop at `stopAt`, found by scanning back to whitespace. */
+function tokenBefore(text: string, stopAt: number): string {
+  let i = stopAt;
+  while (i > 0 && stopAt - i < MAX_TOKEN && !/\s/u.test(text[i - 1]!)) i--;
+  return text.slice(i, stopAt).replace(LEADING_OPENERS, "");
+}
 
 function isAbbreviation(text: string, stopAt: number): boolean {
-  const before = text.slice(0, stopAt);
-  const token = /(\S+)$/.exec(before)?.[1]?.replace(/^[(\["'“‘]+/u, "") ?? "";
+  const token = tokenBefore(text, stopAt);
   if (ABBREVIATIONS.has(token)) return true;
   // A single capital is an initial: "J. K. Rowling".
   return /^\p{Lu}$/u.test(token);
 }
 
-/** Sentences in order. Joining them with single spaces gives back the normalized input. */
+/**
+ * Sentences in order. Joining them with single spaces gives back the normalized input. Linear in
+ * the length of the text: every check runs at the boundary in place, never on a copy of the text
+ * before or after it.
+ */
 export function segmentSentences(text: string): string[] {
   const t = normalizeText(text);
   if (t.length === 0) return [];
@@ -42,7 +55,8 @@ export function segmentSentences(text: string): string[] {
   let start = 0;
   for (const m of t.matchAll(BOUNDARY)) {
     const end = m.index + m[0].length;
-    if (!OPENER.test(t.slice(end))) continue;
+    OPENER.lastIndex = end;
+    if (!OPENER.test(t)) continue;
     // Only a lone full stop can be an abbreviation; "?" and "!" always end a sentence.
     if (m[0].startsWith(".") && !m[0].startsWith("..") && isAbbreviation(t, m.index)) continue;
     out.push(t.slice(start, end).trim());
