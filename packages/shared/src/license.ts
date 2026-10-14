@@ -339,8 +339,10 @@ function baseClaims(input: MintInput, iat: number): CitationLicenseClaims {
     network: input.network,
     settlementRef: event.settlementRef,
   };
-  // A recorded read pays no one. `primaryPayee` throws on an empty list, and the record must still mint.
-  if (event.payees.length === 0) {
+  // A recorded read (one carrying `attest`) pays no one, and its record must still mint, so it names
+  // no payee. Every other row mints exactly as it always has: a record is replayed from its row for
+  // years and must not change bytes.
+  if (event.attest && event.payees.length === 0) {
     // nothing to name
   } else if (input.payeesMode === "hashed") {
     naulon.payeesHash = createHash("sha256").update(canonicalPayees(event.payees)).digest("base64url");

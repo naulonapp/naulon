@@ -295,3 +295,10 @@ test("a row without attest mints no attest claim", () => {
   const jws = mintCitationRecord(mintInput, KEY, NOW);
   assert.equal("attest" in (decodePart(jws, 1).naulon as Record<string, unknown>), false);
 });
+
+test("a paid row with no payees mints exactly as before: only a recorded read omits payee claims (L62)", () => {
+  const paid: AttributedEvent = { ...event, payees: [] };
+  const full = mintCitationRecord({ ...mintInput, event: paid, payeesMode: "full" }, KEY, NOW);
+  assert.deepEqual((decodePart(full, 1).naulon as Record<string, unknown>).payees, []);
+  assert.throws(() => mintCitationRecord({ ...mintInput, event: paid, payeesMode: "hashed" }, KEY, NOW), /no payees/);
+});
