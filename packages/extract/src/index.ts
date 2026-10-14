@@ -148,3 +148,6 @@ export function prefersMarkdown(accept: string | null): boolean {
   }
   return markdown > 0 && markdown > html;
 }
+
+export { EXTRACT_VERSION, normalizeText, segmentSentences } from "./sentences.ts";
+export { inclusionProof, leafHash, merkleRoot, verifyInclusion } from "./merkle.ts";

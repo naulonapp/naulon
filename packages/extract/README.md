@@ -34,4 +34,24 @@ Three helpers cover content negotiation: `prefersMarkdown(accept)` is true only 
 header ranks `text/markdown` above every HTML type it names, and `isHtml` / `isMarkdown` read a
 `Content-Type`.
 
+## Sentences and proofs
+
+A reader that quotes a document can prove each quoted sentence against one published hash without
+disclosing the rest of the text. `segmentSentences` splits normalized text the same way for
+everyone, `merkleRoot` commits to every sentence, and `verifyInclusion` checks one sentence with
+its proof, offline, from its index and the sentence count alone.
+
+```ts
+import { inclusionProof, leafHash, merkleRoot, segmentSentences, verifyInclusion } from "@naulon/extract";
+
+const sentences = segmentSentences(text);
+const leaves = sentences.map((s, i) => leafHash(i, s));
+const root = merkleRoot(leaves);                  // publish this
+const proof = inclusionProof(leaves, 3);          // ship this beside sentence 3
+verifyInclusion(root, 3, sentences.length, sentences[3], proof); // true
+```
+
+The splitting rules are frozen per version of this package. A quote proved under one version is
+checked with that version's rules, which is why `EXTRACT_VERSION` is exported.
+
 MIT licensed. Part of [naulon](https://naulon.app).
