@@ -35,6 +35,8 @@ test("the package is importable by name and exposes the buy-side pipeline API", 
   assert.equal(typeof wayfarer.gatewayTransferStatus, "function");
   assert.equal(typeof wayfarer.gatewayTransfers, "function");
   assert.equal(typeof wayfarer.classifyGatewaySettlement, "function");
+  // in-process payer: sign a leg against requirements the host already holds
+  assert.equal(typeof wayfarer.gatewayLegPayload, "function");
 
   // a default policy consumers extend (BUY-3)
   assert.equal(typeof wayfarer.DEFAULT_POLICY, "object");
