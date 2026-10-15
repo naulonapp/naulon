@@ -53,6 +53,10 @@ export { mockBuyer } from "./pay.ts";
 export { readAccept, readBody, type ReadFormat, type ReadResult } from "./readable.ts";
 export {
   gatewayBuyer,
+  // The one-leg envelope builder, for a payer that already holds the 402 requirements in-process
+  // (no HTTP round trip to re-read them). Both pre-sign guards live inside it, so exporting it opens
+  // no path to the signer that skips them.
+  gatewayLegPayload,
   gatewayDeposit,
   gatewayWithdraw,
   gatewayBalances,
