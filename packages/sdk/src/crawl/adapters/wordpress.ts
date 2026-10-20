@@ -98,6 +98,86 @@ function authorsOf(post: WpPost): DiscoveredAuthor[] {
   return out;
 }
 
+/** The rel WordPress advertises its REST root under, in a `Link` header and a `<link>` tag. */
+const WP_API_REL = "https://api.w.org/";
+
+/** The REST root per crawl context, so discovery costs one origin fetch per crawl. */
+const restRoots = new WeakMap<AdapterContext, Promise<string>>();
+
+/**
+ * The REST root this WordPress site advertises, as an absolute URL.
+ *
+ * `/wp-json/` is only the default. With plain permalinks the API lives at `/?rest_route=/`, and a
+ * subdirectory install moves it under that directory. WordPress names its own root in a `Link`
+ * header and a `<link rel="https://api.w.org/">` tag on every page, so that is read first, and the
+ * default is the fallback. A root on another host is ignored: the fetcher only reaches the origin.
+ */
+export function discoverRestRoot(ctx: AdapterContext): Promise<string> {
+  let root = restRoots.get(ctx);
+  if (!root) {
+    root = readAdvertisedRoot(ctx);
+    restRoots.set(ctx, root);
+  }
+  return root;
+}
+
+async function readAdvertisedRoot(ctx: AdapterContext): Promise<string> {
+  const fallback = new URL("/wp-json/", ctx.origin).toString();
+  try {
+    const res = await ctx.fetch(new URL("/", ctx.origin).toString());
+    const fromHeader = rootFromLinkHeader(res.header?.("link") ?? "");
+    const found = fromHeader ?? rootFromHtml(res.ok ? await res.text() : "");
+    if (found && new URL(found).origin === new URL(ctx.origin).origin) return found;
+  } catch {
+    // unreachable home page or malformed URL → the default root
+  }
+  return fallback;
+}
+
+function rootFromLinkHeader(header: string): string | null {
+  for (const part of header.split(",")) {
+    const m = /<([^>]+)>\s*;.*rel="?([^";]+)"?/.exec(part);
+    if (m && m[2] === WP_API_REL) return m[1] ?? null;
+  }
+  return null;
+}
+
+function rootFromHtml(html: string): string | null {
+  for (const tag of html.match(/<link\b[^>]*>/gi) ?? []) {
+    if (!/rel\s*=\s*["']https:\/\/api\.w\.org\/["']/i.test(tag)) continue;
+    const href = /href\s*=\s*["']([^"']+)["']/i.exec(tag);
+    if (href?.[1]) return href[1];
+  }
+  return null;
+}
+
+/**
+ * A REST route under a root. A path root (`/wp-json/`) gets the route appended; a query root
+ * (`/?rest_route=/`) carries the route in `rest_route`. Params are query parameters either way.
+ */
+export function wpRoute(root: string, route: string, params: Record<string, string>): string {
+  const url = new URL(root);
+  const path = route.replace(/^\/+/, "");
+  if (url.searchParams.has("rest_route")) {
+    url.searchParams.set("rest_route", `/${path}`);
+  } else {
+    url.pathname = `${url.pathname.replace(/\/?$/, "/")}${path}`;
+  }
+  for (const [k, v] of Object.entries(params)) url.searchParams.append(k, v);
+  return url.toString();
+}
+
+/** Posts from a root, for `detect`: an array means a WordPress REST API answered. */
+async function answersPosts(ctx: AdapterContext, root: string): Promise<boolean> {
+  try {
+    const res = await ctx.fetch(wpRoute(root, "wp/v2/posts", { per_page: "1" }));
+    if (!res.ok) return false;
+    return Array.isArray(await res.json());
+  } catch {
+    return false;
+  }
+}
+
 /** Fetch the origin's public user directory → `id → name`. One call per crawl (the caller
  *  memoizes). A disabled or blocked `/users` (privacy plugins → 401/403, or a non-array body)
  *  yields an EMPTY map, never a throw — the join then recovers nothing and author resolution
@@ -106,7 +186,7 @@ function authorsOf(post: WpPost): DiscoveredAuthor[] {
 async function fetchUsersMap(ctx: AdapterContext): Promise<Map<number, string>> {
   const map = new Map<number, string>();
   try {
-    const res = await ctx.fetch(new URL("/wp-json/wp/v2/users?per_page=100", ctx.origin).toString());
+    const res = await ctx.fetch(wpRoute(await discoverRestRoot(ctx), "wp/v2/users", { per_page: "100" }));
     if (!res.ok) return map;
     const body = await res.json();
     if (!Array.isArray(body)) return map;
@@ -125,10 +205,12 @@ async function fetchUsersMap(ctx: AdapterContext): Promise<Map<number, string>> 
 type PageResult = WpPost[] | "stop" | "error";
 
 async function fetchPostsPage(ctx: AdapterContext, page: number, embed: boolean): Promise<PageResult> {
-  const url = new URL(
-    `/wp-json/wp/v2/posts?${embed ? "_embed=1&" : ""}per_page=${PER_PAGE}&page=${page}&status=publish`,
-    ctx.origin,
-  ).toString();
+  const url = wpRoute(await discoverRestRoot(ctx), "wp/v2/posts", {
+    ...(embed ? { _embed: "1" } : {}),
+    per_page: String(PER_PAGE),
+    page: String(page),
+    status: "publish",
+  });
   try {
     const res = await ctx.fetch(url);
     if (!res.ok) return "stop"; // WP returns 400 past the last page → stop
@@ -144,10 +226,11 @@ async function fetchPostsPage(ctx: AdapterContext, page: number, embed: boolean)
  *  `fetchPostsPage`: `"stop"` = no more pages (WP 400s past the last one), `"error"` = the fetch
  *  itself failed. */
 async function fetchMediaPage(ctx: AdapterContext, bucket: string, page: number): Promise<WpMedia[] | "stop" | "error"> {
-  const url = new URL(
-    `/wp-json/wp/v2/media?per_page=${PER_PAGE}&page=${page}&media_type=${encodeURIComponent(bucket)}`,
-    ctx.origin,
-  ).toString();
+  const url = wpRoute(await discoverRestRoot(ctx), "wp/v2/media", {
+    per_page: String(PER_PAGE),
+    page: String(page),
+    media_type: bucket,
+  });
   try {
     const res = await ctx.fetch(url);
     if (!res.ok) return "stop";
@@ -219,13 +302,16 @@ export const wordpressAdapter: SourceAdapter = {
   curated: true, // the REST posts endpoint lists real articles, not every URL
   files: true, // the media library, via `discoverMedia`
   async detect(ctx) {
-    try {
-      const res = await ctx.fetch(new URL("/wp-json/wp/v2/posts?per_page=1", ctx.origin).toString());
-      if (!res.ok) return false;
-      return Array.isArray(await res.json());
-    } catch {
-      return false;
+    const root = await discoverRestRoot(ctx);
+    if (await answersPosts(ctx, root)) return true;
+    // Nothing advertised and `/wp-json/` silent: plain permalinks still answer on the query form,
+    // and the rest of this crawl must use the root that answered.
+    const query = new URL("/?rest_route=/", ctx.origin).toString();
+    if (root === new URL("/wp-json/", ctx.origin).toString() && (await answersPosts(ctx, query))) {
+      restRoots.set(ctx, Promise.resolve(query));
+      return true;
     }
+    return false;
   },
   async discover(ctx) {
     const out: ArticleCandidate[] = [];
@@ -256,7 +342,7 @@ export const wordpressAdapter: SourceAdapter = {
         // A later-page failure keeps what earlier pages yielded (a partial catalog beats none).
         if (page === 1) {
           throw new Error(
-            `WordPress REST discovery failed on the first page (${new URL("/wp-json/wp/v2/posts", ctx.origin).toString()}) — even without _embed. The origin may be timing out or blocking the crawler.`,
+            `WordPress REST discovery failed on the first page (${wpRoute(await discoverRestRoot(ctx), "wp/v2/posts", {})}) — even without _embed. The origin may be timing out or blocking the crawler.`,
           );
         }
         break;

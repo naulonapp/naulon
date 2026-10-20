@@ -47,6 +47,6 @@ export type {
 export { ADAPTERS, adapterById, canRun, selectAdapter } from "./registry.ts";
 export { rssAdapter } from "./adapters/rss.ts";
 export { sitemapAdapter } from "./adapters/sitemap.ts";
-export { wordpressAdapter } from "./adapters/wordpress.ts";
+export { discoverRestRoot, wordpressAdapter, wpRoute } from "./adapters/wordpress.ts";
 export { makeGuardedFetcher, type GuardedFetcherOpts } from "./fetcher.ts";
 export { resolveAuthorWallet, validWallet, type ResolvedAuthor } from "./authors.ts";
