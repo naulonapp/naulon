@@ -14,6 +14,15 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.14.1
+
+The WordPress plugin moves to **0.7.1**. No npm package changed.
+
+### Fixed
+- The plugin's credits route answers `Cache-Control: private, no-store`. A CDN caches by extension,
+  so the credits answer for a tolled file (a URL ending in `.pdf`) was cached for hours and the
+  control plane kept reading a stale payee.
+
 ## v0.14.0
 
 The WordPress plugin moves to **0.7.0**. No npm package changed: every `@naulon/*` package is the

@@ -235,6 +235,21 @@ class Naulon_Credits {
 	 * @return WP_REST_Response
 	 */
 	public function handle( $request ) {
+		$response = $this->answer( $request );
+		// Never cacheable. The control plane reads this to decide who is paid, and a CDN caches by
+		// extension: a credits URL for a file ends in `.pdf`, so Cloudflare held one for four hours
+		// and a changed author or wallet kept answering with the old payee.
+		$response->header( 'Cache-Control', 'private, no-store' );
+		return $response;
+	}
+
+	/**
+	 * The credits answer itself, before the caching header.
+	 *
+	 * @param WP_REST_Request $request The request.
+	 * @return WP_REST_Response
+	 */
+	private function answer( $request ) {
 		if ( ! $this->token_ok( $request ) ) {
 			// A wrong token is answered exactly like a missing post. Distinguishing them would
 			// let a caller enumerate which slugs exist.

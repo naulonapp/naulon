@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.7.0
+Stable tag: 0.7.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -162,6 +162,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.7.1 =
+* The plugin's answer about who is paid for a post or file is never stored by a CDN. Cloudflare caches any address ending in .pdf, so it kept the answer for a tolled file for four hours, and a changed author or wallet was not seen until it expired.
+
 = 0.7.0 =
 * Charge AI agents for files. Tick PDF, JSON, TXT or XML on your site's page in the naulon dashboard and the plugin tolls those files in your media library the way it tolls articles. People still download free. A file is credited to the post it is attached to, with that post's authors and price, and a file on a free post stays free.
 * The plugin checks your server can do this before the dashboard offers it. It asks your own site for a small test file and only reports "working" when WordPress itself answered. Diagnostics shows the result, with the exact fix when your server ignores .htaccess (nginx), cannot write it, or a cache in front serves files on its own.
@@ -264,6 +267,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.7.1 =
+Needed if your site is behind Cloudflare or another CDN and you charge for files.
+
 = 0.7.0 =
 Needed to charge AI agents for PDFs and other files. Without it, files you tick in the dashboard are served free.
 
