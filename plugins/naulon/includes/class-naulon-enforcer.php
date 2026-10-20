@@ -230,11 +230,8 @@ class Naulon_Enforcer {
 			// Paid. Serve the article, with the receipt and the license the agent will present
 			// next time instead of paying again.
 			$this->no_store();
-			if ( '' !== $decision['receipt'] ) {
-				header( self::PAYMENT_RESPONSE_HEADER . ': ' . $decision['receipt'] );
-			}
-			if ( '' !== $decision['license'] ) {
-				header( self::LICENSE_HEADER . ': ' . $decision['license'] );
+			foreach ( self::grant_headers( $decision ) as $line ) {
+				header( $line );
 			}
 			return;
 		}
@@ -714,23 +711,83 @@ class Naulon_Enforcer {
 	 */
 	private function send_402( array $decision ) {
 		$this->no_store();
-		status_header( 402 );
-		header( self::PAYMENT_REQUIRED_HEADER . ': ' . $decision['header'] );
+		$this->emit_denial( $this->denial_response( $decision, (string) get_permalink() ) );
+	}
+
+	/**
+	 * The response that refuses a read: the 402 with its price, or the 403 a rule decided. Null
+	 * for any decision that serves the content. Built rather than sent, so the article page and the
+	 * file route answer an agent with the same bytes.
+	 *
+	 * @param array  $decision The decision.
+	 * @param string $resource The URL the agent asked for.
+	 * @return array|null {status: int, headers: string[], body: string}
+	 */
+	public function denial_response( array $decision, $resource ) {
+		$headers = self::no_store_headers();
 		// The licence, on the response that most needs it. An agent meeting a 402 holds this
 		// response already; without the pointer it must fetch robots.txt before it can learn what
 		// the terms are, and the terms are what decide whether paying is even permitted. Empty
-		// when no document is stored — we never advertise what we do not serve.
+		// when no document is stored: we never advertise what we do not serve.
 		$license_link = Naulon_License::instance()->link_header();
 		if ( '' !== $license_link ) {
-			header( 'Link: ' . $license_link, false );
+			$headers[] = 'Link: ' . $license_link;
 		}
-		header( 'Content-Type: application/json; charset=utf-8' );
-		echo wp_json_encode(
-			array(
-				'error'    => 'payment required',
-				'resource' => esc_url_raw( get_permalink() ),
-			)
-		);
+		if ( 'pay' === $decision['action'] ) {
+			$headers[] = self::PAYMENT_REQUIRED_HEADER . ': ' . $decision['header'];
+			$headers[] = 'Content-Type: application/json; charset=utf-8';
+			return array(
+				'status'  => 402,
+				'headers' => $headers,
+				'body'    => (string) wp_json_encode(
+					array(
+						'error'    => 'payment required',
+						'resource' => esc_url_raw( $resource ),
+					)
+				),
+			);
+		}
+		if ( 'blocked' === $decision['action'] ) {
+			$headers[] = 'Content-Type: text/plain; charset=utf-8';
+			return array(
+				'status'  => 403,
+				'headers' => $headers,
+				'body'    => esc_html( $decision['reason'] ),
+			);
+		}
+		return null;
+	}
+
+	/**
+	 * The headers a served read carries after payment: the receipt and the licence the agent
+	 * presents next time instead of paying again.
+	 *
+	 * @param array $decision The decision.
+	 * @return string[]
+	 */
+	public static function grant_headers( array $decision ) {
+		$headers = array();
+		if ( 'settled' === $decision['action'] && '' !== $decision['receipt'] ) {
+			$headers[] = self::PAYMENT_RESPONSE_HEADER . ': ' . $decision['receipt'];
+		}
+		if ( 'settled' === $decision['action'] && '' !== $decision['license'] ) {
+			$headers[] = self::LICENSE_HEADER . ': ' . $decision['license'];
+		}
+		return $headers;
+	}
+
+	/**
+	 * Send a denial built by denial_response() and stop.
+	 *
+	 * @param array $response {status, headers, body}.
+	 * @return void
+	 */
+	private function emit_denial( array $response ) {
+		status_header( $response['status'] );
+		foreach ( $response['headers'] as $line ) {
+			header( $line, 0 !== stripos( $line, 'link:' ) );
+		}
+		echo $response['body']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built by denial_response(): wp_json_encode() of esc_url_raw(), or esc_html().
 		exit;
 	}
 
@@ -964,14 +1021,7 @@ class Naulon_Enforcer {
 	 */
 	private function send_403( array $decision ) {
 		$this->no_store();
-		status_header( 403 );
-		$license_link = Naulon_License::instance()->link_header();
-		if ( '' !== $license_link ) {
-			header( 'Link: ' . $license_link, false );
-		}
-		header( 'Content-Type: text/plain; charset=utf-8' );
-		echo esc_html( $decision['reason'] );
-		exit;
+		$this->emit_denial( $this->denial_response( $decision, (string) get_permalink() ) );
 	}
 
 	private function free( $reason ) {

@@ -70,6 +70,8 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-log.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-observer.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-enforcer.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-probe.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-toll.php';
 require_once NAULON_PLUGIN_DIR . 'includes/exits/interface-naulon-content-exit.php';
 require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exits.php';
 require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exit-rest.php';
@@ -91,6 +93,8 @@ function naulon_bootstrap() {
 	Naulon_Credits::instance()->register();
 	Naulon_License::instance()->register();
 	Naulon_Enforcer::instance()->register();
+	// Files in the media library, routed here by Naulon_File_Route.
+	Naulon_File_Toll::instance()->register();
 	// The other doors to the same articles: REST, feeds and listing pages.
 	Naulon_Exits::instance()->register();
 	Naulon_Cron::instance()->register();
