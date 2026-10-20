@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.7.1
+Stable tag: 0.7.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -158,9 +158,12 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 2. Content: choose what is tolled and which machines are charged.
 3. People: which authors have wallets here, and who has asked for a naulon payout account.
 4. Earnings: what has been paid, per author, with settled and authorized shown separately.
-5. Diagnostics: the caching check, recent decisions, and connection health.
+5. Diagnostics: whether files can be tolled on your server, the caching check, recent decisions, and connection health.
 
 == Changelog ==
+
+= 0.7.2 =
+* Setup no longer warns that a verified site "cannot pass" verification because its WordPress address says http. A verified site already passed the https check, often behind a proxy or CDN.
 
 = 0.7.1 =
 * The plugin's answer about who is paid for a post or file is never stored by a CDN. Cloudflare caches any address ending in .pdf, so it kept the answer for a tolled file for four hours, and a changed author or wallet was not seen until it expired.
