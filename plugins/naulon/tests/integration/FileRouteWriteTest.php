@@ -91,4 +91,18 @@ class FileRouteWriteTest extends WP_UnitTestCase {
 		$this->assertFalse( Naulon_File_Route::instance()->sync() );
 		remove_filter( 'upload_dir', $offload );
 	}
+
+	public function test_an_admin_page_load_heals_a_missing_block() {
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		Naulon_File_Route::instance()->heal();
+
+		$this->assertStringContainsString( 'naulon_file', $this->block() );
+	}
+
+	public function test_heal_does_nothing_for_a_non_admin() {
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'author' ) ) );
+		Naulon_File_Route::instance()->heal();
+
+		$this->assertSame( '', $this->block() );
+	}
 }

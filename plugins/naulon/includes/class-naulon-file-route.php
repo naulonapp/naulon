@@ -46,6 +46,33 @@ class Naulon_File_Route {
 	 */
 	public function register() {
 		add_action( 'naulon_file_types_changed', array( $this, 'sync' ), 10, 0 );
+		add_action( 'admin_init', array( $this, 'heal' ) );
+	}
+
+	/**
+	 * Write the block when it is missing. Activation from WP-CLI, or a host that rewrote
+	 * `.htaccess`, leaves no block: WP-CLI runs outside Apache, so `got_mod_rewrite()` is false
+	 * there. The next admin page load runs inside the web server and can tell.
+	 *
+	 * @return void
+	 */
+	public function heal() {
+		if ( ! current_user_can( 'manage_options' ) || wp_doing_ajax() ) {
+			return;
+		}
+		$this->ensure();
+	}
+
+	/**
+	 * Write the block if it is missing; leave it alone if it is there. The hourly cron calls this
+	 * too, since wp-cron runs inside the web server on a site nobody opens the admin of.
+	 *
+	 * @return void
+	 */
+	public function ensure() {
+		if ( empty( $this->current() ) ) {
+			$this->sync();
+		}
 	}
 
 	/**

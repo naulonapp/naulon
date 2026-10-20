@@ -103,6 +103,7 @@ class Naulon_Cron {
 		Naulon_Rules::instance()->refresh();
 		// The file self-test, daily: hosting changes under a site (a CDN rule, a server move) and
 		// the portal must not keep showing a verdict that stopped being true.
+		Naulon_File_Route::instance()->ensure();
 		if ( Naulon_File_Probe::instance()->is_stale() ) {
 			Naulon_File_Probe::instance()->run();
 		}
