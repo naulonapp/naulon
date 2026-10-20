@@ -42,6 +42,9 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-log.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-observer.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cache.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-cron.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-probe.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-toll.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-route.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-data.php';
 
 Naulon_Data::uninstall();

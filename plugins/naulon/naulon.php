@@ -72,6 +72,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-observer.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-enforcer.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-probe.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-toll.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-route.php';
 require_once NAULON_PLUGIN_DIR . 'includes/exits/interface-naulon-content-exit.php';
 require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exits.php';
 require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exit-rest.php';
@@ -95,6 +96,7 @@ function naulon_bootstrap() {
 	Naulon_Enforcer::instance()->register();
 	// Files in the media library, routed here by Naulon_File_Route.
 	Naulon_File_Toll::instance()->register();
+	Naulon_File_Route::instance()->register();
 	// The other doors to the same articles: REST, feeds and listing pages.
 	Naulon_Exits::instance()->register();
 	Naulon_Cron::instance()->register();
@@ -130,6 +132,8 @@ function naulon_activate() {
 	Naulon_License::instance()->add_rewrite_rules();
 	flush_rewrite_rules();
 	Naulon_Cron::instance()->ensure_scheduled();
+	// The uploads route for files, written now so the self-test can run before a type is ticked.
+	Naulon_File_Route::instance()->sync();
 }
 register_activation_hook( __FILE__, 'naulon_activate' );
 
@@ -142,5 +146,7 @@ register_activation_hook( __FILE__, 'naulon_activate' );
 function naulon_deactivate() {
 	Naulon_Cron::instance()->unschedule();
 	flush_rewrite_rules();
+	// A deactivated plugin answers nothing, so its uploads route goes with it.
+	Naulon_File_Route::instance()->remove();
 }
 register_deactivation_hook( __FILE__, 'naulon_deactivate' );
