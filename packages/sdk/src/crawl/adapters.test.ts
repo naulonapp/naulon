@@ -198,7 +198,7 @@ test("wordpress discover keeps earlier pages when a LATER page fails (embed + ba
   };
   const arts = await wordpressAdapter.discover(ctx(fetch));
   assert.equal(arts.length, 50); // page 1 kept despite page 2 failing
-  assert.equal(calls, 3); // page-1 embed, then page-2 embed + page-2 bare retry, then stop
+  assert.equal(calls, 4); // REST-root discovery, page-1 embed, then page-2 embed + page-2 bare retry, then stop
 });
 
 /* ── registry ────────────────────────────────────────────────────────────────── */
