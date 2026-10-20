@@ -258,6 +258,7 @@ class Naulon_Admin {
 			case 'install_dropin':
 			case 'remove_dropin':
 			case 'run_probe':
+			case 'file_retest':
 			case 'clear_log':
 			case 'save_data_policy':
 			case 'export_data':

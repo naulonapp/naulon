@@ -150,7 +150,8 @@ class Naulon_Admin_Setup {
 					'gate_url' => '',
 				)
 			);
-			Naulon_Admin::notice( 'success', __( 'Connected. The control plane accepted this key.', 'naulon' ) );
+			self::ping();
+			Naulon_Admin::notice( 'success', __( 'Connected. Your naulon dashboard now shows this site as live.', 'naulon' ) );
 			Naulon_Cron::instance()->ensure_scheduled();
 			return;
 		}
@@ -172,6 +173,7 @@ class Naulon_Admin_Setup {
 					'api_key'  => '',
 				)
 			);
+			self::ping();
 			Naulon_Admin::notice( 'success', __( 'Connected to your own gate.', 'naulon' ) );
 			Naulon_Cron::instance()->ensure_scheduled();
 			return;
@@ -181,6 +183,20 @@ class Naulon_Admin_Setup {
 			'error',
 			__( 'That is neither an API key (they start with nln_live_) nor a gate URL (https://…).', 'naulon' )
 		);
+	}
+
+	/**
+	 * The setup ping: fetch this site's policy now, which is what lights the dashboard's
+	 * "connected" step, instead of waiting for the first crawler or the hourly cron. The file route
+	 * and its self-test run in the same breath, so the dashboard learns whether files can be
+	 * tolled at the moment the publisher is looking at it.
+	 *
+	 * @return void
+	 */
+	private static function ping() {
+		Naulon_Rules::instance()->refresh();
+		Naulon_File_Route::instance()->sync();
+		Naulon_File_Probe::instance()->run_and_report();
 	}
 
 	/**

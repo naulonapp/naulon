@@ -28,6 +28,7 @@ class Naulon_Admin_Diagnostics {
 		Naulon_Admin::header( __( 'Diagnostics', 'naulon' ) );
 
 		self::render_probe();
+		self::render_files();
 		self::render_cache();
 		self::render_decisions();
 		self::render_connectivity();
@@ -84,6 +85,122 @@ class Naulon_Admin_Diagnostics {
 			echo '</tbody></table>';
 		}
 		echo '</div>';
+
+		Naulon_Admin::card_close();
+	}
+
+	/* --------------------------------------------------------------------------------------- */
+	/* Files                                                                                    */
+	/* --------------------------------------------------------------------------------------- */
+
+	/**
+	 * What the Files card says, from the last self-test and the opted-in types. One function, so
+	 * the words on this screen and the status the dashboard shows come from the same verdict.
+	 *
+	 * @param array|null $result Naulon_File_Probe::last().
+	 * @param string[]   $types  Opted-in types.
+	 * @param int        $now    Unix time.
+	 * @return array {pill: ok|warn|bad|idle, label, line, fix: none|nginx|htaccess|cache, scope}
+	 */
+	public static function file_panel( $result, array $types, $now ) {
+		$scope = empty( $types )
+			/* translators: shown under the file tolling status when no file type is opted in. */
+			? __( 'No file types are being charged. Choose PDF, JSON, TXT or XML on your site\'s page in the naulon dashboard.', 'naulon' )
+			/* translators: %s: comma-separated file types, e.g. "PDF, XML". */
+			: sprintf( __( 'Charging agents for: %s. People always download free.', 'naulon' ), strtoupper( implode( ', ', $types ) ) );
+
+		if ( ! is_array( $result ) ) {
+			return array(
+				'pill'  => 'idle',
+				'label' => __( 'Not checked yet', 'naulon' ),
+				'line'  => __( 'Run the check to find out whether this site can charge agents for files.', 'naulon' ),
+				'fix'   => 'none',
+				'scope' => $scope,
+			);
+		}
+		$ago = human_time_diff( (int) $result['at'], $now );
+		switch ( $result['status'] ) {
+			case 'ok':
+				return array(
+					'pill'  => 'ok',
+					'label' => __( 'Working', 'naulon' ),
+					/* translators: %s: how long ago, e.g. "3 mins". */
+					'line'  => sprintf( __( 'Files are tolled on this site. Checked %s ago.', 'naulon' ), $ago ),
+					'fix'   => 'none',
+					'scope' => $scope,
+				);
+			case 'no_rewrite':
+				return array(
+					'pill'  => 'bad',
+					'label' => __( 'Not available', 'naulon' ),
+					'line'  => __( 'Your server ignores .htaccess, so files are served before WordPress can charge for them. If your site runs on nginx, add the rule below to its server block, then check again.', 'naulon' ),
+					'fix'   => 'nginx',
+					'scope' => $scope,
+				);
+			case 'not_writable':
+				return array(
+					'pill'  => 'bad',
+					'label' => __( 'Not available', 'naulon' ),
+					'line'  => __( 'WordPress could not write its .htaccess file. Add the lines below to the .htaccess file in your site\'s root folder, then check again.', 'naulon' ),
+					'fix'   => 'htaccess',
+					'scope' => $scope,
+				);
+			case 'cached':
+				return array(
+					'pill'  => 'bad',
+					'label' => __( 'Not available', 'naulon' ),
+					/* translators: %s: the cache, e.g. "Cloudflare (HIT)". */
+					'line'  => sprintf( __( 'A cache in front of your site, %s, serves files without asking WordPress. Add a rule there that bypasses the cache for these file types under your uploads folder, then check again.', 'naulon' ), (string) $result['detail'] ),
+					'fix'   => 'cache',
+					'scope' => $scope,
+				);
+			case 'offloaded':
+				return array(
+					'pill'  => 'warn',
+					'label' => __( 'Not available', 'naulon' ),
+					'line'  => __( 'Your files are served by your media host, not by this site, so WordPress never sees the request. Route this site through naulon from your dashboard to charge for them.', 'naulon' ),
+					'fix'   => 'none',
+					'scope' => $scope,
+				);
+			default:
+				return array(
+					'pill'  => 'warn',
+					'label' => __( 'Not available', 'naulon' ),
+					/* translators: %s: the reason, e.g. "this site answered its own request with HTTP 401". */
+					'line'  => sprintf( __( 'Files cannot be tolled here: %s.', 'naulon' ), (string) $result['detail'] ),
+					'fix'   => 'none',
+					'scope' => $scope,
+				);
+		}
+	}
+
+	/**
+	 * @return void
+	 */
+	private static function render_files() {
+		$types = Naulon_Rules::instance()->file_types();
+		$panel = self::file_panel( Naulon_File_Probe::instance()->last(), $types, time() );
+
+		Naulon_Admin::card_open( __( 'Files', 'naulon' ) );
+		echo '<p class="naulon-state">';
+		Naulon_Admin::pill( $panel['pill'], $panel['label'] );
+		echo '</p>';
+		echo '<p>' . esc_html( $panel['line'] ) . '</p>';
+		echo '<p class="naulon-muted">' . esc_html( $panel['scope'] ) . '</p>';
+
+		$fix = '';
+		if ( 'nginx' === $panel['fix'] ) {
+			$fix = Naulon_File_Route::nginx_snippet( $types, Naulon_File_Route::uploads_path(), Naulon_File_Route::home_path() );
+		} elseif ( 'htaccess' === $panel['fix'] ) {
+			$fix = "# BEGIN naulon-files\n" . implode( "\n", Naulon_File_Route::instance()->wanted() ) . "\n# END naulon-files";
+		}
+		if ( '' !== $fix ) {
+			printf( '<p><textarea readonly rows="6" class="large-text code" onfocus="this.select()">%s</textarea></p>', esc_textarea( $fix ) );
+		}
+
+		Naulon_Admin::form_open( 'file_retest', Naulon_Admin::PAGE_DIAGNOSTICS );
+		submit_button( __( 'Check again', 'naulon' ), 'secondary', 'submit', false );
+		Naulon_Admin::form_close();
 
 		Naulon_Admin::card_close();
 	}
@@ -576,6 +693,13 @@ class Naulon_Admin_Diagnostics {
 				unset( $result['challenge'] );
 				Naulon_Admin::carry( 'probe', $result );
 				Naulon_Admin::notice( $result['ok'] ? 'success' : 'warning', (string) $result['message'] );
+				break;
+			case 'file_retest':
+				Naulon_Rules::instance()->refresh();
+				Naulon_File_Route::instance()->sync();
+				$result = Naulon_File_Probe::instance()->run_and_report();
+				$panel  = self::file_panel( $result, Naulon_Rules::instance()->file_types(), time() );
+				Naulon_Admin::notice( 'ok' === $result['status'] ? 'success' : 'warning', $panel['line'] );
 				break;
 			case 'clear_log':
 				Naulon_Log::clear();
