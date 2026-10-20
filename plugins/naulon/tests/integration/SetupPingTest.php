@@ -109,4 +109,20 @@ class SetupPingTest extends WP_UnitTestCase {
 		$this->assertSame( 'idle', Naulon_Admin_Diagnostics::file_panel( null, array(), $now )['pill'] );
 		$this->assertStringContainsString( 'No file types', Naulon_Admin_Diagnostics::file_panel( null, array(), $now )['scope'] );
 	}
+
+	public function test_the_http_warning_is_for_a_site_that_cannot_verify_yet() {
+		update_option( 'home', 'http://example.org' );
+		$render = function ( $verified ) {
+			$method = new ReflectionMethod( 'Naulon_Admin_Setup', 'render_ownership' );
+			$method->setAccessible( true );
+			ob_start();
+			$method->invoke( null, array_merge( Naulon_Settings::all(), array( 'verified_at' => $verified ? gmdate( 'c' ) : '', 'challenge_host' => 'example.org' ) ), true, $verified );
+			return ob_get_clean();
+		};
+
+		$this->assertStringContainsString( 'served over http', $render( false ) );
+		// Verified means the https check already passed: telling this publisher it "cannot pass"
+		// contradicts the green pill beside it.
+		$this->assertStringNotContainsString( 'served over http', $render( true ) );
+	}
 }

@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: naulon citation toll 0.7.1\n"
+"Project-Id-Version: naulon citation toll 0.7.2\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/naulon\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-20T16:46:50+00:00\n"
+"POT-Creation-Date: 2026-10-20T16:56:53+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: naulon\n"
@@ -186,12 +186,12 @@ msgid "Run the check"
 msgstr ""
 
 #: includes/admin/class-naulon-admin-diagnostics.php:64
-#: includes/admin/class-naulon-admin-setup.php:578
+#: includes/admin/class-naulon-admin-setup.php:580
 msgid "Charged"
 msgstr ""
 
 #: includes/admin/class-naulon-admin-diagnostics.php:66
-#: includes/admin/class-naulon-admin-setup.php:580
+#: includes/admin/class-naulon-admin-setup.php:582
 msgid "Served free"
 msgstr ""
 
@@ -1031,205 +1031,205 @@ msgstr ""
 msgid "Not verified"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:286
+#: includes/admin/class-naulon-admin-setup.php:288
 msgid "This site is served over http. The ownership check is https-only, so it cannot pass until the site has a certificate. Everything else on this page will work; verification will not."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:296
+#: includes/admin/class-naulon-admin-setup.php:298
 msgid "This site was verified and is not any more — the control plane no longer holds a proof for this host. Nothing is being charged until it is verified again: agents read free. The usual cause is that /.well-known/ stopped being reachable long enough for the check to give up, so look for a security or caching plugin intercepting it, then run the steps below."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:299
+#: includes/admin/class-naulon-admin-setup.php:301
 msgid "Noticed"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:303
+#: includes/admin/class-naulon-admin-setup.php:305
 msgid "Your setup key almost certainly cannot do this on its own. It hands its domain permission back once a site verifies, so claiming the domain again needs a fresh one: in your naulon dashboard, Settings → API & webhooks → Create key → Connect WordPress."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:305
+#: includes/admin/class-naulon-admin-setup.php:307
 msgid "This plugin serves the proof itself — both as a file under /.well-known/ and as a tag in the page head — so there is no DNS to edit. Start it, then ask the control plane to look."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:309
+#: includes/admin/class-naulon-admin-setup.php:311
 msgid "Connect first — verification is a conversation with the control plane."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:317
+#: includes/admin/class-naulon-admin-setup.php:319
 msgid "Verify this site"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:317
+#: includes/admin/class-naulon-admin-setup.php:319
 msgid "Start again"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:326
+#: includes/admin/class-naulon-admin-setup.php:328
 msgid "Check now"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:334
+#: includes/admin/class-naulon-admin-setup.php:336
 msgid "Serving the proof at"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:341
+#: includes/admin/class-naulon-admin-setup.php:343
 msgid "What this site can see from here"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:395
+#: includes/admin/class-naulon-admin-setup.php:397
 msgid "Point your account at this site"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:401
+#: includes/admin/class-naulon-admin-setup.php:403
 msgid "This plugin publishes who wrote each article and where their money goes. The control plane has to be told to read it — that is a setting on your account, and one this plugin deliberately cannot change for you. Paste this address into the credits field there:"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:408
+#: includes/admin/class-naulon-admin-setup.php:410
 msgid "That is the base, without a trailing slash and without /credits — the control plane appends the article itself, so what it fetches is:"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:411
+#: includes/admin/class-naulon-admin-setup.php:413
 msgid "An article that is not tollable — a draft, one you marked free, one that credits nobody — answers 404 here, which is the agreed signal for \"read this one free\". That is why nothing else needs a list of what is paid. An author credited with no wallet on this site is still listed: your account may hold a payout address for them, and only it can decide."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:416
+#: includes/admin/class-naulon-admin-setup.php:418
 msgid "Confirmed by the toll test: a crawler was priced and charged, so this address is being read."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:423
+#: includes/admin/class-naulon-admin-setup.php:425
 msgid "A shared token is set, so the control plane must send it. Remove it on the Content screen if the two ever disagree."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:445
+#: includes/admin/class-naulon-admin-setup.php:447
 msgid "Switch the toll on"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:454
+#: includes/admin/class-naulon-admin-setup.php:456
 msgid "Charging agents"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:456
+#: includes/admin/class-naulon-admin-setup.php:458
 msgid "Standing down"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:458
+#: includes/admin/class-naulon-admin-setup.php:460
 msgid "On, but not able to charge"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:460
+#: includes/admin/class-naulon-admin-setup.php:462
 msgid "Off"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:465
+#: includes/admin/class-naulon-admin-setup.php:467
 msgid "Your DNS still points this domain at the hosted gate, and the gate is already charging for it. Enforcing here as well would charge the same read twice, so this plugin has stood down. Remove the CNAME, or leave enforcement off and let the gate do it."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:471
+#: includes/admin/class-naulon-admin-setup.php:473
 msgid "Verification has to pass first. Until it does, the control plane will not settle a payment for this domain — so a price shown here could never actually be paid."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:472
+#: includes/admin/class-naulon-admin-setup.php:474
 msgid "Connect first."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:479
+#: includes/admin/class-naulon-admin-setup.php:481
 msgid "Switch off"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:482
+#: includes/admin/class-naulon-admin-setup.php:484
 msgid "Switch on"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:491
+#: includes/admin/class-naulon-admin-setup.php:493
 msgid "Humans are never affected by this switch. It decides whether machines are charged."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:505
+#: includes/admin/class-naulon-admin-setup.php:507
 msgid "Not yet. Connect and verify first — a toll that cannot be settled is worse than no toll."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:513
+#: includes/admin/class-naulon-admin-setup.php:515
 msgid "The toll is on. Agents are charged; readers are not."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:514
+#: includes/admin/class-naulon-admin-setup.php:516
 msgid "The toll is off. Everything reads free."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:527
+#: includes/admin/class-naulon-admin-setup.php:529
 msgid "Test the toll"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:528
+#: includes/admin/class-naulon-admin-setup.php:530
 msgid "This asks your own site for one of your articles while pretending to be a crawler, over real HTTP, and shows exactly what came back."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:532
+#: includes/admin/class-naulon-admin-setup.php:534
 msgid "Test toll"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:535
+#: includes/admin/class-naulon-admin-setup.php:537
 msgid "Check status"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:552
+#: includes/admin/class-naulon-admin-setup.php:554
 msgid "The toll is running, but the cache guard is not installed. If anything caches pages on this site, crawlers may be reading them free without any sign of it here."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:554
+#: includes/admin/class-naulon-admin-setup.php:556
 msgid "Install it on the Diagnostics screen."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:582
+#: includes/admin/class-naulon-admin-setup.php:584
 msgid "Inconclusive"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:646
+#: includes/admin/class-naulon-admin-setup.php:648
 msgid "Agent pays"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:651
+#: includes/admin/class-naulon-admin-setup.php:653
 msgid "Your author gets"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:659
+#: includes/admin/class-naulon-admin-setup.php:661
 msgid "Chain"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:678
+#: includes/admin/class-naulon-admin-setup.php:680
 msgid "Split"
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:683
+#: includes/admin/class-naulon-admin-setup.php:685
 msgid "naulon's fee is charged to the agent on top of your author's share. It is never taken out of what your author is paid."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:707
+#: includes/admin/class-naulon-admin-setup.php:709
 msgid "A crawler was charged for that article."
 msgstr ""
 
-#: includes/admin/class-naulon-admin-setup.php:711
+#: includes/admin/class-naulon-admin-setup.php:713
 msgid "A crawler read that article free — see the detail below."
 msgstr ""
 
 #. translators: the control plane has no verdict for this host yet.
-#: includes/admin/class-naulon-admin-setup.php:732
+#: includes/admin/class-naulon-admin-setup.php:734
 msgid "The control plane has not classified this domain yet."
 msgstr ""
 
 #. translators: %s: enforcement mode.
-#: includes/admin/class-naulon-admin-setup.php:734
+#: includes/admin/class-naulon-admin-setup.php:736
 #, php-format
 msgid "The control plane sees this domain as: %s"
 msgstr ""
 
 #. translators: %s: timestamp.
-#: includes/admin/class-naulon-admin-setup.php:755
+#: includes/admin/class-naulon-admin-setup.php:757
 #, php-format
 msgid "Checked %s: this domain is not classified yet."
 msgstr ""
 
 #. translators: 1: timestamp, 2: enforcement mode.
-#: includes/admin/class-naulon-admin-setup.php:758
+#: includes/admin/class-naulon-admin-setup.php:760
 #, php-format
 msgid "Checked %1$s: the control plane sees this domain as %2$s."
 msgstr ""

@@ -14,6 +14,15 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.14.2
+
+The WordPress plugin moves to **0.7.2**. No npm package changed.
+
+### Fixed
+- Setup showed the "served over http, verification will not pass" warning beside a green Verified
+  pill. It now shows only while the site is unverified.
+- New wordpress.org listing screenshots, taken on a verified https site with no error states.
+
 ## v0.14.1
 
 The WordPress plugin moves to **0.7.1**. No npm package changed.

@@ -282,7 +282,9 @@ class Naulon_Admin_Setup {
 		}
 		echo '</div>';
 
-		if ( ! $https ) {
+		// Only while it can still matter: a verified site already answered the https check, often
+		// behind a proxy whose WordPress address still says http.
+		if ( ! $https && ! $verified ) {
 			echo '<p class="naulon-bad">' . esc_html__( 'This site is served over http. The ownership check is https-only, so it cannot pass until the site has a certificate. Everything else on this page will work; verification will not.', 'naulon' ) . '</p>';
 		}
 
