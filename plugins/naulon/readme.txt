@@ -1,14 +1,14 @@
-=== naulon citation toll ===
+=== naulon - Get paid when AI reads your work ===
 Contributors: ravianxreaver
 Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.7.2
+Stable tag: 0.7.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Charge AI agents for reading your articles. Humans always read free, and your authors get paid directly.
+AI agents pay to read your articles and files. People always read free, and every author is paid directly.
 
 == Description ==
 
@@ -162,6 +162,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.7.3 =
+* New name: naulon - Get paid when AI reads your work. Nothing else changed.
+
 = 0.7.2 =
 * Setup no longer warns that a verified site "cannot pass" verification because its WordPress address says http. A verified site already passed the https check, often behind a proxy or CDN.
 
@@ -270,6 +273,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.7.3 =
+A new name and description. No change to how the plugin works.
+
 = 0.7.2 =
 Removes a wrong "verification will not pass" warning from Setup on verified sites.
 
