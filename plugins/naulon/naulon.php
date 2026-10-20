@@ -97,6 +97,7 @@ function naulon_bootstrap() {
 	// Files in the media library, routed here by Naulon_File_Route.
 	Naulon_File_Toll::instance()->register();
 	Naulon_File_Route::instance()->register();
+	Naulon_File_Probe::instance()->register();
 	// The other doors to the same articles: REST, feeds and listing pages.
 	Naulon_Exits::instance()->register();
 	Naulon_Cron::instance()->register();
