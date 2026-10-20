@@ -151,6 +151,13 @@ class Naulon_Admin {
 			array(),
 			NAULON_VERSION
 		);
+		wp_enqueue_script(
+			'naulon-admin',
+			plugins_url( 'assets/admin.js', NAULON_PLUGIN_FILE ),
+			array(),
+			NAULON_VERSION,
+			array( 'in_footer' => true )
+		);
 	}
 
 	/* --------------------------------------------------------------------------------------- */

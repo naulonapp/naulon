@@ -195,7 +195,12 @@ class Naulon_Admin_Diagnostics {
 			$fix = "# BEGIN naulon-files\n" . implode( "\n", Naulon_File_Route::instance()->wanted() ) . "\n# END naulon-files";
 		}
 		if ( '' !== $fix ) {
-			printf( '<p><textarea readonly rows="6" class="large-text code" onfocus="this.select()">%s</textarea></p>', esc_textarea( $fix ) );
+			printf( '<p><textarea id="naulon-file-fix" readonly rows="6" class="large-text code" onfocus="this.select()">%s</textarea></p>', esc_textarea( $fix ) );
+			printf(
+				'<p><button type="button" class="button" data-naulon-copy="naulon-file-fix" data-naulon-copied="%s">%s</button></p>',
+				esc_attr__( 'Copied', 'naulon' ),
+				esc_html__( 'Copy', 'naulon' )
+			);
 		}
 
 		Naulon_Admin::form_open( 'file_retest', Naulon_Admin::PAGE_DIAGNOSTICS );
