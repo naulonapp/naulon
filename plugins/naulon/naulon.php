@@ -57,6 +57,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-byline-publishpr
 require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-byline-coauthors-plus.php';
 require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-authors.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-toll-subject.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-license.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ip.php';

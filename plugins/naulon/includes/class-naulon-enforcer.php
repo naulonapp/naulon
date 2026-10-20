@@ -310,10 +310,20 @@ class Naulon_Enforcer {
 	 * @return array {action: free|pay|settled|reread, header, receipt, license, reason}
 	 */
 	public function decide( $post ) {
+		return $this->decide_subject( Naulon_Toll_Subject::for_post( $post ) );
+	}
+
+	/**
+	 * The decision for an article or a file. Same memo as decide(): one request, one decision.
+	 *
+	 * @param Naulon_Toll_Subject $subject What was requested.
+	 * @return array {action: free|pay|settled|reread|blocked|observed, header, receipt, license, reason}
+	 */
+	public function decide_subject( Naulon_Toll_Subject $subject ) {
 		if ( null !== $this->decision ) {
 			return $this->decision;
 		}
-		$this->decision = $this->compute_decision( $post );
+		$this->decision = $this->compute_decision( $subject );
 		return $this->decision;
 	}
 
@@ -325,12 +335,12 @@ class Naulon_Enforcer {
 	 * humans are not logged at all, anywhere. See Naulon_Log for why that is a position rather
 	 * than an omission.
 	 *
-	 * @param array   $decision The decision.
-	 * @param WP_Post $post     The post.
-	 * @param string  $slug     Canonical slug.
+	 * @param array               $decision The decision.
+	 * @param Naulon_Toll_Subject $subject  What was requested.
 	 * @return array The decision.
 	 */
-	private function logged( array $decision, $post, $slug ) {
+	private function logged( array $decision, Naulon_Toll_Subject $subject ) {
+		$slug = $subject->slug;
 		$kind = $this->requested_kind();
 		$ua   = $this->header( 'User-Agent' );
 
@@ -359,11 +369,10 @@ class Naulon_Enforcer {
 		// Readiness screens, which otherwise only ever see fleet-proxied traffic and therefore
 		// tell an enforcing site that nothing is priced. Cost is bounded to the crawler that
 		// caused it — see Naulon_Observer.
-		$permalink = get_permalink( $post );
-		if ( is_string( $permalink ) && '' !== $permalink ) {
+		if ( '' !== $subject->resource ) {
 			Naulon_Observer::instance()->record(
 				array(
-					'resource'      => $permalink,
+					'resource'      => $subject->resource,
 					'slug'          => $slug,
 					'action'        => $decision['action'],
 					'kind'          => $kind,
@@ -458,7 +467,7 @@ class Naulon_Enforcer {
 	 * @param WP_Post $post The post.
 	 * @return array
 	 */
-	private function compute_decision( $post ) {
+	private function compute_decision( Naulon_Toll_Subject $subject ) {
 		if ( ! $this->is_active() ) {
 			return $this->free( 'enforcement inactive' );
 		}
@@ -500,7 +509,7 @@ class Naulon_Enforcer {
 		if ( 'blocked' === $access['action'] ) {
 			// The logged reason is the refusal, not the classifier's verdict.
 			$this->agent_verdict = array( 'kind' => 'agent', 'reason' => $access['reason'], 'confidence' => 1.0 );
-			return $this->logged( $this->blocked( ucfirst( $access['reason'] ) . '.' ), $post, Naulon_Credits::instance()->canonical_slug_for( $post ) );
+			return $this->logged( $this->blocked( ucfirst( $access['reason'] ) . '.' ), $subject );
 		}
 		if ( 'free' === $access['action'] ) {
 			// A person is never logged. A request whose user-agent names a crawler is not a person
@@ -509,7 +518,7 @@ class Naulon_Enforcer {
 			if ( null !== $access['verdict'] && 'human' === $access['verdict']['kind'] && null === $access['identity'] ) {
 				return $this->free( $access['reason'] );
 			}
-			return $this->logged( $this->free( $access['reason'] ), $post, Naulon_Credits::instance()->canonical_slug_for( $post ) );
+			return $this->logged( $this->free( $access['reason'] ), $subject );
 		}
 
 		// Only a tollable article is ever gated, and "is anyone NAMED" is the question — not "can
@@ -521,17 +530,16 @@ class Naulon_Enforcer {
 		//
 		// The gate remains the authority on whether anyone can be paid: a slug nothing can fill
 		// answers 204, and `built_402` returning null falls through to a free read below.
-		$credits = Naulon_Credits::instance();
-		if ( ! $credits->is_tollable( $post ) || empty( $credits->contributors_for( $post ) ) ) {
+		if ( ! $subject->is_tollable() || empty( Naulon_Credits::instance()->contributors_for( $subject->owner ) ) ) {
 			return $this->logged(
 				$this->free( 'not tollable (nobody credited, unpublished, or opted out)' ),
-				$post,
-				$credits->canonical_slug_for( $post )
+				$subject
 			);
 		}
 
-		$slug     = $credits->canonical_slug_for( $post );
-		$resource = get_permalink( $post );
+		$slug     = $subject->slug;
+		$resource = $subject->resource;
+		$post     = $subject->owner;
 		$kind     = $this->requested_kind();
 
 		// Already paid for this exact article? Verified by the control plane, which owns the
@@ -549,8 +557,7 @@ class Naulon_Enforcer {
 						'license' => '',
 						'reason'  => 'valid license',
 					),
-					$post,
-					$slug
+					$subject
 				);
 			}
 		}
@@ -558,7 +565,7 @@ class Naulon_Enforcer {
 		$built = $this->built_402( $resource, $slug, $kind );
 		if ( null === $built ) {
 			// No price (free article), or the control plane is unreachable. Either way: serve.
-			return $this->logged( $this->free( 'no quote available' ), $post, $slug );
+			return $this->logged( $this->free( 'no quote available' ), $subject );
 		}
 
 		$payment = $this->header( self::PAYMENT_HEADER );
@@ -578,8 +585,7 @@ class Naulon_Enforcer {
 					$budget,
 					'agent (' . $this->agent_verdict['reason'] . ')'
 				),
-				$post,
-				$slug
+				$subject
 			);
 		}
 
@@ -610,8 +616,7 @@ class Naulon_Enforcer {
 					'license' => isset( $settled['body']['licenseJws'] ) ? (string) $settled['body']['licenseJws'] : '',
 					'reason'  => 'settled',
 				),
-				$post,
-				$slug
+				$subject
 			);
 		}
 
@@ -626,8 +631,7 @@ class Naulon_Enforcer {
 				'reason'      => 'settlement failed',
 				'price_micro' => Naulon_Observer::legs_total( $built['legs'] ),
 			),
-			$post,
-			$slug
+			$subject
 		);
 	}
 
