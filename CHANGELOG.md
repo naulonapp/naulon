@@ -14,6 +14,11 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.14.3
+
+The WordPress plugin moves to **0.7.3**, renamed "naulon - Get paid when AI reads your work". No code
+or npm package changed.
+
 ## v0.14.2
 
 The WordPress plugin moves to **0.7.2**. No npm package changed.
