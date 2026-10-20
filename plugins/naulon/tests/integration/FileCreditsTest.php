@@ -165,4 +165,15 @@ class FileCreditsTest extends WP_UnitTestCase {
 		$slugs = wp_list_pluck( $this->catalog_entries(), 'slug' );
 		$this->assertNotContains( 'wp-content/uploads/2026/09/stage-toll.pdf', $slugs );
 	}
+
+	public function test_a_credits_answer_is_never_cacheable() {
+		// A CDN caches by extension: a credits URL ending in .pdf was held for four hours, so a
+		// changed author or wallet kept the old answer, and a file read free with nobody to pay.
+		$this->file( $this->post() );
+
+		foreach ( array( 'wp-content/uploads/2026/09/stage-toll.pdf', 'wp-content/uploads/2026/09/missing.pdf', 'the-paper' ) as $slug ) {
+			$headers = $this->credits( $slug )->get_headers();
+			$this->assertSame( 'private, no-store', isset( $headers['Cache-Control'] ) ? $headers['Cache-Control'] : null, $slug );
+		}
+	}
 }
