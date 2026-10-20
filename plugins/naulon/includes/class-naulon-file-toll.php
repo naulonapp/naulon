@@ -254,6 +254,7 @@ class Naulon_File_Toll {
 	 */
 	public function emit( array $plan ) {
 		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+			// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant, recognized by name.
 			define( 'DONOTCACHEPAGE', true );
 		}
 		while ( ob_get_level() > 0 ) {

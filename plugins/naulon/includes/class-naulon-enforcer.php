@@ -853,7 +853,9 @@ class Naulon_Enforcer {
 	 * @return string
 	 */
 	private function request_path() {
-		$uri = isset( $_SERVER['REQUEST_URI'] ) ? (string) wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+		// Raw on purpose: the signature covers these exact bytes, and sanitize_text_field() strips
+		// percent-encoded octets, which would fail every signed pull for a path that carries one.
+		$uri = isset( $_SERVER['REQUEST_URI'] ) ? (string) wp_unslash( $_SERVER['REQUEST_URI'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- compared byte for byte against a signature, never output or stored.
 		$path = wp_parse_url( $uri, PHP_URL_PATH );
 		return is_string( $path ) ? $path : '';
 	}

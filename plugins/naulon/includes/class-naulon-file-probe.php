@@ -257,8 +257,9 @@ class Naulon_File_Probe {
 				'timeout'     => 5,
 				'redirection' => 2,
 				'headers'     => array( self::REQUEST_HEADER => $nonce ),
-				/** This filter is documented in wp-includes/class-wp-http-streams.php */
-				'sslverify'   => apply_filters( 'https_local_ssl_verify', false ),
+				// Core's own loopback filter (wp-includes/class-wp-http-streams.php), so a site that
+				// tightened its loopback TLS checks gets the same answer here.
+				'sslverify'   => apply_filters( 'https_local_ssl_verify', false ), // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- a core filter, applied as core applies it.
 			)
 		);
 		if ( is_wp_error( $response ) ) {

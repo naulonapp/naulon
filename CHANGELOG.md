@@ -14,6 +14,20 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.14.0
+
+`@naulon/sdk` 0.6.2 → **0.6.3**. The WordPress plugin moves to **0.7.0**. Every other package is
+unchanged.
+
+### Added
+- The WordPress crawl adapter reads the REST root a site advertises (a `Link` header or a
+  `<link rel="https://api.w.org/">` tag) instead of assuming `/wp-json/`, so a site with plain
+  permalinks (`/?rest_route=/`) or a subdirectory install is crawled. `discoverRestRoot` and
+  `wpRoute` are exported from `@naulon/sdk/crawl`.
+- The WordPress plugin tolls opted-in files (PDF, JSON, TXT, XML) through the same decision as
+  articles, measures on its own host whether it can, and reports the result with its policy fetch
+  as `x-naulon-file-toll`. See the plugin's own changelog for the publisher-facing notes.
+
 ## v0.13.0
 
 `@naulon/shared` 0.6.7 → **0.6.8**, `@naulon/enforce` 0.9.0 → **0.10.0** and
