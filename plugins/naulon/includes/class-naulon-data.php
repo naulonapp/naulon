@@ -195,6 +195,10 @@ class Naulon_Data {
 		// Same for the dashboard rules: a cached block list outliving its plugin enforces nothing.
 		delete_option( Naulon_Rules::LAST_GOOD );
 		delete_transient( Naulon_Rules::TRANSIENT );
+		// The uploads route is code, not data: a rule outliving the plugin must not stay behind.
+		Naulon_File_Route::instance()->remove();
+		Naulon_File_Probe::instance()->cleanup();
+		delete_option( Naulon_Rules::FILE_TYPES_OPTION );
 	}
 
 	/**

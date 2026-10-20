@@ -230,11 +230,8 @@ class Naulon_Enforcer {
 			// Paid. Serve the article, with the receipt and the license the agent will present
 			// next time instead of paying again.
 			$this->no_store();
-			if ( '' !== $decision['receipt'] ) {
-				header( self::PAYMENT_RESPONSE_HEADER . ': ' . $decision['receipt'] );
-			}
-			if ( '' !== $decision['license'] ) {
-				header( self::LICENSE_HEADER . ': ' . $decision['license'] );
+			foreach ( self::grant_headers( $decision ) as $line ) {
+				header( $line );
 			}
 			return;
 		}
@@ -310,10 +307,20 @@ class Naulon_Enforcer {
 	 * @return array {action: free|pay|settled|reread, header, receipt, license, reason}
 	 */
 	public function decide( $post ) {
+		return $this->decide_subject( Naulon_Toll_Subject::for_post( $post ) );
+	}
+
+	/**
+	 * The decision for an article or a file. Same memo as decide(): one request, one decision.
+	 *
+	 * @param Naulon_Toll_Subject $subject What was requested.
+	 * @return array {action: free|pay|settled|reread|blocked|observed, header, receipt, license, reason}
+	 */
+	public function decide_subject( Naulon_Toll_Subject $subject ) {
 		if ( null !== $this->decision ) {
 			return $this->decision;
 		}
-		$this->decision = $this->compute_decision( $post );
+		$this->decision = $this->compute_decision( $subject );
 		return $this->decision;
 	}
 
@@ -325,12 +332,12 @@ class Naulon_Enforcer {
 	 * humans are not logged at all, anywhere. See Naulon_Log for why that is a position rather
 	 * than an omission.
 	 *
-	 * @param array   $decision The decision.
-	 * @param WP_Post $post     The post.
-	 * @param string  $slug     Canonical slug.
+	 * @param array               $decision The decision.
+	 * @param Naulon_Toll_Subject $subject  What was requested.
 	 * @return array The decision.
 	 */
-	private function logged( array $decision, $post, $slug ) {
+	private function logged( array $decision, Naulon_Toll_Subject $subject ) {
+		$slug = $subject->slug;
 		$kind = $this->requested_kind();
 		$ua   = $this->header( 'User-Agent' );
 
@@ -359,11 +366,10 @@ class Naulon_Enforcer {
 		// Readiness screens, which otherwise only ever see fleet-proxied traffic and therefore
 		// tell an enforcing site that nothing is priced. Cost is bounded to the crawler that
 		// caused it — see Naulon_Observer.
-		$permalink = get_permalink( $post );
-		if ( is_string( $permalink ) && '' !== $permalink ) {
+		if ( '' !== $subject->resource ) {
 			Naulon_Observer::instance()->record(
 				array(
-					'resource'      => $permalink,
+					'resource'      => $subject->resource,
 					'slug'          => $slug,
 					'action'        => $decision['action'],
 					'kind'          => $kind,
@@ -458,7 +464,7 @@ class Naulon_Enforcer {
 	 * @param WP_Post $post The post.
 	 * @return array
 	 */
-	private function compute_decision( $post ) {
+	private function compute_decision( Naulon_Toll_Subject $subject ) {
 		if ( ! $this->is_active() ) {
 			return $this->free( 'enforcement inactive' );
 		}
@@ -500,7 +506,7 @@ class Naulon_Enforcer {
 		if ( 'blocked' === $access['action'] ) {
 			// The logged reason is the refusal, not the classifier's verdict.
 			$this->agent_verdict = array( 'kind' => 'agent', 'reason' => $access['reason'], 'confidence' => 1.0 );
-			return $this->logged( $this->blocked( ucfirst( $access['reason'] ) . '.' ), $post, Naulon_Credits::instance()->canonical_slug_for( $post ) );
+			return $this->logged( $this->blocked( ucfirst( $access['reason'] ) . '.' ), $subject );
 		}
 		if ( 'free' === $access['action'] ) {
 			// A person is never logged. A request whose user-agent names a crawler is not a person
@@ -509,7 +515,7 @@ class Naulon_Enforcer {
 			if ( null !== $access['verdict'] && 'human' === $access['verdict']['kind'] && null === $access['identity'] ) {
 				return $this->free( $access['reason'] );
 			}
-			return $this->logged( $this->free( $access['reason'] ), $post, Naulon_Credits::instance()->canonical_slug_for( $post ) );
+			return $this->logged( $this->free( $access['reason'] ), $subject );
 		}
 
 		// Only a tollable article is ever gated, and "is anyone NAMED" is the question — not "can
@@ -521,17 +527,16 @@ class Naulon_Enforcer {
 		//
 		// The gate remains the authority on whether anyone can be paid: a slug nothing can fill
 		// answers 204, and `built_402` returning null falls through to a free read below.
-		$credits = Naulon_Credits::instance();
-		if ( ! $credits->is_tollable( $post ) || empty( $credits->contributors_for( $post ) ) ) {
+		if ( ! $subject->is_tollable() || empty( Naulon_Credits::instance()->contributors_for( $subject->owner ) ) ) {
 			return $this->logged(
 				$this->free( 'not tollable (nobody credited, unpublished, or opted out)' ),
-				$post,
-				$credits->canonical_slug_for( $post )
+				$subject
 			);
 		}
 
-		$slug     = $credits->canonical_slug_for( $post );
-		$resource = get_permalink( $post );
+		$slug     = $subject->slug;
+		$resource = $subject->resource;
+		$post     = $subject->owner;
 		$kind     = $this->requested_kind();
 
 		// Already paid for this exact article? Verified by the control plane, which owns the
@@ -549,8 +554,7 @@ class Naulon_Enforcer {
 						'license' => '',
 						'reason'  => 'valid license',
 					),
-					$post,
-					$slug
+					$subject
 				);
 			}
 		}
@@ -558,7 +562,7 @@ class Naulon_Enforcer {
 		$built = $this->built_402( $resource, $slug, $kind );
 		if ( null === $built ) {
 			// No price (free article), or the control plane is unreachable. Either way: serve.
-			return $this->logged( $this->free( 'no quote available' ), $post, $slug );
+			return $this->logged( $this->free( 'no quote available' ), $subject );
 		}
 
 		$payment = $this->header( self::PAYMENT_HEADER );
@@ -578,8 +582,7 @@ class Naulon_Enforcer {
 					$budget,
 					'agent (' . $this->agent_verdict['reason'] . ')'
 				),
-				$post,
-				$slug
+				$subject
 			);
 		}
 
@@ -610,8 +613,7 @@ class Naulon_Enforcer {
 					'license' => isset( $settled['body']['licenseJws'] ) ? (string) $settled['body']['licenseJws'] : '',
 					'reason'  => 'settled',
 				),
-				$post,
-				$slug
+				$subject
 			);
 		}
 
@@ -626,8 +628,7 @@ class Naulon_Enforcer {
 				'reason'      => 'settlement failed',
 				'price_micro' => Naulon_Observer::legs_total( $built['legs'] ),
 			),
-			$post,
-			$slug
+			$subject
 		);
 	}
 
@@ -710,23 +711,83 @@ class Naulon_Enforcer {
 	 */
 	private function send_402( array $decision ) {
 		$this->no_store();
-		status_header( 402 );
-		header( self::PAYMENT_REQUIRED_HEADER . ': ' . $decision['header'] );
+		$this->emit_denial( $this->denial_response( $decision, (string) get_permalink() ) );
+	}
+
+	/**
+	 * The response that refuses a read: the 402 with its price, or the 403 a rule decided. Null
+	 * for any decision that serves the content. Built rather than sent, so the article page and the
+	 * file route answer an agent with the same bytes.
+	 *
+	 * @param array  $decision The decision.
+	 * @param string $resource The URL the agent asked for.
+	 * @return array|null {status: int, headers: string[], body: string}
+	 */
+	public function denial_response( array $decision, $resource ) {
+		$headers = self::no_store_headers();
 		// The licence, on the response that most needs it. An agent meeting a 402 holds this
 		// response already; without the pointer it must fetch robots.txt before it can learn what
 		// the terms are, and the terms are what decide whether paying is even permitted. Empty
-		// when no document is stored — we never advertise what we do not serve.
+		// when no document is stored: we never advertise what we do not serve.
 		$license_link = Naulon_License::instance()->link_header();
 		if ( '' !== $license_link ) {
-			header( 'Link: ' . $license_link, false );
+			$headers[] = 'Link: ' . $license_link;
 		}
-		header( 'Content-Type: application/json; charset=utf-8' );
-		echo wp_json_encode(
-			array(
-				'error'    => 'payment required',
-				'resource' => esc_url_raw( get_permalink() ),
-			)
-		);
+		if ( 'pay' === $decision['action'] ) {
+			$headers[] = self::PAYMENT_REQUIRED_HEADER . ': ' . $decision['header'];
+			$headers[] = 'Content-Type: application/json; charset=utf-8';
+			return array(
+				'status'  => 402,
+				'headers' => $headers,
+				'body'    => (string) wp_json_encode(
+					array(
+						'error'    => 'payment required',
+						'resource' => esc_url_raw( $resource ),
+					)
+				),
+			);
+		}
+		if ( 'blocked' === $decision['action'] ) {
+			$headers[] = 'Content-Type: text/plain; charset=utf-8';
+			return array(
+				'status'  => 403,
+				'headers' => $headers,
+				'body'    => esc_html( $decision['reason'] ),
+			);
+		}
+		return null;
+	}
+
+	/**
+	 * The headers a served read carries after payment: the receipt and the licence the agent
+	 * presents next time instead of paying again.
+	 *
+	 * @param array $decision The decision.
+	 * @return string[]
+	 */
+	public static function grant_headers( array $decision ) {
+		$headers = array();
+		if ( 'settled' === $decision['action'] && '' !== $decision['receipt'] ) {
+			$headers[] = self::PAYMENT_RESPONSE_HEADER . ': ' . $decision['receipt'];
+		}
+		if ( 'settled' === $decision['action'] && '' !== $decision['license'] ) {
+			$headers[] = self::LICENSE_HEADER . ': ' . $decision['license'];
+		}
+		return $headers;
+	}
+
+	/**
+	 * Send a denial built by denial_response() and stop.
+	 *
+	 * @param array $response {status, headers, body}.
+	 * @return void
+	 */
+	private function emit_denial( array $response ) {
+		status_header( $response['status'] );
+		foreach ( $response['headers'] as $line ) {
+			header( $line, 0 !== stripos( $line, 'link:' ) );
+		}
+		echo $response['body']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built by denial_response(): wp_json_encode() of esc_url_raw(), or esc_html().
 		exit;
 	}
 
@@ -792,7 +853,9 @@ class Naulon_Enforcer {
 	 * @return string
 	 */
 	private function request_path() {
-		$uri = isset( $_SERVER['REQUEST_URI'] ) ? (string) wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+		// Raw on purpose: the signature covers these exact bytes, and sanitize_text_field() strips
+		// percent-encoded octets, which would fail every signed pull for a path that carries one.
+		$uri = isset( $_SERVER['REQUEST_URI'] ) ? (string) wp_unslash( $_SERVER['REQUEST_URI'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- compared byte for byte against a signature, never output or stored.
 		$path = wp_parse_url( $uri, PHP_URL_PATH );
 		return is_string( $path ) ? $path : '';
 	}
@@ -960,14 +1023,7 @@ class Naulon_Enforcer {
 	 */
 	private function send_403( array $decision ) {
 		$this->no_store();
-		status_header( 403 );
-		$license_link = Naulon_License::instance()->link_header();
-		if ( '' !== $license_link ) {
-			header( 'Link: ' . $license_link, false );
-		}
-		header( 'Content-Type: text/plain; charset=utf-8' );
-		echo esc_html( $decision['reason'] );
-		exit;
+		$this->emit_denial( $this->denial_response( $decision, (string) get_permalink() ) );
 	}
 
 	private function free( $reason ) {

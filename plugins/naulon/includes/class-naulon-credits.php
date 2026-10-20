@@ -149,8 +149,27 @@ class Naulon_Credits {
 			$entries[] = $entry;
 		}
 
+		// Files page after posts on the same cursor: page N past the last post page is file page
+		// N minus the post pages. The post page count is asked separately because WP_Query leaves
+		// `max_num_pages` at 0 on a page past the end, which would shift every file page by one.
+		$post_pages = $this->post_page_count();
+		$file_pages = 0;
+		$types      = Naulon_Rules::instance()->file_types();
+		if ( ! empty( $types ) ) {
+			$files      = $this->file_query( $types, max( 1, $page - $post_pages ) );
+			$file_pages = (int) $files->max_num_pages;
+			if ( $page > $post_pages ) {
+				foreach ( $files->posts as $attachment ) {
+					$entry = $this->file_entry( $attachment );
+					if ( null !== $entry ) {
+						$entries[] = $entry;
+					}
+				}
+			}
+		}
+
 		$body = array( 'entries' => $entries );
-		if ( $page < (int) $query->max_num_pages ) {
+		if ( $page < $post_pages + $file_pages ) {
 			$body['nextCursor'] = self::cursor_for_page( $page + 1 );
 		}
 		$response = new WP_REST_Response( $body, 200 );
@@ -222,9 +241,25 @@ class Naulon_Credits {
 			return $this->free_read();
 		}
 
-		$post = $this->resolve_post( (string) $request->get_param( 'slug' ) );
+		$raw  = (string) $request->get_param( 'slug' );
+		$post = $this->resolve_post( $raw );
 		if ( null === $post ) {
-			return $this->free_read();
+			$file = $this->resolve_file( $raw );
+			if ( null === $file || ! $this->file_is_tollable( $file ) ) {
+				return $this->free_read();
+			}
+			$contributors = $this->contributors_for( $file['owner'] );
+			if ( empty( $contributors ) ) {
+				return $this->free_read();
+			}
+			return new WP_REST_Response(
+				array(
+					'slug'         => $this->canonical_slug_for_file( $file['attachment'] ),
+					'title'        => wp_strip_all_tags( get_the_title( $file['attachment'] ) ),
+					'contributors' => $contributors,
+				),
+				200
+			);
 		}
 		if ( ! $this->is_tollable( $post ) ) {
 			return $this->free_read();
@@ -244,6 +279,161 @@ class Naulon_Credits {
 			),
 			200
 		);
+	}
+
+	/**
+	 * How many catalog pages the posts fill, independent of which page was asked for.
+	 *
+	 * @return int
+	 */
+	private function post_page_count() {
+		$count = new WP_Query(
+			array(
+				'post_type'      => $this->tollable_post_types(),
+				'post_status'    => 'publish',
+				'has_password'   => false,
+				'posts_per_page' => 1,
+				'fields'         => 'ids',
+			)
+		);
+		return (int) ceil( $count->found_posts / self::CATALOG_PAGE );
+	}
+
+	/** The MIME types each tollable extension is stored under in the media library. */
+	const FILE_MIME_TYPES = array(
+		'json' => array( 'application/json' ),
+		'pdf'  => array( 'application/pdf' ),
+		'txt'  => array( 'text/plain' ),
+		'xml'  => array( 'application/xml', 'text/xml' ),
+	);
+
+	/**
+	 * One page of media-library files of the opted-in types.
+	 *
+	 * @param string[] $types Opted-in extensions.
+	 * @param int      $page  1-based page.
+	 * @return WP_Query
+	 */
+	private function file_query( array $types, $page ) {
+		$mimes = array();
+		foreach ( $types as $ext ) {
+			$mimes = array_merge( $mimes, self::FILE_MIME_TYPES[ $ext ] );
+		}
+		return new WP_Query(
+			array(
+				'post_type'      => 'attachment',
+				'post_status'    => 'inherit',
+				'post_mime_type' => $mimes,
+				'posts_per_page' => self::CATALOG_PAGE,
+				'paged'          => $page,
+				'orderby'        => 'ID',
+				'order'          => 'ASC',
+			)
+		);
+	}
+
+	/**
+	 * A catalog entry for a file, or null when the credits endpoint would not charge for it.
+	 *
+	 * @param WP_Post $attachment The attachment.
+	 * @return array|null
+	 */
+	private function file_entry( $attachment ) {
+		$file = $this->file_from_attachment( $attachment );
+		if ( null === $file || ! $this->file_is_tollable( $file ) ) {
+			return null;
+		}
+		$authors = $this->catalog_authors( $file['owner'] );
+		if ( empty( $authors ) ) {
+			return null;
+		}
+		return array(
+			'slug'        => $this->canonical_slug_for_file( $attachment ),
+			'title'       => wp_strip_all_tags( get_the_title( $attachment ) ),
+			'url'         => (string) wp_get_attachment_url( $attachment->ID ),
+			'authors'     => $authors,
+			'publishedAt' => get_post_time( 'c', true, $attachment ),
+		);
+	}
+
+	/**
+	 * Resolve an uploads path to its attachment and the post that owns it.
+	 *
+	 * Only a path under the uploads base, of an opted-in type, that the media library knows, is a
+	 * file. The owner is the parent post, or the attachment itself when it has none: an
+	 * unattached file is credited to whoever uploaded it.
+	 *
+	 * @param string $raw The requested slug or URL.
+	 * @return array|null {attachment: WP_Post, owner: WP_Post}
+	 */
+	public function resolve_file( $raw ) {
+		$canonical = Naulon_Slug::canonicalize( $raw );
+		$uploads   = Naulon_Slug::canonicalize( (string) wp_upload_dir( null, false )['baseurl'] );
+		if ( '' === $canonical || '' === $uploads || 0 !== strpos( $canonical, $uploads . '/' ) ) {
+			return null;
+		}
+		$ext = strtolower( pathinfo( $canonical, PATHINFO_EXTENSION ) );
+		if ( ! in_array( $ext, Naulon_Rules::instance()->file_types(), true ) ) {
+			return null;
+		}
+		$id = attachment_url_to_postid( home_url( '/' . $canonical ) );
+		if ( $id <= 0 ) {
+			return null;
+		}
+		$attachment = get_post( $id );
+		return $attachment instanceof WP_Post ? $this->file_from_attachment( $attachment ) : null;
+	}
+
+	/**
+	 * @param WP_Post $attachment An attachment.
+	 * @return array|null {attachment: WP_Post, owner: WP_Post}
+	 */
+	private function file_from_attachment( $attachment ) {
+		if ( 'attachment' !== $attachment->post_type ) {
+			return null;
+		}
+		$ext = strtolower( pathinfo( (string) get_attached_file( $attachment->ID, true ), PATHINFO_EXTENSION ) );
+		if ( ! in_array( $ext, Naulon_Rules::instance()->file_types(), true ) ) {
+			return null;
+		}
+		$owner = $attachment;
+		if ( $attachment->post_parent > 0 ) {
+			$parent = get_post( $attachment->post_parent );
+			if ( ! $parent instanceof WP_Post ) {
+				return null;
+			}
+			$owner = $parent;
+		}
+		return array(
+			'attachment' => $attachment,
+			'owner'      => $owner,
+		);
+	}
+
+	/**
+	 * Should this file be tolled? A file attached to a post follows that post's verdict, so a free
+	 * or unpublished post never sells its attachments. An unattached file is tolled when its type
+	 * is opted in, unless the `naulon_is_tollable` filter says otherwise.
+	 *
+	 * @param array $file From resolve_file().
+	 * @return bool
+	 */
+	public function file_is_tollable( array $file ) {
+		if ( $file['owner'] !== $file['attachment'] ) {
+			return in_array( $file['owner']->post_type, $this->tollable_post_types(), true ) && $this->is_tollable( $file['owner'] );
+		}
+		/** This filter is documented in is_tollable(). */
+		return (bool) apply_filters( 'naulon_is_tollable', true, $file['attachment'] );
+	}
+
+	/**
+	 * The canonical slug for a file: its URL path, as the gate derives it.
+	 *
+	 * @param WP_Post $attachment The attachment.
+	 * @return string
+	 */
+	public function canonical_slug_for_file( $attachment ) {
+		return Naulon_Slug::canonicalize( (string) wp_get_attachment_url( $attachment->ID ) );
 	}
 
 	/**

@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.6.5
+Stable tag: 0.7.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -106,6 +106,10 @@ No. Human requests are not touched, and if the control plane is unreachable the 
 
 You need a wallet address to receive payments, the same way you would need a bank account number. Nothing else.
 
+= Can I charge for PDFs and other files? =
+
+Yes. Tick the file types on your site's page in the naulon dashboard. The plugin adds a short rule to your .htaccess so those files reach WordPress, and removes it when you deactivate the plugin. If the plugin's own files go missing without that, the rule switches itself off and your server serves files as it always did. On nginx, Diagnostics gives you the rule to add yourself. Charged files are never stored by a CDN, because a cached copy would be handed to the next agent free.
+
 = What if my authors do not have wallets? =
 
 Their posts still credit them, with no destination attached. If the service this site connects to holds a payout wallet for that author, their share goes there. If nothing does, the post reads free, because nothing is charged when there is nobody to pay.
@@ -157,6 +161,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 5. Diagnostics: the caching check, recent decisions, and connection health.
 
 == Changelog ==
+
+= 0.7.0 =
+* Charge AI agents for files. Tick PDF, JSON, TXT or XML on your site's page in the naulon dashboard and the plugin tolls those files in your media library the way it tolls articles. People still download free. A file is credited to the post it is attached to, with that post's authors and price, and a file on a free post stays free.
+* The plugin checks your server can do this before the dashboard offers it. It asks your own site for a small test file and only reports "working" when WordPress itself answered. Diagnostics shows the result, with the exact fix when your server ignores .htaccess (nginx), cannot write it, or a cache in front serves files on its own.
+* Saving your key now lights up your site in the naulon dashboard straight away, instead of waiting for the first crawler.
 
 = 0.6.5 =
 * Co-written posts are credited to every author. Co-Authors Plus, PublishPress Authors and Molongui Authorship are read automatically, with nothing to set up. Each author gets an equal share, paid to the wallet on their own profile. A guest author with no WordPress account is credited too, without a wallet, so your naulon setting for unclaimed author shares decides where their share goes. Before this, only the post's main author was credited.
@@ -255,6 +264,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.7.0 =
+Needed to charge AI agents for PDFs and other files. Without it, files you tick in the dashboard are served free.
+
 = 0.6.5 =
 Closes the routes that let AI agents read charged articles free (REST API, feeds, listing pages), and credits every author on a co-written post.
 

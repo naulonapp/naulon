@@ -68,6 +68,16 @@ class Naulon_Rules {
 	/** An operator id as CRAWLER_PROOF spells one. */
 	const OPERATOR_ID = '/^[a-z0-9-]{1,64}$/';
 
+	/**
+	 * The file types the publisher opted in (`gateScope.includeExtensions`). One option and no
+	 * transient: the `.htaccess` route is written from it, so it changes only when a refresh
+	 * succeeds, and a failed refresh keeps routing what was routed.
+	 */
+	const FILE_TYPES_OPTION = 'naulon_file_types';
+
+	/** The types the portal offers. Anything else is never routed into the toll. */
+	const TOLLABLE_FILE_TYPES = array( 'json', 'pdf', 'txt', 'xml' );
+
 	/** @var Naulon_Rules|null */
 	private static $instance = null;
 
@@ -168,6 +178,15 @@ class Naulon_Rules {
 			);
 			$this->armed_memo = $armed;
 
+			// The opted-in file types travel in the same scope the gate enforces. A change is
+			// announced so the route and the self-test follow it without waiting for a reader.
+			$types    = self::valid_file_types( isset( $enforcement['gateScope'] ) ? $enforcement['gateScope'] : null );
+			$previous = $this->file_types();
+			if ( $types !== $previous ) {
+				update_option( self::FILE_TYPES_OPTION, $types, true );
+				do_action( 'naulon_file_types_changed', $types, $previous );
+			}
+
 			return $this->memo;
 		}
 		// Stale beats nothing: a publisher who blocked a crawler yesterday still blocks it while
@@ -237,6 +256,48 @@ class Naulon_Rules {
 		$last                       = get_option( self::FLEET_PUBLISHER_LAST_GOOD );
 		$this->fleet_publisher_memo = is_string( $last ) ? $last : '';
 		return $this->fleet_publisher_memo;
+	}
+
+	/**
+	 * The file types this site tolls, sorted. Cache-only: it reads the stored option and never
+	 * fetches, so a file request a person makes costs no network call.
+	 *
+	 * @return string[]
+	 */
+	public function file_types() {
+		return self::valid_file_types_list( get_option( self::FILE_TYPES_OPTION, array() ) );
+	}
+
+	/**
+	 * The opted-in file types a `gateScope` carries. Only whole-site scope has them.
+	 *
+	 * @param mixed $scope The `enforcement.gateScope` field as the control plane sent it.
+	 * @return string[] Sorted, unique, and a subset of TOLLABLE_FILE_TYPES.
+	 */
+	public static function valid_file_types( $scope ) {
+		if ( ! is_array( $scope ) || ! isset( $scope['mode'] ) || 'site' !== $scope['mode'] || ! isset( $scope['includeExtensions'] ) ) {
+			return array();
+		}
+		return self::valid_file_types_list( $scope['includeExtensions'] );
+	}
+
+	/**
+	 * @param mixed $raw A list of extensions.
+	 * @return string[]
+	 */
+	private static function valid_file_types_list( $raw ) {
+		if ( ! is_array( $raw ) ) {
+			return array();
+		}
+		$out = array();
+		foreach ( $raw as $ext ) {
+			if ( is_string( $ext ) && in_array( strtolower( $ext ), self::TOLLABLE_FILE_TYPES, true ) ) {
+				$out[] = strtolower( $ext );
+			}
+		}
+		$out = array_values( array_unique( $out ) );
+		sort( $out );
+		return $out;
 	}
 
 	/**
@@ -336,6 +397,7 @@ class Naulon_Rules {
 		delete_option( self::LAST_GOOD );
 		delete_option( self::FLEET_LAST_GOOD );
 		delete_option( self::FLEET_PUBLISHER_LAST_GOOD );
+		delete_option( self::FILE_TYPES_OPTION );
 	}
 
 	/**

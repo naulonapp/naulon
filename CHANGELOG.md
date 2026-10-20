@@ -14,6 +14,19 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.14.0
+
+The WordPress plugin moves to **0.7.0**. No npm package changed: every `@naulon/*` package is the
+version v0.13.0 named.
+
+### Added
+- The WordPress plugin tolls opted-in files (PDF, JSON, TXT, XML) in the media library through the
+  same decision as articles. People download free, agents get a 402, and a file is credited to the
+  post it is attached to.
+- The plugin measures on its own host whether it can toll files and reports the result with its
+  policy fetch as `x-naulon-file-toll`. Diagnostics shows the verdict and the exact server rule to
+  add when it cannot. See the plugin's own changelog for the publisher-facing notes.
+
 ## v0.13.0
 
 `@naulon/shared` 0.6.7 → **0.6.8**, `@naulon/enforce` 0.9.0 → **0.10.0** and

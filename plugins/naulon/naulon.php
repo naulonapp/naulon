@@ -3,7 +3,7 @@
  * Plugin Name:       naulon citation toll
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
- * Version:           0.6.5
+ * Version:           0.7.0
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
@@ -36,7 +36,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NAULON_VERSION', '0.6.5' );
+define( 'NAULON_VERSION', '0.7.0' );
 define( 'NAULON_PLUGIN_FILE', __FILE__ );
 define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 
@@ -57,6 +57,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-byline-publishpr
 require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-byline-coauthors-plus.php';
 require_once NAULON_PLUGIN_DIR . 'includes/authors/class-naulon-authors.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-credits.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-toll-subject.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-license.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ip.php';
@@ -69,6 +70,9 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ledger.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-log.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-observer.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-enforcer.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-probe.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-toll.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-file-route.php';
 require_once NAULON_PLUGIN_DIR . 'includes/exits/interface-naulon-content-exit.php';
 require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exits.php';
 require_once NAULON_PLUGIN_DIR . 'includes/exits/class-naulon-exit-rest.php';
@@ -90,6 +94,10 @@ function naulon_bootstrap() {
 	Naulon_Credits::instance()->register();
 	Naulon_License::instance()->register();
 	Naulon_Enforcer::instance()->register();
+	// Files in the media library, routed here by Naulon_File_Route.
+	Naulon_File_Toll::instance()->register();
+	Naulon_File_Route::instance()->register();
+	Naulon_File_Probe::instance()->register();
 	// The other doors to the same articles: REST, feeds and listing pages.
 	Naulon_Exits::instance()->register();
 	Naulon_Cron::instance()->register();
@@ -125,6 +133,8 @@ function naulon_activate() {
 	Naulon_License::instance()->add_rewrite_rules();
 	flush_rewrite_rules();
 	Naulon_Cron::instance()->ensure_scheduled();
+	// The uploads route for files, written now so the self-test can run before a type is ticked.
+	Naulon_File_Route::instance()->sync();
 }
 register_activation_hook( __FILE__, 'naulon_activate' );
 
@@ -137,5 +147,7 @@ register_activation_hook( __FILE__, 'naulon_activate' );
 function naulon_deactivate() {
 	Naulon_Cron::instance()->unschedule();
 	flush_rewrite_rules();
+	// A deactivated plugin answers nothing, so its uploads route goes with it.
+	Naulon_File_Route::instance()->remove();
 }
 register_deactivation_hook( __FILE__, 'naulon_deactivate' );

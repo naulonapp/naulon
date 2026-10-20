@@ -117,6 +117,13 @@ class Naulon_Client {
 	 * @return array
 	 */
 	public function enforce_config( $resource ) {
+		$headers = array( 'x-naulon-capabilities' => 'fleet-pull' );
+		// Whether this host can toll files, as the self-test last measured it. Absent until the
+		// test has run once, which the control plane reads as "not reported", never as working.
+		$file_toll = Naulon_File_Probe::header_for( Naulon_File_Probe::instance()->last() );
+		if ( '' !== $file_toll ) {
+			$headers['x-naulon-file-toll'] = $file_toll;
+		}
 		return $this->request(
 			'GET',
 			'/_naulon/enforce-config?' . http_build_query( array( 'resource' => $resource ) ),
@@ -124,7 +131,7 @@ class Naulon_Client {
 			self::TIMEOUT_REQUEST,
 			null,
 			null,
-			array( 'x-naulon-capabilities' => 'fleet-pull' )
+			$headers
 		);
 	}
 

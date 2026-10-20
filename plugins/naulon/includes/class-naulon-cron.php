@@ -101,6 +101,12 @@ class Naulon_Cron {
 		// The dashboard's rules, for the same reason: a human request reads only the stored copy,
 		// so a quiet site still picks up a new block or a changed term within the hour.
 		Naulon_Rules::instance()->refresh();
+		// The file self-test, daily: hosting changes under a site (a CDN rule, a server move) and
+		// the portal must not keep showing a verdict that stopped being true.
+		Naulon_File_Route::instance()->ensure();
+		if ( Naulon_File_Probe::instance()->is_stale() ) {
+			Naulon_File_Probe::instance()->run();
+		}
 		// The crawler ranges an identity check reads. Fetched here and on the settings screen only,
 		// never on a request, and only once the stored copy is older than REFRESH_SECONDS.
 		Naulon_Ranges::instance()->refresh_if_stale();

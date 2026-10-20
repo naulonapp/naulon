@@ -151,6 +151,13 @@ class Naulon_Admin {
 			array(),
 			NAULON_VERSION
 		);
+		wp_enqueue_script(
+			'naulon-admin',
+			plugins_url( 'assets/admin.js', NAULON_PLUGIN_FILE ),
+			array(),
+			NAULON_VERSION,
+			array( 'in_footer' => true )
+		);
 	}
 
 	/* --------------------------------------------------------------------------------------- */
@@ -258,6 +265,7 @@ class Naulon_Admin {
 			case 'install_dropin':
 			case 'remove_dropin':
 			case 'run_probe':
+			case 'file_retest':
 			case 'clear_log':
 			case 'save_data_policy':
 			case 'export_data':
