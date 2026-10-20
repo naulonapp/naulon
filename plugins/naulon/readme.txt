@@ -270,6 +270,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.7.2 =
+Removes a wrong "verification will not pass" warning from Setup on verified sites.
+
 = 0.7.1 =
 Needed if your site is behind Cloudflare or another CDN and you charge for files.
 
