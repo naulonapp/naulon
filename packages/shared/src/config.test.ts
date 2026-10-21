@@ -5,6 +5,7 @@
  * directly and relies on the afterEach below to clean up after itself.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
 import { configSchema, FILE_PATH_KEYS, getConfig, OSS_BUYER_GUIDE_URL, parseEnv, resetConfig } from "./config.ts";
 
@@ -194,4 +195,19 @@ test("an absolute file path is left alone", () => {
 test("every file-path key is a real setting", () => {
   const known = Object.keys(configSchema.shape);
   for (const k of FILE_PATH_KEYS) assert.ok(known.includes(k), `${k} is not in configSchema`);
+});
+
+test("a value that starts with # is refused as a comment read as a value", () => {
+  // What Docker Compose hands over for `CONSOLE_ADMIN_PASSWORD=   # seeds it...`.
+  assert.throws(
+    () => parseEnv({ CONSOLE_ADMIN_PASSWORD: "# seeds it non-interactively", DASHBOARD_AUTH: "# \"user:secret\" HTTP Basic" }, "/srv/naulon"),
+    (e: Error) => /CONSOLE_ADMIN_PASSWORD: starts with "#"/.test(e.message) && /DASHBOARD_AUTH: starts with "#"/.test(e.message),
+  );
+});
+
+test("no blank setting in .env.example has a comment on the same line", () => {
+  // Docker Compose would pass that comment in as the value; see the test above.
+  const lines = readFileSync(new URL("../../../.env.example", import.meta.url), "utf8").split("\n");
+  const offenders = lines.filter((l) => /^[A-Z0-9_]+=\s+#/.test(l));
+  assert.deepEqual(offenders, []);
 });

@@ -607,6 +607,16 @@ export const FILE_PATH_KEYS = [
  */
 export function parseEnv(env: Record<string, string | undefined>, root: string = REPO_ROOT): Config {
   const present = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined && v.trim() !== ""));
+  // A value that starts with "#" is a comment that was read as a value. Docker Compose does
+  // that to `KEY=   # note`: it strips an inline comment after a value but keeps one after an
+  // empty value, so a .env copied from an example handed every blank secret the text of its
+  // own comment, CONSOLE_ADMIN_PASSWORD and DASHBOARD_AUTH included, which are public. Refuse
+  // to boot instead of running on a password anyone can read.
+  const commented = Object.keys(configSchema.shape).filter((k) => /^\s*#/.test(present[k] ?? ""));
+  if (commented.length) {
+    const lines = commented.map((k) => `  ${k}: starts with "#", so it is a comment read as a value. Put the comment on its own line.`);
+    throw new Error(`Invalid environment:\n${lines.join("\n")}\nSee .env.example.`);
+  }
   const parsed = configSchema.safeParse(present);
   if (!parsed.success) {
     const issues = parsed.error.issues
