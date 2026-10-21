@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Hono } from "hono";
 import { authThrottle } from "./authThrottle.ts";
+import { markRejectedGuess, markSignedIn } from "./guess.ts";
 
 /**
  * A stand-in for the basicAuth that sits behind the throttle: the credential is
@@ -13,6 +14,17 @@ function appWith(opts: Parameters<typeof authThrottle>[0], now?: () => number) {
   app.get("*", (c) => {
     if (c.req.header("authorization") !== "good") return c.text("unauthorized", 401);
     return c.text("ops console");
+  });
+  // The sign-in form: the password is in the body, never in a header.
+  app.post("/login", async (c) => {
+    const body = await c.req.parseBody();
+    const username = String(body["username"] ?? "");
+    if (body["password"] === "good") {
+      markSignedIn(c, username);
+      return c.text("signed in");
+    }
+    markRejectedGuess(c, username);
+    return c.text("wrong", 401);
   });
   return app;
 }
@@ -184,4 +196,78 @@ test("a guesser is still stopped in the same number of tries", async () => {
   const codes: number[] = [];
   for (let i = 0; i < 5; i++) codes.push((await app.request("/", guess("198.51.100.90"))).status);
   assert.deepEqual(codes, [401, 401, 401, 429, 429]);
+});
+
+const signIn = (ip: string, password: string) => ({
+  method: "POST",
+  headers: { "x-forwarded-for": ip, "content-type": "application/x-www-form-urlencoded" },
+  body: `username=admin&password=${password}`,
+});
+const signInAs = (ip: string, username: string, password: string) => ({
+  method: "POST",
+  headers: { "x-forwarded-for": ip, "content-type": "application/x-www-form-urlencoded" },
+  body: `username=${username}&password=${password}`,
+});
+
+test("wrong passwords on the sign-in form burn the same budget as Basic", async () => {
+  const app = appWith({ rpm: 60, burst: 3, trustProxy: true });
+  const codes: number[] = [];
+  for (let i = 0; i < 5; i++) codes.push((await app.request("/login", signIn("198.51.100.91", `guess${i}`))).status);
+  assert.deepEqual(codes, [401, 401, 401, 429, 429]);
+});
+
+test("a right password on the form is never charged", async () => {
+  const app = appWith({ rpm: 60, burst: 2, trustProxy: true });
+  for (let i = 0; i < 10; i++) assert.equal((await app.request("/login", signIn("198.51.100.92", "good"))).status, 200);
+});
+
+test("a rejected guess is charged whatever status answers it", async () => {
+  // The password-change form answers a wrong current password with a redirect, not a 401.
+  const app = new Hono();
+  app.use("*", authThrottle({ rpm: 60, burst: 2, trustProxy: true }));
+  app.post("/account/password", (c) => {
+    markRejectedGuess(c);
+    return c.redirect("/account/password?error=wrong", 303);
+  });
+  const codes: number[] = [];
+  for (let i = 0; i < 4; i++) codes.push((await app.request("/account/password", { method: "POST", headers: { "x-forwarded-for": "198.51.100.93" } })).status);
+  assert.deepEqual(codes, [303, 303, 429, 429]);
+});
+
+test("guesses at one account from many addresses run out of the account's budget", async () => {
+  const app = appWith({ rpm: 60, burst: 10, accountRpm: 1, accountBurst: 5, trustProxy: true });
+  const codes: number[] = [];
+  // Every guess from a fresh address, so no address budget is ever close to empty.
+  for (let i = 0; i < 8; i++) codes.push((await app.request("/login", signInAs(`203.0.113.${i + 1}`, "admin", "x"))).status);
+  assert.deepEqual(codes, [401, 401, 401, 401, 401, 429, 429, 429]);
+});
+
+test("the operator's own address still gets in while the account budget is spent", async () => {
+  const app = appWith({ rpm: 60, burst: 10, accountRpm: 1, accountBurst: 3, trustProxy: true });
+  assert.equal((await app.request("/login", signInAs("192.0.2.10", "admin", "good"))).status, 200);
+  for (let i = 0; i < 5; i++) await app.request("/login", signInAs(`198.51.100.${i + 1}`, "Admin", "x"));
+  assert.equal((await app.request("/login", signInAs("198.51.100.200", "admin", "good"))).status, 429, "a stranger is held");
+  assert.equal((await app.request("/login", signInAs("192.0.2.10", "admin", "good"))).status, 200, "the known address is not");
+});
+
+test("an account that does not exist is held exactly like one that does", async () => {
+  // The stand-in has no user list at all: the budget is per NAME, so a 429 says nothing about
+  // which names are real.
+  const app = appWith({ rpm: 60, burst: 10, accountRpm: 1, accountBurst: 2, trustProxy: true });
+  const codes = async (name: string) => {
+    const out: number[] = [];
+    for (let i = 0; i < 3; i++) out.push((await app.request("/login", signInAs(`203.0.113.${name.length * 10 + i}`, name, "x"))).status);
+    return out;
+  };
+  assert.deepEqual(await codes("admin"), await codes("nobody"));
+});
+
+test("Basic guesses are charged to the account they name too", async () => {
+  const app = appWith({ rpm: 60, burst: 10, accountRpm: 1, accountBurst: 2, trustProxy: true });
+  const basic = (ip: string, user: string) => ({
+    headers: { "x-forwarded-for": ip, authorization: "Basic " + Buffer.from(`${user}:wrong`).toString("base64") },
+  });
+  const codes: number[] = [];
+  for (let i = 0; i < 4; i++) codes.push((await app.request("/", basic(`198.51.100.${i + 50}`, "ci"))).status);
+  assert.deepEqual(codes, [401, 401, 429, 429]);
 });

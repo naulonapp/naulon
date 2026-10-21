@@ -170,7 +170,7 @@ The operator console. How to expose it safely: [operating.md](./operating.md).
 | `CONSOLE_ADMIN_PASSWORD` | unset | Seeds the first administrator without an interactive first run, which is the container path. The account it creates **must** change its password before the console will render anything else. |
 | `CONSOLE_SESSION_IDLE_MINUTES` | `480` | Sign-in expires after this much inactivity. |
 | `CONSOLE_SESSION_ABSOLUTE_HOURS` | `168` | Hard ceiling on a sign-in regardless of activity. |
-| `DASHBOARD_AUTH_FAIL_RPM` | `20` | Failed-sign-in budget per client. Basic auth has no lockout, so without this the password can be guessed at network speed. Only 401s are charged, so you cannot lock yourself out by using the console hard. `0` disables. |
+| `DASHBOARD_AUTH_FAIL_RPM` | `20` | Failed-sign-in budget per client, shared by HTTP Basic, the sign-in form and the password-change form. Without it a password can be guessed at network speed. Only wrong passwords are charged, so you cannot lock yourself out by using the console hard. `0` disables. |
 | `DASHBOARD_AUTH_FAIL_BURST` | `10` | Burst allowance on that budget. |
 | `DASHBOARD_PUBLIC` | `false` | Opt in to a read-only public earnings page with wallets masked and every operational panel hidden. The ops console itself is never public. |
 | `DASHBOARD_ALLOWED_HOSTS` | empty | Extra `Host` values the console answers to in private (loopback) mode, comma-separated. This is for the "Caddy on :443 → 127.0.0.1:8403" shape, where the browser sends your real domain. Refusing anything else is what defeats DNS rebinding: a malicious page can't read an unauthenticated loopback console by pointing its own hostname at 127.0.0.1. Ignored in authed and public modes. |

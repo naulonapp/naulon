@@ -254,8 +254,9 @@ announce themselves by needing a non-loopback name in `DASHBOARD_ALLOWED_HOSTS`
 credential is refused.
 
 Failed sign-ins are metered per client (`DASHBOARD_AUTH_FAIL_RPM`, default 20/min,
-burst 10): Basic auth has no lockout of its own, so without that the password can be
-guessed at network speed. Only the rejections are charged, so using the console
+burst 10), whether the password arrives over HTTP Basic, the sign-in form or the
+password-change form. Without that a password can be guessed at network speed. Only
+wrong passwords are charged, so using the console
 heavily, however hard you click, can never lock you out of it.
 
 If a deployment genuinely cannot tell callers apart (no socket and no forwarded
@@ -263,6 +264,40 @@ address), the budget is shared across them rather than switched off, and the 429
 so. Sharing it means guesses from one caller can make another wait; that is a paused
 ops view, against an unlimited guessing rate at a page holding your wallets, and it
 resolves as soon as the forwarded address is readable.
+
+Each account also has its own budget: 20 wrong passwords, then 2 a minute, counted
+across every address. That is what stops a guesser spreading the work over many
+addresses. An address that has signed in to the account before is not held by it, so
+someone hammering `admin` cannot lock you out from your usual machine. That list is
+kept in memory, so after a restart you are treated as a new address until your next
+good sign-in.
+
+Every failed sign-in is written to `console-audit.jsonl`, beside `console.json`, with
+the caller's address resolved the same way the budget resolves it. With
+`TRUST_PROXY=false` a forged `X-Forwarded-For` is ignored rather than recorded. On a
+console open to the internet, let fail2ban ban repeat offenders at the firewall:
+
+```ini
+# /etc/fail2ban/filter.d/naulon-console.conf
+[Definition]
+failregex = "action":"console\.sign_in","outcome":"failed",.*"ip":"<ADDR>"
+datepattern = ^\{"at":"%%Y-%%m-%%dT%%H:%%M:%%S
+```
+
+```ini
+# /etc/fail2ban/jail.d/naulon-console.local
+[naulon-console]
+enabled  = true
+filter   = naulon-console
+logpath  = /srv/naulon/data/console-audit.jsonl
+maxretry = 10
+findtime = 10m
+bantime  = 1h
+```
+
+Set `logpath` to wherever your `console-audit.jsonl` lives. Behind a reverse proxy, set
+`TRUST_PROXY=true` first, or every line records the proxy's address and fail2ban bans
+your proxy.
 
 ### Why "it's on 127.0.0.1" isn't the whole story
 

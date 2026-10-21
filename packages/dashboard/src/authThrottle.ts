@@ -18,6 +18,8 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { createRateLimiter, getConfig, resolveClientIdentity } from "@naulon/shared";
+import { normalizeUsername } from "./console-users.ts";
+import { isRejectedGuess, rejectedAccount, signedInAccount } from "./guess.ts";
 
 const cfg = getConfig();
 
@@ -65,6 +67,42 @@ export interface AuthThrottleOptions {
   trustProxy?: boolean;
   hops?: number;
   now?: () => number;
+  /** The per-ACCOUNT budget: failures a single username may take per minute, from anywhere. */
+  accountRpm?: number;
+  accountBurst?: number;
+}
+
+/**
+ * The per-address budget does nothing against a guesser with many addresses: each one gets
+ * its own ten. So each USERNAME also has a budget, charged by every rejected guess at it
+ * from any address. 20 at once, then 2 a minute: about 2,900 guesses a day against one
+ * account, against a 12-character minimum and an scrypt hash.
+ *
+ * A hard per-account lockout would hand that attacker a way to lock the real operator out.
+ * So an address that has signed in to an account before is never held by that account's
+ * budget, only by its own. The list lives in memory and is lost on restart, which only
+ * means the operator is treated as a stranger until their next good sign-in.
+ */
+export const ACCOUNT_FAIL_RPM = 2;
+export const ACCOUNT_FAIL_BURST = 20;
+const KNOWN_ADDRESSES_PER_ACCOUNT = 20;
+const KNOWN_ACCOUNTS = 1_000;
+
+/** The username a request is trying, if it is trying one: Basic's header, or the sign-in form. */
+async function attemptedUsername(c: Context): Promise<string | undefined> {
+  const header = c.req.header("authorization");
+  if (header?.startsWith("Basic ")) {
+    const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+    const i = decoded.indexOf(":");
+    return i > 0 ? normalizeUsername(decoded.slice(0, i)) : undefined;
+  }
+  if (c.req.method === "POST" && c.req.path === "/login") {
+    // Hono caches the parsed body, so the handler reads the same one.
+    const body = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+    const name = body["username"];
+    return typeof name === "string" && name.trim() ? normalizeUsername(name) : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -83,6 +121,24 @@ export function authThrottle(opts: AuthThrottleOptions = {}): MiddlewareHandler 
   if (!limiter.enabled) {
     return async (_c, next) => next();
   }
+  const accounts = createRateLimiter({
+    rpm: opts.accountRpm ?? ACCOUNT_FAIL_RPM,
+    burst: opts.accountBurst ?? ACCOUNT_FAIL_BURST,
+    maxBuckets: opts.maxBuckets ?? cfg.RATE_LIMIT_MAX_BUCKETS,
+    now: opts.now,
+  });
+  /** Account → addresses that have signed in to it. Insertion order is the eviction order. */
+  const known = new Map<string, Set<string>>();
+  const isKnown = (account: string, address: string) => known.get(account)?.has(address) ?? false;
+  const remember = (account: string, address: string) => {
+    const set = known.get(account) ?? new Set<string>();
+    set.delete(address);
+    set.add(address);
+    if (set.size > KNOWN_ADDRESSES_PER_ACCOUNT) set.delete(set.values().next().value as string);
+    known.delete(account);
+    known.set(account, set);
+    if (known.size > KNOWN_ACCOUNTS) known.delete(known.keys().next().value as string);
+  };
   return async (c, next) => {
     const who = resolveClientIdentity({
       xff: c.req.header("x-forwarded-for"),
@@ -100,8 +156,8 @@ export function authThrottle(opts: AuthThrottleOptions = {}): MiddlewareHandler 
       return c.text(
         who.ok
           ? `naulon dashboard: too many failed sign-ins from your address.\n\n` +
-              `Try again in ${wait}s. If you are the operator and locked yourself out,\n` +
-              `the credential is DASHBOARD_AUTH in the environment this process was started with.\n`
+              `Try again in ${wait}s. If you are the operator and locked yourself out, wait it\n` +
+              `out; the machine credential is DASHBOARD_AUTH in this process's environment.\n`
           : `naulon dashboard: too many failed sign-ins, and this deployment cannot tell\n` +
               `callers apart — so the budget is shared and someone else may have spent it.\n\n` +
               `Try again in ${wait}s. To meter per client instead, set TRUST_PROXY=true (and\n` +
@@ -112,7 +168,25 @@ export function authThrottle(opts: AuthThrottleOptions = {}): MiddlewareHandler 
       );
     }
 
+    // The account's budget, checked for every username alike, whether or not it exists, so
+    // a 429 here says nothing about which accounts are real.
+    const account = await attemptedUsername(c);
+    if (account && accounts.enabled && !(who.ok && isKnown(account, key))) {
+      const held = accounts.peek(account);
+      if (!held.allowed) {
+        const wait = Math.max(1, held.retryAfter);
+        return c.text(
+          `naulon dashboard: too many failed sign-ins for this account.\n\nTry again in ${wait}s.\n`,
+          429,
+          { "Retry-After": String(wait) },
+        );
+      }
+    }
+
     await next();
+
+    const accepted = signedInAccount(c);
+    if (accepted && who.ok) remember(normalizeUsername(accepted), key);
 
     // Charge a rejected GUESS, which is not the same thing as a 401.
     //
@@ -125,6 +199,15 @@ export function authThrottle(opts: AuthThrottleOptions = {}): MiddlewareHandler 
     //
     // A guesser must present something to guess, so requiring an Authorization header
     // costs the attacker nothing they can avoid and costs the operator nothing at all.
-    if (c.res.status === 401 && c.req.header("authorization")) limiter.take(key);
+    //
+    // A form that checks a password carries it in the body, so it never has that header.
+    // Those handlers mark the rejection themselves (guess.ts); until they did, forty wrong
+    // passwords on the sign-in form came back 401 and none met a 429.
+    const basicRejected = c.res.status === 401 && !!c.req.header("authorization");
+    if (basicRejected || isRejectedGuess(c)) {
+      limiter.take(key);
+      const target = rejectedAccount(c) ?? (basicRejected ? account : undefined);
+      if (target) accounts.take(normalizeUsername(target));
+    }
   };
 }

@@ -46,6 +46,8 @@ import {
   tokenFromCookieHeader,
   type SessionLifetimes,
 } from "./console-session.ts";
+import { clientAddress } from "./client-address.ts";
+import { markRejectedGuess, markSignedIn } from "./guess.ts";
 import { checkOrigin } from "./same-origin.ts";
 
 export interface ConsolePrincipal {
@@ -118,8 +120,7 @@ export function isNavigation(c: Context): boolean {
   return (c.req.header("Accept") ?? "").includes("text/html");
 }
 
-const clientIp = (c: Context): string | undefined =>
-  c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || undefined;
+const clientIp = clientAddress;
 
 const secureOf = (c: Context): boolean => isSecureRequest(c.req.url, c.req.header("X-Forwarded-Proto"));
 
@@ -162,6 +163,7 @@ export async function resolvePrincipal(c: Context, deps: ConsoleAuthDeps): Promi
   if (deps.machine) {
     const supplied = basicCredential(c);
     if (supplied && (await deps.machine.verify(supplied.username, supplied.password))) {
+      markSignedIn(c, supplied.username);
       return {
         kind: "machine",
         username: deps.machine.username,
@@ -535,8 +537,8 @@ export function mountConsoleAuth(app: Hono, deps: ConsoleAuthDeps): void {
         ...(clientIp(c) ? { ip: clientIp(c) as string } : {}),
         detail: { reason: result.disabled ? "disabled" : "bad_credentials" },
       });
-      // 401, not a 200 with a message: authThrottle charges failed sign-ins by status, and
-      // a login form that answers 200 to a wrong password disarms the lockout.
+      // A disabled account is not a guess; a wrong password is, and authThrottle charges it.
+      if (!result.disabled) markRejectedGuess(c, username);
       c.status(401);
       return c.html(
         page({
@@ -561,6 +563,7 @@ export function mountConsoleAuth(app: Hono, deps: ConsoleAuthDeps): void {
       ...(clientIp(c) ? { ip: clientIp(c) as string } : {}),
     });
     c.header("Set-Cookie", sessionCookie(issued.token, { secure: secureOf(c) }), { append: true });
+    markSignedIn(c, result.user.username);
     return c.redirect(result.user.mustChangePassword ? "/account/password" : (next ?? "/"), 303);
   });
 
@@ -628,7 +631,11 @@ export function mountConsoleAuth(app: Hono, deps: ConsoleAuthDeps): void {
     // The current password is required even though the session already proves identity:
     // it is what stops a borrowed, unlocked browser from becoming a permanent takeover.
     const confirmed = await authenticate(deps.store, principal.username, formValue(body, "current"));
-    if (!confirmed.user) return fail("Your current password is wrong.");
+    if (!confirmed.user) {
+      // A borrowed, unlocked browser could otherwise guess the current password forever.
+      markRejectedGuess(c, principal.username);
+      return fail("Your current password is wrong.");
+    }
 
     const password = formValue(body, "password");
     if (password !== formValue(body, "repeat")) return fail("Those passwords do not match.");
