@@ -344,8 +344,9 @@ login. `docker-compose.yml` runs both services from it, under an unprivileged us
 ledger volume. Your `credits.json` is mounted read-only from `./config` rather than baked into the
 image: a gate that fell back to an example's wallets would settle real money to a fixture address.
 
-Compose follows `:latest`, which each release moves. Pin a release with `NAULON_TAG=v0.14.3` in
-`.env`, or follow `main` between releases with `NAULON_TAG=edge`.
+Compose follows `:latest`, which each release moves. Pin a release with `NAULON_TAG=0.15.0` in
+`.env` (image tags carry no `v`; `0.15` follows that minor line), or follow `main` between
+releases with `NAULON_TAG=edge`.
 
 Inside its container the console binds wide, because `127.0.0.1` there is unreachable from your
 host, and compose publishes it on your loopback only. Since the socket is no longer evidence of
