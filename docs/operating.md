@@ -380,16 +380,25 @@ The gate (`:8402`) is built to face the public internet in front of a real site.
   the crawler policy, so treat access to it as access to your payout configuration. Every change
   is a POST behind a same-origin check, and the exposure rules above decide who can reach it.
 
-The knobs, all optional, with their defaults ([configuration.md](./configuration.md) has each one):
+The knobs, all optional, with their defaults ([configuration.md](./configuration.md) has each one).
+Each comment sits on its own line: Docker Compose reads a comment after `KEY=` as part of the
+value.
 
 ```bash
-TOLLGATE_SECRET=          # HMAC secret for 402 nonces; ephemeral if unset (set it for more than one instance)
-NONCE_TTL_SECONDS=300     # how long a 402 nonce stays valid, which is also the replay window
-RATE_LIMIT_RPM=120        # sustained requests per client per minute; 0 disables
-RATE_LIMIT_BURST=40       # short-burst allowance before 429
-TRUST_PROXY=false         # trust X-Forwarded-For for the client address (only behind your own proxy)
-DASHBOARD_BIND=127.0.0.1  # the console's interface; loopback unless you add your own auth
-PRIMARY_PAYEE_TIEBREAK=wallet  # on-chain recipient on a top-share tie: by address, or "input"
+# HMAC secret for 402 nonces; ephemeral if unset (set it for more than one instance)
+TOLLGATE_SECRET=
+# How long a 402 nonce stays valid, which is also the replay window
+NONCE_TTL_SECONDS=300
+# Sustained requests per client per minute; 0 disables
+RATE_LIMIT_RPM=120
+# Short-burst allowance before a 429
+RATE_LIMIT_BURST=40
+# Trust X-Forwarded-For for the client address, only behind a proxy you run
+TRUST_PROXY=false
+# The console's interface; loopback unless you add your own auth
+DASHBOARD_BIND=127.0.0.1
+# On-chain recipient on a top-share tie: by address, or "input"
+PRIMARY_PAYEE_TIEBREAK=wallet
 ```
 
 Nonce and rate-limit state live in the process. For more than one instance, set a shared

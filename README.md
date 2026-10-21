@@ -143,7 +143,8 @@ flowchart TD
 
 Every leaf is a direct payout to an author, tracked per `(event, author)`. The collectives
 never hold money; they are only a rule for how a cut divides. Sub-cent shares accrue until
-they clear `MIN_PAYOUT_USDC`, so nothing is paid twice or lost.
+they clear `MIN_PAYOUT_USDC`, so nothing is paid twice or lost; `make settle` runs one
+settlement pass over the ledger.
 
 **The gate describes itself.** Every `402` carries `Link: </.well-known/x402>; rel="payment"`,
 and `GET /.well-known/x402` returns the terms an agent needs: the paths that toll, the read
