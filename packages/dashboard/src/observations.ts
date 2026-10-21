@@ -25,8 +25,17 @@ interface Followed {
 }
 
 const followed = new Map<string, Followed>();
+/** The read in progress per file. The overview polls AND streams, so two reads overlap; run
+ *  concurrently, both would parse the same appended bytes and every row would count twice. */
+const pending = new Map<string, Promise<ObservationEvent[]>>();
 
-async function follow(path: string, now: number): Promise<ObservationEvent[]> {
+function follow(path: string, now: number): Promise<ObservationEvent[]> {
+  const run = (pending.get(path) ?? Promise.resolve([])).then(() => readNew(path, now), () => readNew(path, now));
+  pending.set(path, run);
+  return run;
+}
+
+async function readNew(path: string, now: number): Promise<ObservationEvent[]> {
   let info;
   try {
     info = await stat(path);

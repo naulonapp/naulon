@@ -62,3 +62,13 @@ test("a malformed row is skipped, not fatal", async () => {
   writeFileSync(file, row("a") + "{not json\n" + row("b"));
   assert.deepEqual(await ids(file), ["a", "b"]);
 });
+
+test("overlapping reads never count a row twice", async () => {
+  const file = fresh();
+  writeFileSync(file, row("a"));
+  await ids(file);
+  appendFileSync(file, row("b") + row("c"));
+  const [x, y] = await Promise.all([ids(file), ids(file)]);
+  assert.deepEqual(x, ["a", "b", "c"]);
+  assert.deepEqual(y, ["a", "b", "c"]);
+});
