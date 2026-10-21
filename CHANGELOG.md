@@ -14,6 +14,35 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.15.0
+
+Ships `@naulon/sdk` **0.6.3** and `@naulon/shared` **0.6.9**, and publishes `@naulon/extract`
+**0.2.0**, which `@naulon/wayfarer` 0.7.3 already depends on. The Docker image carries a
+redesigned console. The WordPress plugin is unchanged at 0.7.3.
+
+### Added
+- The console's overview leads with money and time: what agents paid, what they left on the
+  table, and agent requests by hour and outcome. On a phone it uses a top bar, a bottom bar for
+  the four main pages and a More sheet.
+- `naulon init` writes a `.env` and `credits.json` that run as written: a generated first console
+  password (mode 0600), recording on, and `credits.json` where compose mounts it. It tells a clone
+  from a directory holding `docker-compose.yml` (`--runtime` overrides) and prints the next steps
+  for that runtime.
+- The jsonl observation log rotates at `OBSERVATIONS_MAX_MB` (default 100, `0` never rotates), and
+  the console follows it incrementally, so `.env.example` now turns recording on.
+
+### Fixed
+- A `.env` copied from `.env.example` boots: a blank value means unset rather than an invalid URL,
+  and a value that is a comment read as a value is refused instead of used as a password.
+- `naulon doctor` and `naulon selftest` read `.env` the way the gate does, so they no longer fail on
+  a copied `.env.example`.
+- In Docker, every runtime file lives on the `/data` volume, the console reaches the gate by its
+  service name, and `/healthz` answers before sign-in, so compose reports a running console as
+  healthy.
+- Wrong passwords on the console's own sign-in and password-change forms are throttled, and each
+  account has its own guess budget.
+- `make dev` runs `@naulon/*` from source on a fresh clone.
+
 ## v0.14.3
 
 The WordPress plugin moves to **0.7.3**, renamed "naulon - Get paid when AI reads your work". No code
