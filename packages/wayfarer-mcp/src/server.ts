@@ -450,6 +450,15 @@ export interface BuildServerOptions {
      *  tool outside `tools` should be left out too — nothing enforces that, it is the caller's. */
     prompts?: readonly string[];
   };
+  /**
+   * This server never pays: no signer and no budget. Tools whose text is shared with spending
+   * surfaces then describe a price, not a purchase, and `naulon_quote` returns no session envelope
+   * (`ceilingUsdc`, `spentSessionUsdc`, `remainingUsdc`, `affordable`), which would describe a
+   * budget that does not exist. The settlement chain stays: it is a fact about the price.
+   *
+   * Explicit rather than inferred from `budgetUsdc: 0`, which a spending session can also reach.
+   */
+  priceOnly?: boolean;
 }
 
 /**
@@ -523,6 +532,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   // anything that reads the listing, a plugin reviewer included.
   const allowTool = opts.surface?.tools ? new Set(opts.surface.tools) : null;
   const allowPrompt = opts.surface?.prompts ? new Set(opts.surface.prompts) : null;
+  const priceOnly = opts.priceOnly === true;
+  /** One sentence for a server that spends, its counterpart for one that only prices. */
+  const say = (spends: string, prices: string): string => (priceOnly ? prices : spends);
   const discarded = allowTool || allowPrompt ? new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }) : server;
   // `registerTool`/`registerPrompt` are overloaded generics, so `Parameters<…>` collapses to
   // `never`. The variadic body is therefore typed loosely and the WHOLE function is cast back to
@@ -738,6 +750,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     remainingUsdc: remainingUsdc(),
     settlement: networkInfo(net),
   });
+  /** A quote's envelope: the session budget beside the chain, or the chain alone on a server that
+   *  only prices (`priceOnly`), where a budget would describe nothing. */
+  const quoteEnvelope = (net?: SettlementNetwork): Partial<ReturnType<typeof envelope>> & { settlement: NetworkInfo } =>
+    priceOnly ? { settlement: networkInfo(net) } : envelope(net);
   /** The chain a QUOTE says the toll will settle on — the publisher's, read off the 402's own
    *  requirements. Falls back to the session default only when the CAIP-2 id names a chain this
    *  build does not know, which is a fleet-config problem rather than something to guess about. */
@@ -765,12 +781,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "Find candidate essays for a topic from the configured publisher (a live RSS feed or a " +
         "catalog endpoint — set RSS_URL, PUBLISHER_URL, or CATALOG_URL, or use the hosted endpoint). " +
         "Returns FREE public teasers only — slug, title, and summary — with no content and no payment. " +
-        "Call this first to see what is available before appraising, quoting, or paying. If no source " +
+        say("Call this first to see what is available before appraising, quoting, or paying. ",
+          "Call this first to see what is available before appraising or quoting. ") +
+        "If no source " +
         "is configured it refuses with setup guidance rather than inventing sources. " +
         "A candidate may carry WHY it matched: `matchedInBody` means your terms are inside the paid " +
         "text but NOT in the title or teaser (strong — the teaser just does not show it), " +
         "`matchedSemantic` means only that it is near your query in meaning and your terms are " +
-        "absent (weak — judge the teaser, and do not pay one that is off-topic). " +
+        say("absent (weak — judge the teaser, and do not pay one that is off-topic). ",
+          "absent (weak: judge the teaser, and set aside one that is off-topic). ") +
         "NEITHER flag set means one of two opposite things, so read it against the rest of the " +
         "response: if any OTHER candidate here carries a flag, this source searches, and no flag is " +
         "the STRONGEST result of all — your terms matched the title or teaser, which is why no " +
@@ -786,9 +805,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         candidates: z
           .array(
             z.object({
-              slug: z.string().describe("Stable identifier used to quote and pay for this source."),
+              slug: z.string().describe(say("Stable identifier used to quote and pay for this source.", "Stable identifier used to quote this source.")),
               title: z.string(),
-              summary: z.string().describe("Free teaser — what the agent reads to judge relevance before paying."),
+              summary: z.string().describe(say("Free teaser — what the agent reads to judge relevance before paying.", "Free teaser: what the agent reads to judge relevance.")),
               url: z
                 .string()
                 .optional()
@@ -826,7 +845,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
                 .optional()
                 .describe(
                   "Indicative read price in USDC from the catalog. ADVISORY ONLY — naulon_quote's live 402 is the " +
-                    "truth, and the buyer's total may be higher once extra settlement legs are added. Never pay against this.",
+                    "truth, and the buyer's total may be higher once extra settlement legs are added." +
+                    say(" Never pay against this.", ""),
                 ),
               citationPriceUsdc: z
                 .number()
@@ -1027,7 +1047,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "scorer WHY the search returned each one, and dropping them makes a body-matched source with " +
         "a terse teaser look identical to a near-miss with a keyword-ish one. FREE: it reads the " +
         "teaser and those flags, never paid content, and it fetches and pays for nothing. " +
-        "Use it to decide what is worth quoting and paying for.",
+        say("Use it to decide what is worth quoting and paying for.", "Use it to decide what is worth quoting."),
       inputSchema: {
         topic: z.string().min(1).describe("The research topic to score relevance against."),
         candidates: z
@@ -1094,8 +1114,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "may just fetch. Anything else returns refused:true with the reason in note: a refusal to reach " +
         "the url (off-gate identity, or operator policy such as a kill-switch or deny-list), a 404, an " +
         "unreachable origin, or a malformed 402. A refused url is NEITHER payable nor free — do not fetch " +
-        "it and do not report it as free; retry or fix the url. Quote before paying so you can plan spend " +
-        "against real prices.",
+        "it and do not report it as free; retry or fix the url." +
+        say(" Quote before paying so you can plan spend against real prices.", ""),
       inputSchema: {
         slug: z.string().min(1).describe("Source slug from naulon_discover."),
         url: z
@@ -1132,11 +1152,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               "Two of these are the caller's to fix and two are not, which is why this is a field and not prose.",
           ),
         priceUsdc: z.number().optional().describe("The author leg price in USDC."),
-        totalUsdc: z.number().optional().describe("The buyer's true total across all settlement legs — what the budget is debited."),
-        affordable: z
-          .boolean()
-          .optional()
-          .describe("True if totalUsdc fits within the remaining session budget (only meaningful when gated)."),
+        totalUsdc: z.number().optional().describe(say("The buyer's true total across all settlement legs — what the budget is debited.", "The buyer's true total across all settlement legs.")),
+        ...(priceOnly
+          ? {}
+          : {
+              affordable: z
+                .boolean()
+                .optional()
+                .describe("True if totalUsdc fits within the remaining session budget (only meaningful when gated)."),
+            }),
         amountAtomic: z.string().optional().describe("The author amount in atomic units (micro-USDC string)."),
         network: z.string().optional(),
         asset: z.string().optional(),
@@ -1145,10 +1169,17 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .array(z.object({ role: z.string(), payTo: z.string(), amount: z.string() }))
           .optional()
           .describe("Present only for a multi-leg toll (e.g. author + operator fee)."),
-        ceilingUsdc: z.number().describe("The server-configured spend ceiling for this session (cannot be raised from a tool)."),
-        spentSessionUsdc: z.number().describe("Total already spent in this MCP session."),
-        remainingUsdc: z.number().describe("Budget left for this session — plan spend within this."),
-        settlement: z.object(networkOutputSchema).describe("The chain + token this session settles on. Check settlement.testnet before reporting a spend as real money."),
+        ...(priceOnly
+          ? {}
+          : {
+              ceilingUsdc: z.number().describe("The server-configured spend ceiling for this session (cannot be raised from a tool)."),
+              spentSessionUsdc: z.number().describe("Total already spent in this MCP session."),
+              remainingUsdc: z.number().describe("Budget left for this session — plan spend within this."),
+            }),
+        settlement: z.object(networkOutputSchema).describe(say(
+          "The chain + token this session settles on. Check settlement.testnet before reporting a spend as real money.",
+          "The chain + token the toll settles on. Check settlement.testnet before calling a price real money.",
+        )),
         note: z.string().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
@@ -1157,7 +1188,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
       // resolving gateBase() or probing, using the SAME refused/note shape the origin refusal
       // below already returns.
-      if (hostedInertSteer) return structured({ refused: true, note: hostedInertSteer, ...envelope() });
+      if (hostedInertSteer) return structured({ refused: true, note: hostedInertSteer, ...quoteEnvelope() });
       const target = url ?? slugUrl(slug);
       // Origin + policy even on the free probe: an unauthorized url is an SSRF surface and would
       // return an attacker-authored price/payTo the model might then act on. policyForGranularPay
@@ -1167,7 +1198,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       if (refusal) {
         // A refusal is neither payable nor free: signal refused (not gated:false, which the tool
         // contract defines as "free read — just fetch it" and a buyer would act on).
-        return structured({ refused: true, refusedReason: "policy" as const, note: refusal, ...envelope() });
+        return structured({ refused: true, refusedReason: "policy" as const, note: refusal, ...quoteEnvelope() });
       }
       const outcome = await probe(target, KIND, payerAddress());
       if (outcome.status !== "gated") {
@@ -1182,7 +1213,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
             ? { gated: false }
             : { refused: true, refusedReason: outcome.status }),
           note: quoteNote(outcome, target),
-          ...envelope(),
+          ...quoteEnvelope(),
         });
       }
       const quoted = outcome.quoted;
@@ -1192,7 +1223,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         gated: true,
         priceUsdc: quoted.priceUsdc,
         totalUsdc,
-        affordable: totalUsdc <= remainingUsdc(),
+        ...(priceOnly ? {} : { affordable: totalUsdc <= remainingUsdc() }),
         amountAtomic: quoted.amountAtomic,
         network: quoted.requirements.network,
         asset: quoted.requirements.asset,
@@ -1202,7 +1233,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           : {}),
         // The publisher's chain, not this process's — otherwise one payload carried the quoted
         // CAIP-2 id above and a contradicting `settlement.chainName` three lines below it.
-        ...envelope(quotedNetwork(quoted.requirements.network)),
+        ...quoteEnvelope(quotedNetwork(quoted.requirements.network)),
       });
     },
   );
