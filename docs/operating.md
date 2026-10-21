@@ -254,8 +254,9 @@ announce themselves by needing a non-loopback name in `DASHBOARD_ALLOWED_HOSTS`
 credential is refused.
 
 Failed sign-ins are metered per client (`DASHBOARD_AUTH_FAIL_RPM`, default 20/min,
-burst 10): Basic auth has no lockout of its own, so without that the password can be
-guessed at network speed. Only the rejections are charged, so using the console
+burst 10), whether the password arrives over HTTP Basic, the sign-in form or the
+password-change form. Without that a password can be guessed at network speed. Only
+wrong passwords are charged, so using the console
 heavily, however hard you click, can never lock you out of it.
 
 If a deployment genuinely cannot tell callers apart (no socket and no forwarded

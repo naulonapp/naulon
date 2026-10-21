@@ -18,6 +18,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { createRateLimiter, getConfig, resolveClientIdentity } from "@naulon/shared";
+import { isRejectedGuess } from "./guess.ts";
 
 const cfg = getConfig();
 
@@ -100,8 +101,8 @@ export function authThrottle(opts: AuthThrottleOptions = {}): MiddlewareHandler 
       return c.text(
         who.ok
           ? `naulon dashboard: too many failed sign-ins from your address.\n\n` +
-              `Try again in ${wait}s. If you are the operator and locked yourself out,\n` +
-              `the credential is DASHBOARD_AUTH in the environment this process was started with.\n`
+              `Try again in ${wait}s. If you are the operator and locked yourself out, wait it\n` +
+              `out; the machine credential is DASHBOARD_AUTH in this process's environment.\n`
           : `naulon dashboard: too many failed sign-ins, and this deployment cannot tell\n` +
               `callers apart — so the budget is shared and someone else may have spent it.\n\n` +
               `Try again in ${wait}s. To meter per client instead, set TRUST_PROXY=true (and\n` +
@@ -125,6 +126,10 @@ export function authThrottle(opts: AuthThrottleOptions = {}): MiddlewareHandler 
     //
     // A guesser must present something to guess, so requiring an Authorization header
     // costs the attacker nothing they can avoid and costs the operator nothing at all.
-    if (c.res.status === 401 && c.req.header("authorization")) limiter.take(key);
+    //
+    // A form that checks a password carries it in the body, so it never has that header.
+    // Those handlers mark the rejection themselves (guess.ts); until they did, forty wrong
+    // passwords on the sign-in form came back 401 and none met a 429.
+    if ((c.res.status === 401 && c.req.header("authorization")) || isRejectedGuess(c)) limiter.take(key);
   };
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Hono } from "hono";
 import { authThrottle } from "./authThrottle.ts";
+import { markRejectedGuess } from "./guess.ts";
 
 /**
  * A stand-in for the basicAuth that sits behind the throttle: the credential is
@@ -13,6 +14,13 @@ function appWith(opts: Parameters<typeof authThrottle>[0], now?: () => number) {
   app.get("*", (c) => {
     if (c.req.header("authorization") !== "good") return c.text("unauthorized", 401);
     return c.text("ops console");
+  });
+  // The sign-in form: the password is in the body, never in a header.
+  app.post("/login", async (c) => {
+    const body = await c.req.parseBody();
+    if (body["password"] === "good") return c.text("signed in");
+    markRejectedGuess(c);
+    return c.text("wrong", 401);
   });
   return app;
 }
@@ -184,4 +192,35 @@ test("a guesser is still stopped in the same number of tries", async () => {
   const codes: number[] = [];
   for (let i = 0; i < 5; i++) codes.push((await app.request("/", guess("198.51.100.90"))).status);
   assert.deepEqual(codes, [401, 401, 401, 429, 429]);
+});
+
+const signIn = (ip: string, password: string) => ({
+  method: "POST",
+  headers: { "x-forwarded-for": ip, "content-type": "application/x-www-form-urlencoded" },
+  body: `username=admin&password=${password}`,
+});
+
+test("wrong passwords on the sign-in form burn the same budget as Basic", async () => {
+  const app = appWith({ rpm: 60, burst: 3, trustProxy: true });
+  const codes: number[] = [];
+  for (let i = 0; i < 5; i++) codes.push((await app.request("/login", signIn("198.51.100.91", `guess${i}`))).status);
+  assert.deepEqual(codes, [401, 401, 401, 429, 429]);
+});
+
+test("a right password on the form is never charged", async () => {
+  const app = appWith({ rpm: 60, burst: 2, trustProxy: true });
+  for (let i = 0; i < 10; i++) assert.equal((await app.request("/login", signIn("198.51.100.92", "good"))).status, 200);
+});
+
+test("a rejected guess is charged whatever status answers it", async () => {
+  // The password-change form answers a wrong current password with a redirect, not a 401.
+  const app = new Hono();
+  app.use("*", authThrottle({ rpm: 60, burst: 2, trustProxy: true }));
+  app.post("/account/password", (c) => {
+    markRejectedGuess(c);
+    return c.redirect("/account/password?error=wrong", 303);
+  });
+  const codes: number[] = [];
+  for (let i = 0; i < 4; i++) codes.push((await app.request("/account/password", { method: "POST", headers: { "x-forwarded-for": "198.51.100.93" } })).status);
+  assert.deepEqual(codes, [303, 303, 429, 429]);
 });
