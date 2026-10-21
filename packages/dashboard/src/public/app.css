@@ -613,25 +613,19 @@ body {
   /* The column tightens on a phone, and the dock follows it because both read this token. */
   :root { --main-pad-x: 18px; }
   .shell-wrap { grid-template-columns: 1fr; }
-  /* Two rows on a phone: brand and gate state on top, then every page as one swipeable strip.
-     The old single scrolling row fit the brand and two links in 390px, so six of the eight
-     pages sat off screen with nothing saying they were there. The fade at the right edge is
-     the cue that the strip scrolls. */
+  /* The phone shell is the hosted portal's: a top bar carrying the brand and who you are, the
+     pages in a tab bar at the bottom edge (.tabbar, below). The rail's links are not shown here. */
   .shell {
-    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px;
-    padding: 12px var(--main-pad-x) 0; border-right: 0; border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 40;
+    flex-direction: row; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px var(--main-pad-x); border-right: 0; border-bottom: 1px solid var(--line);
+    background: color-mix(in oklab, var(--sidebar) 95%, transparent); backdrop-filter: blur(12px);
   }
-  .shell .nav {
-    grid-column: 1 / -1; flex-direction: row; gap: 4px; overflow-x: auto; scrollbar-width: none;
-    margin: 0 calc(-1 * var(--main-pad-x)); padding: 0 var(--main-pad-x) 10px;
-    mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent);
-  }
-  .shell .nav::-webkit-scrollbar { display: none; }
-  .nav-link { flex: none; min-height: 34px; padding: 6px 12px; gap: 8px; }
-  .nav-group { display: none; }
-  .rail { grid-column: 2; grid-row: 1; margin: 0; border-top: 0; padding-top: 0; display: flex; align-items: center; gap: 12px; }
-  .rail a.rail-link { display: none; }
+  .shell .nav { display: none; }
+  .rail { margin: 0; border-top: 0; padding-top: 0; display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .rail a.rail-link[target="_blank"], .rail .theme-btn, .brand-role { display: none; }
   .rail-link { margin-top: 0; white-space: nowrap; }
+  .gate-state { white-space: nowrap; }
   .main { padding: 24px var(--main-pad-x) 48px; }
   .page-head { flex-direction: column; gap: 16px; }
   .earned { min-width: 0; }
@@ -1006,3 +1000,68 @@ body {
   .money-lead.three > :last-child { grid-column: 1 / -1; }
 }
 .section-head .n .badge { text-transform: none; letter-spacing: 0; }
+
+/* ── phone shell: tab bar + More sheet ─────────────────────────────────────────
+   Measured off the hosted portal's BottomTabBar: pinned to the bottom edge, one cell per page,
+   12px medium labels in --sidebar-muted, the active cell marked by a 2px primary tick at its
+   top edge and a primary glyph. Never a filled cell: the green is punctuation. */
+.tabbar, .sheet { display: none; }
+@media (max-width: 900px) {
+  body.has-tabbar { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .tabbar {
+    display: flex; align-items: stretch; position: fixed; inset: auto 0 0 0; z-index: 40;
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid var(--line);
+    background: color-mix(in oklab, var(--sidebar) 95%, transparent); backdrop-filter: blur(12px);
+  }
+  .tab {
+    position: relative; flex: 1 1 0; min-width: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    padding: 10px 2px; min-height: 56px;
+    font-family: var(--font-sans); font-size: 12px; font-weight: 500; line-height: 16px;
+    color: var(--sidebar-muted); text-decoration: none; background: none; border: 0; cursor: pointer;
+    transition: color var(--motion) var(--ease);
+  }
+  .tab:hover, .tab.on { color: var(--fg); }
+  .tab .nav-ico { width: 20px; height: 20px; }
+  .tab.on .nav-ico { color: var(--primary); }
+  .tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab-mark {
+    position: absolute; top: 0; width: 32px; height: 2px; border-radius: 0 0 999px 999px;
+    background: var(--primary); opacity: 0; transition: opacity var(--motion) var(--ease);
+  }
+  .tab.on .tab-mark { opacity: 1; box-shadow: 0 0 8px var(--primary); }
+  .tab:focus-visible { outline: 2px solid color-mix(in oklab, var(--primary) 60%, transparent); outline-offset: -2px; }
+
+  .sheet[open] {
+    display: block; position: fixed; inset: auto 0 0 0; margin: 0; width: 100%; max-width: none;
+    max-height: 80dvh; overflow-y: auto; padding: 0 0 env(safe-area-inset-bottom);
+    border: 0; border-top: 1px solid var(--line); border-radius: 8px 8px 0 0;
+    background: var(--sidebar); color: var(--fg);
+    animation: sheet-up 220ms var(--ease);
+  }
+  .sheet::backdrop { background: color-mix(in oklab, var(--bg) 80%, transparent); backdrop-filter: blur(1px); }
+  .sheet-head {
+    position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 8px 6px 20px; border-bottom: 1px solid var(--line); background: var(--sidebar);
+  }
+  .sheet-head h2 { font-size: 14px; font-weight: 600; }
+  .sheet-close {
+    display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 4px;
+    background: none; color: var(--sidebar-muted); cursor: pointer;
+  }
+  .sheet-close:hover { color: var(--fg); }
+  .sheet-close svg { width: 20px; height: 20px; }
+  .sheet nav { display: flex; flex-direction: column; padding: 8px; }
+  .sheet-link {
+    display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 12px; border-radius: 6px;
+    font-size: 15px; color: var(--sidebar-muted); text-decoration: none;
+  }
+  .sheet-link:hover { color: var(--fg); background: color-mix(in oklab, var(--sidebar-accent) 60%, transparent); }
+  .sheet-link.on { color: var(--fg); font-weight: 500; background: var(--sidebar-accent); }
+  .sheet-link.on .nav-ico { color: var(--primary); }
+  .sheet-foot { padding: 8px; border-top: 1px solid var(--line); }
+  button.sheet-link { width: 100%; border: 0; background: none; cursor: pointer; font-family: var(--font-sans); text-align: left; }
+}
+@keyframes sheet-up { from { transform: translateY(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sheet[open] { animation: none; } }
