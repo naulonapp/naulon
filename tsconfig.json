@@ -6,17 +6,26 @@
   // `make lint`/`make test` were safe (they build sdk first). This makes every
   // typecheck entry point agree. Only the dist-pointed (published) packages need
   // it; tollgate still resolves to src. Emit is unaffected — per-package
-  // builds extend tsconfig.base.json, not this file. Keep in step with real
-  // internal imports (grep `from "@naulon/` in packages/*/src) — a wrong path is a
-  // loud tsc error, never a silent one.
+  // builds extend tsconfig.base.json, not this file. `make dev` runs under this
+  // file too (TSX_TSCONFIG_PATH), so a subpath missing here resolves to dist/ and
+  // fails on a tree that has none. packages/shared/src/workspace-paths.test.ts
+  // refuses an internal import this file does not map.
   "compilerOptions": {
     "paths": {
       "@naulon/sdk": ["./packages/sdk/src/index.ts"],
       "@naulon/sdk/slug": ["./packages/sdk/src/contract/slug.ts"],
       "@naulon/sdk/net": ["./packages/sdk/src/crawl/net.ts"],
       "@naulon/sdk/crawl": ["./packages/sdk/src/crawl/index.ts"],
+      "@naulon/sdk/crawl/testing": ["./packages/sdk/src/crawl/testing.ts"],
+      "@naulon/sdk/rsl": ["./packages/sdk/src/rsl/index.ts"],
+      "@naulon/sdk/next": ["./packages/sdk/src/next/index.ts"],
+      "@naulon/sdk/express": ["./packages/sdk/src/express/index.ts"],
       "@naulon/shared": ["./packages/shared/src/index.ts"],
+      "@naulon/shared/config": ["./packages/shared/src/config.ts"],
+      "@naulon/shared/types": ["./packages/shared/src/types.ts"],
+      "@naulon/shared/attribution": ["./packages/shared/src/attribution.ts"],
       "@naulon/enforce": ["./packages/enforce/src/index.ts"],
+      "@naulon/enforce/next": ["./packages/enforce/src/enforce/next.ts"],
       "@naulon/extract": ["./packages/extract/src/index.ts"],
       "@naulon/wayfarer": ["./packages/wayfarer/src/lib.ts"]
     }
