@@ -86,7 +86,7 @@ questions and writes a coherent `.env` plus a starter `credits.json`, with no
 hand-editing of the full example:
 
 ```bash
-npx naulon init               # → .env + credits.json, then: make dev
+npx naulon init               # → .env + credits.json, and the next steps for how you run it
 ```
 
 It runs in mock-settlement mode by default (no wallet or API keys), refuses to
@@ -110,8 +110,7 @@ repo nor Node:
 
 ```bash
 curl -O https://raw.githubusercontent.com/naulonapp/naulon/main/docker-compose.yml
-npx -p @naulon/sdk naulon init      # writes .env + credits.json (or write them by hand)
-mkdir -p config && mv credits.json config/
+npx -p @naulon/sdk naulon init      # sees the compose file: writes .env + config/credits.json
 docker compose up -d                # gate :8402 · console :8403 (loopback only)
 ```
 
@@ -126,9 +125,10 @@ earlier name releases that exist on npm and in git, never in the registry.
 
 The console binds wide inside its container (127.0.0.1 there is unreachable from your
 host) and is published on your loopback only. Because the socket is no longer evidence
-of privacy, it *requires* a credential before it serves: set `CONSOLE_ADMIN_PASSWORD`
-in `.env` to seed a first administrator that must change its password on first sign-in,
-or `DASHBOARD_AUTH=user:pass` for HTTP Basic.
+of privacy, it *requires* a credential before it serves. `naulon init` writes a generated
+`CONSOLE_ADMIN_PASSWORD` into `.env` (mode 0600): sign in as `admin` with it, and the
+console makes you choose a new one. Writing `.env` by hand, set it yourself, or
+`DASHBOARD_AUTH=user:pass` for HTTP Basic.
 
 Contributors who want the image built from a working tree instead:
 `make docker-build`.

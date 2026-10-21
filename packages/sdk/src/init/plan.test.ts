@@ -112,3 +112,36 @@ test("INIT_DEFAULTS are themselves valid answers (defaults must never be un-plan
   } as InitAnswers);
   assert.match(fromDefaults.env.contents, /^PAYMENT_MODE=mock$/m);
 });
+
+test("the console is set up: recording on, and a first administrator when a password is given", () => {
+  const withPw = buildInitPlan(answers({ consolePassword: "a-generated-password-24c" })).env.contents;
+  assert.match(withPw, /^OBSERVATIONS_BACKEND=jsonl$/m);
+  assert.match(withPw, /^CONSOLE_ADMIN_USERNAME=admin$/m);
+  assert.match(withPw, /^CONSOLE_ADMIN_PASSWORD=a-generated-password-24c$/m);
+  const without = buildInitPlan(answers()).env.contents;
+  assert.doesNotMatch(without, /^CONSOLE_ADMIN_PASSWORD=/m, "no empty password line to be read as a value");
+  assert.match(without, /^# CONSOLE_ADMIN_PASSWORD=$/m);
+});
+
+test("no setting line carries a comment, which Docker Compose would read as part of the value", () => {
+  for (const mode of ["mock", "gateway"] as const) {
+    const env = buildInitPlan(answers({ paymentMode: mode, consolePassword: "a-generated-password-24c" })).env.contents;
+    const settings = env.split("\n").filter((l) => /^[A-Z0-9_]+=/.test(l));
+    assert.deepEqual(settings.filter((l) => l.includes("#")), []);
+  }
+});
+
+test("next steps follow how the gate will run", () => {
+  const steps = (o: Partial<InitAnswers>) => buildInitPlan(answers(o)).nextSteps.join("\n");
+  const docker = steps({ runtime: "docker", creditsPath: "./config/credits.json" });
+  assert.match(docker, /docker compose up -d/);
+  assert.doesNotMatch(docker, /make dev/);
+  assert.doesNotMatch(docker, /Move /, "credits already sit where compose mounts them");
+  assert.match(steps({ runtime: "docker", creditsPath: "./credits.json" }), /Move \.\/credits\.json to config\/credits\.json/);
+  const repo = steps({ runtime: "repo" });
+  assert.match(repo, /make dev/);
+  assert.doesNotMatch(repo, /docker compose/);
+  const unknown = steps({});
+  assert.match(unknown, /docker compose up -d/);
+  assert.match(unknown, /make dev/);
+});

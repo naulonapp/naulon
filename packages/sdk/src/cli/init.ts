@@ -11,9 +11,10 @@
  * value logic lives in `../init/plan.ts`; this file is only prompts + I/O.
  */
 import * as readline from "node:readline/promises";
-import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { WALLET_RE } from "../contract/wallet.ts";
 import { buildInitPlan, initAnswersSchema, INIT_DEFAULTS, type InitAnswers } from "../init/plan.ts";
 
@@ -40,6 +41,7 @@ interface Flags {
   starterSlug?: string;
   starterTitle?: string;
   starterAuthorId?: string;
+  runtime?: string;
 }
 
 const FLAG_MAP: Record<string, keyof Flags> = {
@@ -55,6 +57,7 @@ const FLAG_MAP: Record<string, keyof Flags> = {
   "--slug": "starterSlug",
   "--title": "starterTitle",
   "--author-id": "starterAuthorId",
+  "--runtime": "runtime",
 };
 
 export function parseInitFlags(argv: string[]): Flags {
@@ -77,7 +80,8 @@ const USAGE = `usage: naulon init [--yes] [--force] [--dir <path>]
              [--origin <url>] [--price <n>] [--citation-multiplier <n>]
              [--mode mock|gateway] [--network arcTestnet|baseSepolia|base]
              [--port <n>] [--prefixes <csv>] [--credits <path>]
-             [--wallet 0x…] [--slug <s>] [--title <t>] [--author-id <id>]`;
+             [--wallet 0x…] [--slug <s>] [--title <t>] [--author-id <id>]
+             [--runtime docker|repo]`;
 
 /**
  * A line reader over stdin. Crucially, `next()` returns `null` at end-of-input instead of
@@ -138,9 +142,30 @@ const vNetwork = (v: string) =>
 const vWallet = (v: string) => (v === "" || WALLET_RE.test(v) ? null : "a 0x-prefixed 40-hex address, or blank");
 const vNonEmpty = (v: string) => (v.trim() === "" ? "cannot be blank" : null);
 
+/**
+ * How the gate in this directory will be started. A clone of the repo runs `make dev`; a
+ * directory holding only docker-compose.yml runs the image. The repo also carries a
+ * docker-compose.yml, so the clone is checked first.
+ */
+export function detectRuntime(dir: string): "docker" | "repo" | undefined {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { name?: string };
+    if (pkg.name === "naulon") return "repo";
+  } catch {
+    // no package.json, or not ours
+  }
+  return existsSync(join(dir, "docker-compose.yml")) ? "docker" : undefined;
+}
+
+/** A first administrator's password: 24 URL-safe characters, 144 bits. */
+const generatePassword = (): string => randomBytes(18).toString("base64url");
+
 /** Gather answers from flags + defaults, only prompting for what's missing (unless --yes). */
 async function gather(f: Flags, reader: LineReader): Promise<InitAnswers> {
-  const d = INIT_DEFAULTS;
+  const runtime = f.runtime === "docker" || f.runtime === "repo" ? f.runtime : detectRuntime(resolve(f.dir));
+  // Compose mounts ./config read-only and reads credits from there.
+  const d = { ...INIT_DEFAULTS, creditsPath: runtime === "docker" ? "./config/credits.json" : INIT_DEFAULTS.creditsPath };
+  const fixed = { runtime, consolePassword: generatePassword() };
   if (f.yes) {
     const mode = (f.paymentMode ?? d.paymentMode) as "mock" | "gateway";
     return initAnswersSchema.parse({
@@ -156,6 +181,7 @@ async function gather(f: Flags, reader: LineReader): Promise<InitAnswers> {
       starterTitle: f.starterTitle ?? d.starterTitle,
       starterAuthorId: f.starterAuthorId ?? d.starterAuthorId,
       defaultWallet: f.defaultWallet && f.defaultWallet !== "" ? f.defaultWallet : undefined,
+      ...fixed,
     });
   }
 
@@ -192,6 +218,7 @@ async function gather(f: Flags, reader: LineReader): Promise<InitAnswers> {
     starterTitle,
     starterAuthorId: f.starterAuthorId ?? d.starterAuthorId,
     defaultWallet: defaultWallet === "" ? undefined : defaultWallet,
+    ...fixed,
   });
 }
 
@@ -234,7 +261,9 @@ export async function initMain(argv: string[]): Promise<number> {
           continue;
         }
       }
-      await writeFile(abs, file.contents, "utf8");
+      await mkdir(dirname(abs), { recursive: true });
+      // .env carries the console's first password, so only its owner may read it.
+      await writeFile(abs, file.contents, { encoding: "utf8", mode: file === plan.env ? 0o600 : 0o644 });
       written.push(file.path);
     }
     printOutcome(written, skipped, plan);

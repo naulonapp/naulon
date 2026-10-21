@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,4 +95,43 @@ test("interactive: refuses to clobber on 'n', overwrites on 'y'", async () => {
   assert.equal(accepted.code, 0);
   assert.doesNotMatch(readFileSync(join(dir, ".env"), "utf8"), /SENTINEL/); // overwritten
   assert.match(readFileSync(join(dir, ".env"), "utf8"), /^PAYMENT_MODE=mock$/m);
+});
+
+function runYes(dir: string, extra: string[] = []): Promise<{ code: number | null; out: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ["--import", "tsx", CLI, "init", "--yes", "--dir", dir, ...extra], { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    const kill = setTimeout(() => child.kill("SIGKILL"), 20_000);
+    child.on("close", (code) => {
+      clearTimeout(kill);
+      resolve({ code, out });
+    });
+  });
+}
+
+test("beside a docker-compose.yml: credits land where compose mounts them, with Docker next steps", async () => {
+  const dir = tmp();
+  writeFileSync(join(dir, "docker-compose.yml"), "services: {}\n");
+  const { code, out } = await runYes(dir, ["--wallet", "0x1111111111111111111111111111111111111111"]);
+  assert.equal(code, 0, out);
+  assert.ok(existsSync(join(dir, "config", "credits.json")), "credits.json in ./config");
+  assert.ok(!existsSync(join(dir, "credits.json")));
+  assert.match(out, /docker compose up -d/);
+  assert.doesNotMatch(out, /make dev/);
+  const env = readFileSync(join(dir, ".env"), "utf8");
+  assert.match(env, /^CREDITS_FIXTURES=\.\/config\/credits\.json$/m);
+  assert.match(env, /^CONSOLE_ADMIN_PASSWORD=[A-Za-z0-9_-]{24}$/m, "a generated first password");
+  assert.equal(statSync(join(dir, ".env")).mode & 0o777, 0o600, ".env holds a password, so only its owner reads it");
+});
+
+test("two runs never share a password", async () => {
+  const pw = async () => {
+    const dir = tmp();
+    await runYes(dir);
+    return /^CONSOLE_ADMIN_PASSWORD=(.+)$/m.exec(readFileSync(join(dir, ".env"), "utf8"))?.[1];
+  };
+  const [a, b] = await Promise.all([pw(), pw()]);
+  assert.ok(a && b && a !== b);
 });
