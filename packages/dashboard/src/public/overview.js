@@ -6,7 +6,7 @@
  * verified-agent). Every one is HTML-escaped before it touches innerHTML — esc()
  * from shell.js is the boundary, same as the earnings view.
  */
-import { $, esc, usd, trunc, rel, emptyState, renderShell, poll, sse, wireSeg, agentLabel, selfTestBadge, wireTestToll } from "./shell.js";
+import { $, esc, usd, rel, emptyState, renderShell, poll, sse, wireSeg, selfTestBadge, wireTestToll, VERDICT_TITLE } from "./shell.js";
 
 renderShell({ active: "overview" });
 
@@ -20,7 +20,13 @@ const prevNum = {};             // last displayed value per stat → count-up fr
 function countUp(el, to, money) {
   const from = prevNum[el.id] ?? 0;
   prevNum[el.id] = to;
-  const paint = (v) => { el.textContent = money ? usd(v) : String(Math.round(v)); };
+  // Every frame is painted at the final figure's precision, so a count-up never changes width.
+  const d = money ? usd(to).split(".")[1].length : 0;
+  const paint = (v) => {
+    el.textContent = money
+      ? "$" + v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })
+      : Math.round(v).toLocaleString("en-US");
+  };
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduce || from === to) { paint(to); return; }
   const t0 = performance.now(), dur = 500;
@@ -42,173 +48,189 @@ function paintFreshness() {
     s < 1 ? "updated now" : s < 60 ? `updated ${s}s ago` : s < 3600 ? `updated ${Math.floor(s / 60)}m ago` : `updated ${Math.floor(s / 3600)}h ago`;
 }
 
+/** The four outcomes, in the order the Requests page draws them. */
+const OUTCOMES = ["paid", "left", "free", "refused"];
+const plural = (n, one, many = one + "s") => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+
 /**
- * Every number on this row is computed from observations, and OBSERVATIONS_BACKEND
- * defaults to `off`. With it off there is nothing to compute from, so a zero here is not
- * a measurement — it is a missing one. The money tile was the worst of it: it read
- * $0.000000 while the Ledger page showed real settled USDC from the same install, which
- * is the console contradicting itself about money on the page the operator lands on.
- * An unknown renders as an unknown.
+ * Every figure here is computed from observations. With OBSERVATIONS_BACKEND off there is
+ * nothing to compute from, so a zero would not be a measurement but a missing one; the money
+ * figure was the worst of it, reading $0 while the Ledger showed real settled USDC from the
+ * same install. An unknown renders as an unknown.
  */
-const TILE_IDS = ["#tHumans", "#tDenied", "#tBlocked", "#tPaid", "#tFailed", "#tEarned", "#tMissed"];
-/** Each tile's markup-declared classes, so the unknown state can hand them back. */
-const TILE_CLASS = new Map(TILE_IDS.map((id) => [id, $(id).className]));
+const FIGURE_IDS = ["#tEarned", "#tMissed", "#tAgents", "#tPaid", "#tDenied", "#tFree", "#tBlocked", "#tHumans"];
+const FIGURE_CLASS = new Map(FIGURE_IDS.map((id) => [id, $(id).className]));
+
+function windowLabel(ops) {
+  const hrs = Math.round((ops.windowMs || 0) / 3_600_000);
+  return hrs > 24 ? `last ${Math.round(hrs / 24)} days` : hrs === 1 ? "last hour" : `last ${hrs} hours`;
+}
+
+function blank(id, title) {
+  const el = $(id);
+  el.textContent = "—";
+  // Strip the valence with the value: a dash left in the paid green still reads as a reading.
+  el.classList.remove("bad", "pos", "warn");
+  el.classList.add("dim");
+  el.title = title;
+}
 
 function renderUnknownTiles(ops) {
-  for (const id of TILE_IDS) {
-    const el = $(id);
-    el.textContent = "—";
-    // Strip the valence with the value. A dash left in the "paid" green or the "denied"
-    // amber still reads as a reading — measured at rgb(43,245,160) and rgb(255,176,32)
-    // before this line existed.
-    el.classList.remove("bad", "pos", "warn");
-    el.classList.add("dim");
-    el.title = "Not recorded — OBSERVATIONS_BACKEND is off";
-  }
-  $("#agentSplit").textContent = "not recorded";
-  const hrs = Math.round((ops.windowMs || 0) / 3_600_000);
-  $("#window").textContent = hrs > 24 ? `last ${Math.round(hrs / 24)}d` : `last ${hrs}h`;
+  for (const id of FIGURE_IDS) blank(id, "Not recorded: OBSERVATIONS_BACKEND is off");
+  $("#tPaidN").textContent = "Traffic is not recorded";
+  $(".hero-foot").hidden = true;
+  $("#tLeftN").textContent = "";
+  $("#agentSplit").textContent = "";
+  $("#chart").innerHTML = "";
+  $("#chartAxis").innerHTML = "";
+  $("#window").textContent = windowLabel(ops);
 }
 
 /**
- * Recording is ON, this window recorded nothing, and the SETTLEMENT ledger has crossings
- * in the same hours. The counters are then honestly zero and the money tiles are not: the
- * gate did earn, the observation log just wasn't keeping the receipt yet.
- *
- * This is the state you enter by taking the console's own advice. With OBSERVATIONS_BACKEND
- * off the empty state says "set it to jsonl and restart" — do that, and every crossing
- * settled before the restart lives in the ledger and in no observation. Measured: the
- * tiles read PAID 0 / EARNED $0.000000 / "$0.000000 left on the table" while /ledger read
- * $0.039000 across 11 crossings stamped 2m, 6m and 13m ago. Turning the telemetry on made
- * the headline LESS true than leaving it off, which is the opposite of the trade an
- * operator thinks they are making.
+ * Recording is on, this window recorded nothing, and the settlement ledger has crossings in
+ * the same hours. That is the state you enter by turning recording on: every crossing settled
+ * before the restart lives in the ledger and in no observation. The counters stay as measured;
+ * the money figures dim, because the ledger contradicts them, and the notice says where the
+ * money is.
  */
 const settlementUnrecorded = (ops) => ops.total === 0 && (ops.settled?.crossings ?? 0) > 0;
 
-/**
- * The counters stay as measured — no traffic WAS recorded, and saying so is true. The two
- * money tiles do not, because the ledger contradicts them: they dim to a dash and the
- * notice below says where the money actually is.
- */
-function renderUnrecordedSettlement(ops) {
-  const v = ops.byVerdict || {};
-  countUp($("#tHumans"), ops.humans ?? 0, false);
-  countUp($("#tDenied"), v["denied"] ?? 0, false);
-  countUp($("#tBlocked"), v["blocked"] ?? 0, false);
-  countUp($("#tPaid"), v["paid"] ?? 0, false);
-  countUp($("#tFailed"), v["payment-failed"] ?? 0, false);
-  for (const id of ["#tEarned", "#tMissed"]) {
-    const el = $(id);
-    el.textContent = "—";
-    el.classList.remove("bad", "pos", "warn");
-    el.classList.add("dim");
-    el.title = "Settled money in this window predates the traffic log — see the Ledger";
-  }
-  const a = ops.agents || {};
-  $("#agentSplit").textContent = `${a.verified || 0} verified · ${a.unverified || 0} unsigned · ${a.masquerade || 0} spoofed`;
-  const hrs = Math.round((ops.windowMs || 0) / 3_600_000);
-  $("#window").textContent = hrs > 24 ? `last ${Math.round(hrs / 24)}d` : `last ${hrs}h`;
+/** Stacked columns, one per bucket. SVG attributes only: the CSP refuses inline style. */
+function renderChart(series) {
+  const buckets = series?.buckets || [];
+  if (!buckets.length) { $("#chart").innerHTML = ""; $("#chartAxis").innerHTML = ""; return; }
+  const totals = buckets.map((b) => OUTCOMES.reduce((n, k) => n + (b[k] || 0), 0));
+  const peak = Math.max(1, ...totals);
+  const W = 100 / buckets.length, H = 100, gap = Math.min(0.9, W * 0.18);
+  let bars = "";
+  buckets.forEach((b, i) => {
+    let y = H;
+    for (const k of OUTCOMES) {
+      const h = ((b[k] || 0) / peak) * (H - 4);
+      if (h <= 0) continue;
+      y -= h;
+      bars += `<rect class="o-${k}" x="${(i * W + gap / 2).toFixed(3)}" y="${y.toFixed(3)}" width="${(W - gap).toFixed(3)}" height="${h.toFixed(3)}" rx="0.4"><title>${esc(bucketLabel(series, i))}: ${b[k]} ${k}</title></rect>`;
+    }
+    if (totals[i] === 0) bars += `<rect class="o-none" x="${(i * W + gap / 2).toFixed(3)}" y="${H - 1}" width="${(W - gap).toFixed(3)}" height="1" />`;
+  });
+  $("#chart").innerHTML = `<svg viewBox="0 0 100 ${H}" preserveAspectRatio="none">${bars}</svg>`;
+  $("#chart").classList.toggle("is-empty", totals.every((t) => t === 0));
+  const ticks = [0, Math.floor(buckets.length / 2), buckets.length - 1];
+  $("#chartAxis").innerHTML = ticks.map((i) => `<span>${esc(bucketLabel(series, i))}</span>`).join("");
+}
+
+function bucketLabel(series, i) {
+  const t = new Date(series.start + i * series.stepMs);
+  if (series.stepMs >= 6 * 3_600_000) return t.toLocaleDateString(undefined, { weekday: "short", day: "numeric" });
+  return t.toLocaleTimeString(undefined, series.stepMs < 3_600_000 ? { hour: "numeric", minute: "2-digit" } : { hour: "numeric" });
 }
 
 function renderTiles(ops, observations) {
   if (observations === "off") return renderUnknownTiles(ops);
-  for (const id of TILE_IDS) {
+  $(".hero-foot").hidden = false;
+  for (const id of FIGURE_IDS) {
     const el = $(id);
     el.removeAttribute("title");
-    el.className = TILE_CLASS.get(id);
+    el.className = FIGURE_CLASS.get(id);
   }
-  if (settlementUnrecorded(ops)) return renderUnrecordedSettlement(ops);
   const v = ops.byVerdict || {};
-  countUp($("#tHumans"), ops.humans ?? 0, false);
-  // An observed read is a `denied` row that was served anyway, so it is shown apart from the 402s.
   const d = ops.demand || { reads: 0, atPrice: 0, signalledPayers: 0 };
-  countUp($("#tDenied"), Math.max(0, (v["denied"] ?? 0) - d.reads), false);
-  $("#observedStat").hidden = d.reads === 0;
-  countUp($("#tObserved"), d.reads, false);
-  countUp($("#tDemand"), d.atPrice, true);
-  $("#tSignalled").textContent = String(d.signalledPayers);
-  const blocked = v["blocked"] ?? 0;
-  const b = $("#tBlocked");
-  countUp(b, blocked, false);
-  b.classList.toggle("bad", blocked > 0);
+  // An observed read is a `denied` row that was served anyway, so it is shown apart from the 402s.
+  const left = Math.max(0, (v["denied"] ?? 0) - d.reads);
+  const refused = (v["blocked"] ?? 0) + (v["payment-failed"] ?? 0) + (v["unservable"] ?? 0);
+  const free = (ops.agents?.total ?? 0) - (v["paid"] ?? 0) - left - refused;
   countUp($("#tPaid"), v["paid"] ?? 0, false);
-  const failed = v["payment-failed"] ?? 0;
-  const f = $("#tFailed");
-  countUp(f, failed, false);
-  f.classList.toggle("bad", failed > 0);
+  countUp($("#tDenied"), left, false);
+  countUp($("#tFree"), Math.max(0, free), false);
+  countUp($("#tBlocked"), refused, false);
+  $("#tBlocked").classList.toggle("bad", refused > 0);
+  countUp($("#tHumans"), ops.humans ?? 0, false);
+  countUp($("#tAgents"), ops.agents?.total ?? 0, false);
+  $("#observedStat").hidden = d.reads === 0;
+  $("#tObserved").textContent = String(d.reads);
+  $("#tDemand").textContent = usd(d.atPrice);
+  $("#tSignalled").textContent = String(d.signalledPayers);
+  $("#tPaidN").textContent = `from ${plural(v["paid"] ?? 0, "paid request")}`;
+  $("#tLeftN").textContent = left === 1 ? "1 agent saw the price and left" : `${left.toLocaleString("en-US")} agents saw the price and left`;
+  const a = ops.agents || {};
+  $("#agentSplit").textContent = `${a.verified || 0} verified · ${a.unverified || 0} unsigned` + (a.masquerade ? ` · ${a.masquerade} spoofed` : "");
+  $("#window").textContent = windowLabel(ops);
+  renderChart(ops.series);
+  if (settlementUnrecorded(ops)) {
+    for (const id of ["#tEarned", "#tMissed"]) blank(id, "Money settled in this window before the traffic log started. See the Ledger.");
+    return;
+  }
   countUp($("#tEarned"), ops.earnings || 0, true);
   countUp($("#tMissed"), ops.earningsMissed || 0, true);
-  const a = ops.agents || {};
-  $("#agentSplit").textContent = `${a.verified || 0} verified · ${a.unverified || 0} unsigned · ${a.masquerade || 0} spoofed`;
-  const hrs = Math.round((ops.windowMs || 0) / 3_600_000);
-  $("#window").textContent = hrs > 24 ? `last ${Math.round(hrs / 24)}d` : `last ${hrs}h`;
 }
+
+const basename = (p) => String(p || "").split("/").pop();
+const STORE_NAME = { jsonl: "local file", supabase: "Supabase", off: "off" };
+const storeName = (k) => STORE_NAME[k] || k;
 
 function renderConfig(cfg) {
   const src = cfg.creditsSource || {};
+  const credits = src.mode === "fixture"
+    ? `<span class="v-main" title="${esc(src.location)}">${esc(basename(src.location))}</span><span class="v-sub">local file</span>`
+    : `<span class="v-main" title="${esc(src.location)}">${esc(src.location || "—")}</span><span class="v-sub">${esc(src.mode || "")}</span>`;
+  const articles = Array.isArray(cfg.articles) && cfg.articles.length
+    ? `<span class="v-sub">${cfg.articles.slice(0, 3).map((x) => esc(x.title || x.slug)).join(", ")}${cfg.articles.length > 3 ? ` and ${cfg.articles.length - 3} more` : ""}</span>`
+    : "";
   const rows = [
-    ["origin", esc(cfg.originUrl)],
-    ["price", `${usd(cfg.priceUsdc)} <span class="dim">/read · ×${esc(cfg.citationMultiplier)} citation</span>`],
-    ["credits", `<span class="dim">${esc(src.mode)}</span> ${esc(src.location)}`],
-    ["tollable", cfg.slugCount == null ? `<span class="dim">dynamic (API)</span>` : `${cfg.slugCount} article${cfg.slugCount === 1 ? "" : "s"}`],
-    ["observations", cfg.observations === "off" ? `<span class="dim">off — no traffic recorded</span>` : `<span class="ok">${esc(cfg.observations)}</span>`],
-    ["events", esc(cfg.events)],
+    ["Origin", `<span class="v-main mono">${esc(cfg.originUrl)}</span>`],
+    ["Price", `<span class="v-main"><span class="mono">${usd(cfg.priceUsdc)}</span> a read</span><span class="v-sub">a citation costs ${esc(cfg.citationMultiplier)}×</span>`],
+    ["Credits", credits],
+    ["Tollable", cfg.slugCount == null ? `<span class="v-main">decided by your credits API</span>` : `<span class="v-main">${plural(cfg.slugCount, "article")}</span>${articles}`],
+    ["Recording", cfg.observations === "off"
+      ? `<span class="v-main"><span class="state-dot off"></span>Off</span><span class="v-sub">set OBSERVATIONS_BACKEND=jsonl</span>`
+      : `<span class="v-main"><span class="state-dot"></span>On</span><span class="v-sub">${esc(storeName(cfg.observations))}</span>`],
+    ["Ledger", `<span class="v-main">${esc(storeName(cfg.events))}</span>`],
   ];
-  let html = rows.map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
-  if (Array.isArray(cfg.articles) && cfg.articles.length) {
-    html += cfg.articles.map((a) =>
-      `<div class="article"><span class="slug">${esc(a.title || a.slug)}</span><span class="w">${esc(trunc(a.wallets[0]))}${a.wallets.length > 1 ? ` +${a.wallets.length - 1}` : ""}</span></div>`,
-    ).join("");
-  }
-  $("#config").innerHTML = html;
+  $("#config").innerHTML = rows.map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
 }
 
 function renderWarnings(warnings) {
-  $("#warnCount").textContent = warnings.length;
-  $("#warnings").innerHTML = warnings.length
-    ? warnings.map((w) => `<div class="warn-row">${esc(w.message)}</div>`).join("")
-    : `<div class="warn-none">Nothing to flag — the gate is configured to toll.</div>`;
+  $("#warnCount").innerHTML = warnings.length
+    ? `<span class="badge denied">${plural(warnings.length, "issue")}</span>`
+    : `<span class="badge paid">Ready to toll</span>`;
+  $("#warnings").innerHTML = warnings.map((w) => `<div class="warn-row">${esc(w.message)}</div>`).join("");
 }
 
 function renderFeed(recent, observations) {
   if (observations === "off") {
-    // Not the fresh-gate state: with recording off, no crawler will ever put a row here,
-    // so promising one is a dead end. Name the switch instead, and say where the money
-    // that DID settle can still be read.
+    // With recording off no crawler will ever put a row here, so promising one is a dead
+    // end. Name the switch, and say where money that did settle can still be read.
     $("#feed").innerHTML = emptyState({
       icon: "requests",
       lead: "Traffic is not being recorded.",
       body: [
-        `<span class="mono">OBSERVATIONS_BACKEND</span> is <span class="mono">off</span>, which is the default. The gate is still tolling and settling — it just isn't keeping the log this panel and the counters above are built from, so no request will appear here however many crawlers arrive.`,
-        `Set <span class="mono">OBSERVATIONS_BACKEND=jsonl</span> and restart the gate to start recording who was served, denied, and paid.`,
+        `The gate still tolls and settles, but it keeps no log of who it served. Set <code>OBSERVATIONS_BACKEND=jsonl</code> and restart it to see every agent here.`,
       ],
-      foot: `Money that already settled is on the <a href="/ledger">Ledger</a> — that reads the event log, not this one.`,
+      foot: `Settled money is on the <a href="/ledger">Ledger</a>.`,
     });
     return;
   }
   if (!recent.length) {
-    // The state every new install is in. Rather than an empty column, give them the
-    // next action: prove the toll works, then check the config that decides it.
+    // The state every new install is in. Give the next action instead of an empty column.
     $("#feed").innerHTML = emptyState({
       icon: "requests",
-      lead: "No requests recorded yet.",
+      lead: "No agent has come by yet.",
       body: [
-        "That is normal on a fresh gate — a row appears here the first time a crawler hits a tollable path.",
-        `To check it works without waiting for one, hit <b>Test toll</b> above: the console asks your own gate for an article while pretending to be a crawler and expects a <span class="mono">402</span>.`,
+        `A row appears the first time a crawler asks for a tollable page. To check the toll now, press <b>Test toll</b>: the console asks your gate for an article as a crawler and expects a <code>402</code>.`,
       ],
       foot: `<a href="/doctor">Doctor</a> checks everything else that decides whether this gate can earn.`,
     });
     return;
   }
-  $("#feed").innerHTML = recent.map((o) => {
+  $("#feed").innerHTML = recent.slice(0, 8).map((o) => {
     const fresh = !firstPaint && !seen.has(o.id);
-    const price = o.price != null ? `<div class="who"><span class="rprice">${usd(o.price)}</span></div>` : "";
-    return `<div class="req ${fresh ? "fresh" : ""} rise">
-      <div class="rt">${esc(rel(o.at))} ago</div>
-      <div class="rmid"><div class="slug">${esc(o.slug || o.host || "—")}${selfTestBadge(o)}</div><div class="who">${agentLabel(o)}</div>${price}</div>
-      <div class="badge ${esc(o.verdict)}">${esc(o.verdict)}</div>
-    </div>`;
-  }).join("");
+    const verdict = o.verdict;
+    return `<a class="act ${fresh ? "fresh" : ""}" href="/requests?agent=${encodeURIComponent(o.agent || "")}&window=${currentWindow}">
+      <span class="act-when">${esc(rel(o.at))}</span>
+      <span class="act-who"><span class="act-name">${esc(o.agent || o.agentUa || "unsigned agent")}${o.verified ? ` <span class="badge paid">verified</span>` : o.sigInvalid ? ` <span class="badge blocked">spoofed</span>` : ""}${selfTestBadge(o)}</span><span class="act-path">${esc(o.path || (o.slug ? "/" + o.slug : "/"))}</span></span>
+      <span class="act-out"><span class="badge ${esc(verdict)}">${esc(VERDICT_TITLE[verdict] || verdict)}</span>${o.price != null && verdict !== "agent-reread" ? `<span class="act-amt">${usd(o.price)}</span>` : ""}</span>
+    </a>`;
+  }).join("") + `<a class="feed-more" href="/requests">All requests</a>`;
   recent.forEach((o) => seen.add(o.id));
 }
 
@@ -220,7 +242,7 @@ async function tick() {
     renderTiles(d.ops, d.config.observations);
     renderConfig(d.config);
     renderWarnings(d.config.warnings || []);
-    renderFeed(d.ops.recent || [], d.config.observations);
+    renderFeed(d.ops.recentAgents || [], d.config.observations);
     firstPaint = false;
     lastUpdate = Date.now();
     paintFreshness();
@@ -228,11 +250,10 @@ async function tick() {
     const fr = $("#freshness");
     fr.classList.remove("beat"); void fr.offsetWidth; fr.classList.add("beat");
     $("#notice").innerHTML = settlementUnrecorded(d.ops)
-      ? `<div class="banner pending"><b>This window settled money the traffic log never saw.</b>` +
-        `<div class="toll-fix">${d.ops.settled.crossings} crossing(s) worth ` +
-        `<span class="mono">$${(d.ops.settled.usdc || 0).toFixed(6)}</span> are in the settlement ledger and in no ` +
-        `observation — recording was switched on after they happened. The counters above are ` +
-        `right; the money is on the <a href="/ledger">Ledger</a>. New crossings appear in both.</div></div>`
+      ? `<div class="banner pending"><b>Some of this window's money settled before recording started.</b>` +
+        `<div class="toll-fix">${plural(d.ops.settled.crossings, "payment")} worth ` +
+        `<span class="mono">${usd(d.ops.settled.usdc || 0)}</span> are on the <a href="/ledger">Ledger</a> ` +
+        `but not in the traffic log, so they are not counted above. New payments appear in both.</div></div>`
       : "";
   } catch {
     // Every figure on this page is now stale and nothing on it says so. The rail used to
@@ -240,8 +261,8 @@ async function tick() {
     // and left this page as the only one with no error surface of its own.
     $("#notice").innerHTML =
       `<div class="banner pending"><b>These figures have stopped updating.</b>` +
-      `<div class="toll-fix">The console could not read <span class="mono">/api/ops</span>. ` +
-      `Everything below is the last answer it got.</div></div>`;
+      `<div class="toll-fix">The console could not reach <span class="mono">/api/ops</span>. ` +
+      `Everything below is from the last answer it got.</div></div>`;
   }
 }
 
@@ -265,7 +286,7 @@ function streamOps() {
   opsStream?.close();
   opsStream = sse(`/api/stream/ops?window=${encodeURIComponent(currentWindow)}`, (_name, ops) => {
     renderTiles(ops);
-    renderFeed(ops.recent || []);
+    renderFeed(ops.recentAgents || []);
     firstPaint = false;
     lastUpdate = Date.now();
     paintFreshness();

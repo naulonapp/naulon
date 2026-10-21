@@ -61,7 +61,7 @@ function darkState() {
       `This gate can post a signed <span class="mono">settlement.completed</span> to your own systems every time a citation settles. Point it somewhere by setting <span class="mono">NAULON_WEBHOOK_ENDPOINTS</span> and restarting:`,
       `<pre class="wh-recipe mono">NAULON_WEBHOOK_ENDPOINTS='[{"url":"https://your-server.example/naulon","secret":"whsec_…"}]'</pre>`,
     ],
-    foot: "The secret signs the body so your server can prove the request came from this gate. Deliveries are retried with backoff and parked here if they run out of attempts — nothing is dropped silently.",
+    foot: "The secret signs the body so your server can prove the request came from this gate. Deliveries are retried with backoff and parked here if they run out of attempts. Nothing is dropped silently.",
   });
 }
 
@@ -122,7 +122,7 @@ function deliveryRow(d) {
   const detail = isOpen
     ? `<tr class="wh-payload-row"><td colspan="6">
          <div class="wh-payload-head">
-           <span class="eyebrow">payload</span>
+           <span class="eyebrow">Payload</span>
            <button type="button" class="wh-link" data-copy="${esc(d.id)}">Copy</button>
          </div>
          <pre class="wh-payload mono">${esc(JSON.stringify(d.payload, null, 2))}</pre>
@@ -195,11 +195,11 @@ function clearErrorNotice() {
  */
 function queuedNote(d) {
   if (d.gate && d.gate.up === false) {
-    return `<div class="banner pending"><b>Queued — but the gate is not running.</b>
+    return `<div class="banner pending"><b>Queued, but the gate is not running.</b>
       <div class="toll-fix">The console records deliveries; the gate is what sends them. This one will go out on the first sweep after the gate is back up.</div></div>`;
   }
   if (d.sweepIntervalMs === 0) {
-    return `<div class="banner pending"><b>Queued — but the sweep is disabled.</b>
+    return `<div class="banner pending"><b>Queued, but the sweep is disabled.</b>
       <div class="toll-fix"><span class="mono">WEBHOOK_SWEEP_INTERVAL_MS</span> is 0, so nothing drives delivery on a timer. Something external has to run the sweep.</div></div>`;
   }
   const secs = Math.round(d.sweepIntervalMs / 1000);

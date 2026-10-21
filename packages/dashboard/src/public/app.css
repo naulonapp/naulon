@@ -196,10 +196,12 @@ body {
 }
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
+/* The portal rail's section label, byte for byte: 12px, medium, --sidebar-muted, sentence case.
+   This was tracked mono caps, which the portal has never used for its rail. */
 .nav-group {
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.22em;
-  text-transform: uppercase; color: var(--faint);
-  padding: 16px 8px 6px;
+  font-family: var(--font-sans); font-size: 12px; font-weight: 500; line-height: 16px;
+  color: var(--sidebar-muted);
+  padding: 16px 16px 4px;
 }
 /* Measured off the hosted portal's sidebar rather than styled by eye: 36px tall,
    8px/12px/8px/16px padding, 7px radius, 12px gap, 14px text — inactive at
@@ -259,6 +261,13 @@ body {
 
 .cols { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; align-items: start; }
 
+/* Links, as the portal draws them: primary colour, underlined on hover. Browser blue on paper
+   read as another product's stylesheet leaking in. */
+.main a:not([class]), .banner a, .empty a { color: var(--primary); transition: color var(--motion) var(--ease); }
+.main a:not([class]):hover, .banner a:hover, .empty a:hover {
+  text-decoration: underline; text-decoration-color: var(--primary); text-underline-offset: 0.25em;
+}
+
 /* ── surfaces ────────────────────────────────────────────────────────────── */
 .card {
   border: 1px solid var(--line); border-radius: var(--radius);
@@ -289,9 +298,12 @@ body {
 .ok { color: var(--primary); }
 .warn-txt { color: var(--warning); }
 
+/* The portal's <Badge>: outlined, 2px radius, 12px medium sans in sentence case. The tone is the
+   border and the text; there is never a fill. */
 .badge {
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
-  padding: 2px 7px; border-radius: 2px; border: 1px solid var(--line-strong); color: var(--muted-fg); white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-sans); font-size: 12px; font-weight: 500; line-height: 16px;
+  padding: 1px 9px; border-radius: 2px; border: 1px solid var(--line-strong); color: var(--muted-fg); white-space: nowrap;
 }
 .badge.paid { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
 .badge.served-free, .badge.agent-reread { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
@@ -601,11 +613,19 @@ body {
   /* The column tightens on a phone, and the dock follows it because both read this token. */
   :root { --main-pad-x: 18px; }
   .shell-wrap { grid-template-columns: 1fr; }
-  .shell { flex-direction: row; align-items: center; gap: 16px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
-  .shell .nav { flex-direction: row; }
-  .nav-group { display: none; }
-  .rail { margin: 0 0 0 auto; border-top: 0; padding-top: 0; display: flex; align-items: center; gap: 14px; }
+  /* The phone shell is the hosted portal's: a top bar carrying the brand and who you are, the
+     pages in a tab bar at the bottom edge (.tabbar, below). The rail's links are not shown here. */
+  .shell {
+    position: sticky; top: 0; z-index: 40;
+    flex-direction: row; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px var(--main-pad-x); border-right: 0; border-bottom: 1px solid var(--line);
+    background: color-mix(in oklab, var(--sidebar) 95%, transparent); backdrop-filter: blur(12px);
+  }
+  .shell .nav { display: none; }
+  .rail { margin: 0; border-top: 0; padding-top: 0; display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .rail a.rail-link[target="_blank"], .rail .theme-btn, .brand-role { display: none; }
   .rail-link { margin-top: 0; white-space: nowrap; }
+  .gate-state { white-space: nowrap; }
   .main { padding: 24px var(--main-pad-x) 48px; }
   .page-head { flex-direction: column; gap: 16px; }
   .earned { min-width: 0; }
@@ -921,3 +941,127 @@ body {
 @media (max-width: 1180px) {
   .agent-nums { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 }
+
+/* ── page: overview ──────────────────────────────────────────────────────────
+   The money lead, ribbon colours and legend are the Requests page's own, so the two pages
+   read as one product. What the overview adds is time: a column per bucket. */
+.hero-panel { padding: 26px 28px 20px; }
+.money-lead.three { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 22px; }
+.money-lead .ml-v.dim { color: var(--faint); }
+.chart { height: 120px; border-bottom: 1px solid var(--line); }
+.chart svg { display: block; width: 100%; height: 100%; }
+.chart.is-empty { height: 40px; }
+.chart .o-paid { fill: var(--o-paid); }
+.chart .o-left { fill: var(--o-left); }
+.chart .o-free { fill: color-mix(in oklab, var(--o-free) 45%, transparent); }
+.chart .o-refused { fill: var(--o-refused); }
+.chart .o-none { fill: var(--line-strong); }
+.chart-axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.legend .sw.o-paid { background: var(--o-paid); }
+.legend .sw.o-left { background: var(--o-left); }
+.legend .sw.o-free { background: var(--o-free); }
+.legend .sw.o-refused { background: var(--o-refused); }
+.legend .v { display: block; }
+.legend .v.bad { color: var(--down); }
+.hero-foot { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted-fg); }
+.hero-foot span[id] { font-variant-numeric: tabular-nums; color: var(--fg); }
+
+.feed-card, .setup-card { padding: 4px 18px; }
+.feed-card .empty { margin: 14px 0; }
+.act {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 14px; align-items: center;
+  padding: 9px 0; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none;
+}
+.act:hover .act-name { color: var(--primary); }
+.act.fresh { animation: flash 2.2s ease forwards; }
+.act-when { font-family: var(--font-mono); font-size: 12px; color: var(--faint); }
+.act-who { display: flex; flex-direction: column; min-width: 0; }
+.act-name { font-size: 14px; font-weight: 500; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color var(--motion) var(--ease); }
+.act-name .badge { margin-left: 6px; vertical-align: 1px; }
+.act-path { font-family: var(--font-mono); font-size: 12px; color: var(--muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-out { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.act-amt { font-family: var(--font-mono); font-size: 12px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+.feed-more { display: block; padding: 12px 0; font-size: 13px; font-weight: 500; color: var(--primary); text-decoration: none; }
+.feed-more::after { content: " →"; }
+.feed-more:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+.setup-card .kv { grid-template-columns: 96px minmax(0, 1fr); padding: 12px 0; }
+.setup-card .kv:last-child { border-bottom: 0; }
+.setup-card .kv .v { font-family: var(--font-sans); word-break: normal; display: flex; flex-direction: column; min-width: 0; }
+.v-main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v-sub { font-size: 12px; color: var(--faint); margin-top: 2px; }
+.state-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; background: var(--primary); }
+.state-dot.off { background: var(--faint); }
+.setup-card .warn-row:first-child { margin-top: 14px; }
+.section-head .n .badge { font-size: 12px; }
+
+@media (max-width: 860px) {
+  .money-lead.three { grid-template-columns: 1fr 1fr; }
+  .money-lead.three > :last-child { grid-column: 1 / -1; }
+}
+.section-head .n .badge { text-transform: none; letter-spacing: 0; }
+
+/* ── phone shell: tab bar + More sheet ─────────────────────────────────────────
+   Measured off the hosted portal's BottomTabBar: pinned to the bottom edge, one cell per page,
+   12px medium labels in --sidebar-muted, the active cell marked by a 2px primary tick at its
+   top edge and a primary glyph. Never a filled cell: the green is punctuation. */
+.tabbar, .sheet { display: none; }
+@media (max-width: 900px) {
+  body.has-tabbar { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .tabbar {
+    display: flex; align-items: stretch; position: fixed; inset: auto 0 0 0; z-index: 40;
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid var(--line);
+    background: color-mix(in oklab, var(--sidebar) 95%, transparent); backdrop-filter: blur(12px);
+  }
+  .tab {
+    position: relative; flex: 1 1 0; min-width: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    padding: 10px 2px; min-height: 56px;
+    font-family: var(--font-sans); font-size: 12px; font-weight: 500; line-height: 16px;
+    color: var(--sidebar-muted); text-decoration: none; background: none; border: 0; cursor: pointer;
+    transition: color var(--motion) var(--ease);
+  }
+  .tab:hover, .tab.on { color: var(--fg); }
+  .tab .nav-ico { width: 20px; height: 20px; }
+  .tab.on .nav-ico { color: var(--primary); }
+  .tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tab-mark {
+    position: absolute; top: 0; width: 32px; height: 2px; border-radius: 0 0 999px 999px;
+    background: var(--primary); opacity: 0; transition: opacity var(--motion) var(--ease);
+  }
+  .tab.on .tab-mark { opacity: 1; box-shadow: 0 0 8px var(--primary); }
+  .tab:focus-visible { outline: 2px solid color-mix(in oklab, var(--primary) 60%, transparent); outline-offset: -2px; }
+
+  .sheet[open] {
+    display: block; position: fixed; inset: auto 0 0 0; margin: 0; width: 100%; max-width: none;
+    max-height: 80dvh; overflow-y: auto; padding: 0 0 env(safe-area-inset-bottom);
+    border: 0; border-top: 1px solid var(--line); border-radius: 8px 8px 0 0;
+    background: var(--sidebar); color: var(--fg);
+    animation: sheet-up 220ms var(--ease);
+  }
+  .sheet::backdrop { background: color-mix(in oklab, var(--bg) 80%, transparent); backdrop-filter: blur(1px); }
+  .sheet-head {
+    position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 8px 6px 20px; border-bottom: 1px solid var(--line); background: var(--sidebar);
+  }
+  .sheet-head h2 { font-size: 14px; font-weight: 600; }
+  .sheet-close {
+    display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 4px;
+    background: none; color: var(--sidebar-muted); cursor: pointer;
+  }
+  .sheet-close:hover { color: var(--fg); }
+  .sheet-close svg { width: 20px; height: 20px; }
+  .sheet nav { display: flex; flex-direction: column; padding: 8px; }
+  .sheet-link {
+    display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 12px; border-radius: 6px;
+    font-size: 15px; color: var(--sidebar-muted); text-decoration: none;
+  }
+  .sheet-link:hover { color: var(--fg); background: color-mix(in oklab, var(--sidebar-accent) 60%, transparent); }
+  .sheet-link.on { color: var(--fg); font-weight: 500; background: var(--sidebar-accent); }
+  .sheet-link.on .nav-ico { color: var(--primary); }
+  .sheet-foot { padding: 8px; border-top: 1px solid var(--line); }
+  button.sheet-link { width: 100%; border: 0; background: none; cursor: pointer; font-family: var(--font-sans); text-align: left; }
+}
+@keyframes sheet-up { from { transform: translateY(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sheet[open] { animation: none; } }

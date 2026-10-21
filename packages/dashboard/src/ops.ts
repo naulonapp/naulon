@@ -6,8 +6,9 @@
  * self-hoster their proxy is actually working — distinct from the earnings
  * ledger, which only sees settled money.
  */
-import { OBSERVATION_VERDICTS } from "@naulon/shared";
+import { OBSERVATION_VERDICTS, effectiveVerdict } from "@naulon/shared";
 import type { ObservationEvent, ObservationVerdict } from "@naulon/shared";
+import { agentKeyOf, outcomeOf, type Outcome } from "./traffic.ts";
 
 /** From shared, never re-typed — see the note on `OBSERVATION_VERDICTS`. */
 const VERDICTS: readonly ObservationVerdict[] = OBSERVATION_VERDICTS;
@@ -37,6 +38,16 @@ export interface OpsSummary {
   /** Newest-first, capped — the live request feed. */
   recent: ObservationEvent[];
   /**
+   * Newest-first agent requests only, each with the display name the Requests page uses. People
+   * read free and outnumber agents, so a mixed feed on a real site is a column of "human".
+   */
+  recentAgents: Array<ObservationEvent & { agent: string }>;
+  /**
+   * Agent requests over the window in equal buckets, split by the Requests page's four
+   * outcomes. Oldest bucket first; `start` is the first bucket's left edge.
+   */
+  series: { start: number; stepMs: number; buckets: Record<Outcome, number>[] };
+  /**
    * What the SETTLEMENT ledger recorded in this same window — a different plane, read
    * from the event sink rather than the observation log.
    *
@@ -62,6 +73,26 @@ export const OPS_WINDOWS: Record<string, number> = {
 /** Map a window key from the console to its span in ms; unknown → 24h default. */
 export function windowMsFromKey(key: string | undefined): number {
   return (key && OPS_WINDOWS[key]) || OPS_WINDOWS["24h"]!;
+}
+
+/** Bucket width per window: about two dozen columns whichever window is open. */
+export function seriesStepMs(windowMs: number): number {
+  if (windowMs <= 3_600_000) return 5 * 60_000;
+  if (windowMs <= 24 * 3_600_000) return 3_600_000;
+  return 6 * 3_600_000;
+}
+
+function seriesOf(agents: readonly ObservationEvent[], nowMs: number, windowMs: number): OpsSummary["series"] {
+  const stepMs = seriesStepMs(windowMs);
+  const count = Math.ceil(windowMs / stepMs);
+  // Right-aligned on the bucket that holds `now`, so the last column is the current one.
+  const start = (Math.floor(nowMs / stepMs) - count + 1) * stepMs;
+  const buckets = Array.from({ length: count }, () => ({ paid: 0, left: 0, free: 0, refused: 0 }));
+  for (const o of agents) {
+    const i = Math.floor((o.at - start) / stepMs);
+    if (i >= 0 && i < count) buckets[i]![outcomeOf(effectiveVerdict(o))] += 1;
+  }
+  return { start, stepMs, buckets };
 }
 
 export function summarizeOps(
@@ -109,7 +140,10 @@ export function summarizeOps(
     }
   }
 
-  const recent = [...inWindow].sort((a, b) => b.at - a.at).slice(0, recentLimit);
+  const newest = [...inWindow].sort((a, b) => b.at - a.at);
+  const recent = newest.slice(0, recentLimit);
+  const agentRows = newest.filter((o) => o.classifiedAs === "agent");
+  const recentAgents = agentRows.slice(0, recentLimit).map((o) => ({ ...o, agent: agentKeyOf(o) }));
 
   // The settlement plane over the SAME window. An event with no `at` cannot be placed in
   // a window, so it is left out rather than counted into whichever window is being asked
@@ -127,6 +161,8 @@ export function summarizeOps(
     earningsMissed,
     demand,
     recent,
+    recentAgents,
+    series: seriesOf(agentRows, nowMs, windowMs),
     settled: {
       crossings: settledInWindow.length,
       usdc: settledInWindow.reduce((sum, e) => sum + e.amount, 0),

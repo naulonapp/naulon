@@ -11,7 +11,7 @@
  * author ids originate from crawled URLs and tenant config, so treat them as
  * untrusted — esc() from shell.js is the boundary.
  */
-import { $, esc, fmt6, trunc, rel, emptyState, renderShell, sse } from "./shell.js";
+import { $, esc, usd, trunc, rel, emptyState, renderShell, sse } from "./shell.js";
 
 const isOperatorPreview = location.pathname === "/ledger";
 renderShell({ active: "ledger", nav: isOperatorPreview });
@@ -27,20 +27,23 @@ function hydrate(root) {
   root.querySelectorAll("[data-w]").forEach((el) => { el.style.width = el.dataset.w + "%"; });
 }
 
-/** Split a figure into whole and fractional parts — the hero renders them in two colors. */
-const heroParts = (n) => {
-  const [w, f] = fmt6(n).split(".");
-  return { w, f };
+/** Split a figure into whole and fractional parts, the hero renders them in two colors. The
+ *  count-up paints every frame at the FINAL figure's precision, so the width never jumps. */
+const decimalsOf = (n) => usd(n).split(".")[1].length;
+const heroParts = (n, d = decimalsOf(n)) => {
+  const [w, f] = Number(n || 0).toFixed(d).split(".");
+  return { w: Number(w).toLocaleString("en-US"), f };
 };
 
 let displayedTotal = 0, seen = new Set(), firstPaint = true;
 
 function animateTotal(to) {
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const d = decimalsOf(to);
   const paint = (v) => {
-    const { w, f } = heroParts(v);
+    const { w, f } = heroParts(v, d);
     $("#total").innerHTML = `<span class="cur">$</span>${w}<span class="frac">.${f}</span>`;
-    $("#total").setAttribute("aria-label", `$${fmt6(v)} settled to authors`);
+    $("#total").setAttribute("aria-label", `${usd(v)} settled to authors`);
   };
   if (reduce) { paint(to); displayedTotal = to; return; }
   const from = displayedTotal, t0 = performance.now(), dur = 700;
@@ -58,7 +61,7 @@ function renderLedger(authors) {
     $("#ledger").innerHTML = emptyState({
       icon: "ledger",
       lead: "The ledger is quiet.",
-      body: `No machine has paid yet — run <code>npm run -w @naulon/dashboard seed</code> or the wayfarer.`,
+      body: `No agent has paid yet. Run <code>make seed</code> for sample data, or <code>make demo</code> to watch one pay.`,
     });
     return;
   }
@@ -87,11 +90,11 @@ function renderFeed(recent) {
     const fresh = !firstPaint && !seen.has(c.id);
     const cls = "cross" + (fresh ? " fresh" : "") + (firstPaint ? " rise" : "");
     const kind = c.kind === "citation" ? "citation" : "read";
-    const split = c.split.map((s) => `<span>${esc(s.authorId)} <b>$${fmt6(s.amount)}</b></span>`).join("");
+    const split = c.split.map((s) => `<span>${esc(s.authorId)} <b>${usd(s.amount)}</b></span>`).join("");
     return `<div class="${cls}" data-i="${i}">
       <div class="when">${esc(rel(c.at))} ago</div>
       <div class="line"><span class="agent">${esc(trunc(c.payer))}</span>
-        <span class="verb"> paid </span><span class="amt">$${fmt6(c.amount)}</span>
+        <span class="verb"> paid </span><span class="amt">${usd(c.amount)}</span>
         <span class="verb"> for </span><span class="slug">${esc(c.slug)}</span>
         <span class="badge ${kind}">${esc(kind)}</span></div>
       <div class="split">${split}</div>

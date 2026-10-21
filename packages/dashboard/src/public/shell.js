@@ -18,8 +18,14 @@ export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESCAPES[c])
 
 /** Six-decimal micro-USDC, bare. Money is always mono + tabular in the CSS. */
 export const fmt6 = (n) => Number(n || 0).toFixed(6);
-/** Six-decimal micro-USDC with the sign. Use this wherever a figure is shown alone. */
-export const usd = (n) => "$" + fmt6(n);
+/** USDC with the sign, by the hosted portal's one rule (its `formatUsdc`): two decimals, up to
+ *  four for a sub-cent toll, and all six only when anything fewer would print a non-zero amount
+ *  as $0.00. Six fixed decimals printed a cent as $0.010000. */
+export const usd = (n) => {
+  const v = Number(n || 0);
+  const tiny = v !== 0 && Math.abs(v) < 0.00005;
+  return v.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: tiny ? 6 : 4 });
+};
 /** A headline amount: two to three decimals, like the hosted portal's money figures. The ledger's
  *  six-decimal `usd` stays for rows, where sub-cent tolls need every digit. */
 export const usdLead = (n) =>
@@ -324,6 +330,85 @@ export const NAV = [
  * earnings page (DASHBOARD_PUBLIC serves the ledger at "/") has no console to link
  * to, and must not advertise routes that would 404 or leak that they exist.
  */
+/** The pages a phone reaches in one tap; the rest sit behind More. The hosted portal's split. */
+const TAB_IDS = ["overview", "requests", "agents", "ledger"];
+const MORE_GLYPH =
+  `<svg class="nav-ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">` +
+  `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>`;
+
+/**
+ * The phone shell, the hosted portal's own shape: the main pages in a bar pinned to the bottom
+ * edge, the rest in a sheet that rises over the page. It replaces the rail below 900px, where
+ * the rail used to become a sideways strip that showed two of eight pages.
+ *
+ * The sheet is a native <dialog> opened with showModal(), so focus is held inside it, Escape
+ * closes it and the page behind is inert, with no script of ours deciding any of that.
+ */
+function renderTabBar(active) {
+  const items = NAV.flatMap((g) => g.items);
+  const tabs = items.filter((i) => TAB_IDS.includes(i.id));
+  const more = items.filter((i) => !TAB_IDS.includes(i.id));
+  const moreActive = more.some((i) => i.id === active);
+  const tab = (i) =>
+    `<a class="tab${i.id === active ? " on" : ""}" href="${esc(i.href)}"${i.id === active ? ' aria-current="page"' : ""}>` +
+    `<span class="tab-mark" aria-hidden="true"></span>${navIcon(i.id)}<span class="tab-label">${esc(i.label)}</span></a>`;
+  const bar = document.createElement("nav");
+  bar.className = "tabbar";
+  bar.setAttribute("aria-label", "Pages");
+  bar.innerHTML =
+    tabs.map(tab).join("") +
+    `<button type="button" class="tab${moreActive ? " on" : ""}" id="moreBtn" aria-haspopup="dialog" aria-expanded="false">` +
+    `<span class="tab-mark" aria-hidden="true"></span>${MORE_GLYPH}<span class="tab-label">More</span></button>`;
+  const sheet = document.createElement("dialog");
+  sheet.className = "sheet";
+  sheet.setAttribute("aria-labelledby", "sheetTitle");
+  sheet.innerHTML =
+    `<div class="sheet-head"><h2 id="sheetTitle">More</h2>` +
+    `<button type="button" class="sheet-close" aria-label="Close">` +
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>` +
+    `<nav aria-label="More pages">` +
+    more
+      .map((i) => `<a class="sheet-link${i.id === active ? " on" : ""}" href="${esc(i.href)}"${i.id === active ? ' aria-current="page"' : ""}>${navIcon(i.id)}<span>${esc(i.label)}</span></a>`)
+      .join("") +
+    `</nav>` +
+    // The rail's theme control does not fit the phone's top bar, so it lives here. It drives the
+    // rail's own button: one control, two places to reach it, one state.
+    `<div class="sheet-foot"><button type="button" class="sheet-link" id="sheetTheme">` +
+    `<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">` +
+    `<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>` +
+    `<span></span></button></div>`;
+  document.body.append(bar, sheet);
+  document.body.classList.add("has-tabbar");
+
+  const btn = bar.querySelector("#moreBtn");
+  const close = () => sheet.close();
+  btn.addEventListener("click", () => {
+    sheet.showModal();
+    btn.setAttribute("aria-expanded", "true");
+  });
+  sheet.addEventListener("close", () => btn.setAttribute("aria-expanded", "false"));
+  sheet.querySelector(".sheet-close").addEventListener("click", close);
+  const railTheme = $("#themeBtn");
+  const sheetTheme = sheet.querySelector("#sheetTheme");
+  const syncTheme = () => {
+    const label = railTheme?.textContent ?? "";
+    sheetTheme.querySelector("span").textContent = label.charAt(0).toUpperCase() + label.slice(1);
+  };
+  if (railTheme) {
+    sheetTheme.addEventListener("click", () => {
+      railTheme.click();
+      syncTheme();
+    });
+    syncTheme();
+  } else {
+    sheetTheme.parentElement.remove();
+  }
+  // A tap on the backdrop lands on the dialog element itself, outside its content box.
+  sheet.addEventListener("click", (e) => {
+    if (e.target === sheet) close();
+  });
+}
+
 export function renderShell({ active, nav = true }) {
   const groups = !nav ? "" : NAV.map(({ group, items }) => {
     const label = group ? `<div class="nav-group">${esc(group)}</div>` : "";
@@ -357,6 +442,7 @@ export function renderShell({ active, nav = true }) {
     `<a class="rail-link" href="https://naulon.app" target="_blank" rel="noopener">naulon cloud ↗</a></div>`;
 
   wireTheme();
+  if (nav) renderTabBar(active);
   if (nav) {
     startGateRail();
     renderWho();
@@ -455,7 +541,7 @@ async function readGate() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const h = await r.json();
     // `detail` is gateHealth()'s own word for why — "unreachable", "timed out", "HTTP 502".
-    setGate(h.up === true, h.up === true ? "gate up" : `gate down — ${h.detail || "unreachable"}`);
+    setGate(h.up === true, h.up === true ? "gate up" : `gate down: ${h.detail || "unreachable"}`);
   } catch {
     // The console could not answer for the gate, so the honest report is that we do not
     // know — never "up", and never a red that blames the gate for the console's fault.

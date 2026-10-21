@@ -9,7 +9,7 @@
  * (the control plane) sets OBSERVATIONS_BACKEND=supabase to stream observations into
  * its own audit table — exactly how settlement events already flow gate → cloud.
  */
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { getConfig } from "./config.ts";
 import { supabaseRest } from "./supabase.ts";
@@ -24,13 +24,35 @@ export function noopObservationSink(): ObservationSink {
   };
 }
 
-/** Append-only JSONL file (dev / single-box). Mirrors `jsonlSink`. */
-export function jsonlObservationSink(path?: string): ObservationSink {
+/** The one rotated generation a jsonl observation log keeps beside the live file. */
+export const rotatedObservationsPath = (path: string): string => `${path}.1`;
+
+/**
+ * Append-only JSONL file (single box). Every request a person makes is a line, so an
+ * unbounded file is a disk that fills on a busy site. Past `maxBytes` the live file moves to
+ * `<path>.1`, replacing the one before, and a new file starts: at most twice the cap on disk,
+ * and the console reads both. The size is read once and then counted in process, so a write
+ * costs no extra syscall.
+ */
+export function jsonlObservationSink(
+  path?: string,
+  maxBytes: number = getConfig().OBSERVATIONS_MAX_MB * 1024 * 1024,
+): ObservationSink {
   const file = resolve(path ?? getConfig().OBSERVATIONS_PATH);
+  let size: number | null = null;
   return {
     async record(observation) {
       await mkdir(dirname(file), { recursive: true });
-      await appendFile(file, JSON.stringify(observation) + "\n", "utf8");
+      const line = JSON.stringify(observation) + "\n";
+      if (maxBytes > 0) {
+        size ??= await stat(file).then((s) => s.size, () => 0);
+        if (size > 0 && size + Buffer.byteLength(line) > maxBytes) {
+          await rename(file, rotatedObservationsPath(file)).catch(() => {});
+          size = 0;
+        }
+        size += Buffer.byteLength(line);
+      }
+      await appendFile(file, line, "utf8");
     },
   };
 }
