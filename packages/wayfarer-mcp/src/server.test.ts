@@ -3148,14 +3148,20 @@ async function listedText(client: Client): Promise<Map<string, string>> {
 }
 
 test("a price-only server describes prices, never a purchase or a budget", async () => {
-  const listed = await listedText(await connectedClientWith({ priceOnly: true, surface: { tools: PRICE_TOOLS } }));
+  const client = await connectedClientWith({ priceOnly: true, surface: { tools: PRICE_TOOLS } });
+  const said = client.getInstructions() ?? "";
+  assert.doesNotMatch(said, /naulon_pay_and_read|naulon_read_held|DON'T PAY TWICE|settlementRef/, "the instructions name tools and results this server never has");
+  assert.match(said, /cannot pay/);
+  const listed = await listedText(client);
   assert.deepEqual([...listed.keys()].sort(), [...PRICE_TOOLS].sort());
   for (const [name, said] of listed) assert.doesNotMatch(said, SPEND_TALK, `${name} talks about spending`);
   assert.doesNotMatch(listed.get("naulon_quote")!, /affordable|ceilingUsdc|spentSessionUsdc|remainingUsdc/);
 });
 
 test("without priceOnly the same tools keep their spending guidance and the session envelope", async () => {
-  const listed = await listedText(await connectedClientWith({ surface: { tools: PRICE_TOOLS } }));
+  const client = await connectedClientWith({ surface: { tools: PRICE_TOOLS } });
+  assert.match(client.getInstructions() ?? "", /naulon_pay_and_read/);
+  const listed = await listedText(client);
   assert.match(listed.get("naulon_quote")!, /Quote before paying/);
   assert.match(listed.get("naulon_quote")!, /remainingUsdc/);
   assert.match(listed.get("naulon_discover")!, /before appraising, quoting, or paying/);

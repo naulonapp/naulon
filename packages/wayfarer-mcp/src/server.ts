@@ -516,10 +516,24 @@ const SERVER_INSTRUCTIONS = [
   "never from an earlier one.",
 ].join("\n");
 
+/** The instructions a `priceOnly` server sends: it finds and prices sources and can do nothing else,
+ *  so the paying guidance above would describe tools and results the caller will never see. */
+const PRICE_ONLY_INSTRUCTIONS = [
+  "naulon is a toll publishers put in front of their sites: people read free, and AI agents pay the",
+  "author to read or cite a page. This server finds sources and states their prices. It cannot pay,",
+  "and it returns no paid text.",
+  "",
+  "HUMANS READ FREE, ALWAYS. Every source carries its `url`; if a person wants the whole article, give",
+  "them that link. They owe nothing for it.",
+  "",
+  "A PRICE IS NOT A PURCHASE. `priceUsdc` from naulon_discover is indicative; naulon_quote reads the",
+  "live price from the publisher's toll. Never report a source as bought or as read in full.",
+].join("\n");
+
 export function buildServer(opts: BuildServerOptions = {}): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { instructions: SERVER_INSTRUCTIONS },
+    { instructions: opts.priceOnly === true ? PRICE_ONLY_INSTRUCTIONS : SERVER_INSTRUCTIONS },
   );
 
   // ── Surface allowlist (opts.surface) ────────────────────────────────────────
