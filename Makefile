@@ -59,13 +59,13 @@ arc-settle: ## LIVE memo settle smoke (SPENDS FUNDS — needs CONFIRM_SPEND=1). 
 	npx tsx scripts/arc-memo-settle.mjs
 
 tollgate: ## Run the tollgate only
-	npm run tollgate
+	TSX_TSCONFIG_PATH=$(CURDIR)/tsconfig.json npm run tollgate
 
 dashboard: ## Run the earnings dashboard only
-	npm run dashboard
+	TSX_TSCONFIG_PATH=$(CURDIR)/tsconfig.json npm run dashboard
 
 wayfarer: ## Run the paying agent. Usage: make wayfarer TOPIC="payment and passage"
-	npm run wayfarer -- "$(TOPIC)"
+	TSX_TSCONFIG_PATH=$(CURDIR)/tsconfig.json npm run wayfarer -- "$(TOPIC)"
 
 seed: ## Seed the ledger with sample crossings
 	npm run -w @naulon/dashboard seed

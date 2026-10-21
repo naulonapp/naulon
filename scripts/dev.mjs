@@ -5,6 +5,13 @@
  *   node scripts/dev.mjs        (or: make dev)
  */
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+// Each package starts from its own directory, where tsx finds that package's tsconfig and
+// resolves `@naulon/*` through node_modules to the BUILT `dist/`. An edit to
+// packages/shared/src then did nothing until `make build-sdk`, with no warning. The root
+// tsconfig maps every `@naulon/*` to its source, the same mapping the tests run under.
+const ROOT_TSCONFIG = fileURLToPath(new URL("../tsconfig.json", import.meta.url));
 
 const services = [
   // Stub origin first — the publisher stand-in the tollgate proxies once paid.
@@ -22,7 +29,7 @@ function prefix(name, color, line) {
 
 for (const svc of services) {
   const [cmd, ...rest] = svc.cmd ?? ["npm", "run", "start", "-w", svc.pkg];
-  const child = spawn(cmd, rest, { env: process.env });
+  const child = spawn(cmd, rest, { env: { ...process.env, TSX_TSCONFIG_PATH: ROOT_TSCONFIG } });
   children.push(child);
   const pipe = (stream) => {
     let buf = "";
