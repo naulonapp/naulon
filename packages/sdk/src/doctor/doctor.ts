@@ -57,12 +57,22 @@ export interface DoctorOutcome {
   ok: boolean;
 }
 
-/** Parse a dotenv-style file into a flat record. Comments + blanks ignored. */
+/**
+ * Parse a dotenv-style file into a flat record, reading it the way the gate does (dotenv, then
+ * `parseEnv` in @naulon/shared): an unquoted value ends at a ` #` comment, a quoted value keeps
+ * what is inside the quotes, and a blank value means unset. Read any other way, a copied
+ * .env.example failed here on `CREDITS_API_URL=` and on `ORIGIN_URL=http://localhost:3000  # …`
+ * while the gate booted on the same file.
+ */
 export function parseEnvFile(text: string): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
-    if (m && m[1] && !line.trimStart().startsWith("#")) env[m[1]] = (m[2] ?? "").trim();
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*(?:export\s+)?([A-Za-z0-9_]+)\s*=\s*(.*)$/);
+    if (!m || !m[1] || line.trimStart().startsWith("#")) continue;
+    const raw = m[2] ?? "";
+    const quoted = raw.match(/^(["'`])(.*)\1\s*(?:#.*)?$/);
+    const value = quoted ? (quoted[2] ?? "") : raw.replace(/(^|\s+)#.*$/, "").trim();
+    if (value !== "") env[m[1]] = value;
   }
   return env;
 }

@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { runDoctor, parseEnvFile, type DoctorInputs } from "./doctor.ts";
 
 const WALLET = "0x1111111111111111111111111111111111111111";
@@ -23,6 +24,31 @@ const find = (checks: { name: string; level: string; detail: string }[], name: s
 test("parseEnvFile ignores comments + blanks, keeps KEY=VALUE", () => {
   const env = parseEnvFile("# a comment\n\nPAYMENT_MODE=mock\nORIGIN_URL=https://x.com\n");
   assert.deepEqual(env, { PAYMENT_MODE: "mock", ORIGIN_URL: "https://x.com" });
+});
+
+test("parseEnvFile reads a value the way the gate's dotenv does", () => {
+  const env = parseEnvFile(
+    [
+      "ORIGIN_URL=http://localhost:3000     # the site the gate sits in front of",
+      "CREDITS_API_URL=",
+      "CIRCLE_API_KEY=   # filled in for gateway mode",
+      'QUOTED="a # not a comment"',
+      "export PAYMENT_MODE=mock",
+      "HASH_IN_VALUE=abc#123",
+    ].join("\n"),
+  );
+  assert.deepEqual(env, {
+    ORIGIN_URL: "http://localhost:3000",
+    QUOTED: "a # not a comment",
+    PAYMENT_MODE: "mock",
+    HASH_IN_VALUE: "abc#123",
+  });
+});
+
+test("a .env copied from .env.example passes the env check", async () => {
+  const example = readFileSync(new URL("../../../../.env.example", import.meta.url), "utf8");
+  const out = await runDoctor(base({ envText: example }));
+  assert.equal(find(out.checks, "env")?.level, "pass", find(out.checks, "env")?.detail);
 });
 
 test("missing .env → env fails hard, not ok", async () => {
