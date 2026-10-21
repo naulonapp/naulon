@@ -860,7 +860,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .describe("True if the server refused to run discovery at all (e.g. a hosted ask-only mount) — see note. Never set alongside real candidates."),
         note: z.string().optional().describe("Present when refused — explains why, and where to go instead."),
       },
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     },
     async ({ topic }) => {
       // WP-3a — a hosted ask-only mount (WP-3c) is inert-but-honest for this tool: refuse BEFORE
@@ -927,7 +927,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .object(networkOutputSchema)
           .describe("The settlement chain + token this wallet tolls on. Read settlement.testnet FIRST: true ⇒ every spend is testnet play-money with no fiat value; false ⇒ real money."),
       },
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
       const cfg = getConfig();
@@ -1063,7 +1063,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           }),
         ),
       },
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ topic, candidates }) => {
       // Price plays no part in relevance, so appraise at zero and drop it from the output. The
@@ -1151,7 +1151,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         settlement: z.object(networkOutputSchema).describe("The chain + token this session settles on. Check settlement.testnet before reporting a spend as real money."),
         note: z.string().optional(),
       },
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     },
     async ({ slug, url }) => {
       // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
@@ -1354,7 +1354,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .optional()
           .describe("The toll (true total, USDC) this call could not cover — present on a needs_topup refusal so the operator knows how much the session is short."),
       },
-      annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true, idempotentHint: false },
     },
     async ({ slug, url, format }) => {
       // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
@@ -1750,7 +1750,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           ),
         error: z.string().optional(),
       },
-      annotations: { readOnlyHint: true, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     },
     async ({ slug, url, format }) => {
       const held = await heldStore.load();
@@ -1882,7 +1882,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         ),
         log: z.array(z.string()).describe("The auditable, human-readable decision log for the run."),
       },
-      annotations: { readOnlyHint: false, openWorldHint: true, idempotentHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true, idempotentHint: false },
     },
     async ({ topic, budgetUsdc }) => {
       // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
