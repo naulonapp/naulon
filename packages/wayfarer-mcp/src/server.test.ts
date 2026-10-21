@@ -514,17 +514,23 @@ test("registers the full §3.1 tool surface with schemas and honest read-only hi
     assert.ok(tool.outputSchema, `${name} advertises an output schema`);
   }
 
-  // The free, side-effect-free tools are flagged read-only; the two that can SPEND
-  // money must not be (the host must see they mutate state / move funds).
+  // Every tool states all three hints as booleans: a host that finds one missing must guess, and
+  // plugin directories reject a tool that leaves any of them unset.
+  for (const tool of tools) {
+    for (const hint of ["readOnlyHint", "destructiveHint", "openWorldHint"] as const) {
+      assert.equal(typeof tool.annotations?.[hint], "boolean", `${tool.name} states ${hint} explicitly`);
+    }
+  }
+
+  // The free, side-effect-free tools are read-only and not destructive. The two that can SPEND
+  // money are neither: a payment cannot be taken back, so the host must treat it as irreversible.
   for (const name of ["naulon_discover", "naulon_appraise", "naulon_quote", "naulon_read_held", "naulon_status"]) {
     assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, `${name} is read-only`);
+    assert.equal(byName.get(name)?.annotations?.destructiveHint, false, `${name} is not destructive`);
   }
   for (const name of ["naulon_pay_and_read", "naulon_research"]) {
-    assert.notEqual(
-      byName.get(name)?.annotations?.readOnlyHint,
-      true,
-      `${name} is NOT flagged read-only (it can spend)`,
-    );
+    assert.equal(byName.get(name)?.annotations?.readOnlyHint, false, `${name} is not read-only (it can spend)`);
+    assert.equal(byName.get(name)?.annotations?.destructiveHint, true, `${name} is destructive (a payment is irreversible)`);
   }
 });
 

@@ -253,8 +253,9 @@ spend within the envelope but can't widen it.
 | `naulon_research` | **$** | One composite that runs the whole discover→quote→pay→ground loop. |
 | `naulon_ask`\* | **$** | Hosted-only reading agent: grounded, numbered-citation answer. |
 
-\* hosted endpoint only. All tools carry MCP annotations (`readOnlyHint` on the
-free ones) so clients render safe-vs-spends correctly.
+\* hosted endpoint only. Every tool states `readOnlyHint`, `destructiveHint` and `openWorldHint`.
+The free ones are read-only; the ones that spend are destructive, because a payment cannot be
+taken back, so a client that confirms irreversible actions asks first.
 
 ---
 

@@ -30,8 +30,9 @@ npx -y @naulon/wayfarer-mcp        # the stdio MCP server
 | `naulon_research` | spends | The whole discover → quote → pay → ground loop as one call. |
 | `naulon_ask` | spends | Hosted only: a grounded, numbered-citation answer. |
 
-The free tools carry `readOnlyHint`, so a client can render "safe" and "spends money"
-differently. That distinction is worth preserving in any host you build.
+The free tools carry `readOnlyHint: true`. The tools that spend carry `destructiveHint: true`,
+because a payment cannot be taken back, so a client can render "safe" and "spends money"
+differently and confirm before a spend. That distinction is worth preserving in any host you build.
 
 ## What the model is not allowed to decide
 
