@@ -38,3 +38,16 @@ test("parseInitFlags: --help sets help, unknown flags are ignored (not crashed)"
   assert.equal(f.help, true);
   assert.equal(f.yes, false);
 });
+
+test("detectRuntime: a clone of the repo runs from source, even though it carries a compose file", async () => {
+  const { detectRuntime } = await import("./init.ts");
+  const { fileURLToPath } = await import("node:url");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  assert.equal(detectRuntime(fileURLToPath(new URL("../../../../", import.meta.url))), "repo");
+  const compose = mkdtempSync(join(tmpdir(), "naulon-rt-"));
+  writeFileSync(join(compose, "docker-compose.yml"), "services: {}\n");
+  assert.equal(detectRuntime(compose), "docker");
+  assert.equal(detectRuntime(mkdtempSync(join(tmpdir(), "naulon-rt-"))), undefined);
+});

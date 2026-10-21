@@ -40,6 +40,17 @@ export const initAnswersSchema = z
     starterTitle: z.string().min(1),
     starterAuthorId: z.string().min(1),
     defaultWallet: payeeWalletSchema.optional(),
+    /**
+     * How the gate will be started, which decides the next steps printed: `docker` when a
+     * docker-compose.yml sits beside the files, `repo` from a clone of this repository, and
+     * absent when neither is known, which prints both.
+     */
+    runtime: z.enum(["docker", "repo"]).optional(),
+    /**
+     * The console's first administrator's password. The CLI generates one; the console makes
+     * its holder change it at first sign-in. A container serves no console without it.
+     */
+    consolePassword: z.string().min(12).optional(),
   })
   .strict();
 
@@ -99,9 +110,28 @@ function renderEnv(a: InitAnswers): string {
     `# The gate reads this local JSON file to map an article slug → its author wallet(s).`,
     `# Swap to a live API instead by setting CREDITS_API_URL.`,
     `CREDITS_FIXTURES=${a.creditsPath}`,
-    "",
-    "# ── Settlement ──",
   ];
+  lines.push(
+    "",
+    "# ── Console (:8403) ──",
+    "# Records who was served, denied and paid. The console's traffic pages read it.",
+    "OBSERVATIONS_BACKEND=jsonl",
+  );
+  if (a.consolePassword) {
+    lines.push(
+      "# The first administrator. It must choose a new password at its first sign-in.",
+      "CONSOLE_ADMIN_USERNAME=admin",
+      `CONSOLE_ADMIN_PASSWORD=${a.consolePassword}`,
+    );
+  } else {
+    lines.push(
+      "# Set a password of 12+ characters here to create the first administrator. A",
+      "# container serves no console without one.",
+      "CONSOLE_ADMIN_USERNAME=admin",
+      "# CONSOLE_ADMIN_PASSWORD=",
+    );
+  }
+  lines.push("", "# ── Settlement ──");
   if (gateway) {
     lines.push(
       `SETTLEMENT_NETWORK=${a.settlementNetwork}`,
@@ -130,6 +160,23 @@ function buildStarterCredits(a: InitAnswers): { map: Record<string, ArticleCredi
   // Never emit a file the gate would reject — validate through the real contract.
   parseCredits(entry, `starter credits for "${a.starterSlug}"`);
   return { map: { [a.starterSlug]: entry }, walletless: false };
+}
+
+/** How to start the gate, for the runtime init found. Unknown prints both. */
+function startSteps(a: InitAnswers): string[] {
+  const docker = "Start it with Docker:  docker compose up -d   (gate :8402, console :8403)";
+  const repo = "Start it from a clone of the repo:  make dev";
+  if (a.runtime === "docker") {
+    // Compose mounts ./config read-only and reads credits from there.
+    return a.creditsPath.replace(/^\.\//, "") === "config/credits.json"
+      ? [docker]
+      : [`Move ${a.creditsPath} to config/credits.json, which compose mounts.`, docker];
+  }
+  if (a.runtime === "repo") return [repo];
+  return [
+    `${docker}, beside https://raw.githubusercontent.com/naulonapp/naulon/main/docker-compose.yml`,
+    `Or ${repo.charAt(0).toLowerCase()}${repo.slice(1)}`,
+  ];
 }
 
 /**
@@ -169,8 +216,11 @@ export function buildInitPlan(answers: InitAnswers): InitPlan {
           ]
         : []),
       `Draft entries from your live site:  npx naulon crawl ${a.originUrl} --prefixes ${a.articlePrefixes}`,
-      "Start the gate:  make dev",
+      ...startSteps(a),
       `Watch the toll:  curl -A python-requests localhost:${a.tollgatePort}/${a.articlePrefixes.split(",")[0]}/${a.starterSlug}`,
+      a.consolePassword
+        ? "Open the console at http://localhost:8403 and sign in as admin with CONSOLE_ADMIN_PASSWORD from .env."
+        : "Set CONSOLE_ADMIN_PASSWORD in .env, then open the console at http://localhost:8403.",
       "Health-check anytime:  npx naulon doctor",
     ],
   };
