@@ -18,13 +18,13 @@ export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESCAPES[c])
 
 /** Six-decimal micro-USDC, bare. Money is always mono + tabular in the CSS. */
 export const fmt6 = (n) => Number(n || 0).toFixed(6);
-/** Exact USDC with the sign, trimmed to the digits it has: $0.005, $0.01, $1.50, $0.000001.
- *  Tolls are sub-cent, so rounding to cents would print most of them as $0.00, and six fixed
- *  decimals printed $0.010000 for a cent. Nothing is rounded: micro-USDC is six places. */
+/** USDC with the sign, by the hosted portal's one rule (its `formatUsdc`): two decimals, up to
+ *  four for a sub-cent toll, and all six only when anything fewer would print a non-zero amount
+ *  as $0.00. Six fixed decimals printed a cent as $0.010000. */
 export const usd = (n) => {
-  const [whole, frac = ""] = fmt6(n).split(".");
-  const digits = frac.replace(/0+$/, "").padEnd(2, "0");
-  return "$" + Number(whole).toLocaleString("en-US") + "." + digits;
+  const v = Number(n || 0);
+  const tiny = v !== 0 && Math.abs(v) < 0.00005;
+  return v.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: tiny ? 6 : 4 });
 };
 /** A headline amount: two to three decimals, like the hosted portal's money figures. The ledger's
  *  six-decimal `usd` stays for rows, where sub-cent tolls need every digit. */

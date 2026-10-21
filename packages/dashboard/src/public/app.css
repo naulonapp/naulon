@@ -191,14 +191,17 @@ body {
 .brand-word { display: flex; flex-direction: column; line-height: 1.15; }
 .brand-word b { font-family: var(--font-mono); font-weight: 500; font-size: 15px; letter-spacing: -0.01em; }
 .brand-role {
-  font-family: var(--font-sans); font-size: 11.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted-fg); margin-top: 2px;
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--muted-fg); margin-top: 2px;
 }
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
+/* The portal rail's section label, byte for byte: 12px, medium, --sidebar-muted, sentence case.
+   This was tracked mono caps, which the portal has never used for its rail. */
 .nav-group {
-  font-family: var(--font-sans); font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
-  text-transform: uppercase; color: var(--faint);
-  padding: 16px 8px 6px;
+  font-family: var(--font-sans); font-size: 12px; font-weight: 500; line-height: 16px;
+  color: var(--sidebar-muted);
+  padding: 16px 16px 4px;
 }
 /* Measured off the hosted portal's sidebar rather than styled by eye: 36px tall,
    8px/12px/8px/16px padding, 7px radius, 12px gap, 14px text — inactive at
@@ -221,7 +224,8 @@ body {
 .rail { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--line); }
 .gate-state {
   display: flex; align-items: center; gap: 8px;
-  font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted-fg);
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted-fg);
 }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--primary); }
 .dot.off { background: var(--faint); }
@@ -237,13 +241,6 @@ body {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em;
   text-transform: uppercase; color: var(--muted-fg);
 }
-/* The tracked mono eyebrow belongs above a page title only. Inside a card or panel it is a
-   label, and labels everywhere else in the console are sentence-case sans. */
-:is(.card, .panel, .hero-card) .eyebrow {
-  font-family: var(--font-sans); font-size: 13px; font-weight: 500; letter-spacing: 0;
-  text-transform: none; color: var(--muted-fg);
-}
-.panel-head .eyebrow { font-weight: 600; color: var(--fg); }
 /* Fraunces earns display size only — this is the smallest place it may appear. */
 .page-title { font-family: var(--font-serif); font-size: 48px; font-weight: 500; line-height: 1.05; letter-spacing: -0.025em; margin-top: 8px; }
 .page-sub { margin-top: 10px; max-width: 62ch; color: var(--muted-fg); }
@@ -256,7 +253,7 @@ body {
    and an invented flourish is exactly what makes two products read as unrelated.
    Kept in the markup as a zero-width no-op so every page need not be re-cut. */
 .section-head .rule { display: none; }
-.section-head .n { margin-left: auto; font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted-fg); }
+.section-head .n { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted-fg); }
 /* A live feed whose socket has dropped still says "live" unless something changes the
    word. `.stale` is that word changing — warning, not error: the rows on screen are
    still true, they have just stopped arriving. */
@@ -264,13 +261,12 @@ body {
 
 .cols { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; align-items: start; }
 
-/* An anchor with no class of its own is a link and should look like one. Browser blue on
-   paper read as a different product's stylesheet leaking in. */
-.main a:not([class]), .banner a, .empty a {
-  color: var(--primary); text-decoration: underline; text-decoration-thickness: 1px;
-  text-underline-offset: 3px; text-decoration-color: color-mix(in oklab, var(--primary) 45%, transparent);
+/* Links, as the portal draws them: primary colour, underlined on hover. Browser blue on paper
+   read as another product's stylesheet leaking in. */
+.main a:not([class]), .banner a, .empty a { color: var(--primary); transition: color var(--motion) var(--ease); }
+.main a:not([class]):hover, .banner a:hover, .empty a:hover {
+  text-decoration: underline; text-decoration-color: var(--primary); text-underline-offset: 0.25em;
 }
-.main a:not([class]):hover, .banner a:hover, .empty a:hover { text-decoration-color: currentColor; }
 
 /* ── surfaces ────────────────────────────────────────────────────────────── */
 .card {
@@ -288,12 +284,12 @@ body {
 }
 .stat { padding: 16px 18px; border-left: 1px solid var(--line); }
 .stat:first-child { border-left: 0; }
-.stat-k { font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted-fg); }
-.stat-v { font-family: var(--font-mono); font-weight: 500; font-variant-numeric: tabular-nums; font-size: 24px; line-height: 1.2; margin-top: 6px; letter-spacing: -0.02em; }
+.stat-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted-fg); }
+.stat-v { font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 26px; line-height: 1.15; margin-top: 8px; }
 .stat-v.pos { color: var(--primary); }
 .stat-v.warn { color: var(--warning); }
 .stat-v.bad { color: var(--down); }
-.stat-sub { font-size: 12.5px; color: var(--faint); margin-top: 4px; }
+.stat-sub { font-size: 11.5px; color: var(--faint); margin-top: 5px; }
 
 .mono-figure { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .mono { font-family: var(--font-mono); }
@@ -302,20 +298,19 @@ body {
 .ok { color: var(--primary); }
 .warn-txt { color: var(--warning); }
 
-/* A status pill: sentence case, tinted fill, no border shouting. The verdict's colour carries
-   the meaning; the words say it for anyone who cannot see the colour. */
+/* The portal's <Badge>: outlined, 2px radius, 12px medium sans in sentence case. The tone is the
+   border and the text; there is never a fill. */
 .badge {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-family: var(--font-sans); font-size: 11.5px; font-weight: 500; line-height: 18px;
-  padding: 0 8px; border-radius: 999px; border: 0; white-space: nowrap;
-  color: var(--muted-fg); background: color-mix(in oklab, var(--muted-fg) 12%, transparent);
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-sans); font-size: 12px; font-weight: 500; line-height: 16px;
+  padding: 1px 9px; border-radius: 2px; border: 1px solid var(--line-strong); color: var(--muted-fg); white-space: nowrap;
 }
-.badge.paid { color: var(--primary); background: color-mix(in oklab, var(--primary) 13%, transparent); }
-.badge.served-free, .badge.agent-reread { color: var(--info); background: color-mix(in oklab, var(--info) 13%, transparent); }
-.badge.denied { color: var(--warning); background: color-mix(in oklab, var(--warning) 13%, transparent); }
-.badge.payment-failed, .badge.blocked { color: var(--down); background: color-mix(in oklab, var(--down) 13%, transparent); }
-.badge.citation { color: var(--info); background: color-mix(in oklab, var(--info) 13%, transparent); }
-.badge.read { color: var(--primary); background: color-mix(in oklab, var(--primary) 13%, transparent); }
+.badge.paid { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.served-free, .badge.agent-reread { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
+.badge.denied { color: var(--warning); border-color: color-mix(in oklab, var(--warning) 45%, transparent); }
+.badge.payment-failed, .badge.blocked { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
+.badge.citation { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
+.badge.read { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
 
 .btn {
   font-family: var(--font-sans); font-size: 13px; font-weight: 500;
@@ -424,7 +419,7 @@ body {
   18% { opacity: 1; transform: none; }
   100% { background: transparent; }
 }
-.cross .when { font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint); }
+.cross .when { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
 .cross .line { margin-top: 5px; font-size: 15px; }
 .cross .line .agent { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted-fg); }
 .cross .line .verb { color: var(--muted-fg); }
@@ -440,7 +435,7 @@ body {
 /* ── page: request feed ──────────────────────────────────────────────────── */
 .req { padding: 12px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: baseline; }
 .req.fresh { animation: flash 2.2s ease forwards; }
-.req .rt { font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint); }
+.req .rt { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
 .req .rmid .slug { font-family: var(--font-mono); color: var(--fg); font-size: 13.5px; }
 .req .rmid .who { font-family: var(--font-mono); font-size: 11px; color: var(--muted-fg); margin-top: 3px; }
 .req .rmid .who .badge { color: var(--primary); }
@@ -453,7 +448,7 @@ body {
   padding: 11px 0; border-bottom: 1px solid var(--line);
   font-size: 13px; align-items: baseline;
 }
-.kv .k { font-family: var(--font-sans); font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--muted-fg); }
+.kv .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted-fg); }
 /* `break-all` is deliberate, though it splits a long path mid-token. `overflow-wrap:
    anywhere` reads better per break and measured WORSE overall: it took the credits row
    from 82px to 121px at 1440px wide, because natural break points leave more ragged
@@ -480,7 +475,7 @@ body {
    21 px jump on every poll at 900 px wide, before). */
 .freshness {
   display: inline-block; min-width: calc(15ch + 1.2em); text-align: right;
-  font-size: 12.5px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--faint); white-space: nowrap;
 }
 .freshness.beat { animation: freshbeat 600ms var(--ease); }
 @keyframes freshbeat {
@@ -510,9 +505,9 @@ body {
 .check-fix { margin-top: 7px; font-size: 13px; color: var(--fg); border-left: 2px solid var(--line-strong); padding-left: 11px; }
 .check.fail .check-fix { border-left-color: color-mix(in oklab, var(--down) 55%, transparent); }
 .check.warn .check-fix { border-left-color: color-mix(in oklab, var(--warning) 55%, transparent); }
-.badge.pass { color: var(--primary); background: color-mix(in oklab, var(--primary) 13%, transparent); }
-.badge.warn { color: var(--warning); background: color-mix(in oklab, var(--warning) 13%, transparent); }
-.badge.fail { color: var(--down); background: color-mix(in oklab, var(--down) 13%, transparent); }
+.badge.pass { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.warn { color: var(--warning); border-color: color-mix(in oklab, var(--warning) 45%, transparent); }
+.badge.fail { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
 .toll-fix { margin-top: 7px; font-size: 13px; color: var(--muted-fg); }
 .toll-meta { margin-top: 8px; font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; }
 
@@ -520,7 +515,7 @@ body {
 .scan { padding: 4px 0 8px; }
 .scan-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
 .fld { display: flex; flex-direction: column; gap: 7px; flex: 1; min-width: 260px; }
-.fld > span { font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted-fg); }
+.fld > span { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted-fg); }
 .in {
   font-family: var(--font-mono); font-size: 13px; color: var(--fg); background: var(--bg);
   border: 1px solid var(--input); border-radius: 4px; padding: 9px 11px; width: 100%;
@@ -539,7 +534,7 @@ body {
 .thead > *, .crow > * { min-width: 0; overflow-wrap: anywhere; }
 .thead {
   padding: 10px 0; margin-top: 4px; border-bottom: 1px solid var(--line-strong);
-  font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted-fg);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted-fg);
 }
 .crow { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .crow .slug { font-family: var(--font-mono); color: var(--fg); font-size: 13.5px; }
@@ -654,7 +649,7 @@ body {
 .empty p { max-width: 46ch; margin: 0 auto; font-size: 12.5px; line-height: 1.65; color: var(--muted-fg); }
 .empty-foot { margin-top: 6px; font-size: 12px; color: var(--faint); }
 /* A row the operator's own Test toll produced — real traffic, but not a real crawler. */
-.badge.selftest { margin-left: 8px; color: var(--muted-fg); }
+.badge.selftest { margin-left: 8px; color: var(--muted-fg); border-color: var(--line-strong); }
 
 /* ── traffic: requests + agents ─────────────────────────────────────────────
    Green stays punctuation: it marks money that landed and a verified identity,
@@ -695,9 +690,9 @@ body {
 
 /* Identity, on both traffic pages. `unsigned` is deliberately uncoloured: it is the
    normal state of most crawler traffic, not a fault to be flagged. */
-.badge.verified { color: var(--primary); background: color-mix(in oklab, var(--primary) 13%, transparent); }
-.badge.unsigned { color: var(--muted-fg); }
-.badge.masquerade { color: var(--down); background: color-mix(in oklab, var(--down) 13%, transparent); }
+.badge.verified { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.unsigned { color: var(--muted-fg); border-color: var(--line-strong); }
+.badge.masquerade { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
 
 .agent-row {
   display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.95fr) auto;
@@ -712,7 +707,7 @@ body {
    Every row now renders all six; a zero is information here ("0 blocked" is a fact). */
 .agent-nums { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0 10px; }
 .agent-nums .kv { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; }
-.agent-nums .kv .k { white-space: nowrap; }
+.agent-nums .kv .k { letter-spacing: 0.1em; font-size: 9.5px; white-space: nowrap; }
 .agent-nums .kv .v { font-size: 13px; }
 .agent-nums .kv .v.bad { color: var(--down); }
 .agent-nums .kv .v.zero { color: var(--faint); }
@@ -722,7 +717,7 @@ body {
 
 /* ── crawlers ──────────────────────────────────────────────────────────────── */
 .crawl-cat {
-  font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
   color: var(--muted-fg); margin: 22px 0 8px;
 }
 .crawl-cat:first-child { margin-top: 8px; }
@@ -745,9 +740,9 @@ body {
    `style-src 'self'` with no unsafe-inline, so an inline style is simply not applied. */
 .scan-inset { padding: 12px 14px; }
 #custom .kv { grid-template-columns: 1fr auto auto; align-items: center; }
-.badge.allow { color: var(--info); background: color-mix(in oklab, var(--info) 13%, transparent); }
-.badge.charge { color: var(--primary); background: color-mix(in oklab, var(--primary) 13%, transparent); }
-.badge.block { color: var(--down); background: color-mix(in oklab, var(--down) 13%, transparent); }
+.badge.allow { color: var(--info); border-color: color-mix(in oklab, var(--info) 40%, transparent); }
+.badge.charge { color: var(--primary); border-color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.badge.block { color: var(--down); border-color: color-mix(in oklab, var(--down) 45%, transparent); }
 
 /* ── webhooks ──────────────────────────────────────────────────────────────── */
 /* Identity left, everything actionable right — the portal's own `justify-between` row shape.
@@ -773,7 +768,7 @@ body {
 }
 .wh-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
 .wh-chip {
-  font-size: 12.5px; font-weight: 500; letter-spacing: 0; color: var(--muted-fg);
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-fg);
   border: 1px solid var(--line-strong); border-radius: 3px; padding: 2px 6px;
 }
 .wh-ep-meta {
@@ -784,7 +779,7 @@ body {
    a second line and let columns disagree from one row to the next. A zero is information here. */
 .wh-ep-nums { display: grid; grid-template-columns: repeat(4, minmax(52px, auto)); gap: 0 14px; }
 .wh-ep-nums .kv { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; }
-.wh-ep-nums .kv .k { white-space: nowrap; }
+.wh-ep-nums .kv .k { letter-spacing: 0.1em; font-size: 9.5px; white-space: nowrap; }
 .wh-ep-nums .kv .v { font-size: 13px; }
 .wh-ep-nums .kv .v.bad { color: var(--down); }
 .wh-ep-nums .kv .v.zero { color: var(--faint); }
@@ -817,7 +812,7 @@ body {
    a decision, and one page's table disagreeing with another's is the same drift the duplicated
    helpers caused. 10px is also the portal's own th size. */
 .wh-table th {
-  font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
   color: var(--muted-fg); font-weight: 400; padding: 10px 12px;
   background: color-mix(in oklab, var(--elev-2) 30%, transparent);
   border-bottom: 1px solid var(--line-strong); white-space: nowrap;
@@ -884,7 +879,8 @@ body {
 .scroll-x { overflow-x: auto; contain: paint; }
 .dtable { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px; }
 .dtable th {
-  text-align: left; font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted-fg); padding: 9px 14px; border-bottom: 1px solid var(--line);
+  text-align: left; font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--muted-fg); padding: 9px 14px; border-bottom: 1px solid var(--line);
 }
 .dtable td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .dtable tbody tr:last-child td { border-bottom: 0; }
@@ -1009,7 +1005,4 @@ body {
   .money-lead.three { grid-template-columns: 1fr 1fr; }
   .money-lead.three > :last-child { grid-column: 1 / -1; }
 }
-
-/* Labels are written lowercase where code builds them from a key; they render in sentence case.
-   Each of these is a block-level box (a grid item or a table cell), which ::first-letter needs. */
-:is(.kv .k, .stat-k, .cause .stat-k, .dtable th, .wh-table th, .fld > span)::first-letter { text-transform: uppercase; }
+.section-head .n .badge { text-transform: none; letter-spacing: 0; }
