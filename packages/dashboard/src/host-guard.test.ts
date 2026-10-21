@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { isAllowedHost, parseAllowedHosts } from "./host-guard.ts";
 
@@ -65,6 +68,11 @@ test("the guard's own 403 carries the security headers", async () => {
   // returns without calling next() skips everything after it — so the one response an
   // attacker can force, which echoes their Host back, was the only response in the app
   // served with no CSP, no nosniff and no Referrer-Policy.
+  //
+  // The guard only runs in private mode, which is the console with no accounts. Point the
+  // account store at an empty directory, or a checkout whose console has been set up boots
+  // in authed mode and answers 401 before any Host check applies.
+  process.env.CONSOLE_STATE_PATH = join(mkdtempSync(join(tmpdir(), "naulon-host-guard-")), "console.json");
   const { app } = await import("./server.ts");
   const res = await app.request("/", { headers: { Host: "rebind.attacker.test" } });
   assert.equal(res.status, 403);
