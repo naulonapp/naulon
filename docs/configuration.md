@@ -117,7 +117,7 @@ multi-instance deploy possible.
 | `EVENTS_BACKEND` | `jsonl` | Where attributed events go. `jsonl` is an append-only local file; `supabase` is a Postgres table over the REST API, for hosts with no shared disk. |
 | `NONCE_BACKEND` | `memory` | Where spent 402 nonces are remembered for replay protection. `memory` is correct for one instance; `supabase` holds replay protection across many. |
 | `PENDING_LEGS_BACKEND` | `memory` | Where buyer-authorized extra settlement legs wait for their deferred on-chain settle. `supabase` makes them survive a restart and settle exactly once across instances. |
-| `OBSERVATIONS_BACKEND` | `off` | The audit plane: who was served free, denied, or charged. `off` records nothing, which keeps the open core's zero-overhead posture. `jsonl` for dev, `supabase` for an audit UI. Separate from `EVENTS_BACKEND` on purpose, because observations are higher-volume and lower-value. |
+| `OBSERVATIONS_BACKEND` | `off` | The audit plane: who was served free, denied, or charged. `off` records nothing, which keeps the open core's zero-overhead posture for anyone embedding it. `.env.example` sets `jsonl`, because the console's traffic pages are built from it. `supabase` for an audit UI across instances. Separate from `EVENTS_BACKEND` on purpose, because observations are higher-volume and lower-value. |
 | `SUPABASE_URL` | unset | Required as soon as any backend above is `supabase`. |
 | `SUPABASE_SERVICE_KEY` | unset | Same. It is a secret, so keep it in `.env`, never in the repo. |
 | `SUPABASE_EVENTS_TABLE` | `naulon_events` | Table override. |
@@ -127,6 +127,7 @@ multi-instance deploy possible.
 | `SUPABASE_OBSERVATIONS_TABLE` | `naulon_observations` | Table override. |
 | `EVENTS_PATH` | `data/events.jsonl` | Shared event ledger for the `jsonl` backend. The gate appends; the dashboard and attribution read. |
 | `OBSERVATIONS_PATH` | `data/observations.jsonl` | Observation ledger for the `jsonl` backend. |
+| `OBSERVATIONS_MAX_MB` | `100` | Size cap for the `jsonl` observation log. Past it the file moves to `<path>.1`, replacing the previous one, and a new file starts, so at most twice the cap is on disk. The console reads both. `0` never rotates. |
 | `PAYOUTS_PATH` | `data/payouts.jsonl` | Where attribution records payouts. |
 
 ## Citation licenses

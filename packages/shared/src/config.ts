@@ -505,6 +505,9 @@ export const configSchema = z.object({
   EVENTS_PATH: z.string().default(DEFAULT_EVENTS_PATH),
   // Observation ledger (jsonl backend). Tollgate appends; the audit plane reads.
   OBSERVATIONS_PATH: z.string().default(DEFAULT_OBSERVATIONS_PATH),
+  // jsonl backend: once the file passes this size it moves to `<path>.1` (replacing the
+  // previous one) and a fresh file starts, so the log holds at most twice this. 0 = never.
+  OBSERVATIONS_MAX_MB: z.coerce.number().nonnegative().default(100),
 
   // Attribution & settlement.
   PAYOUTS_PATH: z.string().default(DEFAULT_PAYOUTS_PATH),

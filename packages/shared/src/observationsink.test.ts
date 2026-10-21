@@ -5,10 +5,15 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   getObservationSink,
+  jsonlObservationSink,
   memoryObservationSink,
   noopObservationSink,
+  rotatedObservationsPath,
 } from "./observationsink.ts";
 import type { ObservationEvent } from "./types.ts";
 
@@ -56,4 +61,22 @@ test("getObservationSink defaults to a no-op when OBSERVATIONS_BACKEND is unset"
   delete process.env.OBSERVATIONS_BACKEND;
   const sink = getObservationSink();
   await assert.doesNotReject(sink.record(obs()));
+});
+
+test("the jsonl sink moves a full file aside and starts a new one", async () => {
+  const file = join(mkdtempSync(join(tmpdir(), "naulon-obs-")), "observations.jsonl");
+  const line = JSON.stringify(obs()).length + 1;
+  const sink = jsonlObservationSink(file, line * 3);
+  for (let i = 0; i < 5; i++) await sink.record(obs({ id: `obs-${i}` }));
+  const ids = (p: string) => readFileSync(p, "utf8").trim().split("\n").map((l) => JSON.parse(l).id);
+  assert.deepEqual(ids(rotatedObservationsPath(file)), ["obs-0", "obs-1", "obs-2"]);
+  assert.deepEqual(ids(file), ["obs-3", "obs-4"]);
+});
+
+test("a cap of 0 never rotates", async () => {
+  const file = join(mkdtempSync(join(tmpdir(), "naulon-obs-")), "observations.jsonl");
+  const sink = jsonlObservationSink(file, 0);
+  for (let i = 0; i < 5; i++) await sink.record(obs({ id: `obs-${i}` }));
+  assert.equal(existsSync(rotatedObservationsPath(file)), false);
+  assert.equal(readFileSync(file, "utf8").trim().split("\n").length, 5);
 });
