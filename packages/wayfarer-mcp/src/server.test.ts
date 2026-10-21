@@ -3137,3 +3137,49 @@ test("the quote-with-proof example is a link whose fragment reads back as the qu
   assert.ok(url.searchParams.get("host") && url.searchParams.get("jti"));
   assert.equal(new URLSearchParams(url.hash.slice(1)).get("quote"), "two horns and a disk");
 });
+
+const PRICE_TOOLS = ["naulon_discover", "naulon_appraise", "naulon_quote"];
+/** Text that only makes sense to a server holding a signer and a budget. */
+const SPEND_TALK = /before paying|or paying|and paying|and pay for|do not pay|never pay against|plan spend|budget/i;
+
+async function listedText(client: Client): Promise<Map<string, string>> {
+  const { tools } = await client.listTools();
+  return new Map(tools.map((t) => [t.name, [t.description, JSON.stringify(t.inputSchema), JSON.stringify(t.outputSchema)].join(" ")]));
+}
+
+test("a price-only server describes prices, never a purchase or a budget", async () => {
+  const client = await connectedClientWith({ priceOnly: true, surface: { tools: PRICE_TOOLS } });
+  const said = client.getInstructions() ?? "";
+  assert.doesNotMatch(said, /naulon_pay_and_read|naulon_read_held|DON'T PAY TWICE|settlementRef/, "the instructions name tools and results this server never has");
+  assert.match(said, /cannot pay/);
+  const listed = await listedText(client);
+  assert.deepEqual([...listed.keys()].sort(), [...PRICE_TOOLS].sort());
+  for (const [name, said] of listed) assert.doesNotMatch(said, SPEND_TALK, `${name} talks about spending`);
+  assert.doesNotMatch(listed.get("naulon_quote")!, /affordable|ceilingUsdc|spentSessionUsdc|remainingUsdc/);
+});
+
+test("without priceOnly the same tools keep their spending guidance and the session envelope", async () => {
+  const client = await connectedClientWith({ surface: { tools: PRICE_TOOLS } });
+  assert.match(client.getInstructions() ?? "", /naulon_pay_and_read/);
+  const listed = await listedText(client);
+  assert.match(listed.get("naulon_quote")!, /Quote before paying/);
+  assert.match(listed.get("naulon_quote")!, /remainingUsdc/);
+  assert.match(listed.get("naulon_discover")!, /before appraising, quoting, or paying/);
+});
+
+test("a price-only quote returns the price and its chain, and no budget fields", async () => {
+  const handler = (_req: IncomingMessage, res: ServerResponse): void => {
+    res.writeHead(402, { "payment-required": paymentRequired("5000"), "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "payment required" }));
+  };
+  await withStubGate(handler, async () => {
+    const client = await connectedClientWith({ priceOnly: true, budgetUsdc: 0 });
+    const res = await client.callTool({ name: "naulon_quote", arguments: { slug: "priced" } });
+    assert.notEqual(res.isError, true);
+    const q = res.structuredContent as Record<string, unknown>;
+    assert.equal(q.gated, true);
+    assert.equal(q.totalUsdc, 0.005);
+    assert.ok(q.settlement, "the chain is a fact about the price");
+    for (const k of ["affordable", "ceilingUsdc", "spentSessionUsdc", "remainingUsdc"]) assert.equal(k in q, false, `${k} describes a budget this server does not have`);
+  });
+});
