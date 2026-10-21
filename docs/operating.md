@@ -362,10 +362,10 @@ The gate (`:8402`) is built to face the public internet in front of a real site.
 
 - **Replay-proof payments.** Every `402` carries a fresh, HMAC-signed nonce bound to the price and
   payee. The agent echoes it in its payment and the gate spends it exactly once
-  ([`nonce.ts`](../packages/enforce/src/nonce.ts)), so a captured `payment-signature` buys nothing
+  ([`nonce.ts`](https://github.com/naulonapp/naulon/blob/main/packages/enforce/src/nonce.ts)), so a captured `payment-signature` buys nothing
   twice and a cheap nonce cannot be moved onto a dearer page. It is mandatory in mock mode; live,
   the deposit-backed Gateway settlement is the chain-level guarantee.
-- **Rate limiting.** A per-client token bucket ([`rateLimit.ts`](../packages/tollgate/src/rateLimit.ts))
+- **Rate limiting.** A per-client token bucket ([`rateLimit.ts`](https://github.com/naulonapp/naulon/blob/main/packages/tollgate/src/rateLimit.ts))
   caps floods. The client is the socket peer, and `X-Forwarded-For` is trusted only when
   `TRUST_PROXY=true` (set it only behind a proxy you control), read from the right of the trail
   so a client-supplied entry is never the key. With no socket at all, as on a serverless adapter,
@@ -375,7 +375,7 @@ The gate (`:8402`) is built to face the public internet in front of a real site.
   cannot spoof its address or host to your origin.
 - **A validated trust boundary.** Credits decide who gets paid, so they pass a strict schema
   before any wallet becomes a `payTo`; a malformed or hostile credits source is refused, not
-  settled ([`credits.ts`](../packages/shared/src/credits.ts)).
+  settled ([`credits.ts`](https://github.com/naulonapp/naulon/blob/main/packages/shared/src/credits.ts)).
 - **The console writes.** The Content page rewrites `credits.json` and the Crawlers page rewrites
   the crawler policy, so treat access to it as access to your payout configuration. Every change
   is a POST behind a same-origin check, and the exposure rules above decide who can reach it.
