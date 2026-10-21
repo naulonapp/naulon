@@ -17,8 +17,10 @@ tags and the auto-generated notes on each GitHub Release.
 ## v0.15.0
 
 Ships `@naulon/sdk` **0.6.3** and `@naulon/shared` **0.6.9**, and publishes `@naulon/extract`
-**0.2.0**, which `@naulon/wayfarer` 0.7.3 already depends on. The Docker image carries a
-redesigned console. The WordPress plugin is unchanged at 0.7.3.
+**0.2.0**, which `@naulon/wayfarer` 0.7.3 already depended on. `@naulon/enforce` **0.10.1**,
+`@naulon/wayfarer` **0.7.4** and `@naulon/wayfarer-mcp` **0.7.5** change only to require the new
+`sdk` and `shared`. The Docker image carries a redesigned console. The WordPress plugin is
+unchanged at 0.7.3.
 
 ### Added
 - The console's overview leads with money and time: what agents paid, what they left on the

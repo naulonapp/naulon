@@ -1,6 +1,6 @@
 {
   "name": "@naulon/wayfarer",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "The naulon paying agent: discover → quote → appraise → decide → pay → ground. Budgeted x402 buying over Circle Gateway on Arc, with reusable Citation Licenses (pay once, re-read free).",
   "keywords": [
     "x402",
@@ -46,8 +46,8 @@
     "@langchain/core": "^1.2.9",
     "@langchain/openai": "^1.5.10",
     "@naulon/extract": "^0.2.0",
-    "@naulon/sdk": "^0.6.2",
-    "@naulon/shared": "^0.6.8",
+    "@naulon/sdk": "^0.6.3",
+    "@naulon/shared": "^0.6.9",
     "@x402/core": "^2.23.0",
     "@x402/evm": "^2.23.0",
     "viem": "^2.56.0"
