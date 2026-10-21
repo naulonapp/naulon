@@ -56,7 +56,7 @@ function paintDirty() {
   $("#saveBtn").disabled = !dirty();
   const note = $("#dockNote");
   if (note) {
-    note.textContent = n === 0 ? "no unsaved changes" : `${n} rule${n === 1 ? "" : "s"} changed — not saved yet`;
+    note.textContent = n === 0 ? "No unsaved changes" : `${n} rule${n === 1 ? "" : "s"} changed, not saved yet`;
     note.classList.toggle("pending", n > 0);
   }
 }
@@ -142,11 +142,11 @@ function renderNotice() {
     // validation complaint and assumes their block is in force.
     bits.push(`<div class="banner pending"><b>The policy on disk is not being applied.</b>
       <div class="toll-fix">${esc(view.problem)}</div>
-      <div class="toll-fix">Until it is fixed the gate falls back to its classifier defaults — nothing is blocked. Saving from this page writes a policy that has already passed validation.</div></div>`);
+      <div class="toll-fix">Until it is fixed the gate falls back to its classifier defaults and blocks nothing. Saving from this page writes a policy that has already passed validation.</div></div>`);
   }
   if (view.restartPending) {
     bits.push(`<div class="banner pending"><b>Saved, but not yet enforced.</b>
-      <div class="toll-fix">The gate reads this policy when it starts. Restart it to apply your changes — until then the old policy is what crawlers meet.</div></div>`);
+      <div class="toll-fix">The gate reads this policy when it starts. Restart it to apply your changes. Until then crawlers meet the old policy.</div></div>`);
   }
   $("#notice").innerHTML = bits.join("");
 }

@@ -88,7 +88,7 @@ test("a hung gate is distinguished from a refused one", async () => {
   const p = await runTollProbe({ slug: "x", apiMode: false }, { fetchImpl: timeout as unknown as typeof fetch });
   assert.equal(p.status, "fail");
   assert.match(p.summary, /did not answer in 8s/);
-  assert.match(p.fix, /blocked on your origin/);
+  assert.match(p.fix, /waiting on your origin/);
 });
 
 test("a live 402 with the quote header is the pass, end to end", async () => {

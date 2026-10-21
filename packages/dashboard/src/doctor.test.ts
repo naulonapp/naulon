@@ -50,7 +50,7 @@ test("an unreachable origin warns that humans break too, not just the toll", () 
   const cs = buildChecks({ ...HEALTHY, originReachable: false });
   const c = byId(cs, "origin");
   assert.equal(c.status, "fail");
-  assert.match(c.fix, /humans included/);
+  assert.match(c.fix, /people included/);
 });
 
 test("no tollable article is a FAIL, not a warning — nothing can be charged", () => {

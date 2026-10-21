@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark light" />
-<title>naulon — self-host console</title>
+<title>Overview · naulon</title>
 <meta name="description" content="Your self-hosted naulon gate: health, live toll traffic, settlement earnings, and config sanity." />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <script src="/theme.js"></script>
@@ -17,16 +17,14 @@
       <div class="page-head">
         <div>
           <p class="eyebrow">Self-hosted gate</p>
-          <h1 class="page-title">Your gate</h1>
-          <p class="page-sub">One box, one origin. Humans read free; machines pay to read and cite. Traffic and earnings here are a read-out; the three pages under Config write to disk, and the gate picks them up when it restarts.</p>
+          <h1 class="page-title">Overview</h1>
+          <p class="page-sub">People read free. Agents pay to read and cite.</p>
         </div>
         <!-- The freshness label comes FIRST on purpose. This row is pinned to the right
-             edge, so the width of its LAST child decides where every earlier child sits —
-             and this label's text is live: "updated now" through "updated 1h 24m ago" is
-             79px to 129px. Placed last, it dragged the window control and the Test toll
-             button 50px leftward as the clock ticked, then snapped them back on each poll.
-             A button that moves under the cursor. Placed first, its own left edge absorbs
-             the growth and the two things you click never move. -->
+             edge, so the width of its LAST child decides where every earlier child sits,
+             and this label's text is live. Placed last, it dragged the window control and
+             the Test toll button sideways as the clock ticked. Placed first, its own left
+             edge absorbs the growth and the two things you click never move. -->
         <div class="head-actions">
           <span class="freshness" id="freshness" aria-live="off"></span>
           <div class="seg" id="winSeg" role="group" aria-label="traffic window">
@@ -40,28 +38,48 @@
 
       <div id="notice" aria-live="polite"></div>
 
-      <section class="stat-strip" id="tiles" aria-live="polite">
-        <div class="stat"><div class="stat-k">served free</div><div class="stat-v" id="tHumans">—</div><div class="stat-sub">humans + allowed crawlers</div></div>
-        <div class="stat"><div class="stat-k">denied</div><div class="stat-v warn" id="tDenied">—</div><div class="stat-sub">refused at 402</div></div>
-        <div class="stat"><div class="stat-k">blocked</div><div class="stat-v" id="tBlocked">—</div><div class="stat-sub">refused outright</div></div>
-        <div class="stat"><div class="stat-k">paid</div><div class="stat-v pos" id="tPaid">—</div><div class="stat-sub">agents that settled</div></div>
-        <div class="stat"><div class="stat-k">payment failed</div><div class="stat-v" id="tFailed">—</div><div class="stat-sub">verify/settle rejected</div></div>
-        <div class="stat" id="observedStat" hidden><div class="stat-k">observed</div><div class="stat-v" id="tObserved">—</div><div class="stat-sub">served, not charged · <span id="tDemand">$0.000000</span> at your price (estimate) · <span id="tSignalled">0</span> said they would pay</div></div>
-        <div class="stat"><div class="stat-k">earned · missed</div><div class="stat-v pos" id="tEarned">$0.000000</div><div class="stat-sub"><span id="tMissed">$0.000000</span> left on the table</div></div>
+      <section class="card hero-panel" id="tiles" aria-live="polite">
+        <div class="money-lead three">
+          <div>
+            <p class="ml-k">Earned</p>
+            <p class="ml-v pos" id="tEarned">—</p>
+            <p class="ml-n"><span id="tPaidN">—</span></p>
+          </div>
+          <div>
+            <p class="ml-k">Left on the table</p>
+            <p class="ml-v" id="tMissed">—</p>
+            <p class="ml-n"><span id="tLeftN">—</span></p>
+          </div>
+          <div>
+            <p class="ml-k">Agent requests</p>
+            <p class="ml-v" id="tAgents">—</p>
+            <p class="ml-n" id="agentSplit">—</p>
+          </div>
+        </div>
+        <div class="chart" id="chart" role="img" aria-label="Agent requests over time, by outcome"></div>
+        <div class="chart-axis" id="chartAxis" aria-hidden="true"></div>
+        <div class="legend" id="legend">
+          <div><span class="k"><span class="sw o-paid"></span>Paid</span><span class="v" id="tPaid">—</span></div>
+          <div><span class="k"><span class="sw o-left"></span>Left at the price</span><span class="v" id="tDenied">—</span></div>
+          <div><span class="k"><span class="sw o-free"></span>Read free</span><span class="v" id="tFree">—</span></div>
+          <div><span class="k"><span class="sw o-refused"></span>Refused or failed</span><span class="v" id="tBlocked">—</span></div>
+        </div>
+        <p class="hero-foot"><span id="tHumans">—</span> people read free in the same window<span id="observedStat" hidden>. Observe mode served <span id="tObserved">0</span> agent reads, worth <span id="tDemand">$0.00</span> at your price, and <span id="tSignalled">0</span> said they would pay</span>.</p>
       </section>
 
       <div id="tollOut" aria-live="polite"></div>
 
       <div class="cols">
         <section>
-          <div class="section-head"><span class="rule"></span><h2>Recent requests</h2><span class="n" id="window">last 24h</span></div>
-          <div class="feed" id="feed" aria-live="polite" aria-relevant="additions"></div>
+          <div class="section-head"><h2>Agent activity</h2><span class="n" id="window">last 24h</span></div>
+          <div class="card feed-card"><div class="feed" id="feed" aria-live="polite" aria-relevant="additions"></div></div>
         </section>
         <section>
-          <div class="section-head"><span class="rule"></span><h2>Config</h2><span class="n" id="agentSplit">—</span></div>
-          <div id="config"></div>
-          <div class="section-head"><span class="rule"></span><h2>Warnings</h2><span class="n" id="warnCount">0</span></div>
-          <div id="warnings"></div>
+          <div class="section-head"><h2>Setup</h2><span class="n" id="warnCount"></span></div>
+          <div class="card setup-card">
+            <div id="warnings"></div>
+            <div id="config"></div>
+          </div>
         </section>
       </div>
     </main>

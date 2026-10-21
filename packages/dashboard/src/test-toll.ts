@@ -77,7 +77,7 @@ export function diagnose(httpStatus: number, quoted: boolean, verdict: string | 
   if (httpStatus === 200) {
     return {
       status: "fail",
-      summary: "200 OK — the gate served the article free to a crawler.",
+      summary: "200 OK: the gate served the article free to a crawler.",
       fix:
         "Three usual causes, in order: the path is not under ARTICLE_PATH_PREFIXES; " +
         "the slug is not in your credits source, so nothing is tollable; or a crawlerPolicy " +
@@ -87,34 +87,34 @@ export function diagnose(httpStatus: number, quoted: boolean, verdict: string | 
   if (httpStatus === 404) {
     return {
       status: "fail",
-      summary: "404 — your origin has no such article.",
+      summary: "404: your origin has no such article.",
       fix: "The slug came from your credits source but the origin does not serve it. Re-scan on the Content page, or fix the slug.",
     };
   }
   if (httpStatus >= 300 && httpStatus < 400) {
     return {
       status: "fail",
-      summary: `${httpStatus} redirect — the probe was bounced before it reached the toll.`,
+      summary: `${httpStatus} redirect: the probe was bounced before it reached the toll.`,
       fix: "Usually a trailing-slash rule or an edge (Cloudflare, a CDN) in front of the gate. The gate must terminate the request, not something upstream of it.",
     };
   }
   if (httpStatus === 502 || httpStatus === 504) {
     return {
       status: "fail",
-      summary: `${httpStatus} — the gate is up but cannot reach your origin.`,
+      summary: `${httpStatus}: the gate is up but cannot reach your origin.`,
       fix: "Check ORIGIN_URL and that your site is actually serving on it.",
     };
   }
   if (httpStatus === 401 || httpStatus === 403) {
     return {
       status: "fail",
-      summary: `${httpStatus} — something in front of the gate refused the request.`,
+      summary: `${httpStatus}: something in front of the gate refused the request.`,
       fix: "A proxy, WAF, or basic-auth is intercepting before the toll. The gate has to see crawler traffic to charge for it.",
     };
   }
   return {
     status: "fail",
-    summary: `${httpStatus} — not the 402 a tollable article should return.` + (verdict ? ` Gate verdict: ${verdict}.` : ""),
+    summary: `${httpStatus}: not the 402 a tollable article should return.` + (verdict ? ` Gate verdict: ${verdict}.` : ""),
     fix: "Check the gate logs for this request.",
   };
 }
@@ -187,7 +187,7 @@ export async function runTollProbe(target: ProbeTarget, deps: ProbeDeps = {}): P
       status: "fail",
       summary: timedOut ? "The gate did not answer in 8s." : "Could not reach the gate at all.",
       fix: timedOut
-        ? "The gate is accepting connections but not responding — check whether it is blocked on your origin."
+        ? "The gate is accepting connections but not responding. Check whether it is stuck waiting on your origin."
         : `Nothing is listening on ${c.GATE_URL}. Start the gate, or fix GATE_URL.`,
       elapsedMs: now() - started,
     };

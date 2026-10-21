@@ -67,7 +67,7 @@ export async function summarizeConfig(): Promise<ConfigSummary> {
   if (c.OBSERVATIONS_BACKEND === "off") {
     warn(
       "observations-off",
-      "OBSERVATIONS_BACKEND is off — nothing is recorded, so the traffic panel stays empty AND every counter on the overview, earnings included, reads as unknown rather than as a number. Settled money is still on the Ledger. Set it to jsonl to record who was served, denied, and paid.",
+      "Traffic is not recorded, so the overview has no figures. Set OBSERVATIONS_BACKEND=jsonl and restart the gate. Settled money is still on the Ledger.",
     );
   }
 
@@ -77,7 +77,7 @@ export async function summarizeConfig(): Promise<ConfigSummary> {
 
   if (apiMode) {
     // A live /credits endpoint is per-slug — there's no list to enumerate.
-    warn("credits-api-dynamic", "Credits come from a live API — the article list is dynamic and not shown here.");
+    warn("credits-api-dynamic", "Credits come from a live API, so the article list is not shown here.");
   } else {
     try {
       const raw = JSON.parse(await readFile(c.CREDITS_FIXTURES, "utf8")) as Record<string, unknown>;
@@ -94,7 +94,7 @@ export async function summarizeConfig(): Promise<ConfigSummary> {
         }
       }
       wallets = [...walletSet];
-      if (articles.length === 0) warn("credits-empty", "The credits fixture has no articles — nothing is tollable.");
+      if (articles.length === 0) warn("credits-empty", "The credits file has no articles, so nothing is tollable.");
     } catch (e) {
       warn("credits-unreadable", `Could not read the credits fixture ${c.CREDITS_FIXTURES}: ${(e as Error).message}`);
     }

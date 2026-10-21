@@ -18,8 +18,14 @@ export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESCAPES[c])
 
 /** Six-decimal micro-USDC, bare. Money is always mono + tabular in the CSS. */
 export const fmt6 = (n) => Number(n || 0).toFixed(6);
-/** Six-decimal micro-USDC with the sign. Use this wherever a figure is shown alone. */
-export const usd = (n) => "$" + fmt6(n);
+/** Exact USDC with the sign, trimmed to the digits it has: $0.005, $0.01, $1.50, $0.000001.
+ *  Tolls are sub-cent, so rounding to cents would print most of them as $0.00, and six fixed
+ *  decimals printed $0.010000 for a cent. Nothing is rounded: micro-USDC is six places. */
+export const usd = (n) => {
+  const [whole, frac = ""] = fmt6(n).split(".");
+  const digits = frac.replace(/0+$/, "").padEnd(2, "0");
+  return "$" + Number(whole).toLocaleString("en-US") + "." + digits;
+};
 /** A headline amount: two to three decimals, like the hosted portal's money figures. The ledger's
  *  six-decimal `usd` stays for rows, where sub-cent tolls need every digit. */
 export const usdLead = (n) =>
@@ -357,6 +363,11 @@ export function renderShell({ active, nav = true }) {
     `<a class="rail-link" href="https://naulon.app" target="_blank" rel="noopener">naulon cloud ↗</a></div>`;
 
   wireTheme();
+  // On a phone the nav is a sideways strip; start it at the page you are on.
+  const on = host.querySelector(".nav-link.on");
+  if (on && host.querySelector(".nav").scrollWidth > host.querySelector(".nav").clientWidth) {
+    on.scrollIntoView({ block: "nearest", inline: "center" });
+  }
   if (nav) {
     startGateRail();
     renderWho();
@@ -455,7 +466,7 @@ async function readGate() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const h = await r.json();
     // `detail` is gateHealth()'s own word for why — "unreachable", "timed out", "HTTP 502".
-    setGate(h.up === true, h.up === true ? "gate up" : `gate down — ${h.detail || "unreachable"}`);
+    setGate(h.up === true, h.up === true ? "gate up" : `gate down: ${h.detail || "unreachable"}`);
   } catch {
     // The console could not answer for the gate, so the honest report is that we do not
     // know — never "up", and never a red that blames the gate for the console's fault.

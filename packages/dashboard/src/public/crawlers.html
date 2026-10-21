@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark light" />
-<title>naulon — crawlers</title>
+<title>Crawlers · naulon</title>
 <meta name="description" content="Decide per crawler whether it reads free, pays the toll, or is refused outright. Humans always read free." />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <script src="/theme.js"></script>
@@ -18,17 +18,17 @@
         <div>
           <p class="eyebrow">Config</p>
           <h1 class="page-title">Crawlers</h1>
-          <p class="page-sub">Decide per crawler: read free, pay the toll, or be refused outright. Leave one on its default and the gate's classifier decides — which is the right answer for most of them.</p>
+          <p class="page-sub">Decide per crawler: read free, pay the toll, or be refused. Most are best left on their default.</p>
         </div>
       </div>
 
       <div id="notice" aria-live="polite"></div>
 
       <section class="stat-strip">
-        <div class="stat"><div class="stat-k">read free</div><div class="stat-v" id="nAllow">—</div></div>
-        <div class="stat"><div class="stat-k">pay the toll</div><div class="stat-v pos" id="nCharge">—</div></div>
-        <div class="stat"><div class="stat-k">refused</div><div class="stat-v" id="nBlock">—</div></div>
-        <div class="stat"><div class="stat-k">on defaults</div><div class="stat-v" id="nDefault">—</div></div>
+        <div class="stat"><div class="stat-k">Read free</div><div class="stat-v" id="nAllow">—</div></div>
+        <div class="stat"><div class="stat-k">Pay the toll</div><div class="stat-v pos" id="nCharge">—</div></div>
+        <div class="stat"><div class="stat-k">Refused</div><div class="stat-v" id="nBlock">—</div></div>
+        <div class="stat"><div class="stat-k">On defaults</div><div class="stat-v" id="nDefault">—</div></div>
       </section>
 
       <div class="section-head"><span class="rule"></span><h2>Known crawlers</h2><span class="n" id="policyPath"></span></div>
@@ -41,7 +41,7 @@
         <div class="scan scan-inset">
           <div class="scan-row">
             <label class="fld">
-              <span>user-agent fragment</span>
+              <span>User-agent fragment</span>
               <input id="customFrag" class="in" type="text" placeholder="scrapybot" autocomplete="off" />
             </label>
             <div class="seg" id="customState" role="group" aria-label="state for the new rule">

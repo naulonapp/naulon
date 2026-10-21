@@ -26,7 +26,7 @@ const PURPOSE = {
 
 const IDENTITY_NOTE = {
   verified: "signature verified",
-  unsigned: "no signature — the user-agent is a claim, not proof",
+  unsigned: "no signature, so the user agent is only a claim",
   masquerade: "presented a signature that failed to verify",
 };
 
@@ -47,7 +47,7 @@ function renderSplit(s) {
   // somebody is actively lying about who they are.
   live($("#masqNote")).html = s.masquerade
     ? `<div class="banner pending"><b>${s.masquerade} request${s.masquerade === 1 ? "" : "s"} presented a signature that did not verify.</b>
-       <div class="toll-fix">That is a different thing from unsigned traffic: a key was claimed and the claim failed. The gate already refused to treat them as verified — nothing is broken on your side. The rows below name which agent string it was.</div></div>`
+       <div class="toll-fix">That is a different thing from unsigned traffic: a key was claimed and the claim failed. The gate already refused to treat them as verified, so nothing is broken on your side. The rows below name which agent string it was.</div></div>`
     : "";
 }
 
@@ -83,7 +83,7 @@ function renderAgents(rows) {
     live($("#agents")).html = emptyState({
       icon: "agents",
       lead: "No agent traffic in this window.",
-      body: q ? "Nothing matches that filter." : "Humans do not appear here — they read free, always, and there is nothing to act on.",
+      body: q ? "Nothing matches that filter." : "People do not appear here. They always read free.",
       foot: q ? "" : `If you expected crawlers, <a href="/doctor">Doctor</a> checks whether traffic is being recorded at all.`,
     });
     return;

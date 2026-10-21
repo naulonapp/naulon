@@ -89,7 +89,7 @@ export function buildChecks(i: DoctorInput): Check[] {
           id: "gate",
           label: "The gate is up",
           status: "fail",
-          detail: `No answer from the gate — ${i.health.detail ?? "unreachable"}.`,
+          detail: `No answer from the gate: ${i.health.detail ?? "unreachable"}.`,
           fix: "Start the gate, or fix GATE_URL. Nothing is being tolled while it is down.",
         },
   );
@@ -111,7 +111,7 @@ export function buildChecks(i: DoctorInput): Check[] {
       label: "Your origin answers",
       status: "fail",
       detail: `${i.config.originUrl} did not respond.`,
-      fix: "The gate proxies to this address. While it is down, every request 502s — humans included.",
+      fix: "The gate proxies to this address. While it is down, every request gets a 502, people included.",
     });
   }
 
@@ -166,7 +166,7 @@ export function buildChecks(i: DoctorInput): Check[] {
       label: "Settlement events are being kept",
       status: "fail",
       detail: `EVENTS_BACKEND=jsonl, but ${i.config.eventsPath} is not writable.`,
-      fix: "Every settled payment is being dropped, silently — the ledger will stay empty however much you earn. Fix the directory's permissions (or its volume mount) so the gate's user can append.",
+      fix: "Every settled payment is being dropped without a word, so the ledger stays empty however much you earn. Fix the directory's permissions (or its volume mount) so the gate's user can append.",
     });
   } else if (i.eventsWritable === null) {
     checks.push(ok("events", "Settlement events are being kept", `EVENTS_BACKEND=supabase.`));
@@ -177,7 +177,7 @@ export function buildChecks(i: DoctorInput): Check[] {
   // 6. A zero price would quote nothing.
   checks.push(
     i.config.priceUsdc > 0
-      ? ok("price", "A price is set", `$${i.config.priceUsdc.toFixed(6)} per read, ×${i.config.citationMultiplier} for a citation.`)
+      ? ok("price", "A price is set", `$${i.config.priceUsdc.toFixed(6).replace(/0{1,4}$/, "")} per read, ×${i.config.citationMultiplier} for a citation.`)
       : {
           id: "price",
           label: "A price is set",
@@ -196,7 +196,7 @@ export function buildChecks(i: DoctorInput): Check[] {
           id: "payment",
           label: "Settlement is live",
           status: "warn",
-          detail: "PAYMENT_MODE=mock — payments are simulated.",
+          detail: "PAYMENT_MODE=mock, so payments are simulated.",
           fix: "Correct while you are trying it out. Nothing settles on-chain and no author is actually paid until you set PAYMENT_MODE=gateway.",
         },
   );
@@ -217,7 +217,7 @@ export function buildChecks(i: DoctorInput): Check[] {
       id: "restart",
       label: "The gate is serving your current credits",
       status: "warn",
-      detail: "Not checkable — the gate is not answering, so it is serving nothing.",
+      detail: "Not checkable: the gate is not answering, so it is serving nothing.",
       fix: "",
     });
   } else if (i.restartPending) {
@@ -234,7 +234,7 @@ export function buildChecks(i: DoctorInput): Check[] {
 
   // 9. Exposure. The console shows wallets; how it is reachable is a real check.
   if (i.accessMode === "public") {
-    checks.push(ok("exposure", "The console is not over-exposed", "Public earnings view — wallets masked, ops routes unmounted."));
+    checks.push(ok("exposure", "The console is not over-exposed", "Public earnings view: wallets masked, ops routes unmounted."));
   } else if (i.accessMode === "authed") {
     // Authed no longer implies a wide bind: a credential is enforced wherever it is set,
     // loopback included, so report the bind instead of assuming one.
@@ -289,7 +289,7 @@ export function buildChecks(i: DoctorInput): Check[] {
       label: "Credits parse cleanly",
       status: "warn",
       detail: w.message,
-      fix: "Fix the entry in your credits source — a malformed one is skipped, so that article earns nothing.",
+      fix: "Fix the entry in your credits source. A malformed one is skipped, so that article earns nothing.",
     });
   }
 

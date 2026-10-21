@@ -4,8 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark light" />
-<title>naulon — agents</title>
-<meta name="description" content="Which agents read this gate: who signs their requests, who does not, and who presented a signature that failed — with what each one took and paid." />
+<title>Agents · naulon</title>
+<meta name="description" content="Which agents read this gate: who signs their requests, who does not, and who presented a signature that failed, and what each one read and paid." />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <script src="/theme.js"></script>
 <link rel="stylesheet" href="/app.css" />
@@ -18,7 +18,7 @@
         <div>
           <p class="eyebrow">Traffic</p>
           <h1 class="page-title">Agents</h1>
-          <p class="page-sub">Who is reading, and how much of that you can actually trust. A user-agent string is a claim anyone can make; a Web Bot Auth signature is one only the operator's key can.</p>
+          <p class="page-sub">Who is reading, and how far to trust it. Anyone can claim a user agent; only the operator can sign a Web Bot Auth request.</p>
         </div>
         <div class="head-actions">
           <div class="seg" id="winSeg" role="group" aria-label="traffic window">
@@ -32,11 +32,11 @@
       <div id="notice" aria-live="polite"></div>
 
       <section class="stat-strip">
-        <div class="stat"><div class="stat-k">agent requests</div><div class="stat-v" id="sTotal">—</div></div>
-        <div class="stat"><div class="stat-k">verified</div><div class="stat-v pos" id="sVerified">—</div><div class="stat-sub" id="sVerifiedPct"></div></div>
-        <div class="stat"><div class="stat-k">unsigned</div><div class="stat-v" id="sUnsigned">—</div><div class="stat-sub" id="sUnsignedPct"></div></div>
-        <div class="stat"><div class="stat-k">masquerade</div><div class="stat-v" id="sMasq">—</div><div class="stat-sub">signature presented and failed</div></div>
-        <div class="stat"><div class="stat-k">impostors</div><div class="stat-v" id="sForged">—</div><div class="stat-sub">named a crawler, came from outside its addresses</div></div>
+        <div class="stat"><div class="stat-k">Agent requests</div><div class="stat-v" id="sTotal">—</div></div>
+        <div class="stat"><div class="stat-k">Verified</div><div class="stat-v pos" id="sVerified">—</div><div class="stat-sub" id="sVerifiedPct"></div></div>
+        <div class="stat"><div class="stat-k">Unsigned</div><div class="stat-v" id="sUnsigned">—</div><div class="stat-sub" id="sUnsignedPct"></div></div>
+        <div class="stat"><div class="stat-k">Masquerade</div><div class="stat-v" id="sMasq">—</div><div class="stat-sub">signature presented and failed</div></div>
+        <div class="stat"><div class="stat-k">Impostors</div><div class="stat-v" id="sForged">—</div><div class="stat-sub">named a crawler, came from outside its addresses</div></div>
       </section>
 
       <div id="masqNote" aria-live="polite"></div>

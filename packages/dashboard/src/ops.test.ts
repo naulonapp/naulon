@@ -165,3 +165,46 @@ test("observe rows count as demand, never as missed earnings", () => {
   assert.ok(Math.abs(s.demand.atPrice - 0.004) < 1e-9);
   assert.equal(s.demand.signalledPayers, 2, "within-budget and payment-presented, never over-budget");
 });
+
+test("the series buckets agent requests by outcome, newest bucket last", () => {
+  const now = 100 * HOUR + 30 * 60_000; // half past the hour
+  const s = summarizeOps(
+    [
+      obs("paid", "agent", now - 10),
+      obs("denied", "agent", now - HOUR),
+      obs("payment-failed", "agent", now - HOUR),
+      obs("served-free", "human", now - 10),
+      obs("denied", "agent", now - 30 * HOUR), // outside the window
+    ],
+    now,
+    24 * HOUR,
+  );
+  assert.equal(s.series.stepMs, HOUR);
+  assert.equal(s.series.buckets.length, 24);
+  assert.equal(s.series.start, 77 * HOUR);
+  assert.deepEqual(s.series.buckets.at(-1), { paid: 1, left: 0, free: 0, refused: 0 });
+  assert.deepEqual(s.series.buckets.at(-2), { paid: 0, left: 1, free: 0, refused: 1 });
+  const total = s.series.buckets.reduce((n, b) => n + b.paid + b.left + b.free + b.refused, 0);
+  assert.equal(total, 3, "people and requests outside the window are not plotted");
+});
+
+test("every window draws about two dozen columns", () => {
+  for (const [key, ms] of Object.entries(OPS_WINDOWS)) {
+    const n = summarizeOps([], NOW, ms).series.buckets.length;
+    assert.ok(n >= 12 && n <= 28, `${key} has ${n} columns`);
+  }
+});
+
+test("the agent feed leaves people out and names each agent", () => {
+  const s = summarizeOps(
+    [
+      obs("served-free", "human", NOW - 1),
+      obs("denied", "agent", NOW - 2, { agentUa: "Mozilla/5.0 (compatible; GPTBot/1.2; +https://openai.com/gptbot)" }),
+    ],
+    NOW,
+    HOUR,
+  );
+  assert.equal(s.recent.length, 2);
+  assert.equal(s.recentAgents.length, 1);
+  assert.equal(s.recentAgents[0]!.agent, "GPTBot");
+});

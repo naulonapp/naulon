@@ -4,8 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark light" />
-<title>naulon — content</title>
-<meta name="description" content="Map your articles to payout wallets — no JSON by hand. Scan your site, fill in wallets, save." />
+<title>Content · naulon</title>
+<meta name="description" content="Map your articles to payout wallets. Scan your site, fill in wallets, save." />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <script src="/theme.js"></script>
 <link rel="stylesheet" href="/app.css" />
@@ -18,7 +18,7 @@
         <div>
           <p class="eyebrow">Content</p>
           <h1 class="page-title">Articles and wallets</h1>
-          <p class="page-sub">The scanner finds the articles. You map the wallets — that is the one thing no crawler can supply, because only you know who gets paid.</p>
+          <p class="page-sub">The scanner finds your articles. You say who gets paid for each one.</p>
         </div>
       </div>
 
@@ -28,7 +28,7 @@
 
       <section class="scan">
         <div class="scan-row">
-          <label class="fld"><span>default wallet <span class="dim">(optional — used when a scanned article has no author mapping)</span></span>
+          <label class="fld"><span>Default wallet <span class="dim">(optional, used when an article has no author)</span></span>
             <input id="defaultWallet" class="in" placeholder="0x… 40 hex" spellcheck="false" autocomplete="off" /></label>
           <button id="scanBtn" class="btn">Scan site</button>
         </div>

@@ -52,7 +52,7 @@ async function load() {
     $("#rows").innerHTML = emptyState({
       icon: "content",
       lead: "Credits come from a live API.",
-      body: `Your articles + wallets are served by <code>${esc(d.origin)}/api/credits</code> — edit them at your CMS. This file manager applies only to the static <code>credits.json</code> path.`,
+      body: `Your articles + wallets are served by <code>${esc(d.origin)}/api/credits</code>, so edit them in your CMS. This page applies only to the static <code>credits.json</code> path.`,
     });
     $("#scanBtn").disabled = true; $("#saveBtn").disabled = true; $("#addBtn").disabled = true;
     return;
@@ -70,12 +70,12 @@ function setBanner(state) {
   el.classList.remove("pending", "synced");
   if (state === "pending") {
     el.classList.add("pending");
-    el.innerHTML = `<b>Edits pending a restart.</b> <span class="mono">${esc(creditsPath || "credits.json")}</span> changed after the gate started — your edits are saved but <b>not live</b> until you restart the gate. <span class="dim">naulon cloud applies wallet edits instantly, no restart.</span>`;
+    el.innerHTML = `<b>Edits pending a restart.</b> <span class="mono">${esc(creditsPath || "credits.json")}</span> changed after the gate started. Your edits are saved but <b>not live</b> until you restart the gate. <span class="dim">naulon cloud applies wallet edits instantly, no restart.</span>`;
   } else if (state === "synced") {
     el.classList.add("synced");
     el.innerHTML = `<b>In sync.</b> The gate is serving the current <span class="mono">${esc(creditsPath || "credits.json")}</span>. Edits here apply on the next gate restart.`;
   } else if (state === "api") {
-    el.innerHTML = `Credits are served from a live API — edit them at your CMS, not here.`;
+    el.innerHTML = `Credits come from a live API. Edit them in your CMS, not here.`;
   } else {
     el.innerHTML = `Edits write <span class="mono">${esc(creditsPath || "credits.json")}</span> and apply when you <b>restart the gate</b>.`;
   }
@@ -179,7 +179,7 @@ function requestSave() {
   const removed = [...savedSlugs].filter((s) => !nextSlugs.has(s));
   confirming = true;
   const removedNote = removed.length
-    ? ` <span class="warn-txt">${removed.length} article(s) removed — they stop being tolled: ${esc(removed.slice(0, 5).join(", "))}${removed.length > 5 ? "…" : ""}.</span>`
+    ? ` <span class="warn-txt">${removed.length} article(s) removed, so they stop being tolled: ${esc(removed.slice(0, 5).join(", "))}${removed.length > 5 ? "…" : ""}.</span>`
     : "";
   $("#saveOut").className = "save-out";
   $("#saveOut").innerHTML =
@@ -205,7 +205,7 @@ async function doSave() {
       $("#saveOut").innerHTML = `<span class="ok">✓ saved ${esc(d.path)}</span> · backup at <span class="mono">${esc(d.backup)}</span> · <b>restart the gate to apply.</b>${d.unmapped.length ? ` <span class="warn-txt">${d.unmapped.length} article(s) still without a wallet.</span>` : ""}`;
       $("#saveOut").className = "save-out flash";
     } else {
-      $("#saveOut").innerHTML = `<span class="err">not saved — fix these:</span>` + (d.errors || []).map((e) => `<div class="err-row">${esc(e.slug)}: ${esc(e.message)}</div>`).join("");
+      $("#saveOut").innerHTML = `<span class="err">Not saved. Fix these:</span>` + (d.errors || []).map((e) => `<div class="err-row">${esc(e.slug)}: ${esc(e.message)}</div>`).join("");
       $("#saveOut").className = "save-out";
     }
   } catch (e) {
