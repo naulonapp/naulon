@@ -75,9 +75,18 @@ COPY --from=builder /app/package.json ./package.json
 # carries this ownership onto a fresh named volume mounted here.
 RUN mkdir -p /data && chown -R node:node /data
 USER node
+# EVERY file either service writes lives on the /data volume. The code's defaults sit under
+# the repo root, which it finds by walking up to package-lock.json; this stage does not carry
+# that file, so the "root" became each package's own directory, owned by root and off the
+# volume. Recording traffic then failed with EACCES in the gate, and the console looked for it
+# somewhere else. Name them all here so no default is ever consulted.
 ENV EVENTS_PATH=/data/events.jsonl \
     CONSOLE_STATE_PATH=/data/console.json \
-    CRAWLER_POLICY_PATH=/data/crawler-policy.json
+    CRAWLER_POLICY_PATH=/data/crawler-policy.json \
+    OBSERVATIONS_PATH=/data/observations.jsonl \
+    WEBHOOK_DELIVERIES_PATH=/data/webhook-deliveries.jsonl \
+    PAYOUTS_PATH=/data/payouts.jsonl \
+    WAYFARER_LICENSE_PATH=/data/wayfarer-licenses.json
 
 # DASHBOARD_BIND is deliberately NOT set here. Inside a container 127.0.0.1 means
 # "unreachable from the host", so widening it is what makes the console usable — and

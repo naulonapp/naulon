@@ -221,6 +221,10 @@ app.use("*", async (c, next) => {
 if (ACCESS.refuse) {
   app.all("*", (c) => c.text(`naulon dashboard refused to start serving.\n\n${ACCESS.reason}\n`, 503));
 } else {
+  // Liveness for a container health check, registered ahead of sign-in so it answers without
+  // one. It says only that this process is serving. Without it the compose healthcheck got a
+  // 401 (or a 404 on a private console) and marked every running console unhealthy.
+  app.get("/healthz", (c) => c.json({ ok: true, service: "dashboard" }));
   if (STORE) {
     // Order is load-bearing, twice over. hono composes middleware in REGISTRATION order,
     // so the failed-sign-in budget has to be mounted before the gate whose 401s it charges,

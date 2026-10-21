@@ -16,10 +16,21 @@ services:
     ports:
       - "8402:8402"
     env_file: .env
-    environment:
+    # `environment` outranks `env_file`, so these hold even when .env was copied from
+    # .env.example and names relative paths. Every file lives on the ledger volume, which
+    # is the only place this unprivileged user may write and the only place that survives
+    # a restart.
+    environment: &paths
       EVENTS_PATH: /data/events.jsonl
+      OBSERVATIONS_PATH: /data/observations.jsonl
       CRAWLER_POLICY_PATH: /data/crawler-policy.json
+      WEBHOOK_DELIVERIES_PATH: /data/webhook-deliveries.jsonl
+      PAYOUTS_PATH: /data/payouts.jsonl
+      CONSOLE_STATE_PATH: /data/console.json
       CREDITS_FIXTURES: /config/credits.json
+      # The console's traffic pages are built from this log. Set it to off in .env to
+      # record nothing.
+      OBSERVATIONS_BACKEND: ${OBSERVATIONS_BACKEND:-jsonl}
     volumes:
       - ledger:/data
       # Your credits.json — who gets paid, per article — lives in ./config beside this
@@ -47,11 +58,11 @@ services:
       - "127.0.0.1:8403:8403"
     env_file: .env
     environment:
-      EVENTS_PATH: /data/events.jsonl
-      CRAWLER_POLICY_PATH: /data/crawler-policy.json
-      CREDITS_FIXTURES: /config/credits.json
-      CONSOLE_STATE_PATH: /data/console.json
+      <<: *paths
       DASHBOARD_BIND: 0.0.0.0
+      # Inside this container 127.0.0.1 is the console itself, so the health rail, Doctor
+      # and Test toll all reported a running gate as unreachable.
+      GATE_URL: http://tollgate:8402
     volumes:
       - ledger:/data
       - ./config:/config:ro
