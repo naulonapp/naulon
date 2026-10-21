@@ -1,60 +1,133 @@
 <div align="center">
 
-# 🜉 &nbsp;naulon
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/naulon-lockup-dark.png">
+  <img src="docs/assets/naulon-lockup-light.png" alt="naulon" height="64">
+</picture>
 
-**Humans read free. Machines pay.**
+### Humans read free. Machines pay.
 
-A pay-per-read toll for the agentic web. Drop it in front of any site; AI agents
-and crawlers pay a USDC nanopayment to read or cite an article, and it settles
-to the author's own Circle Gateway balance, which only their wallet can withdraw.
+A toll you put in front of a site. AI agents and crawlers pay a fraction of a cent in USDC
+to read or cite a page, it settles straight to the author's own wallet, and people read free.
 
+[Website](https://naulon.app) · [Docs](https://naulonapp.github.io/naulon/) · [Changelog](./CHANGELOG.md) · [Security](./SECURITY.md) · [Contributing](./CONTRIBUTING.md)
+
+[![CI](https://github.com/naulonapp/naulon/actions/workflows/ci.yml/badge.svg)](https://github.com/naulonapp/naulon/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@naulon/enforce?label=%40naulon%2Fenforce&color=black)](https://www.npmjs.com/package/@naulon/enforce)
 [![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](./LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-black.svg)
-[![Built on Arc Network](https://img.shields.io/badge/built_on-Arc_Network-black.svg)](https://docs.arc.io/)
+[![Built on Arc](https://img.shields.io/badge/built_on-Arc-black.svg)](https://docs.arc.io/)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/console-dark.png">
+  <img src="docs/assets/console-light.png" alt="The operator console: a day of traffic on a gate. People read free, crawlers that would not pay left at the price, and agents paid to read." width="100%">
+</picture>
 
 </div>
 
----
+## Why
 
-People should read for free. But large language models now consume writing at
-scale and pay nothing for it: the cost lands on the author, the benefit on the
-crawler. `naulon` flips that one exchange: a human request passes straight
-through, untouched; a machine request gets an HTTP `402 Payment Required` and has
-to settle a tiny USDC payment before it reads. The fare is the *naulon*, the
-old coin you paid to cross.
+People should read for free. Language models now read writing at scale and pay nothing for
+it: the cost lands on the author and the benefit on the crawler. naulon changes that one
+exchange. A human request passes straight through, untouched. A machine request gets
+`402 Payment Required` and settles a tiny USDC payment before it reads. The fare is the
+*naulon*, the old coin you paid to cross.
 
-The toll is what keeps the work open: machines subsidize the free human read.
+The toll is what keeps the work open: machines pay for the free human read.
 
-Built on the [Circle](https://www.circle.com/) nanopayment rail, Arc-first on
-[Arc Network](https://docs.arc.io/), with the wider set of Circle Gateway
-chains in the network registry, so a single read can cost a fraction of a cent
-and still settle.
+## Get started
+
+Pick the door that fits how your site runs. Every one of them tolls the same way and settles
+to the same wallets.
+
+| You run | Start here |
+|---|---|
+| **Any site, with Docker** | The gate and its console as one image, in front of your origin. [Below](#self-host-with-docker) |
+| **WordPress** | The plugin, with no code: install [`naulon.zip`](https://github.com/naulonapp/naulon/releases/latest/download/naulon.zip), paste your [naulon.app](https://naulon.app) key, verify the site. [plugin readme](./plugins/naulon/readme.txt) |
+| **Your own app** (Next.js, or any runtime with a web `Request`) | `@naulon/enforce` makes the same toll decision inside your app, so agents reach your origin directly. [package readme](./packages/enforce/README.md) |
+| **Nothing (hosted)** | [naulon.app](https://naulon.app) runs the gate for you. Same protocol, same custody-free settlement, and nothing in this repo is held back to push you there. |
+
+### Self-host with Docker
+
+You need Docker and Node 22 for the one-off setup command. The image is public, with no
+registry login.
+
+```bash
+curl -O https://raw.githubusercontent.com/naulonapp/naulon/main/docker-compose.yml
+npx -p @naulon/sdk naulon init      # asks a few questions, writes .env and config/credits.json
+docker compose up -d                # gate on :8402, console on :8403 (loopback only)
+```
+
+`init` writes a generated first password for the console into `.env` (mode 0600). Sign in at
+<http://localhost:8403> as `admin`, and the console asks you to choose a new one. It runs in
+mock settlement until you add a wallet, so nothing moves while you look around. Pinning a
+version, exposing the console, and moving to real settlement are in
+[docs/operating.md](./docs/operating.md).
+
+### Try the whole loop on your machine
+
+```bash
+git clone https://github.com/naulonapp/naulon.git && cd naulon
+make install
+make demo        # offline: a stub site, the gate, an agent that pays, a settlement pass
+```
+
+`make dev` runs the same stack live (stub origin `:3000`, gate `:8402`, console `:8403`) so you
+can drive it yourself. `make help` lists every target.
+
+### Prove it tolls
+
+Two commands, both offline. `doctor` reads your `.env`, checks the credits source and probes
+the gate: a browser must read free and an agent must get a `402`. `selftest` goes the rest of
+the way, paying the `402`, reading the article, checking the citation licence it got back, and
+proving the same payment cannot be replayed.
+
+```bash
+npx -p @naulon/sdk naulon doctor
+npx -p @naulon/sdk naulon selftest
+```
+
+```text
+  ✓ manifest   self-describing toll at /essays/ · read 1000 atomic
+  ✓ human      browser UA → HTTP 200, straight through
+  ✓ quote      402 · 1000 atomic → 0x1111…1111
+  ✓ pay        HTTP 200 · settled with a payment-response
+  ✓ licence    citation licence for "on-stillness" naming 1 payee(s)
+  ✓ replay     the spent payment bought nothing a second time
+  ✓ citation   5000 atomic (5× a read) · paid, HTTP 200
+```
+
+Or watch it by hand against `make dev`:
+
+```bash
+curl -A 'Mozilla/5.0' -H 'accept: text/html' localhost:8402/essays/on-stillness   # 200, free
+curl -A 'python-requests' localhost:8402/essays/on-stillness                      # 402, the bill
+```
 
 ## How it works
 
 ```mermaid
-flowchart TD
-    Req([Incoming request]) --> Cls{"agentDetect:<br/>human or machine?"}
-    Cls -->|human| Free[["Proxied through, untouched: free read"]]
-    Cls -->|machine| Bill["402 Payment Required<br/>price · author wallet(s) · signed nonce"]
-    Bill --> Sign["Agent signs a USDC payment,<br/>echoes the nonce, retries with payment-signature"]
-    Sign --> Verify{"Verify via Circle Gateway"}
-    Verify -->|valid| Serve[["Serve content + mint a Citation License,<br/>record who earned what"]]
-    Verify -->|replayed / invalid| Bill
+flowchart LR
+    Req([Request]) --> Cls{Human or<br/>machine?}
+    Cls -->|human| Free[[Free read,<br/>untouched]]
+    Cls -->|machine| Bill[402 Payment Required<br/>price · wallets · nonce]
+    Bill --> Sign[Agent pays in USDC<br/>and retries]
+    Sign --> Verify{Verified by<br/>Circle Gateway?}
+    Verify -->|yes| Serve[[The page and a<br/>citation licence]]
+    Verify -->|replayed or invalid| Bill
 
     linkStyle 0 stroke-width:2px
     linkStyle 1 stroke:#3fb950,stroke-width:2px
     linkStyle 2 stroke:#d29922,stroke-width:2px
 ```
 
-The piece that makes it interesting: **attribution is the payout rule.** An
-article's credits graph, who wrote it and in what proportion, *is* how the
-money splits. Co-authored pieces split automatically, and a credit can itself be
-a collective that splits again among its members. No invoices, no manual payouts.
+The classifier is tuned to favour people. Mistaking a reader for a machine paywalls a person
+and breaks the whole promise; mistaking a machine for a person loses a fraction of a cent. An
+agent that *says* it will pay is trusted over user-agent guessing.
 
-The split is recursive: a payee can itself be a collective that divides its cut
-again, all the way down. This is the real credits graph from
-[`examples/cascade`](./examples/cascade/credits.json) (`how-vaccines-teach`),
+**Attribution is the payout rule.** An article's credits, who wrote it and in what proportion,
+are how the money splits. A credit can be a collective that splits again among its members,
+all the way down. This is the real graph from [`examples/cascade`](./examples/cascade/credits.json),
 resolved by the split algorithm in `@naulon/shared`:
 
 ```mermaid
@@ -68,455 +141,144 @@ flowchart TD
     Bench -->|equal| Had["haddad · $0.0015"]
 ```
 
-Every leaf is a direct author payout, tracked per `(event, author)`, and recorded
-whether or not it clears the payout floor yet. The intermediate collectives never
-hold the money; they're only a rule for how the cut divides.
+Every leaf is a direct payout to an author, tracked per `(event, author)`. The collectives
+never hold money; they are only a rule for how a cut divides. Sub-cent shares accrue until
+they clear `MIN_PAYOUT_USDC`, so nothing is paid twice or lost.
 
-## Quick start
+**The gate describes itself.** Every `402` carries `Link: </.well-known/x402>; rel="payment"`,
+and `GET /.well-known/x402` returns the terms an agent needs: the paths that toll, the read
+and citation price, the network and asset, and where to verify a licence. It names no wallet;
+`payTo` is resolved per article at payment time.
 
-Requires Node ≥ 22.
+## The paying agent
 
-```bash
-make install
-make demo        # the whole loop offline: origin → toll → agent pays → settle
-```
-
-To put a gate in front of your own site, `naulon init` asks a handful of
-questions and writes a coherent `.env` plus a starter `credits.json`, with no
-hand-editing of the full example:
+The [Wayfarer](./packages/wayfarer) is a research agent that pays: it ranks candidates by
+relevance per dollar, buys under a budget down to a relevance floor, reuses what it already
+holds, and logs why for every choice. Against `make dev`:
 
 ```bash
-npx naulon init               # → .env + credits.json, and the next steps for how you run it
-```
-
-It runs in mock-settlement mode by default (no wallet or API keys), refuses to
-overwrite files you've edited unless you pass `--force`, and takes `--yes` with
-flags for a non-interactive/CI run.
-
-Or set it up by hand:
-
-```bash
-cp .env.example .env          # runs in mock-settlement mode with no creds
-make dev                      # stub origin :3000 + tollgate :8402 + dashboard :8403
-make tollgate                 # just the reverse proxy
-```
-
-`make help` lists every target.
-
-### Without cloning anything
-
-The gate and console ship as one image, so a host with Docker needs neither this
-repo nor Node:
-
-```bash
-curl -O https://raw.githubusercontent.com/naulonapp/naulon/main/docker-compose.yml
-npx -p @naulon/sdk naulon init      # sees the compose file: writes .env + config/credits.json
-docker compose up -d                # gate :8402 · console :8403 (loopback only)
-```
-
-`ghcr.io/naulonapp/naulon` is public, with no registry login. Both services run the same
-image under an unprivileged user and share one ledger volume; your `credits.json` is
-mounted read-only from `./config` rather than baked in, because a gate that fell back
-to an example's wallets would settle real money to a fixture address. Compose follows
-`:latest`, which each release moves; pin one with `NAULON_TAG=v0.7.0` in `.env`, or
-track main between releases with `NAULON_TAG=edge`. v0.7.0 is the first tag carrying an
-image, because the workflow that builds one postdates every tag before it, so `v0.6.0` and
-earlier name releases that exist on npm and in git, never in the registry.
-
-The console binds wide inside its container (127.0.0.1 there is unreachable from your
-host) and is published on your loopback only. Because the socket is no longer evidence
-of privacy, it *requires* a credential before it serves. `naulon init` writes a generated
-`CONSOLE_ADMIN_PASSWORD` into `.env` (mode 0600): sign in as `admin` with it, and the
-console makes you choose a new one. Writing `.env` by hand, set it yourself, or
-`DASHBOARD_AUTH=user:pass` for HTTP Basic.
-
-Contributors who want the image built from a working tree instead:
-`make docker-build`.
-
-### Check it actually tolls
-
-Two commands, both offline. `doctor` reads your `.env`, validates the credits source, and
-probes the gate: a browser must read free, an agent must get a 402.
-
-```bash
-npx -p @naulon/sdk naulon doctor
-```
-
-`selftest` goes the rest of the way: it pays the 402, reads the article, checks the citation
-licence that came back, and proves the same payment cannot be replayed:
-
-```bash
-npx -p @naulon/sdk naulon selftest
+TOLLGATE_URL=http://localhost:8402 CATALOG_URL=http://localhost:3000/catalog \
+  make wayfarer TOPIC="payment and passage"
 ```
 
 ```text
-  ✓ manifest   self-describing toll at /essays/ · read 1000 atomic
-  ✓ human      browser UA → HTTP 200, straight through
-  ✓ quote      402 · 1000 atomic → 0x1111…1111
-  ✓ pay        HTTP 200 · settled with a payment-response
-  ✓ licence    citation licence for "hello-world" naming 1 payee(s)
-  ✓ replay     the spent payment bought nothing a second time
-  ✓ citation   5000 atomic (5× a read) · paid, HTTP 200
+  [PAY]  the-naulon — relevance 1.00 @ $0.005000 (density 200); $0.095000 left
+  [SKIP] on-stillness — relevance 0.00 below floor 0.35
+  ✓ paid $0.005000 for the-naulon → 🎫 license verified
 ```
 
-It drives the path prefix your gate advertises, not a hardcoded one, and picks the first
-article in your credits (`--slug` to choose). The payment is the offline mock signature, so
-nothing moves, and against a gate already in `gateway` mode it says so rather than failing.
-
-Watch the toll work (mock settlement, so no wallet or API keys needed):
-
-```bash
-# a human reads for free → proxied straight through
-curl -H 'accept: text/html' -A 'Mozilla/5.0' localhost:8402/essays/on-stillness
-
-# an agent gets a bill
-curl -A 'python-requests' localhost:8402/essays/on-stillness
-# → 402 { x402Version: 2, resource, accepts: [{ scheme, network, asset, amount, payTo, extra: { nonce } }] }
-
-# a co-authored piece, cited rather than read: 5× the price by default
-# (CITATION_MULTIPLIER), split 2:1
-curl -A 'python-requests' -H 'x-naulon-kind: citation' localhost:8402/essays/the-naulon
-```
-
-The agent then signs a payment, echoes the nonce back in a `payment-signature` header,
-and retries. The gate verifies it, serves the article, and records who earned
-what.
-
-### The paying agent
-
-The [Wayfarer](./packages/wayfarer) automates that whole loop, and makes a real
-budget decision at each step rather than paying for everything:
-
-```bash
-npm run tollgate &                                   # in one shell
-npm run wayfarer -- "payment and passage"            # in another
-```
-
-```text
-appraisal:
-  · the-naulon: relevance 1.00, shares 2/2 topic terms (payment, passage)
-  · on-stillness: relevance 0.00, no topic-term overlap
-decisions:
-  [PAY]  the-naulon, relevance 1.00 @ $0.005 (density 200); $0.095 left
-  [SKIP] on-stillness, relevance 0.00 below floor 0.35
-  ✓ paid $0.005000 for the-naulon
-→ earnings: ava 0.00333 / guest 0.00167   (the 2:1 co-author split, settled)
-```
-
-It ranks candidates by relevance-per-dollar, buys greedily under the budget down
-to a relevance floor, reuses anything already cached, and logs *why* for each:
-the reasoning is the artifact. It runs offline against mock settlement; set
-`OPENAI_API_KEY` for LLM appraisal and answer synthesis instead of the keyword
-heuristic.
-
-### The operator console
-
-```bash
-npm run dashboard                         # http://localhost:8403
-```
-
-Your window onto the gate: health, live toll traffic (served free / denied /
-paid), settlement earnings, and a config-sanity panel, so you can see your proxy
-actually working. Two of its pages also write: Content edits `credits.json` (who
-gets paid) and Crawlers edits the crawler policy (who reads free, pays, or is
-refused). It reads the gate's observation log (set
-`OBSERVATIONS_BACKEND=jsonl`) and event ledger. Private on `127.0.0.1` by default;
-making it reachable at all, through a wider bind, a reverse proxy or a serverless deploy,
-needs `DASHBOARD_AUTH`, and `DASHBOARD_PUBLIC=true` serves only a masked public
-earnings page. Full guide: [docs/operating.md](./docs/operating.md).
-
-### Settling payouts
-
-```bash
-npm run attribution        # one settlement pass over the ledger
-```
-
-Sub-cent tolls aren't worth settling one at a time, so the service accrues each
-author's share across many events and only cuts a payout once it clears
-`MIN_PAYOUT_USDC`, carrying the rest forward. Settlement is tracked per
-`(event, author)`, so a co-author whose small share is still below the floor
-keeps accruing while their co-author gets paid; nothing is double-paid or lost.
-Mock settlement runs offline; real Circle Gateway batching needs a funded testnet
-wallet to exercise live (`PAYMENT_MODE=gateway`).
-
-## Use it with your own site
-
-Nothing here is tied to a particular publisher. You wire up two things:
-
-- **`ORIGIN_URL`**: the site to sit in front of.
-- **A credits source**: how an article slug maps to its author wallet(s).
-  Point `CREDITS_API_URL` at your CMS (it serves `/credits/:slug`), or ship a
-  static `credits.json`. For anything custom, implement the one-method
-  `CreditsResolver` interface from `@naulon/shared`.
-
-A complete worked example lives in
-[`examples/meridian/`](./examples/meridian), a fictional essays publisher.
-Copy that folder, swap the origin and credits, and you have your own toll.
-[`examples/cascade/`](./examples/cascade) is a second adapter for a different
-kind of publisher (a different origin, path prefix, and a deeper credits graph),
-proving the same core is publisher-agnostic with zero code changed.
-
-For building the publisher side, the kit `@naulon/sdk` packages both
-endpoints, the credits resolver and the HMAC-verified webhook receiver, with
-drop-in adapters for Next.js (`/next`) and Express (`/express`), and a
-`naulon-kit check` CLI that conformance-tests your live `/credits` endpoint against
-the contract. Start with the
-[integration guide](./docs/integration-guide.md); the two wire contracts are
-[credits-api.md](./docs/credits-api.md) and
-[settlement-notifications.md](./docs/settlement-notifications.md), and a runnable consumer is
-in [`packages/sdk/examples/next-credits/`](./packages/sdk/examples/next-credits).
-
-### Webhooks (settlement notifications)
-
-Point the gate at one or more of your own HTTPS endpoints and it POSTs a signed
-`settlement.completed` after every paid read. Set `NAULON_WEBHOOK_ENDPOINTS` to a
-JSON array:
-
-```
-NAULON_WEBHOOK_ENDPOINTS='[{"url":"https://you.example/naulon-hook","secret":"whsec_…","events":["settlement.completed"],"hostFilter":null}]'
-```
-
-Each endpoint gets a `Naulon-Signature: t=<unix>,v1=<hex>` header: HMAC-SHA256 over
-`${t}.${rawBody}`, keyed by your `secret`. Verify it with `verifyPayload` from
-`@naulon/sdk`, or take the whole receiver (verify + the mandatory dedupe) with
-`createWebhookReceiver`. Endpoints must be HTTPS; delivery retries with backoff and is
-a no-op when the env is unset. Full contract:
-[settlement-notifications.md](./docs/settlement-notifications.md).
-
-<!-- naulon-docs: deleted-names CREDITS_SETTLEMENT_SECRET -->
-
-**This is the only settlement-notification path.** The gate used to *also* POST a
-signed settlement straight at the publisher's origin; that wire was deleted (WH-1 P3)
-along with `CREDITS_SETTLEMENT_SECRET` and the eleven `SETTLEMENT_*` knobs that tuned
-it. One fact, one delivery mechanism.
-
-## What's here
-
-A small npm-workspaces monorepo. Each piece is independent and runs on its own.
-
-| Package | What it does |
-|---|---|
-| [`tollgate`](./packages/tollgate) | The x402 reverse proxy: human/agent detection, the `402` challenge, payment verification, and the attributed-event log. |
-| [`wayfarer`](./packages/wayfarer) | An autonomous research agent that decides which articles are worth paying to cite under a budget, then pays. |
-| [`attribution`](./packages/attribution) | Batches sub-cent tolls per wallet and settles author payouts (mock, or real Circle Gateway via `PAYMENT_MODE`). |
-| [`dashboard`](./packages/dashboard) | The operator console: gate health, live toll traffic, earnings, and config sanity (plus an opt-in public earnings page). |
-
-Under those sit three libraries the runnable pieces share:
-[`sdk`](./packages/sdk) (the publisher contract + crawl engine),
-[`shared`](./packages/shared) (domain types, config, the split algorithm), and
-[`enforce`](./packages/enforce) (the runtime-agnostic toll-decision kernel). There's
-also [`wayfarer-mcp`](./packages/wayfarer-mcp), which exposes the paying agent as an
-MCP server.
-
-**How the packages layer.** Arrows point to what a package depends on. The
-dependency graph is strictly one-directional; nothing lower reaches up.
-
-```mermaid
-flowchart TD
-    tollgate["tollgate<br/><i>the gate</i>"]
-    wayfarer["wayfarer<br/><i>paying agent</i>"]
-    wmcp["wayfarer-mcp<br/><i>MCP server</i>"]
-    attribution["attribution<br/><i>settlement</i>"]
-    dashboard["dashboard<br/><i>console</i>"]
-    enforce["enforce<br/><i>decision kernel</i>"]
-    shared["shared<br/><i>contract + split math</i>"]
-    sdk["sdk<br/><i>publisher kit + crawl</i>"]
-
-    tollgate --> enforce
-    tollgate --> sdk
-    tollgate --> shared
-    wmcp --> wayfarer
-    wayfarer --> shared
-    attribution --> shared
-    dashboard --> sdk
-    dashboard --> shared
-    enforce --> shared
-    enforce --> sdk
-    shared --> sdk
-```
-
-```
-packages/
-  sdk/          publisher contract · framework adapters · crawl engine
-  shared/       types, config, attribution + split math
-  enforce/      runtime-agnostic toll-decision kernel + in-app middleware
-  tollgate/     proxy · agentDetect · x402 · pricing · credits · eventLog
-  wayfarer/     the paying agent
-  wayfarer-mcp/ the paying agent as an MCP server
-  attribution/  settlement + payouts
-  dashboard/    operator console
-examples/
-  meridian/     worked example: a fictional publisher adapter
-  cascade/      second adapter: proves the core is publisher-agnostic
-scripts/        dev stack runner · self-contained demo · wallet generator
-Makefile · Dockerfile · docker-compose.yml
-```
-
-## Develop
-
-```bash
-npm run lint     # typecheck the whole workspace
-npm test         # unit tests (attribution splits, dust-free settlement, …)
-npm run tollgate # or: wayfarer · attribution · dashboard
-```
-
-Everything runs straight from TypeScript via [`tsx`](https://github.com/privatenumber/tsx),
-with no build step while developing.
+It runs offline on mock settlement and a keyword appraisal; set `OPENAI_API_KEY` for model
+appraisal and answers. [`@naulon/wayfarer-mcp`](./packages/wayfarer-mcp) exposes the same agent
+as an MCP server, and [docs/buying.md](./docs/buying.md) covers both.
 
 ## Going live on Arc
 
-Everything above runs in **mock** settlement so you can develop offline. The real
-rail is wired to the Circle Gateway batching SDK (`@circle-fin/x402-batching`),
-Arc-first. Flip `PAYMENT_MODE` to switch:
+Everything above runs on **mock** settlement. Real money moves through the Circle Gateway
+batching SDK (`@circle-fin/x402-batching`), Arc first:
 
 ```bash
-make generate-wallets         # a buyer + author wallet; fund the buyer via the Circle faucet on Arc
-# put PAYMENT_MODE=gateway and BUYER_PRIVATE_KEY in .env
-PAYMENT_MODE=gateway make wayfarer TOPIC="payment and passage"
+make generate-wallets     # a buyer and an author wallet; fund the buyer from the Circle faucet on Arc
+# then in .env: PAYMENT_MODE=gateway and BUYER_PRIVATE_KEY
 ```
 
-- **Seller (tollgate):** `BatchFacilitatorClient.verify` / `.settle` against the
-  Arc GatewayWallet (`0x0077777d7EBA…`, network `eip155:5042002`, Arc testnet). No seller key,
-  because Gateway settles the buyer's deposit into the author's own Gateway balance. Custody-free:
-  only the author's wallet can withdraw it, at [naulon.app/earnings](https://naulon.app/earnings)
-  or with Circle's Gateway API directly. If you build an author screen, link the former there.
-- **Buyer (wayfarer):** `GatewayClient.deposit` once, then `.pay()` per citation
-  runs the full deposit-backed 402 flow (gasless, batched, <500ms finality).
-- **One payment, one `payTo`.** x402 settles to a single address, so the on-chain
-  leg pays the article's primary author; the recursive co-author split is the
-  attribution layer's job (its onward payouts). The split is always recorded.
-- **Network.** `SETTLEMENT_NETWORK` picks the chain: `arcTestnet` (default),
-  `baseSepolia`, or `base`. Arc is the first-class rail (it ships the Memo
-  contract that carries the citation reference); the full Circle chain registry,
-  Arc mainnet included, lives in
-  [`shared/src/networks.ts`](./packages/shared/src/networks.ts), and chains light
-  up as live settlement is verified on each.
+- **Custody-free.** The buyer's deposit settles into the author's own Gateway balance. The gate
+  holds no key and no money, and only the author's wallet can withdraw.
+- **One payment, one `payTo`.** x402 settles to a single address, so the on-chain leg pays the
+  article's primary author; the attribution layer pays the rest of the split onward. The split
+  is always recorded.
+- **Network.** `SETTLEMENT_NETWORK` picks the chain: `arcTestnet` (the default), `baseSepolia`
+  or `base`. The full Circle chain registry, Arc mainnet included, lives in
+  [`networks.ts`](./packages/shared/src/networks.ts), and chains turn on as live settlement is
+  verified on each.
+
+The headers (`PAYMENT-REQUIRED`, `payment-signature`, `PAYMENT-RESPONSE`) and the Arc constants
+match `circlefin/arc-nanopayments`, so a stock Gateway client pays this gate unmodified.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant A as Agent (wayfarer)
-    participant G as Gate (tollgate)
+    participant A as Agent
+    participant G as Gate
     participant C as Circle Gateway (Arc)
     participant Au as Author wallet
 
     A->>G: GET /essays/the-naulon
-    G-->>A: 402 · price · payTo · nonce · Link: /.well-known/x402
-    Note over A: appraise relevance-per-dollar, decide to pay under budget
-    A->>C: GatewayClient.pay(): deposit-backed, gasless
-    A->>G: retry + payment-signature (signature, nonce)
-    G->>C: BatchFacilitatorClient.verify + settle
-    C->>Au: USDC settles buyer → author (custody-free)
-    G-->>A: 200 · content + Citation License Token
+    G-->>A: 402 · price · payTo · nonce
+    Note over A: decide under budget
+    A->>C: pay (deposit-backed, gasless)
+    A->>G: retry with payment-signature
+    G->>C: verify and settle
+    C->>Au: USDC, buyer to author
+    G-->>A: 200 · the page and a citation licence
 ```
 
-The header contract (`PAYMENT-REQUIRED` / `payment-signature` / `PAYMENT-RESPONSE`)
-and Arc constants mirror `circlefin/arc-nanopayments`, so a stock Gateway client
-pays this gate unmodified. Both modes typecheck against the real SDK; the gateway
-path needs a funded testnet wallet to exercise live.
+## Packages
 
-**Self-describing toll.** The gate advertises its own terms so an agent can find
-them without being told the endpoint out of band. Every `402` carries a `Link:
-</.well-known/x402>; rel="payment"` header, and `GET /.well-known/x402` returns a
-machine-readable manifest: article path prefixes, read and citation price, the Arc
-network + USDC asset, and the JWKS/verify URLs. It names no author wallet: `payTo`
-is resolved per article from the credits graph at payment time.
+| Package | What it does | npm |
+|---|---|---|
+| [`enforce`](./packages/enforce) | The toll decision as one pure function, plus in-app middleware with a Next.js adapter | [![](https://img.shields.io/npm/v/@naulon/enforce?label=&color=black)](https://www.npmjs.com/package/@naulon/enforce) |
+| [`sdk`](./packages/sdk) | The publisher kit: the credits endpoint and webhook receiver for Next.js and Express, the `naulon` CLI, and the crawl engine | [![](https://img.shields.io/npm/v/@naulon/sdk?label=&color=black)](https://www.npmjs.com/package/@naulon/sdk) |
+| [`shared`](./packages/shared) | Types, config, and the attribution and split math | [![](https://img.shields.io/npm/v/@naulon/shared?label=&color=black)](https://www.npmjs.com/package/@naulon/shared) |
+| [`extract`](./packages/extract) | Deterministic article extraction to markdown for paid reads, with no network and no model | [![](https://img.shields.io/npm/v/@naulon/extract?label=&color=black)](https://www.npmjs.com/package/@naulon/extract) |
+| [`wayfarer`](./packages/wayfarer) | The paying research agent | [![](https://img.shields.io/npm/v/@naulon/wayfarer?label=&color=black)](https://www.npmjs.com/package/@naulon/wayfarer) |
+| [`wayfarer-mcp`](./packages/wayfarer-mcp) | The paying agent as an MCP server | [![](https://img.shields.io/npm/v/@naulon/wayfarer-mcp?label=&color=black)](https://www.npmjs.com/package/@naulon/wayfarer-mcp) |
+| [`tollgate`](./packages/tollgate) | The gate: the reverse proxy, the `402`, payment verification and the event log | Docker |
+| [`dashboard`](./packages/dashboard) | The operator console shown above | Docker |
+| [`attribution`](./packages/attribution) | Batches sub-cent tolls and settles author payouts | in the repo |
+| [`plugins/naulon`](./plugins/naulon) | The WordPress plugin | [`naulon.zip`](https://github.com/naulonapp/naulon/releases/latest/download/naulon.zip) |
 
-```bash
-curl localhost:8402/.well-known/x402
-# → { x402Version, humansReadFree, resources:{pathPrefixes,kinds}, payment:{network,asset,price}, license }
-```
+The dependency graph points one way: `sdk` at the bottom, then `shared`, then `enforce`, with
+the runnable pieces on top. Nothing lower reaches up.
 
-## Deploying in front of a live site
+## Use it with your own site
 
-`make demo` and `make dev` need nothing but a JSONL ledger and in-process state. To
-host the gate + dashboard on a serverless platform (Vercel) in front of a real
-site, swap those two pieces of state for **Supabase** (`EVENTS_BACKEND=supabase`,
-`NONCE_BACKEND=supabase`) so every instance shares one ledger and nonce set.
-Step-by-step (Vercel projects, Supabase schema, DNS): **[DEPLOY.md](./DEPLOY.md)**.
+Nothing here is tied to one publisher. You wire up two things:
 
-**Self-host or hosted.** Everything in this repo runs standalone, so you own the
-gate. If you'd rather not run the infrastructure, [naulon.app](https://naulon.app)
-operates a managed fleet that speaks the same protocol: you point your site at it
-and declare your credits URL exactly as the [integration guide](./docs/integration-guide.md)
-shows, then serve the same two endpoints. Same toll, same custody-free settlement, and
-nothing here is held back to push you toward it.
+- **`ORIGIN_URL`**: the site the gate sits in front of.
+- **A credits source**: how a page maps to its author wallets. Point `CREDITS_API_URL` at your
+  CMS, ship a static `credits.json`, or implement the one-method `CreditsResolver`.
 
-## Design notes
+[`examples/meridian`](./examples/meridian) is a complete adapter for a fictional essays site, and
+[`examples/cascade`](./examples/cascade) is a second one with a different origin, path and a deeper
+credits graph, on the same core with no code changed. The gate can also POST a signed
+`settlement.completed` to your own endpoint after every paid read; `@naulon/sdk` verifies it.
 
-- **Custody-free.** Payments go agent → author. The toll never pools USDC in a
-  wallet the operator controls, which keeps them clear of money-transmission rules.
-- **Conservative classifier.** Mistaking a human for a machine paywalls a reader
-  and breaks the whole promise; mistaking a machine for a human just misses a
-  fraction of a cent. So [`agentDetect`](./packages/enforce/src/agentDetect.ts)
-  is tuned to favor humans, and declared intent (an agent that *says* it'll pay)
-  is trusted over fragile user-agent sniffing.
-- **No secrets in the repo.** Credentials live in `.env` (gitignored); only
-  `.env.example` ships.
+## Docs
 
-## Hardening
+| Doc | What it covers |
+|---|---|
+| [Integration guide](./docs/integration-guide.md) | The two endpoints you serve, in Next.js or Express |
+| [Credits API](./docs/credits-api.md) | `GET /credits/:slug`: a page in, an author split out, `404` for free |
+| [Settlement notifications](./docs/settlement-notifications.md) | The signed webhook and its HMAC check |
+| [Operating a gate](./docs/operating.md) | The console, exposing it safely, Docker tags, hardening |
+| [Configuration](./docs/configuration.md) | Every environment variable and its default |
+| [Crawler policy](./docs/crawler-policy.md) | Allow, charge or block per crawler, and verified bot identity |
+| [Buying](./docs/buying.md) | The Wayfarer agent and the MCP server |
+| [Citation licence](./docs/citation-license.md) | The licence an agent gets with a paid read, and how to verify it |
+| [Deploying on Vercel + Supabase](./DEPLOY.md) | The gate on serverless, in front of a live site |
 
-The gate is built to sit on the public internet in front of a real site:
+## Security
 
-- **Replay-proof payments.** Every `402` carries a fresh, HMAC-signed nonce bound
-  to the price + payee; the agent echoes it in its payment and the gate spends it
-  exactly once ([`nonce.ts`](./packages/enforce/src/nonce.ts)). A captured
-  `payment-signature` can't be replayed for a free read, and a cheap nonce can't
-  be swapped onto a pricier resource. Mandatory in mock mode; live, the
-  deposit-backed Circle Gateway settlement is the chain-level guarantor.
-- **Rate limiting.** A per-client token bucket
-  ([`rateLimit.ts`](./packages/tollgate/src/rateLimit.ts)) caps request floods.
-  Client identity is the socket peer IP; `X-Forwarded-For` is trusted when
-  `TRUST_PROXY=true` (set it iff you run behind a proxy you control), and read from
-  the RIGHT of the trail, so a client-supplied entry is never the key. Where there is
-  no socket at all, as on a serverless adapter, the header is used regardless, because a
-  caller able to forge it would have had a socket.
-- **Header hygiene.** The proxy strips hop-by-hop and internal `x-naulon-*` /
-  payment headers before forwarding upstream, and re-derives `X-Forwarded-*` /
-  `Host` itself so a client can't spoof its origin IP or host to the backend.
-- **Validated trust boundary.** Credits (which decide *who gets paid*) are parsed
-  through a strict schema before any wallet becomes a `payTo`, so a malformed or
-  hostile credits source is rejected, not settled
-  ([`shared/credits.ts`](./packages/shared/src/credits.ts)).
-- **Dashboard exposure.** The operator console shows wallets, earnings and traffic,
-  **and it writes**: the Content page rewrites `credits.json` (who gets paid) and
-  the Crawlers page rewrites the crawler policy (whether a bot is charged at all).
-  Treat access to it as access to your payout configuration, not as a read-only
-  leak. Every state-changing route is a POST behind a same-origin check, so a third
-  party's page cannot drive it; a credential that reaches it can. Exposure is
-  therefore deliberate. It binds `127.0.0.1` by default
-  (private). Make it reachable, through a wide bind or a non-loopback name in
-  `DASHBOARD_ALLOWED_HOSTS`, which is how a reverse proxy and a serverless deploy
-  both announce themselves, and it **requires** `DASHBOARD_AUTH=user:pass` (HTTP
-  Basic), refusing to serve rather than leak. Failed sign-ins are metered, since
-  Basic carries no lockout of its own. `DASHBOARD_PUBLIC=true` serves only a masked
-  earnings page. The gate (`:8402`) is built to face the internet; the console
-  (`:8403`) is not. See [docs/operating.md](./docs/operating.md).
+The gate is built to face the internet: every `402` carries a single-use, HMAC-signed nonce
+bound to the price and payee, so a captured payment cannot be replayed or moved to a dearer
+page. Requests are rate limited per client, hop-by-hop and internal headers are stripped before
+anything reaches your origin, and credits are validated before any wallet becomes a `payTo`.
+The console is not meant to face the internet: it can rewrite who gets paid, so it binds to
+loopback and refuses to serve on a wider address without a credential. The full list is in
+[docs/operating.md](./docs/operating.md).
 
-Hardening knobs (all optional, with safe defaults shown), add to `.env`:
-
-```bash
-TOLLGATE_SECRET=          # HMAC secret for 402 nonces; ephemeral if unset (set for multi-instance)
-NONCE_TTL_SECONDS=300     # how long a 402 nonce stays valid (also the replay window)
-RATE_LIMIT_RPM=120        # sustained per-client requests/min; 0 disables
-RATE_LIMIT_BURST=40       # short-burst allowance before 429
-TRUST_PROXY=false         # trust X-Forwarded-For for client IP (only behind your own proxy)
-DASHBOARD_BIND=127.0.0.1  # dashboard interface; localhost-only by default (set 0.0.0.0 only behind your own auth)
-PRIMARY_PAYEE_TIEBREAK=wallet  # on-chain recipient on a top-share tie: by address (order-independent) or "input"
-```
-
-> Nonce + rate-limit state is in-process. For a multi-instance deployment, set a
-> shared `TOLLGATE_SECRET` and back both with a shared store (e.g. Redis).
+Found a vulnerability? Report it privately as [SECURITY.md](./SECURITY.md) describes, not in a
+public issue.
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, conventions, and PR rules.
+Issues and pull requests are welcome. [CONTRIBUTING.md](./CONTRIBUTING.md) covers the setup,
+the conventions and how a change is merged. `make lint && make test` is the check every pull
+request runs.
 
 ## License
 
-[MIT](./LICENSE).
+[MIT](./LICENSE). The WordPress plugin is GPLv2 or later, as WordPress requires.
 
----
-
-<sub>Arc is a trademark of Circle Internet Group, Inc. and/or its affiliates.
-naulon is an independent project, not endorsed by or affiliated with Circle.</sub>
+<sub>Arc is a trademark of Circle Internet Group, Inc. and/or its affiliates. naulon is an
+independent project, not endorsed by or affiliated with Circle.</sub>

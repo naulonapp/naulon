@@ -336,3 +336,61 @@ Every byte the console loads comes off your own box. Its fonts ship in
 `packages/dashboard/src/public/fonts` (SIL OFL), so it runs under a strict
 `default-src 'self'` CSP and never calls a CDN, so an air-gapped box serves it
 exactly as a connected one does.
+
+## Running it in Docker
+
+The gate and the console ship as one public image, `ghcr.io/naulonapp/naulon`, with no registry
+login. `docker-compose.yml` runs both services from it, under an unprivileged user, sharing one
+ledger volume. Your `credits.json` is mounted read-only from `./config` rather than baked into the
+image: a gate that fell back to an example's wallets would settle real money to a fixture address.
+
+Compose follows `:latest`, which each release moves. Pin a release with `NAULON_TAG=v0.14.3` in
+`.env`, or follow `main` between releases with `NAULON_TAG=edge`.
+
+Inside its container the console binds wide, because `127.0.0.1` there is unreachable from your
+host, and compose publishes it on your loopback only. Since the socket is no longer evidence of
+privacy, the console requires a credential before it serves: the `CONSOLE_ADMIN_PASSWORD` that
+`naulon init` generates (sign in as `admin` and choose a new one), or `DASHBOARD_AUTH=user:pass`
+for HTTP Basic.
+
+To build the image from a working tree instead: `make docker-build`.
+
+## Hardening the gate
+
+The gate (`:8402`) is built to face the public internet in front of a real site. The console
+(`:8403`) is not.
+
+- **Replay-proof payments.** Every `402` carries a fresh, HMAC-signed nonce bound to the price and
+  payee. The agent echoes it in its payment and the gate spends it exactly once
+  ([`nonce.ts`](../packages/enforce/src/nonce.ts)), so a captured `payment-signature` buys nothing
+  twice and a cheap nonce cannot be moved onto a dearer page. It is mandatory in mock mode; live,
+  the deposit-backed Gateway settlement is the chain-level guarantee.
+- **Rate limiting.** A per-client token bucket ([`rateLimit.ts`](../packages/tollgate/src/rateLimit.ts))
+  caps floods. The client is the socket peer, and `X-Forwarded-For` is trusted only when
+  `TRUST_PROXY=true` (set it only behind a proxy you control), read from the right of the trail
+  so a client-supplied entry is never the key. With no socket at all, as on a serverless adapter,
+  the header is used, because a caller able to forge it would have had a socket.
+- **Header hygiene.** Hop-by-hop headers and the internal `x-naulon-*` and payment headers are
+  stripped before forwarding, and `X-Forwarded-*` and `Host` are rebuilt by the gate, so a client
+  cannot spoof its address or host to your origin.
+- **A validated trust boundary.** Credits decide who gets paid, so they pass a strict schema
+  before any wallet becomes a `payTo`; a malformed or hostile credits source is refused, not
+  settled ([`credits.ts`](../packages/shared/src/credits.ts)).
+- **The console writes.** The Content page rewrites `credits.json` and the Crawlers page rewrites
+  the crawler policy, so treat access to it as access to your payout configuration. Every change
+  is a POST behind a same-origin check, and the exposure rules above decide who can reach it.
+
+The knobs, all optional, with their defaults ([configuration.md](./configuration.md) has each one):
+
+```bash
+TOLLGATE_SECRET=          # HMAC secret for 402 nonces; ephemeral if unset (set it for more than one instance)
+NONCE_TTL_SECONDS=300     # how long a 402 nonce stays valid, which is also the replay window
+RATE_LIMIT_RPM=120        # sustained requests per client per minute; 0 disables
+RATE_LIMIT_BURST=40       # short-burst allowance before 429
+TRUST_PROXY=false         # trust X-Forwarded-For for the client address (only behind your own proxy)
+DASHBOARD_BIND=127.0.0.1  # the console's interface; loopback unless you add your own auth
+PRIMARY_PAYEE_TIEBREAK=wallet  # on-chain recipient on a top-share tie: by address, or "input"
+```
+
+Nonce and rate-limit state live in the process. For more than one instance, set a shared
+`TOLLGATE_SECRET` and back both with a shared store.
