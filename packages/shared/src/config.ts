@@ -3,7 +3,7 @@
  * rather than mid-payment. Secrets never get a default.
  */
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
 import { FLEET_DIRECTORY_URL, FLEET_VERIFY_URL } from "./fleet.ts";
@@ -584,16 +584,47 @@ export type Config = z.infer<typeof configSchema>;
 
 let cached: Config | undefined;
 
-export function getConfig(): Config {
-  if (cached) return cached;
-  const parsed = configSchema.safeParse(process.env);
+/**
+ * Settings that name a file. A relative value is read from the repo root, the directory the .env
+ * lives in, never from the process's cwd: npm workspaces run each package with its own cwd, so
+ * `./examples/meridian/credits.json` would resolve inside `packages/tollgate/` and the gate would
+ * find no credits and toll nothing. `naulon doctor` and `selftest` already read them this way.
+ */
+export const FILE_PATH_KEYS = [
+  "CREDITS_FIXTURES",
+  "CRAWLER_POLICY_PATH",
+  "WEBHOOK_DELIVERIES_PATH",
+  "WAYFARER_LICENSE_PATH",
+  "CONSOLE_STATE_PATH",
+  "EVENTS_PATH",
+  "OBSERVATIONS_PATH",
+  "PAYOUTS_PATH",
+] as const satisfies readonly (keyof Config)[];
+
+/**
+ * Validate an environment. A blank value (`GATEWAY_API_URL=` in a copied .env.example) means unset,
+ * as `requireKeys` already treats it, rather than an invalid URL that stops the gate at boot.
+ */
+export function parseEnv(env: Record<string, string | undefined>, root: string = REPO_ROOT): Config {
+  const present = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined && v.trim() !== ""));
+  const parsed = configSchema.safeParse(present);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  ${i.path.join(".")}: ${i.message}`)
       .join("\n");
     throw new Error(`Invalid environment:\n${issues}\nSee .env.example.`);
   }
-  cached = parsed.data;
+  const cfg = parsed.data;
+  for (const key of FILE_PATH_KEYS) {
+    const value = cfg[key];
+    if (typeof value === "string" && !isAbsolute(value)) (cfg as Record<string, unknown>)[key] = resolve(root, value);
+  }
+  return cfg;
+}
+
+export function getConfig(): Config {
+  if (cached) return cached;
+  cached = parseEnv(process.env);
   return cached;
 }
 

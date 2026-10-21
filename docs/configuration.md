@@ -14,6 +14,15 @@ would miss the root file and fall back to defaults, meaning mock payments and an
 ephemeral signing key, without saying anything. The root is found by walking up until a
 `package-lock.json` appears.
 
+Two rules make a straight `cp .env.example .env` work as written:
+
+- **A blank value is unset.** `EDGE_SECRET=` reads the same as leaving the line out, so it
+  takes the default (or stays off) instead of failing validation as an empty string.
+- **A relative file path is read from the repo root**, the same root `.env` is found from.
+  `CREDITS_FIXTURES=./examples/meridian/credits.json` resolves to the same file whether the
+  gate starts from the root or from `packages/tollgate`. This covers every `*_PATH` setting
+  and `CREDITS_FIXTURES`; absolute paths are left alone.
+
 Everything is validated with zod at first `getConfig()`, and an invalid value throws
 before the process serves a request. The point is to fail at boot, not mid-payment.
 Tests run with `NODE_ENV=test` and deliberately do **not** load your `.env`, so a

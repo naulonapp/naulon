@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { configSchema, getConfig, OSS_BUYER_GUIDE_URL, resetConfig } from "./config.ts";
+import { configSchema, FILE_PATH_KEYS, getConfig, OSS_BUYER_GUIDE_URL, parseEnv, resetConfig } from "./config.ts";
 
 function issuePaths(env: Record<string, string>): string[] {
   const r = configSchema.safeParse(env);
@@ -163,4 +163,35 @@ test("a buyer URL that would corrupt a Link header is refused at boot", () => {
   for (const bad of ["https://g.example/a>b", "https://g.example/a,b", "https://g.example/a;b", 'https://g.example/a"b', "https://g.example/a b"]) {
     assert.deepEqual([...new Set(issuePaths({ BUYER_GUIDE_URL: bad }))], ["BUYER_GUIDE_URL"], bad);
   }
+});
+
+// The quick start is `cp .env.example .env`. Whatever the example says, that copy has to boot.
+test("a straight copy of .env.example parses", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { parse } = await import("dotenv");
+  const { join } = await import("node:path");
+  const example = parse(readFileSync(join(import.meta.dirname, "../../../.env.example"), "utf8"));
+  assert.doesNotThrow(() => parseEnv(example, "/srv/naulon"));
+});
+
+test("a blank value means unset: the default applies and a URL key is not invalid", () => {
+  const cfg = parseEnv({ GATEWAY_API_URL: "", EDGE_SECRET: "   ", INGRESS_HOST: "", TOLLGATE_PORT: "" }, "/srv/naulon");
+  assert.equal(cfg.GATEWAY_API_URL, undefined);
+  assert.equal(cfg.EDGE_SECRET, undefined);
+  assert.equal(cfg.TOLLGATE_PORT, configSchema.parse({}).TOLLGATE_PORT);
+});
+
+test("a relative file path is read from the repo root, not from the package that is running", () => {
+  const cfg = parseEnv({ CREDITS_FIXTURES: "./examples/meridian/credits.json", EVENTS_PATH: "data/events.jsonl" }, "/srv/naulon");
+  assert.equal(cfg.CREDITS_FIXTURES, "/srv/naulon/examples/meridian/credits.json");
+  assert.equal(cfg.EVENTS_PATH, "/srv/naulon/data/events.jsonl");
+});
+
+test("an absolute file path is left alone", () => {
+  assert.equal(parseEnv({ EVENTS_PATH: "/data/events.jsonl" }, "/srv/naulon").EVENTS_PATH, "/data/events.jsonl");
+});
+
+test("every file-path key is a real setting", () => {
+  const known = Object.keys(configSchema.shape);
+  for (const k of FILE_PATH_KEYS) assert.ok(known.includes(k), `${k} is not in configSchema`);
 });
