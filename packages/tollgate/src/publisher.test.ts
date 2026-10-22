@@ -173,3 +173,41 @@ test("an unrecognized host is refused, never misrouted", async () => {
   });
   assert.equal(res.status, 502, "unknown host fails closed");
 });
+
+test("an unknownHost hook answers for a host nothing resolves", async () => {
+  const seen: string[] = [];
+  const hooked = createApp(resolver, {
+    unknownHost: (c, host) => {
+      seen.push(host);
+      return host === "fleet.example" ? c.json({ error: "not_found" }, 404) : undefined;
+    },
+  });
+  const own = await hooked.request("/favicon.ico", { headers: { host: "fleet.example" } });
+  assert.equal(own.status, 404, "the hook's answer is the response");
+  const other = await hooked.request("/favicon.ico", { headers: { host: "unknown.example" } });
+  assert.equal(other.status, 502, "undefined keeps the fail-closed default");
+  assert.deepEqual(seen, ["fleet.example", "unknown.example"]);
+});
+
+test("an unknownHost hook is never consulted for a host that resolves", async () => {
+  let called = false;
+  const hooked = createApp(resolver, {
+    unknownHost: () => {
+      called = true;
+      return new Response("hijacked", { status: 200 });
+    },
+  });
+  const res = await hooked.request("/", { headers: { host: "a.example", "x-naulon-agent": "tester" } });
+  assert.notEqual(await res.text(), "hijacked");
+  assert.equal(called, false);
+});
+
+test("an unknownHost hook that throws still fails closed", async () => {
+  const hooked = createApp(resolver, {
+    unknownHost: () => {
+      throw new Error("boom");
+    },
+  });
+  const res = await hooked.request("/", { headers: { host: "unknown.example" } });
+  assert.equal(res.status, 502);
+});
