@@ -459,8 +459,8 @@ function envIngress(resolver: PublisherResolver): IngressOptions | undefined {
  * answers every host); an injected resolver returns undefined for a host it
  * doesn't recognize. Fail closed: refuse with a generic 502 and leak nothing about
  * which hosts ARE served. Don't proxy a request we can't attribute — a misrouted
- * read would settle to the wrong author or to no one. A resolver that recognizes
- * more hosts can return a branded page or a redirect instead of this default.
+ * read would settle to the wrong author or to no one. A downstream host replaces
+ * this answer for hosts of its own through `CreateAppOptions.unknownHost`.
  */
 function handleUnknownHost(c: Context, _host: string): Response {
   return c.text("This host is not served by the naulon gate.", 502);
@@ -528,6 +528,18 @@ export interface CreateAppOptions {
 
   /** Per-install crawler identity arming. Default: in memory (re-arms from zero on restart). */
   arming?: ArmingStore;
+
+  /**
+   * Optional host seam: the answer for a request whose Host no publisher resolves to.
+   *
+   * The default refuses with a generic 502 that names no served host. A downstream host that runs
+   * the gate under hostnames of its own, which no publisher fronts, can answer those itself: a 404
+   * for a path its own host does not serve is the true answer, where a 502 tells a client to retry.
+   * Return `undefined` to keep the default. Called only after resolution has failed, so it cannot
+   * make a host routable; a hook that throws is treated as `undefined`. Omitting it is
+   * byte-identical to before the option existed.
+   */
+  unknownHost?: (c: Context, host: string) => Response | undefined | Promise<Response | undefined>;
 }
 
 export function createApp(
@@ -542,6 +554,18 @@ export function createApp(
     throw new Error(`ingress host must be a bare lowercase hostname, got ${JSON.stringify(ingress.host)}`);
   }
   const onUpstreamOutcome = opts?.onUpstreamOutcome;
+  const unknownHost = opts?.unknownHost;
+  const refuseHost = async (c: Context, host: string): Promise<Response> => {
+    if (unknownHost) {
+      try {
+        const answer = await unknownHost(c, host);
+        if (answer) return answer;
+      } catch {
+        // Fail closed: a broken hook must not turn a refusal into a crash.
+      }
+    }
+    return handleUnknownHost(c, host);
+  };
   const resolveInAppConfig = opts?.resolveInAppConfig;
   const rangeFetcher = opts?.crawlerRanges ?? createRangeFetcher({ disabled: cfg.CRAWLER_RANGES === "off" });
   const arming = opts?.arming ?? new MemoryArmingStore();
@@ -628,7 +652,7 @@ export function createApp(
       if (admission.kind === "miss") {
         // A secret that stopped matching (rotated, revoked, site removed) loses its pass.
         if (seenKey !== undefined) admittedBefore.delete(seenKey);
-        return takeIngress(missScope, caller) ?? handleUnknownHost(c, inboundHost);
+        return takeIngress(missScope, caller) ?? refuseHost(c, inboundHost);
       }
       if (seenKey !== undefined && admission.kind === "admitted") {
         if (admittedBefore.size >= ADMITTED_BEFORE_MAX) admittedBefore.clear();
@@ -955,13 +979,13 @@ export function createApp(
     // On the crawler route the outer address is the publisher CDN's egress, never the caller's.
     if (via) return serveGated(c, via.request, path, via.clientIp ?? clientIp, via.siteHost, via.config, true, via.clientIp ?? null);
     // An open path reached with a method its route does not take: nothing to serve on this host.
-    if (ingress && isIngressHost(inboundHost, ingress)) return handleUnknownHost(c, inboundHost);
+    if (ingress && isIngressHost(inboundHost, ingress)) return refuseHost(c, inboundHost);
 
     // Resolve the publisher this Host fronts. Every downstream decision (proxy
     // target, price, payees, license identity, settlement) reads from here.
     const host = inboundHost;
     const publisher = await resolver.resolve(host);
-    if (!publisher) return handleUnknownHost(c, host);
+    if (!publisher) return refuseHost(c, host);
     return serveGated(c, c.req.raw, path, clientIp, host, publisher, false, identityIp);
   });
 
