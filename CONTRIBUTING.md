@@ -68,9 +68,9 @@ earnings. Do not move a test out of it to make it faster.
 Sites install the plugin from the [Plugin Directory](https://wordpress.org/plugins/naulon/),
 which `.github/workflows/wordpress-org.yml` publishes to over SVN:
 
-- A new version ships with a release tag. Bump `Version:` in `naulon.php`, `NAULON_VERSION`
-  and `Stable tag:` in `readme.txt` together, with a changelog entry and an Upgrade Notice
-  (`VersionTest` holds all of that). The tag's release job commits the same `naulon.zip` it
+- A new version ships with a release tag. Bump the version in `naulon.php`, both the
+  header and the constant, and `Stable tag:` in `readme.txt` together, with a changelog
+  entry and an Upgrade Notice (`VersionTest` holds all of that). The tag's release job commits the same `naulon.zip` it
   attaches to the GitHub Release. A version already in the directory is never rewritten.
 - `readme.txt` and `.wordpress-org/` go live when they merge to `main`, because the
   directory renders the readme inside the published version. Merge a readme change only
