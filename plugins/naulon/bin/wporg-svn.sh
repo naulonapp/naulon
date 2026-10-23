@@ -17,8 +17,9 @@
 set -euo pipefail
 
 SLUG=naulon
-SVN_URL="https://plugins.svn.wordpress.org/${SLUG}"
-ASSETS_DIR="$(cd "$(dirname "$0")/../.wordpress-org" && pwd)"
+# Both overridable only so tests/wporg-svn.test.sh can run against a local repository.
+SVN_URL="${WPORG_SVN_URL:-https://plugins.svn.wordpress.org/${SLUG}}"
+ASSETS_DIR="$(cd "${WPORG_ASSETS_DIR:-$(dirname "$0")/../.wordpress-org}" && pwd)"
 
 die() { echo "::error::$*" >&2; exit 1; }
 

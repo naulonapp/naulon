@@ -88,14 +88,13 @@ jobs:
         working-directory: plugins/naulon
         run: composer test
 
-      # The update manifest is written in JavaScript and read in PHP, and each side's own tests
-      # can pass while the two disagree about a field — which reads as "no update available" on
-      # every install, silently. So the real generator's output is fed to the real validator here,
-      # on every push, rather than being discovered at a tag. No fixture: a committed sample of a
-      # generated document would be the second source of truth this feature exists to remove.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      # What reaches wordpress.org is decided by bin/wporg-svn.sh, and a release cannot be taken
+      # back once a site has installed it. Its test runs every branch against a local repository.
+      - name: Test the directory publish (local SVN)
+        working-directory: plugins/naulon
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq subversion
+          tests/wporg-svn.test.sh
 
       # `Requires PHP: 7.4` is a promise to publishers on older hosting, and nothing
       # checked it. php -l needs no vendor tree, so the floor can be honoured even
