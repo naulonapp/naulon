@@ -21,7 +21,8 @@ export SVN_USERNAME=test SVN_PASSWORD=test
 # The listing art, plus two files the directory would not accept as assets.
 export WPORG_ASSETS_DIR="$tmp/art"
 mkdir -p "$WPORG_ASSETS_DIR"
-cp "$plugin/.wordpress-org/icon-128x128.png" "$plugin/.wordpress-org/icon.svg" "$WPORG_ASSETS_DIR/"
+cp "$plugin/.wordpress-org/icon-128x128.png" "$WPORG_ASSETS_DIR/"
+echo '<svg/>' > "$WPORG_ASSETS_DIR/icon.svg"
 echo '<svg/>' > "$WPORG_ASSETS_DIR/banner-772x250.svg"
 echo 'source' > "$WPORG_ASSETS_DIR/notes.txt"
 
