@@ -62,9 +62,19 @@ this working tree rather than a copy, so the integration suite runs the files yo
 just edited.
 
 The integration suite is where anything that only means something against a real
-database is proven: that a cached update manifest is re-validated against the pinned
-download host on every read, and that deleting the plugin keeps the publisher's
-wallets and earnings. Do not move a test out of it to make it faster.
+database is proven, such as deleting the plugin keeping the publisher's wallets and
+earnings. Do not move a test out of it to make it faster.
+
+Sites install the plugin from the [Plugin Directory](https://wordpress.org/plugins/naulon/),
+which `.github/workflows/wordpress-org.yml` publishes to over SVN:
+
+- A new version ships with a release tag. Bump `Version:` in `naulon.php`, `NAULON_VERSION`
+  and `Stable tag:` in `readme.txt` together, with a changelog entry and an Upgrade Notice
+  (`VersionTest` holds all of that). The tag's release job commits the same `naulon.zip` it
+  attaches to the GitHub Release. A version already in the directory is never rewritten.
+- `readme.txt` and `.wordpress-org/` go live when they merge to `main`, because the
+  directory renders the readme inside the published version. Merge a readme change only
+  when it is true of the version sites are running.
 
 `npx @wordpress/env start` still works if you want a browsable site, but its teardown
 has twice emptied the bind-mounted plugin directory, so commit before you run it.
