@@ -303,21 +303,21 @@ jobs:
           mkdir -p _release
           for pkg in $PUBLISHED_PACKAGES; do npm pack -w "@naulon/${pkg}" --pack-destination _release; done
 
-      # The WordPress plugin's ONLY distribution channel until it is listed on
-      # wordpress.org. The portal's domains card and the customer docs both link
-      # `releases/latest/download/naulon.zip` — GitHub's version-free redirector —
-      # so the asset name is load-bearing: it must never gain a version suffix, and
-      # in exchange nothing on the consuming side needs bumping per release.
+      # The one build of the WordPress plugin. It is attached to the GitHub Release
+      # for manual installs, and the wordpress-org job below commits this same zip to
+      # the Plugin Directory, so both channels serve identical bytes. The README links
+      # `releases/latest/download/naulon.zip`, GitHub's version-free redirector, so
+      # the asset name is load-bearing: it must never gain a version suffix.
       #
       # Zipped from a staging dir so the archive has exactly one top-level folder,
       # `naulon/`. WordPress installs a zip by unpacking it into wp-content/plugins/,
       # so a wrong root silently produces a plugin WordPress cannot see.
       #
       # What to leave out is NOT restated here — `plugins/naulon/.distignore` already
-      # owns that list (it is the wordpress.org convention, and the SVN publish will
-      # read the same file). rsync skips its comments and blank lines, and the leading
-      # `/` entries anchor to the transfer root exactly as .distignore means them. Two
-      # copies of "what never ships" would drift the first time either changed.
+      # owns that list (it is the wordpress.org convention). rsync skips its comments
+      # and blank lines, and the leading `/` entries anchor to the transfer root
+      # exactly as .distignore means them. Two copies of "what never ships" would
+      # drift the first time either changed.
       - name: Pack the WordPress plugin
         run: |
           set -euo pipefail
@@ -335,3 +335,23 @@ jobs:
             _release/*.tgz
             _release/naulon.zip
           generate_release_notes: true
+
+      - name: Hand the plugin zip to the wordpress-org job
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: naulon-zip
+          path: _release/naulon.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # After the GitHub Release, so the directory never carries a version the Release lacks. A tag
+  # whose plugin version is already in SVN is a no-op there: most tags ship npm packages only.
+  wordpress-org:
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/wordpress-org.yml
+    with:
+      mode: release
+    permissions:
+      contents: read

@@ -1,0 +1,83 @@
+name: WordPress.org
+
+# Publishes plugins/naulon to the wordpress.org Plugin Directory over SVN. The logic lives in
+# plugins/naulon/bin/wporg-svn.sh; this file only decides which tree that script is handed.
+#
+#   release  a version tag calls this from release.yml with the zip it just attached to the
+#            GitHub Release, so the directory and the Release serve the same bytes. Dispatched by
+#            hand, it publishes the zip on the latest GitHub Release instead, never the branch:
+#            a version only reaches the directory after it has been released here.
+#   listing  readme.txt or the listing art changed on main. Only those reach SVN; the readme is
+#            updated inside the published version's tag, which is the one the directory renders.
+#
+# SVN_USERNAME and SVN_PASSWORD are secrets of the `wordpress-org` environment, which only main
+# and v* tags may deploy to. The password is account-wide on wordpress.org, so no other ref and
+# no pull request ever sees it.
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        default: release
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [listing, release]
+        default: listing
+      dry_run:
+        description: Show what would be committed, commit nothing
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - plugins/naulon/readme.txt
+      - plugins/naulon/.wordpress-org/**
+
+permissions:
+  contents: read
+
+jobs:
+  svn:
+    runs-on: ubuntu-latest
+    environment: wordpress-org
+    # Two runs committing at once would race on the same SVN revision.
+    concurrency:
+      group: wordpress-org
+      cancel-in-progress: false
+    env:
+      MODE: ${{ inputs.mode || 'listing' }}
+      DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Subversion
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq subversion
+
+      - name: The zip this release attached
+        if: env.MODE == 'release' && github.ref_type == 'tag'
+        uses: actions/download-artifact@v4
+        with:
+          name: naulon-zip
+          path: _zip
+
+      - name: The zip on the latest GitHub Release
+        if: env.MODE == 'release' && github.ref_type != 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download --repo "$GITHUB_REPOSITORY" --pattern naulon.zip --dir _zip
+
+      - name: Publish
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = release ]; then
+            unzip -q _zip/naulon.zip -d _zip
+            plugins/naulon/bin/wporg-svn.sh release _zip/naulon
+          else
+            plugins/naulon/bin/wporg-svn.sh listing plugins/naulon
+          fi

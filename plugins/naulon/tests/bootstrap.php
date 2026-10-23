@@ -13,12 +13,6 @@
 
 define( 'ABSPATH', __DIR__ . '/' );
 
-// Core time constants — only the two the updater writes its cache lifetimes in. Class constants
-// are resolved on first use, so a missing one is a fatal in whichever test touches it, not a
-// silent zero.
-define( 'MINUTE_IN_SECONDS', 60 );
-define( 'HOUR_IN_SECONDS', 3600 );
-
 /**
  * The few WordPress functions the pure classes touch. Kept deliberately thin — if a class under
  * test starts needing more than this, that is the signal it belongs in the wp-env suite instead.
@@ -107,10 +101,6 @@ require_once __DIR__ . '/../includes/class-naulon-file-route.php';
 // Only `edge_remedy` is exercised here — a pure function over a header bag whose output is
 // publisher-facing copy on a branch the admin screens cannot reach offline. See EdgeRemedyTest.
 require_once __DIR__ . '/../includes/class-naulon-cache.php';
-// Manifest validation and the two mappings are pure over an array, and they decide which zip a
-// publisher's server executes — the one place in this plugin where a wrong answer is remote code
-// execution. The fetch and its caching need WordPress, so they live in the wp-env suite.
-require_once __DIR__ . '/../includes/class-naulon-updater.php';
 // The uninstall policy: `should_purge` is a pure read over a settings array, and it guards a
 // path that drops a table. UninstallGuardTest also reads uninstall.php as text, which needs no
 // WordPress either. The outcomes against a real database live in the wp-env suite.

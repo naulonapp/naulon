@@ -43,7 +43,7 @@ to the same wallets.
 | You run | Start here |
 |---|---|
 | **Any site, with Docker** | The gate and its console as one image, in front of your origin. [Below](#self-host-with-docker) |
-| **WordPress** | The plugin, with no code: install [`naulon.zip`](https://github.com/naulonapp/naulon/releases/latest/download/naulon.zip), paste your [naulon.app](https://naulon.app) key, verify the site. [plugin readme](./plugins/naulon/readme.txt) |
+| **WordPress** | The plugin, with no code: install it from the [Plugin Directory](https://wordpress.org/plugins/naulon/), paste your [naulon.app](https://naulon.app) key, verify the site. [plugin readme](./plugins/naulon/readme.txt) |
 | **Your own app** (Next.js, or any runtime with a web `Request`) | `@naulon/enforce` makes the same toll decision inside your app, so agents reach your origin directly. [package readme](./packages/enforce/README.md) |
 | **Nothing (hosted)** | [naulon.app](https://naulon.app) runs the gate for you. Same protocol, same custody-free settlement, and nothing in this repo is held back to push you there. |
 
@@ -226,7 +226,7 @@ sequenceDiagram
 | [`tollgate`](./packages/tollgate) | The gate: the reverse proxy, the `402`, payment verification and the event log | Docker |
 | [`dashboard`](./packages/dashboard) | The operator console shown above | Docker |
 | [`attribution`](./packages/attribution) | Batches sub-cent tolls and settles author payouts | in the repo |
-| [`plugins/naulon`](./plugins/naulon) | The WordPress plugin | [`naulon.zip`](https://github.com/naulonapp/naulon/releases/latest/download/naulon.zip) |
+| [`plugins/naulon`](./plugins/naulon) | The WordPress plugin | [wordpress.org](https://wordpress.org/plugins/naulon/) · [`naulon.zip`](https://github.com/naulonapp/naulon/releases/latest/download/naulon.zip) |
 
 The dependency graph points one way: `sdk` at the bottom, then `shared`, then `enforce`, with
 the runnable pieces on top. Nothing lower reaches up.
