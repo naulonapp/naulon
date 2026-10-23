@@ -111,12 +111,9 @@ jobs:
 
   # The suite above is the unit one: decision functions, no WordPress. Everything that only means
   # something against a real database lived in tests/integration and ran nowhere but a laptop, by
-  # hand, through wp-env. Two of those tests are load-bearing enough that leaving them there was a
+  # hand, through wp-env. One of those tests is load-bearing enough that leaving it there was a
   # standing risk:
   #
-  #   UpdaterCacheTest  — a cached update manifest is re-validated against the pinned download host
-  #                       on every read. A regression means a poisoned transient names the zip
-  #                       WordPress unpacks and executes.
   #   UninstallDataTest — deleting the plugin keeps the publisher's wallets and earnings. A
   #                       regression silently destroys customer data, which is the exact failure
   #                       0.4.0 shipped to end.
