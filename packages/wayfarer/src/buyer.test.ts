@@ -335,6 +335,8 @@ test("classifySignerRefusal terminates every DETERMINISTIC signer refusal, inclu
     "payee_not_owned",
     // Fleet chain config: the identical 402 refuses identically until a human fixes the registry.
     "no_gateway_wallet — arc has no GatewayWallet configured",
+    // The host operator paused real-money payments; only the operator resumes them.
+    "selling_paused — real-money payments are paused. Nothing was signed and nothing was charged",
   ];
   for (const msg of terminal) {
     const c = classifySignerRefusal(msg);
