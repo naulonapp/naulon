@@ -308,6 +308,9 @@ export function classifySignerRefusal(errorText: string): { errorCode: FetchErro
     // until they lift the freeze. Only the owner can clear it, so asking again inside the run is the
     // one thing guaranteed not to.
     case "account_frozen":
+    // The host operator has paused every real-money payment. Only the operator resumes it, so no
+    // retry, other article or other token inside the run gets a different answer.
+    case "selling_paused":
       return { errorCode: "rejected", retryable: false };
     default:
       return null;
