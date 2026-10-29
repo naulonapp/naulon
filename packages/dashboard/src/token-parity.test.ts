@@ -27,23 +27,24 @@ const css = await readFile(new URL("./public/app.css", import.meta.url), "utf8")
 
 /** The tokens as published. Elevation reads sidebar < bg < card < elev-2. */
 const DARK: Record<string, string> = {
-  "--sidebar": "#050609",
-  "--sidebar-accent": "#0e1218",
-  "--sidebar-muted": "#7c8593",
-  "--bg": "#07080b",
-  "--card": "#11141c",
-  "--elev-2": "#1a1f29",
-  "--fg": "#e9edf3",
-  "--muted-fg": "#8d96a3",
-  "--faint": "#828c9a",
-  "--line": "#242b39",
-  "--line-strong": "#2e3647",
-  "--input": "#313a4b",
-  "--primary": "#2bf5a0",
-  "--primary-ink": "#04130c",
-  "--down": "#ff476f",
-  "--warning": "#ffb020",
-  "--info": "#38bdf8",
+  "--sidebar": "#101312",
+  "--sidebar-accent": "#1d2220",
+  "--sidebar-muted": "#8e9590",
+  "--bg": "#141716",
+  "--card": "#1a1e1d",
+  "--elev-2": "#202523",
+  "--fg": "#edefec",
+  "--muted-fg": "#9ca39f",
+  "--faint": "#8e9590",
+  "--line": "#2a302e",
+  "--line-strong": "#39403d",
+  "--input": "#434b47",
+  "--primary": "#52b89c",
+  "--primary-ink": "#08150f",
+  "--down": "#f77c88",
+  "--warning": "#e48a4f",
+  "--info": "#86aecb",
+  "--money": "#d2a46c",
 };
 
 /** Pull a `:root`-level (or themed) block's `--token: value;` pairs. */
@@ -108,16 +109,16 @@ test("light and dark define the same tokens — a theme with a hole shows it on 
 test("no light token is simply the dark one repeated", () => {
   const light = tokensIn(lightBlock());
   const same = Object.entries(DARK).filter(([name, dark]) => light[name] === dark);
-  assert.deepEqual(same, [], `these were copied from dark rather than chosen for paper: ${same.map(([n]) => n).join(", ")}`);
+  assert.deepEqual(same, [], `these were copied from dark rather than chosen for concrete: ${same.map(([n]) => n).join(", ")}`);
 });
 
 /**
- * The brand green at #2bf5a0 measures ~1.4:1 on paper — it disappears. Light deepens it, and
- * this is the check that a future "keep the brand consistent" edit does not put the neon back.
+ * The dark green is too light to carry text on concrete. Light deepens it, and this is the check
+ * that a future "keep the brand consistent" edit does not copy the dark value across.
  */
-test("light deepens the green instead of inheriting the neon", () => {
+test("light deepens the green instead of inheriting the dark one", () => {
   const light = tokensIn(lightBlock());
-  assert.notEqual(light["--primary"], DARK["--primary"], "the dark green is unreadable on paper");
+  assert.notEqual(light["--primary"], DARK["--primary"], "the dark green is unreadable on concrete");
   assert.equal(light["--primary-ink"], "#ffffff", "a deepened green needs white ink on it");
   // Not a custom property, so it is read off the block text rather than the token map.
   assert.match(lightBlock(), /color-scheme:\s*light/, "without color-scheme the UA keeps dark scrollbars and form controls");
