@@ -70,6 +70,9 @@
   --warning: #e48a4f;
   --info: #86aecb;
   --money: #d2a46c;
+  /* The sign: one verdigris carrying white in both themes (naulon.app/brand). */
+  --sign: #1f6b58;
+  --sign-ink: #ffffff;
 
   --shadow-panel:
     inset 0 1px 0 0 color-mix(in oklab, var(--fg) 7%, transparent),
@@ -172,7 +175,8 @@ body {
 .brand-tile {
   display: grid; place-items: center; flex: none;
   width: 32px; height: 32px; border-radius: 7px;
-  background: var(--primary); color: var(--primary-ink);
+  /* The mark is the sign: verdigris carrying white in both themes, as brand.ts and the portal draw it. */
+  background: var(--sign); color: var(--sign-ink);
 }
 .brand-tile svg { width: 58%; height: 58%; }
 .brand-word { display: flex; flex-direction: column; line-height: 1.15; }
@@ -281,6 +285,22 @@ body {
 
 .mono-figure { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .mono { font-family: var(--font-mono); }
+/* An amount of money, wherever it is printed: mono, tabular, bronze (naulon.app/brand). */
+.money { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--money); }
+
+/* The guide sign: a page's verdict, as the hosted portal draws it. Verdigris carrying white, with the
+   white inset rule a road sign carries; the same in both themes. */
+.sign {
+  background: var(--sign); color: var(--sign-ink); border-radius: 10px;
+  box-shadow: inset 0 0 0 3px var(--sign), inset 0 0 0 5px color-mix(in oklab, var(--sign-ink) 85%, transparent);
+}
+.verdict { padding: 20px 24px; margin-bottom: 32px; }
+.verdict .say { font-size: 26px; font-weight: 700; line-height: 1.23; letter-spacing: -0.01em; max-width: 32em; text-wrap: pretty; }
+.verdict .rest { margin-top: 8px; font-size: 16px; line-height: 1.6; color: color-mix(in oklab, var(--sign-ink) 85%, transparent); max-width: 62ch; }
+.verdict .rest:empty { display: none; }
+.verdict .term { font-family: var(--font-mono); font-weight: 600; border-bottom: 2px solid color-mix(in oklab, var(--money) 70%, var(--sign-ink)); }
+.verdict code { font-family: var(--font-mono); font-size: 0.9em; color: var(--sign-ink); background: color-mix(in oklab, var(--sign-ink) 14%, transparent); padding: 1px 6px; border-radius: 3px; }
+@media (max-width: 720px) { .verdict .say { font-size: 22px; } }
 .dim { color: var(--faint); }
 .err { color: var(--down); }
 .ok { color: var(--primary); }
@@ -357,10 +377,10 @@ body {
 .total {
   font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums;
   font-size: clamp(40px, 6vw, 68px); line-height: 1; letter-spacing: -0.02em;
-  margin-top: 14px; color: var(--fg);
+  margin-top: 14px; color: var(--money);
 }
-.total .cur { color: var(--primary); font-size: 0.5em; vertical-align: 0.42em; margin-right: 0.06em; }
-.total .frac { color: var(--muted-fg); }
+/* One uniform string, as the portal's MoneyFigure: a split $ / dollars / cents reads as three numbers. */
+.total .cur, .total .frac { color: inherit; }
 .hero-sub { margin-top: 16px; font-size: 14px; color: var(--muted-fg); }
 .hero-sub b { font-family: var(--font-mono); font-weight: 500; color: var(--fg); }
 
@@ -372,18 +392,18 @@ body {
 .rise { animation: rise 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 60ms); }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .rank { font-family: var(--font-mono); font-size: 13px; color: var(--faint); text-align: right; }
-.who .name { font-family: var(--font-mono); font-size: 16px; font-weight: 500; }
+.who .name { font-family: var(--font-sans); font-size: 16px; font-weight: 600; }
 .who .addr { font-family: var(--font-mono); font-size: 11px; color: var(--faint); letter-spacing: 0.03em; margin-top: 4px; }
 .who .meta { font-size: 12.5px; color: var(--muted-fg); margin-top: 5px; }
 .earned { text-align: right; min-width: 150px; }
 .earned .amt {
   font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums;
-  font-size: 19px; color: var(--primary);
+  font-size: 19px; color: var(--money);
 }
-.earned .amt .frac { color: color-mix(in oklab, var(--primary) 55%, transparent); }
+.earned .amt .frac { color: inherit; }
 .bar {
   height: 2px; margin-top: 9px; border-radius: 2px;
-  background: linear-gradient(90deg, var(--primary), #7dffc9);
+  background: var(--money);
   transform-origin: right; transform: scaleX(0);
   animation: grow 1s var(--ease) forwards;
 }
@@ -402,12 +422,12 @@ body {
 .cross .line { margin-top: 5px; font-size: 15px; }
 .cross .line .agent { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted-fg); }
 .cross .line .verb { color: var(--muted-fg); }
-.cross .line .amt { font-family: var(--font-mono); color: var(--primary); font-weight: 600; }
+.cross .line .amt { font-family: var(--font-mono); color: var(--money); font-weight: 600; }
 /* Slugs are mono: tokens are always mono, and the serif is for the page title only. */
 .cross .line .slug { font-family: var(--font-mono); font-size: 13.5px; color: var(--fg); }
 .cross .split { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .cross .split span { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-fg); }
-.cross .split span b { color: var(--primary); font-weight: 500; }
+.cross .split span b { color: var(--money); font-weight: 500; }
 .cross .prov { margin-top: 7px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--faint); }
 .cross .prov b { color: var(--muted-fg); font-weight: 500; }
 
@@ -432,7 +452,8 @@ body {
    anywhere` reads better per break and measured WORSE overall: it took the credits row
    from 82px to 121px at 1440px wide, because natural break points leave more ragged
    space. A 50%-taller row in a six-row table costs more than a clean hyphenation does. */
-.kv .v { font-family: var(--font-mono); color: var(--fg); word-break: break-all; }
+/* A value is a word unless it is a token: tokens (a host, a path) carry `.mono` themselves. */
+.kv .v { color: var(--fg); word-break: break-all; }
 .article { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
 .article .slug { font-family: var(--font-mono); color: var(--fg); }
 .article .w { font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
@@ -685,7 +706,7 @@ body {
 .agent-nums .kv .v.zero { color: var(--faint); }
 .agent-money { text-align: right; }
 .agent-money .mono-figure { font-size: 17px; font-weight: 600; }
-.agent-money .mono-figure.pos { color: var(--primary); }
+.agent-money .mono-figure.pos { color: var(--money); }
 
 /* ── crawlers ──────────────────────────────────────────────────────────────── */
 .crawl-cat {
@@ -831,8 +852,9 @@ body {
 :root { --o-paid: var(--primary); --o-left: var(--warning); --o-free: var(--muted-fg); --o-refused: var(--down); }
 .money-lead { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 40px; margin-bottom: 26px; }
 .money-lead .ml-k { margin: 0; font-size: 13px; color: var(--muted-fg); }
-.money-lead .ml-v { margin: 4px 0 0; font-family: var(--font-mono); font-weight: 500; font-size: 40px; color: var(--money); line-height: 1.1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
-.money-lead .ml-v.pos { color: var(--money); }
+.money-lead .ml-v { margin: 4px 0 0; font-family: var(--font-mono); font-weight: 500; font-size: 40px; line-height: 1.1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+/* Only the money figures are bronze; a count stays ink. */
+.money-lead .ml-v.pos, .money-lead .ml-v.money-v { color: var(--money); }
 .money-lead .ml-n { margin: 6px 0 0; font-size: 13px; color: var(--muted-fg); }
 .ribbon { display: flex; gap: 3px; height: 12px; border-radius: 3px; overflow: hidden; }
 .ribbon a { display: block; min-width: 6px; opacity: 0.9; transition: opacity var(--motion) var(--ease); }

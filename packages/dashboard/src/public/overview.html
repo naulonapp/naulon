@@ -36,6 +36,14 @@
         </div>
       </div>
 
+
+      <!-- The page's verdict, drawn as the guide sign the hosted portal uses: one sentence on where
+           this gate stands for the selected window, then the figures that back it. -->
+      <section class="sign verdict" aria-live="polite">
+        <p class="say" id="vSay">Reading the gate…</p>
+        <p class="rest" id="vRest"></p>
+      </section>
+
       <div id="notice" aria-live="polite"></div>
 
       <section class="card hero-panel" id="tiles" aria-live="polite">
@@ -47,7 +55,7 @@
           </div>
           <div>
             <p class="ml-k">Left on the table</p>
-            <p class="ml-v" id="tMissed">—</p>
+            <p class="ml-v money-v" id="tMissed">—</p>
             <p class="ml-n"><span id="tLeftN">—</span></p>
           </div>
           <div>

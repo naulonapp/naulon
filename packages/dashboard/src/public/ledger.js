@@ -27,7 +27,7 @@ function hydrate(root) {
   root.querySelectorAll("[data-w]").forEach((el) => { el.style.width = el.dataset.w + "%"; });
 }
 
-/** Split a figure into whole and fractional parts, the hero renders them in two colors. The
+/** Split a figure into whole and fractional parts (one colour; the parts keep the count-up steady). The
  *  count-up paints every frame at the FINAL figure's precision, so the width never jumps. */
 const decimalsOf = (n) => usd(n).split(".")[1].length;
 const heroParts = (n, d = decimalsOf(n)) => {

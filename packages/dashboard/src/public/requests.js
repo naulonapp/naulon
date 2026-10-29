@@ -109,7 +109,7 @@ function rollRow(name, meta, earned, missed, attrs) {
     <div class="roll-name mono">${name}</div>
     <div class="roll-meta">${meta}</div>
     <div class="roll-money">
-      <span class="pos">${usd(earned)}</span>
+      <span class="money">${usd(earned)}</span>
       ${missed > 0 ? `<span class="dim">${usd(missed)} missed</span>` : ""}
     </div>
   </button>`;
