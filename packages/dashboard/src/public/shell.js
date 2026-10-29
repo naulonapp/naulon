@@ -240,8 +240,8 @@ export function emptyState({ icon, lead, body = "", foot = "" }) {
     .join("");
   return (
     `<div class="empty">` +
-    (icon ? `<span class="empty-ico">${navIcon(icon)}</span>` : "") +
-    `<div class="lead">${lead}</div>` +
+    // The icon sits beside the title, as in the portal, never in a tile of its own above it.
+    `<div class="lead">${icon ? `<span class="empty-ico" aria-hidden="true">${navIcon(icon)}</span>` : ""}${lead}</div>` +
     paras +
     (foot ? `<p class="empty-foot">${foot}</p>` : "") +
     `</div>`
