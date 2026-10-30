@@ -353,7 +353,7 @@ test("a forced password change does not refuse the page's OWN stylesheet", async
   // It looked fine in a walk only because the login page had already cached the CSS.
   const h = harness({ users: [user("u1", "admin", "admin", { mustChangePassword: true })] });
   const cookie = await signIn(h, "admin");
-  for (const path of ["/auth.css", "/favicon.svg", "/fonts/fraunces-latin.woff2"]) {
+  for (const path of ["/auth.css", "/favicon.svg", "/fonts/overpass-latin.woff2"]) {
     const res = await h.app.request(path, { headers: { Host: HOST, Cookie: cookie } });
     assert.notEqual(res.status, 403, `${path} must not be gated by the password change`);
   }
