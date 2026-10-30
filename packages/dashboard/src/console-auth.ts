@@ -344,13 +344,13 @@ function page({ title, body, error, notice }: PageOptions): string {
  * scripting switched off, and it is one screen, once per session.
  *
  * Values are the same published palette as app.css. `--field` exists because the input
- * background was the one hardcoded colour left in here (#0b0e14) — invisible in dark, and on
- * paper it would have been a black box in the middle of a white card.
+ * background was the one hardcoded colour left in here, invisible in dark, and on concrete it
+ * would have been a black box in the middle of a light card.
  */
-export const AUTH_CSS = `:root{color-scheme:dark;--bg:#07080b;--card:#11141c;--fg:#e9edf3;--muted-fg:#8d96a3;
---line:#242b39;--input:#313a4b;--primary:#2bf5a0;--primary-ink:#04130c;--down:#ff476f;--field:#0b0e14}
-@media (prefers-color-scheme: light){:root{color-scheme:light;--bg:#f7f4ec;--card:#fffdf8;--fg:#1a1c1a;
---muted-fg:#5f635a;--line:#e3ddcf;--input:#cdc6b4;--primary:#0a7350;--primary-ink:#ffffff;--down:#d11f4f;
+export const AUTH_CSS = `:root{color-scheme:dark;--bg:#141716;--card:#1a1e1d;--fg:#edefec;--muted-fg:#9ca39f;
+--line:#2a302e;--input:#434b47;--primary:#52b89c;--primary-ink:#08150f;--down:#f77c88;--field:#101312}
+@media (prefers-color-scheme: light){:root{color-scheme:light;--bg:#ecedea;--card:#f6f7f5;--fg:#151815;
+--muted-fg:#575d58;--line:#d3d7d1;--input:#aab1aa;--primary:#1f6b58;--primary-ink:#ffffff;--down:#b42a3a;
 --field:#ffffff}}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);

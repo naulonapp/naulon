@@ -125,7 +125,35 @@ function bucketLabel(series, i) {
   return t.toLocaleTimeString(undefined, series.stepMs < 3_600_000 ? { hour: "numeric", minute: "2-digit" } : { hour: "numeric" });
 }
 
+/**
+ * The sign's sentence: what this window says about the gate, in one line, then the line under it.
+ * Money in the sentence is underlined in the sign's bronze, as the portal does.
+ */
+function renderVerdict(ops, observations) {
+  const say = $("#vSay"), rest = $("#vRest");
+  const win = windowLabel(ops);
+  const agents = ops.agents?.total ?? 0;
+  const paid = ops.byVerdict?.paid ?? 0;
+  if (observations === "off") {
+    say.textContent = "Traffic is not being recorded.";
+    rest.innerHTML = "The gate still tolls and settles. Set <code>OBSERVATIONS_BACKEND=jsonl</code> and restart it to see every agent here.";
+  } else if ((ops.earnings || 0) > 0) {
+    say.innerHTML = `Agents paid <span class="term">${esc(usd(ops.earnings))}</span> in the ${esc(win)}.`;
+    rest.textContent = `${plural(paid, "paid request")} of ${plural(agents, "agent request")}. People always read free.`;
+  } else if (agents > 0) {
+    say.textContent = "Agents came by, and none has paid yet.";
+    rest.textContent = `${plural(agents, "agent request")} in the ${win}. People always read free.`;
+  } else {
+    say.textContent = "No agent has come by yet.";
+    rest.textContent = "People always read free. Press Test toll to check the gate answers 402.";
+  }
+}
+
 function renderTiles(ops, observations) {
+  renderVerdict(ops, observations);
+  // With recording off every figure is a dash under a sign that already says why; the figures
+  // appear once there are some, as on the portal.
+  $("#tiles").hidden = observations === "off" || ((ops.agents?.total ?? 0) === 0 && !((ops.earnings || 0) > 0));
   if (observations === "off") return renderUnknownTiles(ops);
   $(".hero-foot").hidden = false;
   for (const id of FIGURE_IDS) {
@@ -171,14 +199,15 @@ const storeName = (k) => STORE_NAME[k] || k;
 function renderConfig(cfg) {
   const src = cfg.creditsSource || {};
   const credits = src.mode === "fixture"
-    ? `<span class="v-main" title="${esc(src.location)}">${esc(basename(src.location))}</span><span class="v-sub">local file</span>`
-    : `<span class="v-main" title="${esc(src.location)}">${esc(src.location || "—")}</span><span class="v-sub">${esc(src.mode || "")}</span>`;
+    ? `<span class="v-main mono" title="${esc(src.location)}">${esc(basename(src.location))}</span><span class="v-sub">local file</span>`
+    : `<span class="v-main mono" title="${esc(src.location)}">${esc(src.location || "—")}</span><span class="v-sub">${esc(src.mode || "")}</span>`;
   const articles = Array.isArray(cfg.articles) && cfg.articles.length
     ? `<span class="v-sub">${cfg.articles.slice(0, 3).map((x) => esc(x.title || x.slug)).join(", ")}${cfg.articles.length > 3 ? ` and ${cfg.articles.length - 3} more` : ""}</span>`
     : "";
   const rows = [
     ["Origin", `<span class="v-main mono">${esc(cfg.originUrl)}</span>`],
-    ["Price", `<span class="v-main"><span class="mono">${usd(cfg.priceUsdc)}</span> a read</span><span class="v-sub">a citation costs ${esc(cfg.citationMultiplier)}×</span>`],
+    // Both prices as amounts, as the portal's site rows show them, so nobody multiplies "5×".
+    ["Price", `<span class="v-main"><span class="money">${usd(cfg.priceUsdc)}</span> a read</span><span class="v-sub"><span class="money">${usd(cfg.priceUsdc * cfg.citationMultiplier)}</span> a citation</span>`],
     ["Credits", credits],
     ["Tollable", cfg.slugCount == null ? `<span class="v-main">decided by your credits API</span>` : `<span class="v-main">${plural(cfg.slugCount, "article")}</span>${articles}`],
     ["Recording", cfg.observations === "off"
@@ -198,14 +227,11 @@ function renderWarnings(warnings) {
 
 function renderFeed(recent, observations) {
   if (observations === "off") {
-    // With recording off no crawler will ever put a row here, so promising one is a dead
-    // end. Name the switch, and say where money that did settle can still be read.
+    // The sign above already names the switch; this column says only what it will hold and
+    // where settled money can be read meanwhile, rather than repeating the sentence.
     $("#feed").innerHTML = emptyState({
       icon: "requests",
-      lead: "Traffic is not being recorded.",
-      body: [
-        `The gate still tolls and settles, but it keeps no log of who it served. Set <code>OBSERVATIONS_BACKEND=jsonl</code> and restart it to see every agent here.`,
-      ],
+      lead: "Agents appear here once recording is on.",
       foot: `Settled money is on the <a href="/ledger">Ledger</a>.`,
     });
     return;
@@ -214,7 +240,7 @@ function renderFeed(recent, observations) {
     // The state every new install is in. Give the next action instead of an empty column.
     $("#feed").innerHTML = emptyState({
       icon: "requests",
-      lead: "No agent has come by yet.",
+      lead: "Agents appear here as they arrive.",
       body: [
         `A row appears the first time a crawler asks for a tollable page. To check the toll now, press <b>Test toll</b>: the console asks your gate for an article as a crawler and expects a <code>402</code>.`,
       ],
@@ -253,7 +279,7 @@ async function tick() {
       ? `<div class="banner pending"><b>Some of this window's money settled before recording started.</b>` +
         `<div class="toll-fix">${plural(d.ops.settled.crossings, "payment")} worth ` +
         `<span class="mono">${usd(d.ops.settled.usdc || 0)}</span> are on the <a href="/ledger">Ledger</a> ` +
-        `but not in the traffic log, so they are not counted above. New payments appear in both.</div></div>`
+        `but not in the traffic log, so the figures here leave them out. New payments appear in both.</div></div>`
       : "";
   } catch {
     // Every figure on this page is now stale and nothing on it says so. The rail used to

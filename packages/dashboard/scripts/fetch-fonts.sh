@@ -4,8 +4,8 @@
 # default-src 'self'). Re-run only to refresh the faces.
 #
 # The three faces and their roles are the published design system's
-# (https://naulon.app/brand): Fraunces display-only, Hanken Grotesk for UI and
-# body, JetBrains Mono for every figure. All three are SIL OFL — see OFL.txt.
+# (https://naulon.app/brand): Newsreader for the page title only, Overpass for
+# every word, Overpass Mono for every figure. All three are SIL OFL, see OFL.txt.
 set -euo pipefail
 OUT="${1:-$(dirname "$0")/../src/public/fonts}"
 UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
@@ -23,6 +23,6 @@ fetch() { # <family-spec> <outfile>
   printf '%-28s %s\n' "$2" "$(du -h "$OUT/$2" | cut -f1)"
 }
 
-fetch "Fraunces:opsz,wght@9..144,300..700" fraunces-latin.woff2
-fetch "Hanken+Grotesk:wght@300..800"       hanken-grotesk-latin.woff2
-fetch "JetBrains+Mono:wght@400..700"       jetbrains-mono-latin.woff2
+fetch "Newsreader:opsz,wght@6..72,400..700" newsreader-latin.woff2
+fetch "Overpass:wght@300..800"              overpass-latin.woff2
+fetch "Overpass+Mono:wght@400..700"         overpass-mono-latin.woff2

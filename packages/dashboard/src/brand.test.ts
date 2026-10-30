@@ -10,8 +10,8 @@ test("the mark geometry is the published one", () => {
 });
 
 test("the brand green and ink are the published ones", () => {
-  assert.equal(BRAND.green, "#2bf5a0");
-  assert.equal(BRAND.ink, "#04130c");
+  assert.equal(BRAND.green, "#1f6b58");
+  assert.equal(BRAND.ink, "#ffffff");
   assert.equal(BRAND.markScale, 0.58);
 });
 

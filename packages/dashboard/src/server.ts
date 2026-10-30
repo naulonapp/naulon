@@ -16,6 +16,7 @@
  * That decision drives everything.
  */
 import { readFile } from "node:fs/promises";
+import { CONSOLE_FONTS } from "./fonts.ts";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { getConfig, getSink } from "@naulon/shared";
@@ -258,16 +259,11 @@ if (ACCESS.refuse) {
     });
   }
 
-  // Fonts — same-origin so the strict CSP holds. Explicit allowlist, never a path
-  // join from user input.
-  const FONTS = new Set([
-    "fraunces-latin.woff2",
-    "hanken-grotesk-latin.woff2",
-    "jetbrains-mono-latin.woff2",
-  ]);
+  // Fonts: same-origin so the strict CSP holds. Matched by exact name against the files present at
+  // boot (`fonts.ts`), never a path join from user input.
   app.get("/fonts/:file", async (c) => {
     const file = c.req.param("file");
-    if (!FONTS.has(file)) return c.notFound();
+    if (!CONSOLE_FONTS.has(file)) return c.notFound();
     c.header("Content-Type", "font/woff2");
     c.header("Cache-Control", "public, max-age=31536000, immutable");
     return c.body(await readFile(new URL(`fonts/${file}`, PUBLIC)));

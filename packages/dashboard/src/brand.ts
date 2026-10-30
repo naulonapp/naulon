@@ -14,10 +14,10 @@ export const MARK = {
   coin: { cx: 12, cy: 13.2, r: 1.85 },
 } as const;
 
-/** Brand green + the ink that sits on it. `markScale` = the mark fills 58% of its tile. */
+/** The sign: a verdigris tile carrying a white mark. `markScale` = the mark fills 58% of its tile. */
 export const BRAND = {
-  green: "#2bf5a0",
-  ink: "#04130c",
+  green: "#1f6b58",
+  ink: "#ffffff",
   markScale: 0.58,
   tileRadiusRatio: 0.21875, // 14/64 — exact at 32px (→7) and 64px (→14)
 } as const;

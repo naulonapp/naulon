@@ -7,8 +7,8 @@
  * WordPress with better spacing. A plugin that repaints wp-admin in its own colours makes a
  * publisher work out where they are before they can work out what the screen says.
  *
- * The one owned colour is the deep green (#0a7350 — the paper-safe form of the brand neon, which
- * would be unreadable on white). It marks money and completion, and nothing else.
+ * The owned colour is the verdigris sign green (#1f6b58, deep enough to carry text on white). It
+ * marks completion and the way through, and nothing else. Rust marks something that needs you.
  *
  * @package naulon
  */
@@ -18,11 +18,11 @@
  * stylesheet is only enqueued on naulon screens and the profile screens, so nothing else on the
  * site can pick these up. */
 :root {
-	--naulon-green: #0a7350;
-	--naulon-green-soft: #e8f5ef;
-	--naulon-amber: #8f5e00;
-	--naulon-amber-soft: #fdf6e3;
-	--naulon-red: #b32d3f;
+	--naulon-green: #1f6b58;
+	--naulon-green-soft: #e7f0ec;
+	--naulon-amber: #97481a;
+	--naulon-amber-soft: #fbefe7;
+	--naulon-red: #b42a3a;
 	--naulon-red-soft: #fdf0f1;
 	--naulon-ink: #1d2327;
 	--naulon-muted: #646970;
@@ -57,8 +57,8 @@ input.naulon-wallet:invalid {
 	align-items: center;
 	justify-content: space-between;
 	gap: 16px 32px;
-	background: #10161c;
-	color: #f0f0f1;
+	background: #141716;
+	color: #edefec;
 	border-radius: 8px;
 	padding: 14px 20px;
 	margin: 16px 0 20px;
@@ -73,7 +73,7 @@ input.naulon-wallet:invalid {
 
 .naulon-head__logo {
 	display: inline-flex;
-	color: #2bf5a0; /* the neon is legible here, and only here: this band is the dark surface */
+	color: #52b89c; /* the light verdigris, legible here because this band is the dark asphalt */
 }
 
 .naulon-mark {
@@ -137,15 +137,15 @@ input.naulon-wallet:invalid {
 }
 
 .naulon-dot--ok {
-	background: #2bf5a0;
+	background: #52b89c;
 }
 
 .naulon-dot--warn {
-	background: #ffb020;
+	background: #e48a4f;
 }
 
 .naulon-dot--bad {
-	background: #ff476f;
+	background: #f77c88;
 }
 
 .naulon-lede {
@@ -248,13 +248,13 @@ input.naulon-wallet:invalid {
 
 .naulon-pill--ok {
 	background: var(--naulon-green-soft);
-	border-color: #9ad3bd;
-	color: #04543a;
+	border-color: #a7c9bd;
+	color: #174f41;
 }
 
 .naulon-pill--warn {
 	background: var(--naulon-amber-soft);
-	border-color: #e6c76a;
+	border-color: #e2b597;
 	color: var(--naulon-amber);
 }
 
