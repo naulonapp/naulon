@@ -5,7 +5,8 @@
   "type": "module",
   "main": "./src/app.ts",
   "exports": {
-    ".": "./src/app.ts"
+    ".": "./src/app.ts",
+    "./rsl": "./src/rsl/index.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -22,6 +23,7 @@
     "@x402/core": "^2.23.0",
     "@x402/evm": "^2.23.0",
     "hono": "^4.13.5",
-    "viem": "^2.56.0"
+    "viem": "^2.56.0",
+    "zod": "^4.4.3"
   }
 }
