@@ -279,3 +279,24 @@ export function deriveSiteSlug(url: string, excludePrefixes: string[], opts?: Si
   const pathname = pathnameOf(url);
   return pathname === null ? null : slugFromSitePath(pathname, excludePrefixes, opts);
 }
+
+/** What a publisher tolls: its article prefixes and, when set, its scope. Structurally the same
+ *  fields `PublisherConfig` carries, so a config or a stored record can be passed as is. */
+export interface TollScope {
+  articlePrefixes: readonly string[];
+  gateScope?:
+    | { mode: "prefixes"; depth?: PrefixDepth }
+    | { mode: "site"; excludePrefixes: readonly string[]; includeExtensions?: readonly string[] };
+}
+
+/**
+ * The slug a request path is tolled under for this scope, or `null` when it is free. The one place
+ * the scope branch is written: the gate, the payee checks and any other runtime key a path through
+ * this, so the slug a payment is checked against is always the slug the toll priced.
+ */
+export function slugForScope(path: string, scope: TollScope): string | null {
+  const s = scope.gateScope;
+  return s?.mode === "site"
+    ? slugFromSitePath(path, [...s.excludePrefixes], { includeExtensions: s.includeExtensions })
+    : slugFromPath(path, [...scope.articlePrefixes], { depth: s?.mode === "prefixes" ? s.depth : undefined });
+}

@@ -25,7 +25,7 @@ import type { Quote } from "./pricing.ts";
 import { revocations } from "./revocation.ts";
 import { verifyPopProof } from "./pop.ts";
 import { matchTarget } from "@naulon/sdk/rsl";
-import { slugFromPath, slugFromSitePath } from "@naulon/sdk/slug";
+import { slugForScope, slugFromPath, slugFromSitePath } from "@naulon/sdk/slug";
 import { routeTemplateFor } from "./bazaar.ts";
 import {
   externalSchemeOf,
@@ -433,16 +433,7 @@ export async function classifyRequester(
 export async function decide(input: DecideInput): Promise<Decision> {
   const { raw, host, path, publisher, now, quote } = input;
 
-  const slug =
-    publisher.gateScope?.mode === "site"
-      ? slugFromSitePath(path, publisher.gateScope.excludePrefixes, {
-          includeExtensions: publisher.gateScope.includeExtensions,
-        })
-      : slugFromPath(path, publisher.articlePrefixes, {
-          // Absent gateScope IS prefix mode, so read the depth off the union only when it is
-          // actually the prefixes variant. Undefined ⇒ "segment", unchanged.
-          depth: publisher.gateScope?.mode === "prefixes" ? publisher.gateScope.depth : undefined,
-        });
+  const slug = slugForScope(path, publisher);
 
   // Non-article routes: pure passthrough (assets, home, RSS...).
   if (!slug) return { kind: "passthrough", verdict: "non-article" };
