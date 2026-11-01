@@ -1,0 +1,107 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { httpPublisherResolver } from "./httpPublisherResolver.ts";
+
+const RECORD = {
+  id: "blog-1",
+  hosts: ["one.example"],
+  originUrl: "https://one.example",
+  articlePrefixes: [],
+  priceMicro: 5000,
+};
+
+interface Seen { url: string; auth: string | null }
+
+function fakeFetch(responses: (() => Response)[], seen: Seen[] = []): typeof fetch {
+  let i = 0;
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    seen.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+    const next = responses[Math.min(i++, responses.length - 1)];
+    if (!next) throw new Error("no response queued");
+    return next();
+  }) as typeof fetch;
+}
+
+const ok = (body: unknown) => () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+test("sends the bearer key and the host as ?host=", async () => {
+  const seen: Seen[] = [];
+  const r = httpPublisherResolver({ url: "https://platform.example/naulon/publisher", key: "k1", fetch: fakeFetch([ok(RECORD)], seen) });
+  const cfg = await r.resolve("One.Example");
+  assert.equal(cfg?.id, "blog-1");
+  assert.equal(seen[0]?.url, "https://platform.example/naulon/publisher?host=one.example");
+  assert.equal(seen[0]?.auth, "Bearer k1");
+});
+
+test("caches per host for ttlMs", async () => {
+  const seen: Seen[] = [];
+  let now = 0;
+  const r = httpPublisherResolver({ url: "https://p.example/x", key: "k", ttlMs: 1000, now: () => now, fetch: fakeFetch([ok(RECORD)], seen) });
+  await r.resolve("one.example");
+  now = 999;
+  await r.resolve("one.example");
+  assert.equal(seen.length, 1);
+  now = 1001;
+  await r.resolve("one.example");
+  assert.equal(seen.length, 2);
+});
+
+test("serves the last good record when the platform 500s", async () => {
+  let now = 0;
+  const r = httpPublisherResolver({
+    url: "https://p.example/x", key: "k", ttlMs: 10, now: () => now,
+    fetch: fakeFetch([ok(RECORD), () => new Response("boom", { status: 500 })]),
+  });
+  await r.resolve("one.example");
+  now = 100;
+  assert.equal((await r.resolve("one.example"))?.id, "blog-1");
+});
+
+test("serves the last good record when the platform is unreachable", async () => {
+  let now = 0;
+  let calls = 0;
+  const r = httpPublisherResolver({
+    url: "https://p.example/x", key: "k", ttlMs: 10, now: () => now,
+    fetch: (async () => { if (calls++ === 0) return ok(RECORD)(); throw new TypeError("fetch failed"); }) as typeof fetch,
+  });
+  await r.resolve("one.example");
+  now = 100;
+  assert.equal((await r.resolve("one.example"))?.id, "blog-1");
+});
+
+test("returns undefined on 404", async () => {
+  const r = httpPublisherResolver({ url: "https://p.example/x", key: "k", fetch: fakeFetch([() => new Response("", { status: 404 })]) });
+  assert.equal(await r.resolve("gone.example"), undefined);
+});
+
+test("a 404 after a good record means the platform withdrew it", async () => {
+  let now = 0;
+  const r = httpPublisherResolver({
+    url: "https://p.example/x", key: "k", ttlMs: 10, now: () => now,
+    fetch: fakeFetch([ok(RECORD), () => new Response("", { status: 404 })]),
+  });
+  await r.resolve("one.example");
+  now = 100;
+  assert.equal(await r.resolve("one.example"), undefined);
+});
+
+test("returns the last good record and logs once when the body fails the schema", async () => {
+  let now = 0;
+  const logged: string[] = [];
+  const r = httpPublisherResolver({
+    url: "https://p.example/x", key: "k", ttlMs: 10, now: () => now,
+    log: (m) => logged.push(m),
+    fetch: fakeFetch([ok(RECORD), ok({ ...RECORD, priceMicro: 1.5 })]),
+  });
+  await r.resolve("one.example");
+  now = 100;
+  assert.equal((await r.resolve("one.example"))?.id, "blog-1");
+  now = 200;
+  await r.resolve("one.example");
+  assert.equal(logged.length, 1);
+});
+
+test("a record that does not list the asked host is refused", async () => {
+  const r = httpPublisherResolver({ url: "https://p.example/x", key: "k", fetch: fakeFetch([ok({ ...RECORD, hosts: ["other.example"] })]) });
+  assert.equal(await r.resolve("one.example"), undefined);
+});

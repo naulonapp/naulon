@@ -6,7 +6,8 @@
   "main": "./src/app.ts",
   "exports": {
     ".": "./src/app.ts",
-    "./rsl": "./src/rsl/index.ts"
+    "./rsl": "./src/rsl/index.ts",
+    "./platform": "./src/platform.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
