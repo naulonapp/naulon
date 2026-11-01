@@ -105,3 +105,42 @@ test("a record that does not list the asked host is refused", async () => {
   const r = httpPublisherResolver({ url: "https://p.example/x", key: "k", fetch: fakeFetch([ok({ ...RECORD, hosts: ["other.example"] })]) });
   assert.equal(await r.resolve("one.example"), undefined);
 });
+
+test("an invalid host never reaches the platform", async () => {
+  const seen: Seen[] = [];
+  const r = httpPublisherResolver({ url: "https://p.example/x", key: "k", fetch: fakeFetch([ok(RECORD)], seen) });
+  for (const bad of ["", "a b.example", "x.example/path", "x.example?host=y", "a..b.example", `${"a".repeat(254)}.example`, "x.example:99999"]) {
+    assert.equal(await r.resolve(bad), undefined, bad);
+  }
+  assert.equal(seen.length, 0);
+});
+
+test("a trailing dot names the same host", async () => {
+  const seen: Seen[] = [];
+  const r = httpPublisherResolver({ url: "https://p.example/x", key: "k", fetch: fakeFetch([ok(RECORD)], seen) });
+  await r.resolve("one.example.");
+  await r.resolve("one.example");
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]?.url, "https://p.example/x?host=one.example");
+});
+
+test("concurrent resolves for one host make one platform fetch", async () => {
+  const seen: Seen[] = [];
+  const r = httpPublisherResolver({ url: "https://p.example/x", key: "k", fetch: fakeFetch([ok(RECORD)], seen) });
+  await Promise.all([r.resolve("one.example"), r.resolve("one.example"), r.resolve("one.example")]);
+  assert.equal(seen.length, 1);
+});
+
+test("the cache holds at most maxEntries hosts, evicting the least recently used", async () => {
+  const seen: Seen[] = [];
+  const r = httpPublisherResolver({ url: "https://p.example/x", key: "k", maxEntries: 2, fetch: fakeFetch([() => new Response("", { status: 404 })], seen) });
+  await r.resolve("a.example");
+  await r.resolve("b.example");
+  await r.resolve("a.example");
+  await r.resolve("c.example");
+  assert.equal(seen.length, 3, "a was used last, so b is the one evicted");
+  await r.resolve("a.example");
+  assert.equal(seen.length, 3);
+  await r.resolve("b.example");
+  assert.equal(seen.length, 4);
+});
