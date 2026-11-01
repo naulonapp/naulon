@@ -29,7 +29,7 @@ const statusRoute = createRoute({
 export function mountStatus(app: OpenAPIHono, deps: EnforceApiDeps): void {
   app.openapi(statusRoute, async (c) => {
     const auth = await deps.auth(c, null);
-    if (!auth.ok) return c.json({ error: auth.error }, 401);
+    if (!auth.ok) return ("response" in auth ? auth.response : c.json({ error: auth.error }, 401)) as never;
     return c.json({ hosts: [], attention: false, selfHosted: auth.selfHosted }, 200);
   });
 }

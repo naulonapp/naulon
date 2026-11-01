@@ -8,23 +8,28 @@ import type { PublisherConfig } from "@naulon/shared";
 import type { EnforceApiDeps } from "./index.ts";
 
 export type Authorized =
-  | { ok: true; publisher: PublisherConfig; host: string; selfHosted: boolean }
+  | { ok: true; publisher: PublisherConfig; host: string; path: string; selfHosted: boolean }
   | { ok: false; response: Response };
 
-/** The host of an absolute resource URL, or null when it is missing or not a URL. */
-export function hostOfResource(resource: string | undefined | null): string | null {
-  if (!resource) return null;
+/** Where a request points: a host, or why it names none. The two refusals keep distinct messages
+ *  because runtimes already branch on them. */
+export type Target = { host: string; path: string } | { error: "bad request" | "bad resource" };
+
+export function targetOf(resource: string | undefined | null): Target {
+  if (!resource) return { error: "bad request" };
   try {
-    return new URL(resource).host.toLowerCase() || null;
+    const url = new URL(resource);
+    return url.host ? { host: url.host.toLowerCase(), path: url.pathname } : { error: "bad resource" };
   } catch {
-    return null;
+    return { error: "bad resource" };
   }
 }
 
-export async function authorize(c: Context, deps: EnforceApiDeps, host: string | null): Promise<Authorized> {
-  const auth = await deps.auth(c, host);
-  if (!auth.ok) return { ok: false, response: c.json({ error: auth.error }, auth.status) };
-  if (host === null) return { ok: false, response: c.json({ error: "bad request" }, 400) };
+export async function authorize(c: Context, deps: EnforceApiDeps, target: Target): Promise<Authorized> {
+  const auth = await deps.auth(c, "host" in target ? target.host : null);
+  if (!auth.ok) return { ok: false, response: "response" in auth ? auth.response : c.json({ error: auth.error }, auth.status) };
+  if (!("host" in target)) return { ok: false, response: c.json({ error: target.error }, 400) };
+  const { host } = target;
 
   let publisher = await deps.resolver.resolve(host);
   if (!publisher && deps.hooks?.resolveByOwner) {
@@ -34,5 +39,5 @@ export async function authorize(c: Context, deps: EnforceApiDeps, host: string |
     deps.hooks?.reportUnownedHost?.(auth.publisherId, host);
     return { ok: false, response: c.json({ error: "resource not owned by this key" }, 403) };
   }
-  return { ok: true, publisher, host, selfHosted: auth.selfHosted };
+  return { ok: true, publisher, host, path: target.path, selfHosted: auth.selfHosted };
 }

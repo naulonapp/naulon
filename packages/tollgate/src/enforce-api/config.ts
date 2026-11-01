@@ -15,7 +15,7 @@ import { buildX402Manifest } from "@naulon/enforce";
 import { CRAWLER_REGISTRY, activeNetwork, getNetwork, prohibitedUse, type PublisherConfig } from "@naulon/shared";
 import { buildRslDocument } from "../rsl/document.ts";
 import { termsFor } from "../rsl/terms.ts";
-import { authorize, hostOfResource } from "./authorize.ts";
+import { authorize, targetOf } from "./authorize.ts";
 import type { EnforceApiDeps } from "./index.ts";
 import { ErrorSchema, SECURITY } from "./schemas.ts";
 
@@ -101,7 +101,7 @@ export function rulesOf(p: PublisherConfig) {
 export function mountConfig(app: OpenAPIHono, deps: EnforceApiDeps): void {
   const clock = deps.now ?? Date.now;
   app.openapi(configRoute, async (c) => {
-    const authed = await authorize(c, deps, hostOfResource(c.req.query("resource")));
+    const authed = await authorize(c, deps, targetOf(c.req.query("resource")));
     if (!authed.ok) return authed.response as never;
     const { publisher, host } = authed;
 

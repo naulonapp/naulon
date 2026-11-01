@@ -16,6 +16,8 @@ import type { IdentityResult } from "@naulon/enforce";
 import type { JwkSet, ObservationEvent, PublisherConfig, PublisherResolver } from "@naulon/shared";
 import { mountConfig } from "./config.ts";
 import { mountStatus } from "./status.ts";
+import { mountQuote } from "./quote.ts";
+import type { build402, quote as resolveQuote } from "@naulon/enforce";
 
 export { fleetAgentHost, rulesOf } from "./config.ts";
 
@@ -28,7 +30,12 @@ export { fleetAgentHost, rulesOf } from "./config.ts";
 export type EnforceAuth = (
   c: Context,
   host: string | null,
-) => Promise<{ ok: true; publisherId: string; selfHosted: boolean } | { ok: false; status: 401 | 403; error: string }>;
+) => Promise<
+  | { ok: true; publisherId: string; selfHosted: boolean }
+  | { ok: false; status: 401 | 403; error: string }
+  /** A complete refusal, for an implementation whose auth layer already built one. */
+  | { ok: false; response: Response }
+>;
 
 /** Side effects only a hosted control plane performs. Every one is optional. */
 export interface EnforceApiHooks {
@@ -61,9 +68,17 @@ export interface EnforceApiDeps {
   fleetAgent?: string;
   hooks?: EnforceApiHooks;
   now?: () => number;
+  /** Test seams for the money path. Production uses the gate's own implementations. */
+  impl?: EnforceApiImpl;
+}
+
+export interface EnforceApiImpl {
+  price?: typeof resolveQuote;
+  build402?: typeof build402;
 }
 
 export function mountEnforceApi(app: OpenAPIHono, deps: EnforceApiDeps): void {
   mountConfig(app, deps);
   mountStatus(app, deps);
+  mountQuote(app, deps);
 }
