@@ -21,7 +21,16 @@ export function buyerTotalFrom(
 
 export function termsFor(
   host: string,
-  p: Pick<PublisherConfig, "articlePrefixes" | "price" | "citationMultiplier" | "gateScope" | "priceRules" | "extraLegs" | "termsPolicy" | "licenceServer">,
+  p: {
+    articlePrefixes: string[];
+    price: number;
+    citationMultiplier: number;
+    gateScope?: PublisherConfig["gateScope"];
+    priceRules?: PublisherConfig["priceRules"];
+    extraLegs?: PublisherConfig["extraLegs"];
+    termsPolicy?: PublisherConfig["termsPolicy"];
+    licenceServer?: PublisherConfig["licenceServer"];
+  },
   /** CAIP-2 chain for this host's toll, the `<accepts>` metadata. */
   x402Network?: string,
 ): RslTenantTerms {
