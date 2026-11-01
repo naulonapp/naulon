@@ -150,3 +150,9 @@ test("status answers a valid key with selfHosted from auth", async () => {
 test("status refuses a missing key", async () => {
   assert.equal((await appWith().request("/_naulon/enforce-status")).status, 401);
 });
+
+test("a per-site key digest never reaches the runtime", async () => {
+  const withDigest = publisherOf("pub_a", { enforceKeySha256: "d".repeat(64) });
+  const text = await (await appWith({ resolveHost: () => withDigest }).request(url(), { headers: keyHeaders })).text();
+  assert.ok(!text.includes("d".repeat(64)));
+});

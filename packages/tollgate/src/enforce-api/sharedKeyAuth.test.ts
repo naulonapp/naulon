@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { sharedKeyAuth } from "./sharedKeyAuth.ts";
 
@@ -49,4 +50,40 @@ test("an unauthenticated caller never reaches the resolver", async () => {
 
 test("a key shorter than 32 characters is refused at construction", () => {
   assert.throws(() => sharedKeyAuth("short", resolver), /32/);
+});
+
+const SITE_KEY = "s".repeat(40);
+const sha = (v: string) => createHash("sha256").update(v).digest("hex");
+const perSite = {
+  async resolve(host: string) {
+    if (host === "a.example") return { id: "pub_a", enforceKeySha256: sha(SITE_KEY) } as never;
+    if (host === "b.example") return { id: "pub_b", enforceKeySha256: sha("t".repeat(40)) } as never;
+    if (host === "c.example") return { id: "pub_c" } as never;
+    return undefined;
+  },
+};
+
+async function runWith(r: typeof perSite, authorization: string, host: string | null) {
+  const app = new Hono();
+  let result: unknown;
+  app.get("/", async (c) => { result = await sharedKeyAuth(KEY, r)(c, host); return c.text("ok"); });
+  await app.request("/", { headers: { authorization } });
+  return result as { ok: boolean; status?: number; publisherId?: string };
+}
+
+test("a site's own key authorizes its own host", async () => {
+  assert.deepEqual(await runWith(perSite, `Bearer ${SITE_KEY}`, "a.example"), { ok: true, publisherId: "pub_a", selfHosted: true });
+});
+
+test("a site's own key never authorizes another site's host", async () => {
+  assert.equal((await runWith(perSite, `Bearer ${SITE_KEY}`, "b.example")).status, 401);
+  assert.equal((await runWith(perSite, `Bearer ${SITE_KEY}`, "c.example")).status, 401);
+});
+
+test("a site key cannot pass a host-less check, which only the operator key answers", async () => {
+  assert.equal((await runWith(perSite, `Bearer ${SITE_KEY}`, null)).status, 401);
+});
+
+test("the operator key still authorizes every host the resolver knows", async () => {
+  for (const h of ["a.example", "b.example", "c.example"]) assert.equal((await runWith(perSite, `Bearer ${KEY}`, h)).ok, true, h);
 });

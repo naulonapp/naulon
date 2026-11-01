@@ -53,6 +53,7 @@ export const publisherRecordSchema = z
     gateScope: gateScopeSchema.optional(),
     settlementNetwork: networkSchema.optional(),
     suspended: z.boolean().optional(),
+    enforceKeySha256: z.string().regex(/^[0-9a-f]{64}$/, "must be a lowercase hex SHA-256 digest").optional(),
   })
   .strict();
 
@@ -106,6 +107,7 @@ export function publisherFromRecord(record: PublisherRecord): PublisherConfig {
     ...(record.gateScope ? { gateScope: record.gateScope } : {}),
     ...(record.settlementNetwork ? { settlementNetwork: record.settlementNetwork } : {}),
     ...(record.suspended !== undefined ? { suspended: record.suspended } : {}),
+    ...(record.enforceKeySha256 ? { enforceKeySha256: record.enforceKeySha256 } : {}),
   };
 }
 

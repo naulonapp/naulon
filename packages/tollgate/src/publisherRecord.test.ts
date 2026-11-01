@@ -77,3 +77,9 @@ test("passes toll mode, scope, terms and suspension through", () => {
 test("the licence identity names the record", () => {
   assert.equal(publisherFromRecord(BASE).licenseIdentity, "naulon:blog-1");
 });
+
+test("a per-site enforce key digest must be 64 lowercase hex characters", () => {
+  assert.equal(parse({ ...BASE, enforceKeySha256: "abc" }).success, false);
+  assert.equal(parse({ ...BASE, enforceKeySha256: "a".repeat(64) }).success, true);
+  assert.equal(publisherFromRecord({ ...BASE, enforceKeySha256: "a".repeat(64) }).enforceKeySha256, "a".repeat(64));
+});
