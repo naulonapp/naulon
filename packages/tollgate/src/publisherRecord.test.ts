@@ -83,3 +83,10 @@ test("a per-site enforce key digest must be 64 lowercase hex characters", () => 
   assert.equal(parse({ ...BASE, enforceKeySha256: "a".repeat(64) }).success, true);
   assert.equal(publisherFromRecord({ ...BASE, enforceKeySha256: "a".repeat(64) }).enforceKeySha256, "a".repeat(64));
 });
+
+test("a price rule carries integer micro-USDC on the wire and becomes the gate's price", () => {
+  assert.equal(parse({ ...BASE, priceRules: [{ pattern: "/premium/*", priceUsdc: 0.05 }] }).success, false, "no float price field");
+  assert.equal(parse({ ...BASE, priceRules: [{ pattern: "/premium/*", priceMicro: 1.5 }] }).success, false);
+  const cfg = publisherFromRecord({ ...BASE, priceRules: [{ pattern: "/premium/*", priceMicro: 50_000, agent: "chatgpt.com" }] });
+  assert.deepEqual(cfg.priceRules, [{ pattern: "/premium/*", priceUsdc: 0.05, agent: "chatgpt.com" }]);
+});

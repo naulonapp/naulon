@@ -16,8 +16,10 @@ import { termsPolicySchema } from "./rsl/terms-policy.ts";
 const priceRuleSchema = z
   .object({
     pattern: z.string().min(1),
-    priceUsdc: z.number().nonnegative().optional(),
+    priceMicro: z.number().int().nonnegative().optional(),
     citationMultiplier: z.number().positive().optional(),
+    /** A Web Bot Auth directory host the rule is bound to, lowercased. */
+    agent: z.string().min(1).optional(),
   })
   .strict();
 
@@ -99,7 +101,14 @@ export function publisherFromRecord(record: PublisherRecord): PublisherConfig {
     articlePrefixes: record.articlePrefixes,
     price: usdc(record.priceMicro / 1_000_000),
     citationMultiplier: record.citationMultiplier ?? DEFAULT_CITATION_MULTIPLIER,
-    ...(record.priceRules ? { priceRules: record.priceRules } : {}),
+    ...(record.priceRules
+      ? {
+          priceRules: record.priceRules.map(({ priceMicro, ...rule }) => ({
+            ...rule,
+            ...(priceMicro !== undefined ? { priceUsdc: priceMicro / 1_000_000 } : {}),
+          })),
+        }
+      : {}),
     credits: creditsFor(record),
     licenseIdentity: `naulon:${record.id}`,
     ...(record.tollMode ? { tollMode: record.tollMode } : {}),
