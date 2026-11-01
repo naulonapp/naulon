@@ -7,6 +7,7 @@
  * so a runtime pointed at a self-hosted gate gets a definite answer rather than a 404.
  */
 import { createRoute, z, type OpenAPIHono } from "@hono/zod-openapi";
+import { targetOf } from "./authorize.ts";
 import type { EnforceApiDeps } from "./index.ts";
 import { ErrorSchema, SECURITY } from "./schemas.ts";
 
@@ -20,6 +21,11 @@ const statusRoute = createRoute({
   summary: "Check a key and whether the gate is self-hosted",
   tags: ["Enforce"],
   security: SECURITY,
+  request: {
+    query: z.object({
+      resource: z.string().optional().openapi({ description: "Your site's address. Lets a gate that issues per-site keys tell whose key this is." }),
+    }),
+  },
   responses: {
     200: { description: "The key works.", content: { "application/json": { schema: StatusSchema } } },
     401: { description: "Missing or invalid key.", content: { "application/json": { schema: ErrorSchema } } },
@@ -28,7 +34,8 @@ const statusRoute = createRoute({
 
 export function mountStatus(app: OpenAPIHono, deps: EnforceApiDeps): void {
   app.openapi(statusRoute, async (c) => {
-    const auth = await deps.auth(c, null);
+    const target = targetOf(c.req.query("resource"));
+    const auth = await deps.auth(c, "host" in target ? target.host : null);
     if (!auth.ok) return ("response" in auth ? auth.response : c.json({ error: auth.error }, 401)) as never;
     return c.json({ hosts: [], attention: false, selfHosted: auth.selfHosted }, 200);
   });

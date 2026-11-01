@@ -486,6 +486,18 @@
             "naulonKey": []
           }
         ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Your site's address. Lets a gate that issues per-site keys tell whose key this is."
+            },
+            "required": false,
+            "description": "Your site's address. Lets a gate that issues per-site keys tell whose key this is.",
+            "name": "resource",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
             "description": "The key works.",

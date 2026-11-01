@@ -156,3 +156,11 @@ test("a per-site key digest never reaches the runtime", async () => {
   const text = await (await appWith({ resolveHost: () => withDigest }).request(url(), { headers: keyHeaders })).text();
   assert.ok(!text.includes("d".repeat(64)));
 });
+
+test("status offers the resource's host to auth, so a per-site key can be checked", async () => {
+  const seen: (string | null)[] = [];
+  const app = appWith({ auth: async (_c, host) => { seen.push(host); return { ok: true, publisherId: "pub_a", selfHosted: true }; } });
+  await app.request(`/_naulon/enforce-status?resource=${encodeURIComponent("https://Site.Example/")}`, { headers: keyHeaders });
+  await app.request("/_naulon/enforce-status", { headers: keyHeaders });
+  assert.deepEqual(seen, ["site.example", null]);
+});

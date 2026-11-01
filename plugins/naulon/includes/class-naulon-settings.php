@@ -48,6 +48,8 @@ class Naulon_Settings {
 				'api_key'            => '',
 				'api_base'           => '',
 				'gate_url'           => '',
+				// The self-hosted gate's NAULON_ENFORCE_KEY. Used only while gate_url is set.
+				'gate_key'           => '',
 				'challenge_host'     => '',
 				'challenge_token'    => '',
 				'challenge_method'   => '',
@@ -141,6 +143,40 @@ class Naulon_Settings {
 	}
 
 	/**
+	 * The self-hosted gate's key. `NAULON_GATE_KEY` in wp-config.php wins, for the same reason
+	 * `NAULON_API_KEY` does: it stays out of database exports and backups.
+	 *
+	 * @return string
+	 */
+	public static function gate_key() {
+		if ( defined( 'NAULON_GATE_KEY' ) && is_string( NAULON_GATE_KEY ) && '' !== trim( NAULON_GATE_KEY ) ) {
+			return trim( NAULON_GATE_KEY );
+		}
+		$settings = self::all();
+		return is_string( $settings['gate_key'] ) ? trim( $settings['gate_key'] ) : '';
+	}
+
+	/**
+	 * Is this site connected to a gate its owner runs, rather than the hosted service?
+	 *
+	 * @return bool
+	 */
+	public static function is_self_hosted() {
+		$settings = self::all();
+		return is_string( $settings['gate_url'] ) && '' !== trim( $settings['gate_url'] );
+	}
+
+	/**
+	 * The credential sent to whatever `api_base()` points at: the gate's key for a self-hosted
+	 * gate, the API key for the hosted service.
+	 *
+	 * @return string
+	 */
+	public static function credential() {
+		return self::is_self_hosted() ? self::gate_key() : self::api_key();
+	}
+
+	/**
 	 * Where the key is stored, for the admin screen to report honestly.
 	 *
 	 * @return string One of 'constant', 'option', 'none'.
@@ -179,9 +215,7 @@ class Naulon_Settings {
 	 * @return bool
 	 */
 	public static function is_connected() {
-		$settings = self::all();
-		$gate_url = is_string( $settings['gate_url'] ) ? trim( $settings['gate_url'] ) : '';
-		return '' !== self::api_key() || '' !== $gate_url;
+		return '' !== self::credential();
 	}
 
 	/**
