@@ -11,6 +11,7 @@
  * it's a property of *this* impl, not of the protocol: another resolver may carry
  * its publisher's credits source straight from its own database.
  */
+import { httpPublisherResolver } from "./httpPublisherResolver.ts";
 import {
   getConfig,
   readCrawlerPolicyFile,
@@ -71,4 +72,20 @@ export function envPublisherResolver(cfg: Config = getConfig()): PublisherResolv
       };
     },
   };
+}
+
+/** True when the operator configured platform tenancy (`NAULON_PLATFORM_URL` + `NAULON_PLATFORM_KEY`). */
+export function platformTenancy(cfg: Config): boolean {
+  return cfg.NAULON_PLATFORM_URL !== undefined && cfg.NAULON_PLATFORM_KEY !== undefined;
+}
+
+/**
+ * The resolver a gate boots with when none is injected: the platform's records when platform
+ * tenancy is configured, otherwise the single publisher described by this gate's own config.
+ */
+export function defaultPublisherResolver(cfg: Config = getConfig()): PublisherResolver {
+  if (cfg.NAULON_PLATFORM_URL !== undefined && cfg.NAULON_PLATFORM_KEY !== undefined) {
+    return httpPublisherResolver({ url: cfg.NAULON_PLATFORM_URL, key: cfg.NAULON_PLATFORM_KEY });
+  }
+  return envPublisherResolver(cfg);
 }

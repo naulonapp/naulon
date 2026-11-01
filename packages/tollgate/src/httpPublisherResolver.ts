@@ -57,7 +57,8 @@ export function platformHostOf(raw: string): string | undefined {
 export function httpPublisherResolver(opts: HttpPublisherResolverOptions): PublisherResolver {
   const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
   const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const doFetch = opts.fetch ?? fetch;
+  // Looked up per call, so instrumentation installed after boot (tracing, a proxy agent) applies.
+  const doFetch: typeof fetch = opts.fetch ?? ((input, init) => fetch(input, init));
   const now = opts.now ?? Date.now;
   const log = opts.log ?? ((m: string) => console.error(`[tollgate] ${m}`));
   const maxEntries = opts.maxEntries ?? DEFAULT_MAX_ENTRIES;

@@ -53,7 +53,7 @@ const SURFACE: { method: "GET" | "POST"; path: string; body?: unknown }[] = [
 ];
 
 for (const call of SURFACE) {
-  test(`the gate answers ${call.method} ${call.path.split("?")[0]} itself`, { todo: "the enforce API is not mounted yet" }, async () => {
+  test(`the gate answers ${call.method} ${call.path.split("?")[0]} itself`, async () => {
     const res = await app.request(call.path, {
       method: call.method,
       headers: {
@@ -68,3 +68,23 @@ for (const call of SURFACE) {
     assert.match(res.headers.get("content-type") ?? "", /application\/json/);
   });
 }
+
+test("an unknown /_naulon/ path still reaches the origin", async () => {
+  const res = await app.request("/_naulon/not-an-api-route", { headers: { host: "selfhost.example", authorization: `Bearer ${KEY}` } });
+  assert.equal(await res.text(), ORIGIN_BODY);
+});
+
+test("the gate serves the OpenAPI document for the API", async () => {
+  const res = await app.request("/_naulon/openapi.json", { headers: { host: "selfhost.example" } });
+  assert.equal(res.status, 200);
+  const doc = (await res.json()) as { openapi: string; info: { version: string }; paths: Record<string, unknown> };
+  assert.equal(doc.openapi, "3.1.0");
+  for (const p of ["/_naulon/enforce-config", "/_naulon/enforce-status", "/_naulon/quote", "/_naulon/verify", "/_naulon/license/check", "/_naulon/observe"]) {
+    assert.ok(doc.paths[p], `${p} is documented`);
+  }
+});
+
+test("a wrong key is 401 and never proxied", async () => {
+  const res = await app.request("/_naulon/enforce-status", { headers: { host: "selfhost.example", authorization: "Bearer wrong" } });
+  assert.equal(res.status, 401);
+});

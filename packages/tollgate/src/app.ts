@@ -80,6 +80,7 @@ import {
 import { get as getEvent } from "./eventLog.ts";
 import { licensing } from "./licensing.ts";
 import { observe } from "./observationLog.ts";
+import { enforceApiForGate } from "./enforce-api/gate.ts";
 import { clientKeyOf, rateLimit } from "./rateLimit.ts";
 import { admitIngress, EDGE_AUTH_HEADER, edgeSecretDigest, lastForwardedElement, isIngressHost, namedSiteOf, privateToIngress, siteHostOf, type IngressAdmission, type IngressOptions } from "./ingress.ts";
 import { DEFAULT_TOLL_TERMS, settleAndAttribute } from "./settle.ts";
@@ -87,7 +88,7 @@ import { deliverForAgent, varyOnAccept, type Delivered } from "./deliver.ts";
 import { stampGateCacheHeaders } from "./cacheHeaders.ts";
 import { throughContentExit } from "./contentExit.ts";
 import { prefersMarkdown } from "@naulon/extract";
-import { envPublisherResolver } from "./publisher.ts";
+import { envPublisherResolver, defaultPublisherResolver, platformTenancy } from "./publisher.ts";
 
 // The origin-mirror seams (`drainSettlements`/`DrainScope` and the whole
 // `settlementDelivery` delivery-state surface) were exported here until WH-1 P3. They are gone:
@@ -548,10 +549,10 @@ export function createApp(
   resolverArg?: PublisherResolver,
   opts?: CreateAppOptions,
 ): Hono {
-  const resolver = resolverArg ?? envPublisherResolver();
+  const resolver = resolverArg ?? defaultPublisherResolver(cfg);
   // The env ingress applies ONLY to the single-tenant default resolver: it carries one secret, and
   // handing one secret to a resolver that answers many publishers would let any of them be named.
-  const ingress = opts?.ingress ?? (resolverArg === undefined ? envIngress(resolver) : undefined);
+  const ingress = opts?.ingress ?? (resolverArg === undefined && !platformTenancy(cfg) ? envIngress(resolver) : undefined);
   if (ingress && !isBareHostname(ingress.host)) {
     throw new Error(`ingress host must be a bare lowercase hostname, got ${JSON.stringify(ingress.host)}`);
   }
@@ -956,6 +957,19 @@ export function createApp(
   });
 
   // Everything else flows through the gate.
+  // The in-app enforce API, ahead of the proxy so its routes are answered here rather than
+  // forwarded to the origin. Off unless the operator set a key.
+  if (cfg.NAULON_ENFORCE_KEY) {
+    app.route("/", enforceApiForGate({
+      key: cfg.NAULON_ENFORCE_KEY,
+      resolver,
+      arming,
+      ...(licensing ? { licenseKeys: licensing.publishedJwks } : {}),
+      ...(cfg.BOT_AUTH_SIGNING_KEY ? { signingKey: cfg.BOT_AUTH_SIGNING_KEY } : {}),
+      ...(cfg.BOT_AUTH_SIGNATURE_AGENT ? { signatureAgent: cfg.BOT_AUTH_SIGNATURE_AGENT } : {}),
+    }));
+  }
+
   app.all("*", async (c) => {
     const path = new URL(c.req.url).pathname + new URL(c.req.url).search;
     // getConnInfo needs a node socket; under a serverless adapter (Vercel) it

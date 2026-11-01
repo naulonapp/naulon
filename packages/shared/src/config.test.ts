@@ -211,3 +211,15 @@ test("no blank setting in .env.example has a comment on the same line", () => {
   const offenders = lines.filter((l) => /^[A-Z0-9_]+=\s+#/.test(l));
   assert.deepEqual(offenders, []);
 });
+
+test("NAULON_ENFORCE_KEY shorter than 32 characters fails at boot", () => {
+  assert.throws(() => parseEnv({ NAULON_ENFORCE_KEY: "short" }), /NAULON_ENFORCE_KEY/);
+  assert.equal(parseEnv({ NAULON_ENFORCE_KEY: "k".repeat(32) }).NAULON_ENFORCE_KEY, "k".repeat(32));
+});
+
+test("the platform URL and key are set together or not at all", () => {
+  assert.throws(() => parseEnv({ NAULON_PLATFORM_URL: "https://platform.example/naulon/publisher" }), /NAULON_PLATFORM_KEY/);
+  assert.throws(() => parseEnv({ NAULON_PLATFORM_KEY: "k" }), /NAULON_PLATFORM_URL/);
+  const both = parseEnv({ NAULON_PLATFORM_URL: "https://platform.example/naulon/publisher", NAULON_PLATFORM_KEY: "k" });
+  assert.equal(both.NAULON_PLATFORM_KEY, "k");
+});

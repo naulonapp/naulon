@@ -165,6 +165,15 @@ export const configSchema = z.object({
   CITATION_MULTIPLIER: z.coerce.number().positive().default(5),
   // Which path prefixes count as gateable articles (comma-separated).
   ARTICLE_PATH_PREFIXES: z.string().default("essays,articles,posts"),
+  // In-app enforce API. When set, the gate serves /_naulon/{enforce-config,enforce-status,quote,
+  // verify,license/check,observe} to runtimes presenting `Authorization: Bearer <key>`: the
+  // WordPress plugin, @naulon/enforce, the Python package. Unset (the default) serves none of them.
+  NAULON_ENFORCE_KEY: z.string().min(32, "must be at least 32 characters").optional(),
+  // Platform tenancy. Both set: the gate resolves each Host by asking the platform at this URL
+  // (`GET <url>?host=<host>`, `Authorization: Bearer <key>`) for a publisher record, instead of
+  // serving the single publisher above. Both or neither.
+  NAULON_PLATFORM_URL: z.string().url().optional(),
+  NAULON_PLATFORM_KEY: z.string().min(1).optional(),
   // Crawler route (optional): a hostname on which the gate accepts requests proxied by the
   // publisher's own CDN, naming the site in `Forwarded: host=` and authenticating with EDGE_SECRET.
   // Both unset (the default) means no ingress at all.
@@ -538,6 +547,13 @@ export const configSchema = z.object({
     cfg.NONCE_BACKEND === "supabase" ||
     cfg.PENDING_LEGS_BACKEND === "supabase" ||
     cfg.OBSERVATIONS_BACKEND === "supabase";
+  if ((cfg.NAULON_PLATFORM_URL === undefined) !== (cfg.NAULON_PLATFORM_KEY === undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: [cfg.NAULON_PLATFORM_URL === undefined ? "NAULON_PLATFORM_URL" : "NAULON_PLATFORM_KEY"],
+      message: "NAULON_PLATFORM_URL and NAULON_PLATFORM_KEY are set together or not at all",
+    });
+  }
   if (usesSupabase) {
     for (const key of ["SUPABASE_URL", "SUPABASE_SERVICE_KEY"] as const) {
       if (!cfg[key]) {

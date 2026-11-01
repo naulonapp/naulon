@@ -27,6 +27,9 @@ import type { settleAndAttribute } from "../settle.ts";
 export { fleetAgentHost, rulesOf } from "./config.ts";
 export { toObservationEvent, type InAppObservation, type ObservationEmitter, type ReportedAgent } from "./observation.ts";
 export { isSingleLegPayment } from "../x402.ts";
+export { sharedKeyAuth, MIN_ENFORCE_KEY_LENGTH } from "./sharedKeyAuth.ts";
+export { enforceApiForGate, documentEnforceApi, type GateEnforceOptions } from "./gate.ts";
+export { ENFORCE_API_VERSION, OPENAPI_PATH } from "./schemas.ts";
 
 /**
  * Decide whether this request may act for `host`'s publisher. Runs before anything else on every
