@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/app.ts",
     "./rsl": "./src/rsl/index.ts",
-    "./platform": "./src/platform.ts"
+    "./platform": "./src/platform.ts",
+    "./enforce-api": "./src/enforce-api/index.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
