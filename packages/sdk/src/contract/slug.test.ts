@@ -379,3 +379,10 @@ test("slugForScope keys site mode on the full path and keeps discovery free", ()
   assert.equal(slugForScope("/api/x", scope), null);
   assert.notEqual(slugForScope("/paper.pdf", scope), null);
 });
+
+test("the gate's /_naulon/ namespace is never an article, in either mode", () => {
+  for (const p of ["/_naulon/quote", "/_naulon/olp/x/token", "//_naulon/verify"]) {
+    assert.equal(slugFromSitePath(p, []), null, p);
+    assert.equal(slugFromPath(p, ["_naulon"]), null, p);
+  }
+});

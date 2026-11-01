@@ -45,14 +45,15 @@ function articleRe(prefixes: string[], depth: PrefixDepth): RegExp {
   return re;
 }
 
-/** Gate control routes are never articles, whatever prefixes a publisher configures. */
+/** Gate control routes are never articles, whatever prefixes a publisher configures: discovery
+ *  (`/.well-known/`), licence records (`/licenses/`) and the gate's own API namespace (`/_naulon/`). */
 function isControlRoute(pathname: string): boolean {
   // Repeated leading slashes are collapsed FIRST. Hono routes `//.well-known/naulon-jwks.json`
   // to the catch-all rather than the JWKS handler, so a raw `startsWith` let that spelling reach
   // the toll — free before `includeExtensions`, chargeable after it, which is a regression a
   // client joining a base URL ending in `/` produces by accident.
   const p = pathname.replace(/^\/+/, "/");
-  return p.startsWith("/.well-known/") || p.startsWith("/licenses/");
+  return p.startsWith("/.well-known/") || p.startsWith("/licenses/") || p.startsWith("/_naulon/");
 }
 
 /**
