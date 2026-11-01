@@ -5,7 +5,7 @@
  */
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { JwkSet, PublisherConfig, PublisherResolver } from "@naulon/shared";
-import { mountEnforceApi, type EnforceApiImpl, type ObservationEmitter } from "./index.ts";
+import { mountEnforceApi, type EnforceApiHooks, type EnforceApiImpl, type ObservationEmitter } from "./index.ts";
 
 export interface HostedDeps {
   resolver: PublisherResolver;
@@ -15,6 +15,7 @@ export interface HostedDeps {
   observe?: ObservationEmitter;
   licenseKeys?: JwkSet;
   stampInApp?: (tenantId: string, host: string, atMs: number) => void;
+  recordIdentity?: EnforceApiHooks["recordIdentity"];
   requiresFullPayment?: (tenantId: string) => Promise<boolean>;
   ownsVerifiedHost?: (tenantId: string, host: string) => Promise<boolean>;
   resolveByTenant?: (tenantId: string, host: string) => Promise<PublisherConfig | undefined>;
@@ -36,6 +37,7 @@ export function mountFromHostedDeps(app: OpenAPIHono, d: HostedDeps): void {
     ...(d.licenseKeys ? { licenseKeys: d.licenseKeys } : {}),
     hooks: {
       ...(d.stampInApp ? { stampInApp: d.stampInApp } : {}),
+      ...(d.recordIdentity ? { recordIdentity: d.recordIdentity } : {}),
       ...(d.requiresFullPayment ? { requiresFullPayment: d.requiresFullPayment } : {}),
       ...(d.ownsVerifiedHost && d.resolveByTenant
         ? { resolveByOwner: hostedOwnership(d.ownsVerifiedHost, d.resolveByTenant) }

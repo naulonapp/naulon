@@ -20,6 +20,7 @@ import { mountStatus } from "./status.ts";
 import { mountQuote } from "./quote.ts";
 import { mountVerify } from "./verify.ts";
 import { mountLicense } from "./license.ts";
+import { mountObserve } from "./observe.ts";
 import type { build402, licenseEntitlesRead, quote as resolveQuote } from "@naulon/enforce";
 import type { settleAndAttribute } from "../settle.ts";
 
@@ -91,4 +92,5 @@ export function mountEnforceApi(app: OpenAPIHono, deps: EnforceApiDeps): void {
   mountQuote(app, deps);
   mountVerify(app, deps);
   mountLicense(app, deps);
+  mountObserve(app, deps);
 }

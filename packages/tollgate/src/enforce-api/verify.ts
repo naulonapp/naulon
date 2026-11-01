@@ -16,7 +16,7 @@ import { classifyPaymentFailure, toAtomicUsdc, usdc } from "@naulon/shared";
 import { canonicalResource } from "../resource.ts";
 import { settleAndAttribute } from "../settle.ts";
 import { isSingleLegPayment } from "../x402.ts";
-import { authorize, targetOf } from "./authorize.ts";
+import { authBeforeValidation, authorize, targetOf } from "./authorize.ts";
 import type { EnforceApiDeps } from "./index.ts";
 import type { ReportedAgent } from "./observation.ts";
 import { SECURITY } from "./schemas.ts";
@@ -119,17 +119,7 @@ export function mountVerify(app: OpenAPIHono, deps: EnforceApiDeps): void {
   const derive402 = deps.impl?.build402 ?? build402;
   const clock = deps.now ?? Date.now;
 
-  // Auth runs before the OpenAPI body validator, so an unauthenticated caller always gets 401 and
-  // never a validation 400.
-  app.use("/_naulon/verify", async (c, next) => {
-    if (c.req.method !== "POST") return next();
-    const body: unknown = await c.req.json().catch(() => undefined);
-    const resource = (body as { resource?: unknown } | undefined)?.resource;
-    const target = targetOf(typeof resource === "string" ? resource : undefined);
-    const auth = await deps.auth(c, "host" in target ? target.host : null);
-    if (!auth.ok) return "response" in auth ? auth.response : c.json(failed(auth.error), auth.status);
-    return next();
-  });
+  authBeforeValidation(app, "/_naulon/verify", deps, failed);
 
   app.openapi(verifyRoute, async (c) => {
     const parsed = VerifyBodyStrict.safeParse(await c.req.json().catch(() => undefined));

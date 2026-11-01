@@ -4,6 +4,7 @@
  * answering for it would tell the caller that the host is a customer and what it charges.
  */
 import type { Context } from "hono";
+import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { PublisherConfig } from "@naulon/shared";
 import type { EnforceApiDeps } from "./index.ts";
 
@@ -34,14 +35,37 @@ export async function authorize(c: Context, deps: EnforceApiDeps, target: Target
   if (!auth.ok) return { ok: false, response: "response" in auth ? auth.response : c.json(body(auth.error), auth.status) };
   if (!("host" in target)) return { ok: false, response: c.json(body(target.error), 400) };
   const { host } = target;
-
-  let publisher = await deps.resolver.resolve(host);
-  if (!publisher && deps.hooks?.resolveByOwner) {
-    publisher = await deps.hooks.resolveByOwner(auth.publisherId, host);
-  }
-  if (!publisher || publisher.id !== auth.publisherId) {
-    deps.hooks?.reportUnownedHost?.(auth.publisherId, host);
-    return { ok: false, response: c.json(body("resource not owned by this key"), 403) };
-  }
+  const publisher = await ownedPublisher(deps, auth.publisherId, host);
+  if (!publisher) return { ok: false, response: c.json(body("resource not owned by this key"), 403) };
   return { ok: true, publisher, host, path: target.path, selfHosted: auth.selfHosted };
+}
+
+/**
+ * `host`'s publisher when it is `publisherId`'s own, else undefined (and the refusal is reported).
+ * A host the resolver does not route is asked of `resolveByOwner`; a host that resolves to another
+ * publisher is never re-asked, because that is a real cross-publisher call.
+ */
+export async function ownedPublisher(deps: EnforceApiDeps, publisherId: string, host: string): Promise<PublisherConfig | undefined> {
+  let publisher = await deps.resolver.resolve(host);
+  if (!publisher && deps.hooks?.resolveByOwner) publisher = await deps.hooks.resolveByOwner(publisherId, host);
+  if (publisher && publisher.id === publisherId) return publisher;
+  deps.hooks?.reportUnownedHost?.(publisherId, host);
+  return undefined;
+}
+
+/**
+ * Authenticate a JSON POST route before its body validator runs, so an unauthenticated caller always
+ * gets 401 and never a validation 400. The host offered to `auth` is the first report's `resource`.
+ */
+export function authBeforeValidation(app: OpenAPIHono, path: string, deps: EnforceApiDeps, body: ErrorBody = plain): void {
+  app.use(path, async (c, next) => {
+    if (c.req.method !== "POST") return next();
+    const raw: unknown = await c.req.json().catch(() => undefined);
+    const first: unknown = Array.isArray(raw) ? raw[0] : raw;
+    const resource = (first as { resource?: unknown } | undefined)?.resource;
+    const target = targetOf(typeof resource === "string" ? resource : undefined);
+    const auth = await deps.auth(c, "host" in target ? target.host : null);
+    if (!auth.ok) return "response" in auth ? auth.response : c.json(body(auth.error), auth.status);
+    return next();
+  });
 }
