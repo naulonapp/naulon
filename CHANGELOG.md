@@ -14,6 +14,36 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.16.0
+
+Ships `@naulon/sdk` **0.7.0**, `@naulon/shared` **0.7.0** and `@naulon/enforce` **0.11.0**.
+`@naulon/wayfarer` **0.7.5** and `@naulon/wayfarer-mcp` **0.7.6** change only to require the new
+`sdk` and `shared`. The Docker image serves the in-app enforce API. The WordPress plugin is 0.8.0.
+
+### Added
+- A self-hosted gate serves the in-app enforce API when `NAULON_ENFORCE_KEY` is set:
+  `/_naulon/enforce-config`, `enforce-status`, `quote`, `verify`, `license/check` and `observe`,
+  plus their OpenAPI document at `/_naulon/openapi.json`. The WordPress plugin and
+  `@naulon/enforce` can toll from inside your own app against your own gate. Unset, the gate is
+  unchanged.
+- A runtime in any language can be written against `docs/protocol/in-app.md`, the committed
+  `docs/protocol/openapi.json`, and contract fixtures generated from the gate itself:
+  `access-cases.json`, `scope-cases.json` and `content-type-cases.json` in
+  `packages/shared/test-fixtures/`.
+- Platform tenancy: with `NAULON_PLATFORM_URL` and `NAULON_PLATFORM_KEY`, the gate asks your
+  platform `GET <url>?host=<host>` for each site's publisher record
+  (`docs/protocol/publisher-record.schema.json`). A record can carry `enforceKeySha256`, so a site's
+  own key acts for that site only.
+- `GATE_SCOPE=site`, with `GATE_EXCLUDE_PREFIXES` and `GATE_INCLUDE_EXTENSIONS`, tolls a site whose
+  articles live at the root.
+- `@naulon/sdk`: `slugForScope(path, scope)`, the one function that keys a path for a toll scope.
+- `@naulon/shared`: `splitList`, and `PublisherConfig.enforceKeySha256`.
+
+### Fixed
+- Site mode no longer quotes a price for paths under the gate's own `/_naulon/` namespace.
+- The WordPress plugin connects to a self-hosted gate. It used to store the gate's address
+  without a key, so every call went unauthenticated and nothing was charged.
+
 ## v0.15.0
 
 Ships `@naulon/sdk` **0.6.3** and `@naulon/shared` **0.6.9**, and publishes `@naulon/extract`
