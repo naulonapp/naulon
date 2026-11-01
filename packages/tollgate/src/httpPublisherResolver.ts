@@ -11,7 +11,7 @@
  * not hostname syntax never reaches the platform, concurrent lookups of one host share one fetch,
  * and the cache is a bounded LRU covering absent hosts as well as known ones.
  */
-import type { PublisherConfig, PublisherResolver } from "@naulon/shared";
+import { isBareHostname, type PublisherConfig, type PublisherResolver } from "@naulon/shared";
 import { parsePublisherRecord, publisherFromRecord } from "./publisherRecord.ts";
 
 export interface HttpPublisherResolverOptions {
@@ -38,17 +38,20 @@ interface Entry {
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 2_000;
 const DEFAULT_MAX_ENTRIES = 10_000;
-const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** Lowercase, drop one trailing dot, and refuse anything that is not `hostname[:port]`. */
-export function normalizeHost(raw: string): string | undefined {
-  const lower = raw.trim().toLowerCase();
-  const m = /^([^:]+)(?::(\d{1,5}))?$/.exec(lower);
+/**
+ * The host a platform is asked about: lowercase, one trailing dot dropped, a bare hostname with an
+ * optional port, or undefined. The port is kept, unlike the ingress, because a platform may key its
+ * sites by `host:port` (a local development server does).
+ */
+export function platformHostOf(raw: string): string | undefined {
+  const m = /^([^:]+)(?::(\d{1,5}))?$/.exec(raw.trim().toLowerCase());
   if (!m || !m[1]) return undefined;
   const name = m[1].endsWith(".") ? m[1].slice(0, -1) : m[1];
-  if (name.length === 0 || name.length > 253 || !name.split(".").every((l) => LABEL.test(l))) return undefined;
-  if (m[2] !== undefined && (Number(m[2]) < 1 || Number(m[2]) > 65535)) return undefined;
-  return m[2] !== undefined ? `${name}:${m[2]}` : name;
+  if (!isBareHostname(name)) return undefined;
+  if (m[2] === undefined) return name;
+  const port = Number(m[2]);
+  return port >= 1 && port <= 65535 ? `${name}:${port}` : undefined;
 }
 
 export function httpPublisherResolver(opts: HttpPublisherResolverOptions): PublisherResolver {
@@ -126,7 +129,7 @@ export function httpPublisherResolver(opts: HttpPublisherResolverOptions): Publi
 
   return {
     async resolve(rawHost: string) {
-      const host = normalizeHost(rawHost);
+      const host = platformHostOf(rawHost);
       if (host === undefined) return undefined;
       const cached = cache.get(host);
       if (cached && cached.expiresAt > now()) {

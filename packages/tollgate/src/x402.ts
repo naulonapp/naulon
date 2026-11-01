@@ -28,6 +28,23 @@ import {
 
 /** Re-exported so the settle surface reads unchanged; the type is owned by `@naulon/shared`
  *  because `AttributedEvent` carries it and shared is the base package. */
+
+/** A decoded payment that is one bare payload rather than a per-leg array: what a stock x402 client
+ *  sends, because it signs `accepts[0]` alone. */
+function isBarePayload(parsed: unknown): boolean {
+  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+}
+
+/** `isBarePayload` for a raw `payment-signature` header. Undecodable is false: the settle layer owns
+ *  that refusal. */
+export function isSingleLegPayment(paymentSignature: string): boolean {
+  try {
+    return isBarePayload(JSON.parse(Buffer.from(paymentSignature, "base64").toString("utf8")));
+  } catch {
+    return false;
+  }
+}
+
 export type { ForgoneLeg };
 import { signMemoAuthorization } from "./arcRelay.ts";
 import { getPendingLegSink, type PendingLeg, type PendingLegSink } from "./pendingLegs.ts";
@@ -249,7 +266,7 @@ export async function verifyAndSettle(
   //
   // Note this is orthogonal to the control plane's drop-refusal on `/verify`: that one catches a
   // PUBLISHER who strips the fee from their own quote. This is a BUYER who was never offered it.
-  const stockPayer = !Array.isArray(parsed) && legReqs.length > 1;
+  const stockPayer = isBarePayload(parsed) && legReqs.length > 1;
   // ALL OR NOTHING, and refused HERE — before a signature is presented to the facilitator, so no
   // money has moved and the payer can simply pay again with every leg. Refusing after the settle
   // would leave the authorized legs on chain with nothing to show for them; see `requireEveryLeg`.

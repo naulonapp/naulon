@@ -20,6 +20,7 @@
  * (= `createApp()`). Keeping the app free of any server boot is what lets every
  * entry import it without one of them starting a listener.
  */
+import { canonicalResource } from "./resource.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { createRangeFetcher, type RangeFetcher } from "./rangeFetcher.ts";
@@ -112,6 +113,7 @@ export { decide, LICENSE_HEADER } from "@naulon/enforce";
 export { licensing, type Licensing } from "./licensing.ts";
 export type { Decision, DecideInput, DecideObs } from "@naulon/enforce";
 export { settleAndAttribute, type SettleResult, type SettleArgs } from "./settle.ts";
+export { canonicalResource } from "./resource.ts";
 // The ingress host rules, for an embedder serving its own routes on the ingress host.
 export { isIngressHost, siteHostOf } from "./ingress.ts";
 // The gate's pricing — the hosted /quote prices a resource with the SAME resolver
@@ -1542,17 +1544,6 @@ export function createApp(
  * Vercel function. A downstream embedder builds its own via `createApp(resolver)`.
  */
 export const app = createApp();
-
-/**
- * The URL a buyer paid for, as the citation record names it: the Host that was tolled plus the
- * path exactly as requested, with no query string (a query does not change what was priced; the slug is
- * derived from the path alone). `https` everywhere except a loopback host, which is only ever a
- * local rig and would otherwise name a URL nobody can open.
- */
-export function canonicalResource(host: string, pathname: string): string {
-  const scheme = /^(localhost|127\.|\[::1\])/i.test(host) ? "http" : "https";
-  return `${scheme}://${host.toLowerCase()}${pathname}`;
-}
 
 /** The agent guide for one tolled request: the page it names, and the links its quote carries. */
 function guideFor(
