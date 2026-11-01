@@ -59,3 +59,4 @@ nav:
       - Writing a crawl adapter: crawl-adapters.md
   - Protocol:
       - Citation License Token: citation-license.md
+      - Writing an in-app runtime: protocol/in-app.md
