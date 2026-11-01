@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
 import { FLEET_DIRECTORY_URL, FLEET_VERIFY_URL } from "./fleet.ts";
+import { normalizeIncludeExtensions, splitList } from "./gate-scope.ts";
 
 /** The OSS guide to paying any naulon 402 from any x402 client. A fleet overrides it with its own. */
 export const OSS_BUYER_GUIDE_URL = "https://naulonapp.github.io/naulon/buying/#paying-from-any-x402-client";
@@ -165,6 +166,12 @@ export const configSchema = z.object({
   CITATION_MULTIPLIER: z.coerce.number().positive().default(5),
   // Which path prefixes count as gateable articles (comma-separated).
   ARTICLE_PATH_PREFIXES: z.string().default("essays,articles,posts"),
+  // What the gate tolls. `prefixes` (the default) tolls ARTICLE_PATH_PREFIXES. `site` tolls every
+  // page except discovery, static files and GATE_EXCLUDE_PREFIXES; GATE_INCLUDE_EXTENSIONS opts
+  // file types (pdf, json, ...) back in.
+  GATE_SCOPE: z.enum(["prefixes", "site"]).default("prefixes"),
+  GATE_EXCLUDE_PREFIXES: z.string().default(""),
+  GATE_INCLUDE_EXTENSIONS: z.string().default(""),
   // In-app enforce API. When set, the gate serves /_naulon/{enforce-config,enforce-status,quote,
   // verify,license/check,observe} to runtimes presenting `Authorization: Bearer <key>`: the
   // WordPress plugin, @naulon/enforce, the Python package. Unset (the default) serves none of them.
@@ -547,6 +554,11 @@ export const configSchema = z.object({
     cfg.NONCE_BACKEND === "supabase" ||
     cfg.PENDING_LEGS_BACKEND === "supabase" ||
     cfg.OBSERVATIONS_BACKEND === "supabase";
+  try {
+    normalizeIncludeExtensions(splitList(cfg.GATE_INCLUDE_EXTENSIONS));
+  } catch (err) {
+    ctx.addIssue({ code: "custom", path: ["GATE_INCLUDE_EXTENSIONS"], message: err instanceof Error ? err.message : String(err) });
+  }
   if ((cfg.NAULON_PLATFORM_URL === undefined) !== (cfg.NAULON_PLATFORM_KEY === undefined)) {
     ctx.addIssue({
       code: "custom",

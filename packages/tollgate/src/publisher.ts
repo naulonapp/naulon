@@ -14,7 +14,9 @@
 import { httpPublisherResolver } from "./httpPublisherResolver.ts";
 import {
   getConfig,
+  normalizeIncludeExtensions,
   readCrawlerPolicyFile,
+  splitList,
   usdc,
   type Config,
   type CreditsResolver,
@@ -31,12 +33,11 @@ function buildCreditsResolver(cfg: Config): Promise<CreditsResolver> {
   return fixtureResolverFromFile(cfg.CREDITS_FIXTURES);
 }
 
-/** Split `ARTICLE_PATH_PREFIXES` into clean prefixes (no leading slash, no blanks). */
-function parsePrefixes(raw: string): string[] {
-  return raw
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
+/** The toll scope this gate's own config describes. Absent for prefix mode, the default. */
+function gateScopeOf(cfg: Config): PublisherConfig["gateScope"] {
+  if (cfg.GATE_SCOPE !== "site") return undefined;
+  const include = normalizeIncludeExtensions(splitList(cfg.GATE_INCLUDE_EXTENSIONS));
+  return { mode: "site", excludePrefixes: splitList(cfg.GATE_EXCLUDE_PREFIXES), ...(include.length ? { includeExtensions: include } : {}) };
 }
 
 /**
@@ -48,7 +49,8 @@ function parsePrefixes(raw: string): string[] {
  */
 export function envPublisherResolver(cfg: Config = getConfig()): PublisherResolver {
   const credits = buildCreditsResolver(cfg);
-  const articlePrefixes = parsePrefixes(cfg.ARTICLE_PATH_PREFIXES);
+  const articlePrefixes = splitList(cfg.ARTICLE_PATH_PREFIXES);
+  const gateScope = gateScopeOf(cfg);
   const price = usdc(cfg.DEFAULT_PRICE_USDC);
   // Read once at construction, exactly as credits are: the gate loads its policy at boot
   // and a later edit takes a restart. That is the contract credits.json already has, and
@@ -69,6 +71,7 @@ export function envPublisherResolver(cfg: Config = getConfig()): PublisherResolv
         licenseIdentity: cfg.LICENSE_ISSUER ?? `naulon:${host}`,
         coauthorSplit: cfg.COAUTHOR_ONCHAIN_SPLIT,
         ...(policy ? { crawlerPolicy: policy } : {}),
+        ...(gateScope ? { gateScope } : {}),
       };
     },
   };

@@ -171,7 +171,8 @@ tollgate project:
 openssl rand -hex 32   # -> NAULON_ENFORCE_KEY
 ```
 
-Give the runtime the gate's URL and the same key. Check the key works:
+Give the runtime the gate's URL and the same key. A WordPress site with post-name permalinks keeps its
+articles at the root, so set `GATE_SCOPE=site` too. Check the key works:
 
 ```bash
 curl -s -H "Authorization: Bearer $NAULON_ENFORCE_KEY" https://gate.yourdomain.com/_naulon/enforce-status
