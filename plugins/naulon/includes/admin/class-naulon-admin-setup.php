@@ -92,13 +92,21 @@ class Naulon_Admin_Setup {
 					: esc_html__( 'stored in this site’s database', 'naulon' );
 				echo '</span>';
 			}
-			if ( 'option' === $source ) {
+			// A self-hosted connection is stored in the options row too (the gate key may live in
+			// wp-config.php, but the address never does), so it can always be disconnected here.
+			if ( 'option' === $source || Naulon_Settings::is_self_hosted() ) {
 				Naulon_Admin::actions_open();
 				Naulon_Admin::form_open( 'disconnect', Naulon_Admin::PAGE_SETUP );
 				submit_button( __( 'Disconnect', 'naulon' ), 'link-delete', 'submit', false );
 				Naulon_Admin::form_close();
 				Naulon_Admin::actions_close();
 			}
+		} elseif ( '' !== $gate_url ) {
+			// Connected by address alone before gate keys existed: name what is missing rather than
+			// reading as a site that was never set up.
+			Naulon_Admin::pill( 'warn', __( 'Needs your gate\'s key', 'naulon' ) );
+			printf( '<code class="naulon-token">%s</code>', esc_html( $gate_url ) );
+			echo '<span class="naulon-muted">' . esc_html__( 'Nothing is being charged until you paste the gate\'s NAULON_ENFORCE_KEY below.', 'naulon' ) . '</span>';
 		} else {
 			Naulon_Admin::pill( 'idle', __( 'Not connected', 'naulon' ) );
 			echo '<span class="naulon-muted">' . esc_html__( 'Nothing is being charged.', 'naulon' ) . '</span>';
@@ -156,6 +164,7 @@ class Naulon_Admin_Setup {
 				array(
 					'api_key'  => $raw,
 					'gate_url' => '',
+					'gate_key' => '',
 				)
 			);
 			self::ping();
@@ -167,7 +176,10 @@ class Naulon_Admin_Setup {
 		if ( Naulon_Key::looks_like_gate_url( $raw ) ) {
 			$base = untrailingslashit( $raw );
 			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- the dispatcher checked it.
-			$pasted   = isset( $_POST['naulon_gate_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['naulon_gate_key'] ) ) ) : '';
+			// Not sanitize_text_field: it strips `%xx` octets, which would silently change a key.
+			// The value is only compared by the gate and stored; looks_like_gate_key() checks its shape.
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+			$pasted   = isset( $_POST['naulon_gate_key'] ) ? trim( (string) wp_unslash( $_POST['naulon_gate_key'] ) ) : '';
 			$gate_key = '' !== $pasted ? $pasted : Naulon_Settings::gate_key();
 			if ( ! Naulon_Key::looks_like_gate_key( $gate_key ) ) {
 				Naulon_Admin::notice( 'error', __( 'A gate you host needs its key too: paste the value of NAULON_ENFORCE_KEY from the gate\'s environment (at least 32 characters).', 'naulon' ) );

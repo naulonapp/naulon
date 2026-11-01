@@ -108,7 +108,9 @@ class Naulon_Key {
 	 * @return bool
 	 */
 	public static function looks_like_gate_key( $candidate ) {
-		return is_string( $candidate ) && strlen( trim( $candidate ) ) >= self::MIN_GATE_KEY_LENGTH;
+		// Printable ASCII with no spaces: what `openssl rand -hex` and every env file carry. Checked
+		// rather than sanitized, so a key is never silently changed before it is stored.
+		return is_string( $candidate ) && 1 === preg_match( '/^[\x21-\x7E]{' . self::MIN_GATE_KEY_LENGTH . ',}\z/', $candidate );
 	}
 
 	/**
@@ -126,6 +128,9 @@ class Naulon_Key {
 		}
 		if ( 401 === $check['status'] ) {
 			return __( 'Your gate refused that key. Paste the value of NAULON_ENFORCE_KEY from the gate\'s environment.', 'naulon' );
+		}
+		if ( 403 === $check['status'] ) {
+			return __( 'Your gate accepted the key but does not serve this site\'s address. Add the address WordPress uses to the gate, then connect again.', 'naulon' );
 		}
 		if ( 404 === $check['status'] ) {
 			return __( 'That gate does not serve the in-app API yet. Set NAULON_ENFORCE_KEY on it, restart it, and connect again.', 'naulon' );

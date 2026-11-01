@@ -46,4 +46,16 @@ class GateCheckTest extends TestCase {
 		$this->assertFalse( Naulon_Key::looks_like_gate_key( '' ) );
 		$this->assertFalse( Naulon_Key::looks_like_gate_key( null ) );
 	}
+
+	public function test_a_site_the_gate_does_not_serve_is_named_as_such_not_as_a_bad_key() {
+		$message = Naulon_Key::gate_check_error( self::check( 403 ) );
+		$this->assertStringContainsString( 'does not serve this site', $message );
+		$this->assertStringNotContainsString( 'refused that key', $message );
+	}
+
+	public function test_a_gate_key_is_any_printable_run_of_32_or_more_characters() {
+		$this->assertTrue( Naulon_Key::looks_like_gate_key( str_repeat( 'a', 30 ) . '%2F' ) );
+		$this->assertFalse( Naulon_Key::looks_like_gate_key( str_repeat( 'a', 31 ) . ' b' ) );
+		$this->assertFalse( Naulon_Key::looks_like_gate_key( str_repeat( 'a', 32 ) . "\n" ) );
+	}
 }
