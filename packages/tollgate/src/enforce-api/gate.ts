@@ -26,17 +26,25 @@ export interface GateEnforceOptions {
 
 const OPERATOR_IDS = CRAWLER_PROOF.map((r) => r.id);
 
-/** Describe the API: the bearer scheme every route names, and the document metadata. */
-export function documentEnforceApi(api: OpenAPIHono): void {
+/** The document metadata, shared by the served document and the committed copy. */
+export const OPENAPI_INFO = {
+  openapi: "3.1.0",
+  info: {
+    title: "naulon in-app enforce API",
+    version: ENFORCE_API_VERSION,
+    description: "What a runtime tolling from inside a publisher's app asks the gate. See docs/protocol/in-app.md.",
+  },
+};
+
+/** Register the bearer scheme every route names. */
+export function registerEnforceSecurity(api: OpenAPIHono): void {
   api.openAPIRegistry.registerComponent("securitySchemes", "naulonKey", { type: "http", scheme: "bearer" });
-  api.doc31(OPENAPI_PATH, {
-    openapi: "3.1.0",
-    info: {
-      title: "naulon in-app enforce API",
-      version: ENFORCE_API_VERSION,
-      description: "What a runtime tolling from inside a publisher's app asks the gate. See docs/protocol/in-app.md.",
-    },
-  });
+}
+
+/** Describe the API and serve its document at `OPENAPI_PATH`. */
+export function documentEnforceApi(api: OpenAPIHono): void {
+  registerEnforceSecurity(api);
+  api.doc31(OPENAPI_PATH, OPENAPI_INFO);
 }
 
 export function enforceApiForGate(o: GateEnforceOptions): OpenAPIHono {

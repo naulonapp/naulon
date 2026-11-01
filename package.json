@@ -19,7 +19,8 @@
     "generate-wallets": "tsx scripts/generate-wallets.mjs",
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json",
-    "test": "NODE_ENV=test node --import tsx --test \"packages/**/src/**/*.test.ts\""
+    "test": "NODE_ENV=test node --import tsx --test \"packages/**/src/**/*.test.ts\"",
+    "contract:fixtures": "tsx packages/tollgate/src/contract/write.ts"
   },
   "devDependencies": {
     "@types/node": "^25.9.5",
