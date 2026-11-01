@@ -11,7 +11,8 @@
  * plane (per-tenant keys, a database resolver).
  */
 import type { Context } from "hono";
-import type { OpenAPIHono } from "@hono/zod-openapi";
+import type { OpenAPIHono, z } from "@hono/zod-openapi";
+type ZodType = z.ZodType;
 import type { IdentityResult } from "@naulon/enforce";
 import type { JwkSet, PublisherConfig, PublisherResolver } from "@naulon/shared";
 import type { ObservationEmitter } from "./observation.ts";
@@ -82,6 +83,12 @@ export interface EnforceApiDeps {
   now?: () => number;
   /** Test seams for the money path. Production uses the gate's own implementations. */
   impl?: EnforceApiImpl;
+  /** How a host documents routes whose payload it supplies. */
+  docs?: {
+    /** The schema of one `enforce-status` host row, when `statusReport` returns rows. */
+    statusRow?: ZodType;
+    statusSummary?: string;
+  };
 }
 
 export interface EnforceApiImpl {

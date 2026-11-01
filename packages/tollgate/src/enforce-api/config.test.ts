@@ -173,3 +173,22 @@ test("status carries the host's own report when it has one", async () => {
   const res = await app.request("/_naulon/enforce-status", { headers: keyHeaders });
   assert.deepEqual(await res.json(), { hosts: [{ host: "pub_a.test", nextAction: "none" }], attention: false, selfHosted: false });
 });
+
+test("status passes the auth refusal through, so a key for the wrong site is a 403 not a 401", async () => {
+  const app = appWith({ auth: async () => ({ ok: false, status: 403, error: "resource not owned by this key" }) });
+  assert.equal((await app.request("/_naulon/enforce-status", { headers: keyHeaders })).status, 403);
+});
+
+test("a host's status row schema and summary reach the OpenAPI document", async () => {
+  const { z } = await import("@hono/zod-openapi");
+  const app = new OpenAPIHono();
+  mountEnforceApi(app, {
+    resolver: { resolve: async () => undefined },
+    auth: keyAuth(),
+    observe: () => {},
+    docs: { statusSummary: "Per-host enforcement report", statusRow: z.object({ host: z.string(), nextAction: z.string() }).openapi("StatusRowTest") },
+  });
+  const doc = app.getOpenAPI31Document({ openapi: "3.1.0", info: { title: "t", version: "1" } }) as { paths: Record<string, { get?: { summary?: string } }>; components?: { schemas?: Record<string, unknown> } };
+  assert.equal(doc.paths["/_naulon/enforce-status"]?.get?.summary, "Per-host enforcement report");
+  assert.ok(doc.components?.schemas?.StatusRowTest, "the row schema is documented");
+});

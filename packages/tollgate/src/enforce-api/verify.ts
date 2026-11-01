@@ -1,11 +1,17 @@
 /**
  * `POST /_naulon/verify`: settle a payment an in-app runtime relays, and answer whether to serve.
  *
- * The runtime is the publisher's own code, so nothing it sends about money is taken on trust:
- *  - the buyer-signed legs must equal, as a multiset of (payTo, amount), the legs the quote implies;
- *  - when the publisher owes additive legs (an operator fee), the price is re-derived from the
- *    publisher's configuration and the signed legs must carry every owed leg.
+ * The caller is the publisher's own runtime, holding that publisher's key, and it relays a quote
+ * this API built for it. What it may NOT do is pay a third party less than it is owed:
+ *  - the buyer-signed legs must equal, as a multiset of (payTo, amount), the legs the quote implies,
+ *    so the money the buyer authorized is the money the quote describes;
+ *  - when the publisher owes additive legs to someone else (an operator fee), the price is
+ *    re-derived from the publisher's configuration and the signed legs must carry every owed leg.
  * Both are checked before anything reaches the facilitator, so a refusal never moves money.
+ *
+ * The publisher's own legs are the publisher's to state: a runtime that names different authors or a
+ * different price for its own articles is the key holder describing its own sales, which it could
+ * equally do by editing its credits. That is why a site key must only ever reach that site.
  *
  * The money verdicts (`paid`, `payment-failed`) are written here and nowhere else on this plane,
  * which is why `/observe` refuses them from a client.
