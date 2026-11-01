@@ -65,6 +65,8 @@ export interface EnforceApiHooks {
   requiresFullPayment?(publisherId: string): Promise<boolean>;
   /** Record a runtime's identity verdict. */
   recordIdentity?(publisherId: string, result: IdentityResult, at: number): void;
+  /** A per-host health report for `/_naulon/enforce-status`. Absent: the route reports no hosts. */
+  statusReport?(publisherId: string): Promise<{ hosts: Record<string, unknown>[]; attention: boolean }>;
 }
 
 export interface EnforceApiDeps {

@@ -164,3 +164,12 @@ test("status offers the resource's host to auth, so a per-site key can be checke
   await app.request("/_naulon/enforce-status", { headers: keyHeaders });
   assert.deepEqual(seen, ["site.example", null]);
 });
+
+test("status carries the host's own report when it has one", async () => {
+  const app = appWith({
+    auth: async () => ({ ok: true, publisherId: "pub_a", selfHosted: false }),
+    hooks: { statusReport: async (id) => ({ hosts: [{ host: `${id}.test`, nextAction: "none" }], attention: false }) },
+  });
+  const res = await app.request("/_naulon/enforce-status", { headers: keyHeaders });
+  assert.deepEqual(await res.json(), { hosts: [{ host: "pub_a.test", nextAction: "none" }], attention: false, selfHosted: false });
+});

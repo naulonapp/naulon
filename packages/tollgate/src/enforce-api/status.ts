@@ -37,6 +37,7 @@ export function mountStatus(app: OpenAPIHono, deps: EnforceApiDeps): void {
     const target = targetOf(c.req.query("resource"));
     const auth = await deps.auth(c, "host" in target ? target.host : null);
     if (!auth.ok) return ("response" in auth ? auth.response : c.json({ error: auth.error }, 401)) as never;
-    return c.json({ hosts: [], attention: false, selfHosted: auth.selfHosted }, 200);
+    const report = deps.hooks?.statusReport ? await deps.hooks.statusReport(auth.publisherId) : { hosts: [], attention: false };
+    return c.json({ ...report, selfHosted: auth.selfHosted }, 200);
   });
 }
