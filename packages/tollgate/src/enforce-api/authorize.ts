@@ -25,10 +25,14 @@ export function targetOf(resource: string | undefined | null): Target {
   }
 }
 
-export async function authorize(c: Context, deps: EnforceApiDeps, target: Target): Promise<Authorized> {
+/** The body a refusal carries. Most routes answer `{ error }`; `/verify` answers `{ ok: false, error }`. */
+export type ErrorBody = (error: string) => Record<string, unknown>;
+const plain: ErrorBody = (error) => ({ error });
+
+export async function authorize(c: Context, deps: EnforceApiDeps, target: Target, body: ErrorBody = plain): Promise<Authorized> {
   const auth = await deps.auth(c, "host" in target ? target.host : null);
-  if (!auth.ok) return { ok: false, response: "response" in auth ? auth.response : c.json({ error: auth.error }, auth.status) };
-  if (!("host" in target)) return { ok: false, response: c.json({ error: target.error }, 400) };
+  if (!auth.ok) return { ok: false, response: "response" in auth ? auth.response : c.json(body(auth.error), auth.status) };
+  if (!("host" in target)) return { ok: false, response: c.json(body(target.error), 400) };
   const { host } = target;
 
   let publisher = await deps.resolver.resolve(host);
@@ -37,7 +41,7 @@ export async function authorize(c: Context, deps: EnforceApiDeps, target: Target
   }
   if (!publisher || publisher.id !== auth.publisherId) {
     deps.hooks?.reportUnownedHost?.(auth.publisherId, host);
-    return { ok: false, response: c.json({ error: "resource not owned by this key" }, 403) };
+    return { ok: false, response: c.json(body("resource not owned by this key"), 403) };
   }
   return { ok: true, publisher, host, path: target.path, selfHosted: auth.selfHosted };
 }

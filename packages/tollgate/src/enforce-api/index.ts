@@ -13,13 +13,19 @@
 import type { Context } from "hono";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { IdentityResult } from "@naulon/enforce";
-import type { JwkSet, ObservationEvent, PublisherConfig, PublisherResolver } from "@naulon/shared";
+import type { JwkSet, PublisherConfig, PublisherResolver } from "@naulon/shared";
+import type { ObservationEmitter } from "./observation.ts";
 import { mountConfig } from "./config.ts";
 import { mountStatus } from "./status.ts";
 import { mountQuote } from "./quote.ts";
-import type { build402, quote as resolveQuote } from "@naulon/enforce";
+import { mountVerify } from "./verify.ts";
+import { mountLicense } from "./license.ts";
+import type { build402, licenseEntitlesRead, quote as resolveQuote } from "@naulon/enforce";
+import type { settleAndAttribute } from "../settle.ts";
 
 export { fleetAgentHost, rulesOf } from "./config.ts";
+export { toObservationEvent, type InAppObservation, type ObservationEmitter, type ReportedAgent } from "./observation.ts";
+export { isSingleLegPayment } from "../x402.ts";
 
 /**
  * Decide whether this request may act for `host`'s publisher. Runs before anything else on every
@@ -61,7 +67,7 @@ export interface EnforceApiDeps {
   resolver: PublisherResolver;
   auth: EnforceAuth;
   /** Where decisions are recorded. Called fire-and-forget; it must not throw. */
-  observe: (o: ObservationEvent) => void;
+  observe: ObservationEmitter;
   /** Keys licences are verified against. Absent: licence checks answer not entitled. */
   licenseKeys?: JwkSet;
   /** The host the gate signs its origin pulls as, when it signs any. */
@@ -75,10 +81,14 @@ export interface EnforceApiDeps {
 export interface EnforceApiImpl {
   price?: typeof resolveQuote;
   build402?: typeof build402;
+  settle?: typeof settleAndAttribute;
+  entitles?: typeof licenseEntitlesRead;
 }
 
 export function mountEnforceApi(app: OpenAPIHono, deps: EnforceApiDeps): void {
   mountConfig(app, deps);
   mountStatus(app, deps);
   mountQuote(app, deps);
+  mountVerify(app, deps);
+  mountLicense(app, deps);
 }
