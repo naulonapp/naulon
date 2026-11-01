@@ -431,7 +431,7 @@ export async function classifyRequester(
 }
 
 export async function decide(input: DecideInput): Promise<Decision> {
-  const { raw, host, path, publisher, now, quote } = input;
+  const { raw, path, publisher, now, quote } = input;
 
   const slug = slugForScope(path, publisher);
 

@@ -88,7 +88,7 @@ import { deliverForAgent, varyOnAccept, type Delivered } from "./deliver.ts";
 import { stampGateCacheHeaders } from "./cacheHeaders.ts";
 import { throughContentExit } from "./contentExit.ts";
 import { prefersMarkdown } from "@naulon/extract";
-import { envPublisherResolver, defaultPublisherResolver, platformTenancy } from "./publisher.ts";
+import { defaultPublisherResolver, platformTenancy } from "./publisher.ts";
 
 // The origin-mirror seams (`drainSettlements`/`DrainScope` and the whole
 // `settlementDelivery` delivery-state surface) were exported here until WH-1 P3. They are gone:

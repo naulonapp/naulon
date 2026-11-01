@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OpenAPIHono } from "@hono/zod-openapi";
-import { build402 } from "@naulon/enforce";
 import { mountEnforceApi, type EnforceApiDeps } from "./index.ts";
 
 const publisherOf = (id: string, over: Record<string, unknown> = {}) =>
