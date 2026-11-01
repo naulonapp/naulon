@@ -144,3 +144,25 @@ test("the cache holds at most maxEntries hosts, evicting the least recently used
   await r.resolve("b.example");
   assert.equal(seen.length, 4);
 });
+
+test("during a platform outage an unknown host is not re-fetched on every request, and nothing grows without bound", async () => {
+  const seen: Seen[] = [];
+  const logged: string[] = [];
+  let now = 0;
+  const r = httpPublisherResolver({
+    url: "https://p.example/x", key: "k", maxEntries: 3, now: () => now, log: (m) => logged.push(m),
+    fetch: fakeFetch([() => new Response("down", { status: 503 })], seen),
+  });
+  await r.resolve("a.example");
+  await r.resolve("a.example");
+  assert.equal(seen.length, 1, "a failed lookup is remembered briefly");
+  now = 10_000;
+  await r.resolve("a.example");
+  assert.equal(seen.length, 2, "and retried once that window passes");
+  for (let i = 0; i < 50; i++) await r.resolve(`h${i}.example`);
+  assert.ok(logged.length <= 50 + 2);
+  const internals = r as unknown as { stats?: () => { cached: number; warned: number } };
+  assert.ok(internals.stats, "the resolver exposes its sizes for this test");
+  const { cached, warned } = internals.stats();
+  assert.ok(cached <= 3 && warned <= 3, `cached ${cached}, warned ${warned}`);
+});

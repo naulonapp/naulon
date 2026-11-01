@@ -38,6 +38,9 @@ interface Entry {
 const DEFAULT_TTL_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 2_000;
 const DEFAULT_MAX_ENTRIES = 10_000;
+/** How long a failed lookup for a host with no last good record is remembered, so an outage costs
+ *  the platform one request per host per window rather than one per gate request. */
+const FAILURE_TTL_MS = 5_000;
 
 /**
  * The host a platform is asked about: lowercase, one trailing dot dropped, a bare hostname with an
@@ -54,7 +57,12 @@ export function platformHostOf(raw: string): string | undefined {
   return port >= 1 && port <= 65535 ? `${name}:${port}` : undefined;
 }
 
-export function httpPublisherResolver(opts: HttpPublisherResolverOptions): PublisherResolver {
+/** A platform resolver, with its cache sizes for diagnostics. */
+export interface HttpPublisherResolver extends PublisherResolver {
+  stats(): { cached: number; warned: number; inflight: number };
+}
+
+export function httpPublisherResolver(opts: HttpPublisherResolverOptions): HttpPublisherResolver {
   const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
   const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   // Looked up per call, so instrumentation installed after boot (tracing, a proxy agent) applies.
@@ -81,6 +89,9 @@ export function httpPublisherResolver(opts: HttpPublisherResolverOptions): Publi
 
   const warnOnce = (host: string, message: string) => {
     if (warned.has(host)) return;
+    // Bounded like the cache: past the cap the set starts over, which costs a repeated log line,
+    // never memory.
+    if (warned.size >= maxEntries) warned.clear();
     warned.add(host);
     log(`platform record for ${host} ignored, serving the last good one: ${message}`);
   };
@@ -125,6 +136,7 @@ export function httpPublisherResolver(opts: HttpPublisherResolverOptions): Publi
       remember(host, { config: cached.config, expiresAt: now() + ttl });
       return cached.config;
     }
+    remember(host, { config: undefined, expiresAt: now() + Math.min(ttl, FAILURE_TTL_MS) });
     return undefined;
   }
 
@@ -143,5 +155,6 @@ export function httpPublisherResolver(opts: HttpPublisherResolverOptions): Publi
       inflight.set(host, run);
       return run;
     },
+    stats: () => ({ cached: cache.size, warned: warned.size, inflight: inflight.size }),
   };
 }
