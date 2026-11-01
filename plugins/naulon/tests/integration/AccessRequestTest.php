@@ -55,12 +55,12 @@ class AccessRequestTest extends WP_UnitTestCase {
 		);
 	}
 	public function test_a_gate_connected_site_is_told_what_is_missing_not_sent_back_to_setup() {
-		// Connecting a gate URL clears the API key by design, so Setup reports "Connected" while
-		// approval cannot work. The refusal must name the key, not send the publisher to a screen
-		// that already says it is finished.
+		// A self-hosted gate connection (address plus the gate's own key) clears the hosted API key by
+		// design, so Setup reports "Connected" while approval cannot work. The refusal must name the
+		// key, not send the publisher to a screen that already says it is finished.
 		$user  = self::factory()->user->create( array( 'role' => 'author' ) );
 		$admin = self::factory()->user->create( array( 'role' => 'administrator' ) );
-		Naulon_Settings::update( array( 'gate_url' => 'https://gate.example', 'api_key' => '' ) );
+		Naulon_Settings::update( array( 'gate_url' => 'https://gate.example', 'gate_key' => str_repeat( 'k', 64 ), 'api_key' => '' ) );
 
 		$msg = Naulon_Access::approve( $user, $admin );
 

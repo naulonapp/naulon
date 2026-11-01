@@ -97,7 +97,7 @@ class UninstallDataTest extends WP_UnitTestCase {
 		// `ensure_scheduled()` refuses on an unconnected site — an install with no key must not
 		// phone home, which is a wordpress.org rule as well as the right default. So the
 		// precondition for this test is a connected site, not just a call to the scheduler.
-		Naulon_Settings::update( array( 'gate_url' => 'https://gate.example' ) );
+		Naulon_Settings::update( array( 'gate_url' => 'https://gate.example', 'gate_key' => str_repeat( 'k', 64 ) ) );
 		Naulon_Cron::instance()->ensure_scheduled();
 		$this->assertNotFalse( wp_next_scheduled( Naulon_Cron::EVENT ) );
 
@@ -125,5 +125,14 @@ class UninstallDataTest extends WP_UnitTestCase {
 		$this->assertSame( '0x1111111111111111111111111111111111111111', $payload['wallets'][0]['wallet'] );
 		$this->assertArrayNotHasKey( 'api_key', $payload['settings'] );
 		$this->assertStringNotContainsString( 'nln_live_secret_value', (string) $encoded, 'the API key leaked into an export file' );
+	}
+
+	public function test_the_export_never_carries_a_self_hosted_gate_key() {
+		Naulon_Settings::update( array( 'gate_url' => 'https://gate.example', 'gate_key' => 'gate-secret-value-gate-secret-value-0123' ) );
+
+		$payload = Naulon_Data::export_payload();
+
+		$this->assertArrayNotHasKey( 'gate_key', $payload['settings'] );
+		$this->assertStringNotContainsString( 'gate-secret-value', (string) wp_json_encode( $payload ), 'the gate key leaked into an export file' );
 	}
 }
