@@ -54,3 +54,11 @@ export function normalizeIncludeExtensions(input: readonly string[]): string[] {
   }
   return [...out].sort();
 }
+
+/** A comma-separated config value as a clean list: entries trimmed, blanks dropped. */
+export function splitList(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+}

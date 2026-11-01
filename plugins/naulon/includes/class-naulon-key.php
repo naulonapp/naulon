@@ -96,4 +96,53 @@ class Naulon_Key {
 		$body = substr( $value, strlen( self::PREFIX ) );
 		return self::PREFIX . substr( $body, 0, self::PREVIEW_CHARS ) . '…';
 	}
+
+	/** The shortest key a self-hosted gate accepts, matching the gate's NAULON_ENFORCE_KEY rule. */
+	const MIN_GATE_KEY_LENGTH = 32;
+
+	/**
+	 * Could this be a self-hosted gate's key? Only the length is knowable here: the gate itself
+	 * is the one that says whether it is the right key.
+	 *
+	 * @param mixed $candidate Pasted value.
+	 * @return bool
+	 */
+	public static function looks_like_gate_key( $candidate ) {
+		// Printable ASCII with no spaces: what `openssl rand -hex` and every env file carry. Checked
+		// rather than sanitized, so a key is never silently changed before it is stored.
+		return is_string( $candidate ) && 1 === preg_match( '/^[\x21-\x7E]{' . self::MIN_GATE_KEY_LENGTH . ',}\z/', $candidate );
+	}
+
+	/**
+	 * Why a self-hosted gate's answer to the key check is not good enough to store, or '' when it is.
+	 * Only a gate that accepted the key and reports itself as self-hosted is accepted, so a hosted
+	 * address pasted into the gate field cannot be stored as one.
+	 *
+	 * @param array $check {ok:bool, status:int, body:array|null, error:string} from enforce_status().
+	 * @return string
+	 */
+	public static function gate_check_error( array $check ) {
+		if ( 0 === $check['status'] ) {
+			/* translators: %s: transport error. */
+			return sprintf( __( 'Nothing answered at that address: %s', 'naulon' ), $check['error'] );
+		}
+		if ( 401 === $check['status'] ) {
+			return __( 'Your gate refused that key. Paste the value of NAULON_ENFORCE_KEY from the gate\'s environment.', 'naulon' );
+		}
+		if ( 403 === $check['status'] ) {
+			return __( 'Your gate accepted the key but does not serve this site\'s address. Add the address WordPress uses to the gate, then connect again.', 'naulon' );
+		}
+		if ( 404 === $check['status'] ) {
+			return __( 'That gate does not serve the in-app API yet. Set NAULON_ENFORCE_KEY on it, restart it, and connect again.', 'naulon' );
+		}
+		if ( ! $check['ok'] ) {
+			/* translators: %d: HTTP status. */
+			return sprintf( __( 'Your gate answered %d while checking that key. Nothing has been changed.', 'naulon' ), $check['status'] );
+		}
+		$body = is_array( $check['body'] ) ? $check['body'] : array();
+		if ( ! isset( $body['selfHosted'] ) || true !== $body['selfHosted'] ) {
+			return __( 'That address is not a self-hosted gate. To use the hosted service, paste an API key instead.', 'naulon' );
+		}
+		return '';
+	}
 }

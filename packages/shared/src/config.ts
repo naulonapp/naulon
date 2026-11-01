@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
 import { FLEET_DIRECTORY_URL, FLEET_VERIFY_URL } from "./fleet.ts";
+import { normalizeIncludeExtensions, splitList } from "./gate-scope.ts";
 
 /** The OSS guide to paying any naulon 402 from any x402 client. A fleet overrides it with its own. */
 export const OSS_BUYER_GUIDE_URL = "https://naulonapp.github.io/naulon/buying/#paying-from-any-x402-client";
@@ -165,6 +166,21 @@ export const configSchema = z.object({
   CITATION_MULTIPLIER: z.coerce.number().positive().default(5),
   // Which path prefixes count as gateable articles (comma-separated).
   ARTICLE_PATH_PREFIXES: z.string().default("essays,articles,posts"),
+  // What the gate tolls. `prefixes` (the default) tolls ARTICLE_PATH_PREFIXES. `site` tolls every
+  // page except discovery, static files and GATE_EXCLUDE_PREFIXES; GATE_INCLUDE_EXTENSIONS opts
+  // file types (pdf, json, ...) back in.
+  GATE_SCOPE: z.enum(["prefixes", "site"]).default("prefixes"),
+  GATE_EXCLUDE_PREFIXES: z.string().default(""),
+  GATE_INCLUDE_EXTENSIONS: z.string().default(""),
+  // In-app enforce API. When set, the gate serves /_naulon/{enforce-config,enforce-status,quote,
+  // verify,license/check,observe} to runtimes presenting `Authorization: Bearer <key>`: the
+  // WordPress plugin, @naulon/enforce, the Python package. Unset (the default) serves none of them.
+  NAULON_ENFORCE_KEY: z.string().min(32, "must be at least 32 characters").optional(),
+  // Platform tenancy. Both set: the gate resolves each Host by asking the platform at this URL
+  // (`GET <url>?host=<host>`, `Authorization: Bearer <key>`) for a publisher record, instead of
+  // serving the single publisher above. Both or neither.
+  NAULON_PLATFORM_URL: z.string().url().optional(),
+  NAULON_PLATFORM_KEY: z.string().min(1).optional(),
   // Crawler route (optional): a hostname on which the gate accepts requests proxied by the
   // publisher's own CDN, naming the site in `Forwarded: host=` and authenticating with EDGE_SECRET.
   // Both unset (the default) means no ingress at all.
@@ -538,6 +554,18 @@ export const configSchema = z.object({
     cfg.NONCE_BACKEND === "supabase" ||
     cfg.PENDING_LEGS_BACKEND === "supabase" ||
     cfg.OBSERVATIONS_BACKEND === "supabase";
+  try {
+    normalizeIncludeExtensions(splitList(cfg.GATE_INCLUDE_EXTENSIONS));
+  } catch (err) {
+    ctx.addIssue({ code: "custom", path: ["GATE_INCLUDE_EXTENSIONS"], message: err instanceof Error ? err.message : String(err) });
+  }
+  if ((cfg.NAULON_PLATFORM_URL === undefined) !== (cfg.NAULON_PLATFORM_KEY === undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: [cfg.NAULON_PLATFORM_URL === undefined ? "NAULON_PLATFORM_URL" : "NAULON_PLATFORM_KEY"],
+      message: "NAULON_PLATFORM_URL and NAULON_PLATFORM_KEY are set together or not at all",
+    });
+  }
   if (usesSupabase) {
     for (const key of ["SUPABASE_URL", "SUPABASE_SERVICE_KEY"] as const) {
       if (!cfg[key]) {

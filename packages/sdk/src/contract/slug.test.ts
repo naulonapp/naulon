@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { STATIC_EXTENSIONS, decodeSlug, deriveSiteSlug, deriveSlug, slugFromPath, slugFromSitePath } from "./slug.ts";
+import { STATIC_EXTENSIONS, decodeSlug, deriveSiteSlug, deriveSlug, slugFromPath, slugForScope, slugFromSitePath } from "./slug.ts";
 
 test("deriveSlug pulls the segment after a configured prefix", () => {
   assert.equal(deriveSlug("https://site.com/essays/on-stillness", ["essays"]), "on-stillness");
@@ -360,4 +360,29 @@ test("a non-string member of either list is dropped rather than matched", () => 
 test("an extension allowlist that is not an array tolls no static file", () => {
   assert.equal(slugFromSitePath("/paper.pdf", [], { includeExtensions: "pdf" as unknown as string[] }), null);
   assert.equal(slugFromSitePath("/paper.pdf", [], { includeExtensions: ["pdf"] }), "/paper.pdf");
+});
+
+test("slugForScope keys prefix mode at segment depth by default", () => {
+  assert.equal(slugForScope("/essays/on-stillness", { articlePrefixes: ["essays"] }), "on-stillness");
+  assert.equal(slugForScope("/essays/2026/09/post", { articlePrefixes: ["essays"] }), slugFromPath("/essays/2026/09/post", ["essays"]));
+});
+
+test("slugForScope honours prefix depth", () => {
+  const scope = { articlePrefixes: ["essays"], gateScope: { mode: "prefixes" as const, depth: "rest" as const } };
+  assert.equal(slugForScope("/essays/2026/09/post", scope), slugFromPath("/essays/2026/09/post", ["essays"], { depth: "rest" }));
+});
+
+test("slugForScope keys site mode on the full path and keeps discovery free", () => {
+  const scope = { articlePrefixes: [], gateScope: { mode: "site" as const, excludePrefixes: ["api"], includeExtensions: ["pdf"] } };
+  assert.equal(slugForScope("/hello-world/", scope), slugFromSitePath("/hello-world/", ["api"], { includeExtensions: ["pdf"] }));
+  assert.equal(slugForScope("/sitemap.xml", scope), null);
+  assert.equal(slugForScope("/api/x", scope), null);
+  assert.notEqual(slugForScope("/paper.pdf", scope), null);
+});
+
+test("the gate's /_naulon/ namespace is never an article, in either mode", () => {
+  for (const p of ["/_naulon/quote", "/_naulon/olp/x/token", "//_naulon/verify"]) {
+    assert.equal(slugFromSitePath(p, []), null, p);
+    assert.equal(slugFromPath(p, ["_naulon"]), null, p);
+  }
 });

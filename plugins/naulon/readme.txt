@@ -4,7 +4,7 @@ Tags: ai crawlers, gptbot, monetization, paywall, licensing
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.7.3
+Stable tag: 0.8.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -37,7 +37,7 @@ Payment is direct: the agent pays your authors. Each payment settles to the auth
 
 **Self-hosting**
 
-The whole protocol is open source. The connectivity field takes either a hosted key or the URL of a gate you run yourself, and everything else works identically.
+The whole protocol is open source. To use a gate you run yourself, set `NAULON_ENFORCE_KEY` on the gate, then paste the gate's address and that key on the Setup screen. The gate's key is the ownership proof, so there is no verification step, and pricing, settlement, licences and the decision log work the same as on the hosted service. Inviting authors to a naulon account needs the hosted service; on your own gate, authors set their wallet on their profile.
 
 == Installation ==
 
@@ -162,6 +162,11 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= 0.8.0 =
+* Connect to a gate you host yourself. Paste its address and its key (`NAULON_ENFORCE_KEY`), or put the key in `wp-config.php` as `NAULON_GATE_KEY`. Before this, a self-hosted gate never answered the plugin, so nothing was charged.
+* A site connected to its own gate by address alone, without a key, now shows as not connected until you add the key.
+* The licence the plugin publishes is read from the same enforcement document on every gate, hosted or your own.
+
 = 0.7.3 =
 * New name: naulon - Get paid when AI reads your work. Nothing else changed.
 
@@ -273,6 +278,9 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Hourly heartbeat that keeps the connection alive and stands the toll down if DNS-based enforcement is already charging for the same domain.
 
 == Upgrade Notice ==
+= 0.8.0 =
+Self-hosted gates work. If you connected one by address only, add its key on the Setup screen.
+
 = 0.7.3 =
 A new name and description. No change to how the plugin works.
 

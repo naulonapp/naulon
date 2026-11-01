@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "hosts": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "originUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "articlePrefixes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "priceMicro": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "citationMultiplier": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "priceRules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "minLength": 1
+          },
+          "priceMicro": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "citationMultiplier": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "agent": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "defaultPayoutAddress": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{40}$"
+    },
+    "creditsInline": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "creditsApiUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "tollMode": {
+      "type": "string",
+      "enum": [
+        "charge",
+        "observe"
+      ]
+    },
+    "termsPolicy": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string",
+          "enum": [
+            "free",
+            "prohibit"
+          ]
+        },
+        "ai-input": {
+          "type": "string",
+          "enum": [
+            "prohibit",
+            "free",
+            "priced"
+          ]
+        },
+        "ai-index": {
+          "type": "string",
+          "enum": [
+            "prohibit",
+            "free",
+            "priced"
+          ]
+        },
+        "ai-train": {
+          "type": "string",
+          "enum": [
+            "prohibit",
+            "free",
+            "by-agreement"
+          ]
+        },
+        "contact": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "gateScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "prefixes"
+            },
+            "depth": {
+              "type": "string",
+              "enum": [
+                "segment",
+                "rest"
+              ]
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "site"
+            },
+            "excludePrefixes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "includeExtensions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "mode",
+            "excludePrefixes"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "settlementNetwork": {
+      "type": "string"
+    },
+    "suspended": {
+      "type": "boolean"
+    },
+    "enforceKeySha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "id",
+    "hosts",
+    "originUrl",
+    "articlePrefixes",
+    "priceMicro"
+  ],
+  "additionalProperties": false
+}

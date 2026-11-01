@@ -43,7 +43,9 @@ class Naulon_Client {
 	 * @return array {ok:bool, status:int, body:array|null, error:string}
 	 */
 	public function enforce_status( $key = null, $base = null ) {
-		return $this->request( 'GET', '/_naulon/enforce-status', null, self::TIMEOUT_ADMIN, $key, $base );
+		// The site's own address rides along so a gate that issues per-site keys can tell whose
+		// key this is. A hosted control plane ignores it.
+		return $this->request( 'GET', '/_naulon/enforce-status?' . http_build_query( array( 'resource' => home_url( '/' ) ) ), null, self::TIMEOUT_ADMIN, $key, $base );
 	}
 
 	/**
@@ -283,12 +285,11 @@ class Naulon_Client {
 	}
 
 	/**
-	 * This tenant's RSL licence, as the control plane generates it.
+	 * This site's RSL licence, as the gate generates it.
 	 *
-	 * Its own method rather than `request()` because the body is XML, not JSON — decoding it
-	 * would throw away the only thing we want. The route is keyed by the `nln_live_` bearer, so
-	 * the plugin never needs to know its tenant id: the credential already in the options table
-	 * is the whole configuration.
+	 * Read from the `license` field of the enforcement config, the document every gate serves to
+	 * an in-app runtime, so a hosted control plane and a self-hosted gate answer it the same way
+	 * and there is one licence route to depend on, not two.
 	 *
 	 * Admin-length timeout even though a crawler can trigger it. The alternative is publishing
 	 * no licence at all on a slow tick, and the result is cached for hours.
@@ -296,45 +297,31 @@ class Naulon_Client {
 	 * @return array {ok:bool, status:int, xml:string, error:string}
 	 */
 	public function license_xml() {
-		$key = Naulon_Settings::api_key();
-		if ( '' === $key ) {
+		if ( ! Naulon_Settings::is_connected() ) {
 			return array(
 				'ok'     => false,
 				'status' => 0,
 				'xml'    => '',
-				'error'  => 'no api key',
+				'error'  => 'not connected',
 			);
 		}
-		$response = wp_remote_get(
-			Naulon_Settings::api_base() . '/_naulon/rsl/license.xml',
-			array(
-				'timeout'     => self::TIMEOUT_ADMIN,
-				'redirection' => 0,
-				'headers'     => array(
-					'Accept'        => 'application/rsl+xml',
-					'Authorization' => 'Bearer ' . $key,
-				),
-			)
+		$response = $this->request(
+			'GET',
+			'/_naulon/enforce-config?' . http_build_query( array( 'resource' => home_url( '/' ) ) ),
+			null,
+			self::TIMEOUT_ADMIN
 		);
-		if ( is_wp_error( $response ) ) {
-			return array(
-				'ok'     => false,
-				'status' => 0,
-				'xml'    => '',
-				'error'  => $response->get_error_message(),
-			);
-		}
-		$status = (int) wp_remote_retrieve_response_code( $response );
-		$body   = (string) wp_remote_retrieve_body( $response );
-		// A 200 carrying something that is not an RSL document is a failure, not a licence. The
-		// most likely shape is a login or captcha page from something in front of the gate, and
-		// serving that as our terms would be worse than serving nothing.
+		$body = is_array( $response['body'] ) && isset( $response['body']['license'] ) && is_string( $response['body']['license'] )
+			? $response['body']['license']
+			: '';
+		// Something that is not an RSL document is a failure, not a licence: serving a login or
+		// captcha page from something in front of the gate as our terms is worse than nothing.
 		$looks_rsl = ( false !== strpos( $body, '<rsl' ) );
 		return array(
-			'ok'     => $status >= 200 && $status < 300 && $looks_rsl,
-			'status' => $status,
+			'ok'     => $response['ok'] && $looks_rsl,
+			'status' => $response['status'],
 			'xml'    => $looks_rsl ? $body : '',
-			'error'  => '',
+			'error'  => $response['ok'] ? ( $looks_rsl ? '' : 'no licence in the enforcement config' ) : $response['error'],
 		);
 	}
 
@@ -392,7 +379,7 @@ class Naulon_Client {
 	 * @return array {ok:bool, status:int, body:array|null, error:string}
 	 */
 	private function request( $method, $path, $body, $timeout, $key = null, $base = null, array $extra_headers = array() ) {
-		$api_key = null === $key ? Naulon_Settings::api_key() : $key;
+		$api_key = null === $key ? Naulon_Settings::credential() : $key;
 		$url     = ( null === $base ? Naulon_Settings::api_base() : untrailingslashit( $base ) ) . $path;
 
 		$headers = array( 'Accept' => 'application/json' );

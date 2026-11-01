@@ -360,7 +360,7 @@ class Naulon_Observer {
 	 * @return bool
 	 */
 	public static function can_report() {
-		return Naulon_Settings::is_connected() && '' !== Naulon_Settings::api_key();
+		return Naulon_Settings::is_connected();
 	}
 
 	/**

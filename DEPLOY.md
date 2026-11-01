@@ -161,6 +161,29 @@ wallet/faucet steps.)
 
 ---
 
+## 6. Optional: let a plugin or SDK toll from inside your app
+
+The gate can also answer a runtime that tolls from inside your own app instead of sitting in front of
+it: the WordPress plugin, `@naulon/enforce`, or the Python package. Generate a key and set it on the
+tollgate project:
+
+```bash
+openssl rand -hex 32   # -> NAULON_ENFORCE_KEY
+```
+
+Give the runtime the gate's URL and the same key. A WordPress site with post-name permalinks keeps its
+articles at the root, so set `GATE_SCOPE=site` too. Check the key works:
+
+```bash
+curl -s -H "Authorization: Bearer $NAULON_ENFORCE_KEY" https://gate.yourdomain.com/_naulon/enforce-status
+# {"hosts":[],"attention":false,"selfHosted":true}
+```
+
+The full contract, in any language, is served at `/_naulon/openapi.json` and described in
+[docs/protocol/in-app.md](./docs/protocol/in-app.md). A platform hosting many sites sets
+`NAULON_PLATFORM_URL` and `NAULON_PLATFORM_KEY` so the gate asks it which site each host is
+([configuration](./docs/configuration.md)).
+
 ## Notes & caveats
 
 - **Hobby ToS.** Vercel Hobby is non-commercial. Moving real USDC is arguably

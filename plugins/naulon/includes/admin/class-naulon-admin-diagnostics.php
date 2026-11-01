@@ -458,7 +458,7 @@ class Naulon_Admin_Diagnostics {
 		Naulon_Admin::card_open( __( 'Control plane', 'naulon' ) );
 		echo '<table class="naulon-kv"><tbody>';
 		self::kv( __( 'Address', 'naulon' ), Naulon_Settings::api_base() );
-		self::kv( __( 'Key', 'naulon' ), '' !== Naulon_Settings::api_key() ? Naulon_Key::mask( Naulon_Settings::api_key() ) : __( 'none', 'naulon' ) );
+		self::kv( __( 'Key', 'naulon' ), '' !== Naulon_Settings::credential() ? Naulon_Key::mask( Naulon_Settings::credential() ) : __( 'none', 'naulon' ) );
 		self::kv( __( 'Verified host', 'naulon' ), Naulon_Settings::is_verified() ? Naulon_Verification::host() : __( 'not verified', 'naulon' ) );
 		self::kv_html( __( 'Last status check', 'naulon' ), Naulon_Admin::when( (string) $settings['status_checked_at'], __( 'never', 'naulon' ) ) );
 		self::kv( __( 'This domain is classified as', 'naulon' ), '' !== (string) $settings['status_mode'] ? (string) $settings['status_mode'] : __( 'not classified yet', 'naulon' ) );

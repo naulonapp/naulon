@@ -5,7 +5,10 @@
   "type": "module",
   "main": "./src/app.ts",
   "exports": {
-    ".": "./src/app.ts"
+    ".": "./src/app.ts",
+    "./rsl": "./src/rsl/index.ts",
+    "./platform": "./src/platform.ts",
+    "./enforce-api": "./src/enforce-api/index.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -15,13 +18,15 @@
   "dependencies": {
     "@circle-fin/x402-batching": "^3.5.0",
     "@hono/node-server": "^2.1.1",
-    "@naulon/enforce": "^0.10.0",
+    "@hono/zod-openapi": "^1.6.3",
+    "@naulon/enforce": "^0.11.0",
     "@naulon/extract": "^0.2.0",
-    "@naulon/sdk": "^0.6.2",
-    "@naulon/shared": "^0.6.8",
+    "@naulon/sdk": "^0.7.0",
+    "@naulon/shared": "^0.7.0",
     "@x402/core": "^2.23.0",
     "@x402/evm": "^2.23.0",
     "hono": "^4.13.5",
-    "viem": "^2.56.0"
+    "viem": "^2.56.0",
+    "zod": "^4.4.3"
   }
 }

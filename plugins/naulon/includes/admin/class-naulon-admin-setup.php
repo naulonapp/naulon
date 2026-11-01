@@ -92,13 +92,21 @@ class Naulon_Admin_Setup {
 					: esc_html__( 'stored in this site’s database', 'naulon' );
 				echo '</span>';
 			}
-			if ( 'option' === $source ) {
+			// A self-hosted connection is stored in the options row too (the gate key may live in
+			// wp-config.php, but the address never does), so it can always be disconnected here.
+			if ( 'option' === $source || Naulon_Settings::is_self_hosted() ) {
 				Naulon_Admin::actions_open();
 				Naulon_Admin::form_open( 'disconnect', Naulon_Admin::PAGE_SETUP );
 				submit_button( __( 'Disconnect', 'naulon' ), 'link-delete', 'submit', false );
 				Naulon_Admin::form_close();
 				Naulon_Admin::actions_close();
 			}
+		} elseif ( '' !== $gate_url ) {
+			// Connected by address alone before gate keys existed: name what is missing rather than
+			// reading as a site that was never set up.
+			Naulon_Admin::pill( 'warn', __( 'Needs your gate\'s key', 'naulon' ) );
+			printf( '<code class="naulon-token">%s</code>', esc_html( $gate_url ) );
+			echo '<span class="naulon-muted">' . esc_html__( 'Nothing is being charged until you paste the gate\'s NAULON_ENFORCE_KEY below.', 'naulon' ) . '</span>';
 		} else {
 			Naulon_Admin::pill( 'idle', __( 'Not connected', 'naulon' ) );
 			echo '<span class="naulon-muted">' . esc_html__( 'Nothing is being charged.', 'naulon' ) . '</span>';
@@ -119,6 +127,14 @@ class Naulon_Admin_Setup {
 			esc_attr( 'nln_live_…' )
 		);
 		submit_button( $connected ? __( 'Replace', 'naulon' ) : __( 'Connect', 'naulon' ), 'primary', 'submit', false );
+		echo '</div>';
+		echo '<div class="naulon-field">';
+		echo '<label for="naulon_gate_key">' . esc_html__( 'Your gate\'s key, only when connecting a gate you host', 'naulon' ) . '</label>';
+		if ( defined( 'NAULON_GATE_KEY' ) ) {
+			echo '<p class="naulon-muted">' . esc_html__( 'Read from NAULON_GATE_KEY in wp-config.php.', 'naulon' ) . '</p>';
+		} else {
+			echo '<input type="password" class="regular-text code" id="naulon_gate_key" name="naulon_gate_key" autocomplete="off" spellcheck="false" placeholder="NAULON_ENFORCE_KEY" />';
+		}
 		echo '</div>';
 		echo '<p class="naulon-muted naulon-hint">' . esc_html__( 'Checked against the control plane before it is stored, so a typo cannot take a working toll offline. The key never leaves this server: it is not printed into any page, and no browser ever sees it.', 'naulon' ) . '</p>';
 		Naulon_Admin::form_close();
@@ -148,6 +164,7 @@ class Naulon_Admin_Setup {
 				array(
 					'api_key'  => $raw,
 					'gate_url' => '',
+					'gate_key' => '',
 				)
 			);
 			self::ping();
@@ -157,22 +174,36 @@ class Naulon_Admin_Setup {
 		}
 
 		if ( Naulon_Key::looks_like_gate_url( $raw ) ) {
-			$base  = untrailingslashit( $raw );
-			$check = Naulon_Client::instance()->enforce_status( '', $base );
-			// A self-hosted gate may legitimately answer 401/404 on a keyed status route while
-			// still being the right address — what must not happen is storing an address nothing
-			// answers at all.
-			if ( 0 === $check['status'] ) {
-				/* translators: %s: transport error. */
-				Naulon_Admin::notice( 'error', sprintf( __( 'Nothing answered at that address: %s', 'naulon' ), $check['error'] ) );
+			$base = untrailingslashit( $raw );
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- the dispatcher checked it.
+			// Not sanitize_text_field: it strips `%xx` octets, which would silently change a key.
+			// The value is only compared by the gate and stored; looks_like_gate_key() checks its shape.
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+			$pasted   = isset( $_POST['naulon_gate_key'] ) ? trim( (string) wp_unslash( $_POST['naulon_gate_key'] ) ) : '';
+			$gate_key = '' !== $pasted ? $pasted : Naulon_Settings::gate_key();
+			if ( ! Naulon_Key::looks_like_gate_key( $gate_key ) ) {
+				Naulon_Admin::notice( 'error', __( 'A gate you host needs its key too: paste the value of NAULON_ENFORCE_KEY from the gate\'s environment (at least 32 characters).', 'naulon' ) );
 				return;
 			}
-			Naulon_Settings::update(
-				array(
-					'gate_url' => $base,
-					'api_key'  => '',
-				)
+			$error = Naulon_Key::gate_check_error( Naulon_Client::instance()->enforce_status( $gate_key, $base ) );
+			if ( '' !== $error ) {
+				Naulon_Admin::notice( 'error', $error );
+				return;
+			}
+			// The gate accepted its own key, which is the ownership proof a self-hosted gate has:
+			// whoever holds that key runs the gate. There is no challenge to serve.
+			$update = array(
+				'gate_url'          => $base,
+				'api_key'           => '',
+				'verified_at'       => gmdate( 'c' ),
+				'ownership_lost_at' => '',
 			);
+			// An empty field keeps the key already stored (or the wp-config.php constant) rather
+			// than wiping it.
+			if ( '' !== $pasted ) {
+				$update['gate_key'] = $pasted;
+			}
+			Naulon_Settings::update( $update );
 			self::ping();
 			Naulon_Admin::notice( 'success', __( 'Connected to your own gate.', 'naulon' ) );
 			Naulon_Cron::instance()->ensure_scheduled();
@@ -239,6 +270,7 @@ class Naulon_Admin_Setup {
 			array(
 				'api_key'        => '',
 				'gate_url'       => '',
+				'gate_key'       => '',
 				'enforcement_on' => false,
 			)
 		);

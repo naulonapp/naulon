@@ -1,0 +1,876 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "naulon in-app enforce API",
+    "version": "1.0.0",
+    "description": "What a runtime tolling from inside a publisher's app asks the gate. See docs/protocol/in-app.md."
+  },
+  "components": {
+    "securitySchemes": {
+      "naulonKey": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "EnforcementConfig": {
+        "type": "object",
+        "properties": {
+          "enforcement": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "enforcement"
+        ],
+        "additionalProperties": {},
+        "description": "The decision inputs an in-app enforcer reads before pricing, plus the x402 manifest and the RSL licence."
+      },
+      "EnforceError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "EnforcementStatus": {
+        "type": "object",
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": {}
+            }
+          },
+          "attention": {
+            "type": "boolean"
+          },
+          "selfHosted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hosts",
+          "attention",
+          "selfHosted"
+        ]
+      },
+      "Quote": {
+        "type": "object",
+        "properties": {
+          "price": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "extraLegs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "payTo": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "role",
+                "payTo",
+                "amount"
+              ]
+            },
+            "description": "Additive settlement legs beyond the author's. Every one must be paid."
+          }
+        },
+        "required": [
+          "price"
+        ],
+        "additionalProperties": {},
+        "description": "Custody-free quote. `price` is the author leg in micro-USDC and `extraLegs` carries every other transfer the same read requires, so the amount to authorize is `price` plus every extra leg. Pass `build=402` to receive the built 402 instead of assembling legs yourself. `204` = free."
+      },
+      "VerifyReceipt": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "settlementRef": {
+            "type": "string"
+          },
+          "payer": {
+            "type": "string"
+          },
+          "responseHeader": {
+            "type": "string"
+          },
+          "licenseJws": {
+            "type": "string"
+          },
+          "chargedMicro": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "VerifyError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ]
+      },
+      "VerifyRequest": {
+        "type": "object",
+        "properties": {
+          "payment": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The buyer's x402 payment payload (required)."
+          },
+          "legs": {
+            "type": "array",
+            "items": {},
+            "description": "Settlement legs, validated against the signature (required)."
+          },
+          "quote": {
+            "description": "The quote that priced the resource (required)."
+          },
+          "resource": {
+            "type": "string",
+            "example": "https://your-site.com/articles/x"
+          },
+          "agent": {
+            "$ref": "#/components/schemas/ObservedAgent"
+          }
+        }
+      },
+      "ObservedAgent": {
+        "type": "object",
+        "properties": {
+          "ua": {
+            "type": "string"
+          },
+          "classifyReason": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "verifiedAgent": {
+            "type": "string"
+          },
+          "sigInvalid": {
+            "type": "boolean"
+          }
+        },
+        "description": "Who the caller was, as the publisher's classifier saw them. Never used for authorization."
+      },
+      "LicenseCheckResult": {
+        "type": "object",
+        "properties": {
+          "entitled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entitled"
+        ]
+      },
+      "LicenseCheckBody": {
+        "type": "object",
+        "properties": {
+          "license": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resource": {
+            "type": "string",
+            "format": "uri"
+          },
+          "slug": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "read",
+              "citation"
+            ],
+            "default": "read"
+          },
+          "proof": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "license",
+          "resource",
+          "slug"
+        ]
+      },
+      "ObserveAccepted": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "accepted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ok",
+          "accepted"
+        ]
+      },
+      "ObserveError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ]
+      },
+      "ObservationReport": {
+        "type": "object",
+        "properties": {
+          "resource": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://your-site.com/articles/x",
+            "description": "The URL the decision was made for. Its host must be this key's."
+          },
+          "slug": {
+            "type": "string",
+            "example": "articles/x",
+            "description": "The slug that was priced. Empty for a gated non-article path."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "served-free",
+              "agent-reread",
+              "denied",
+              "blocked",
+              "paid",
+              "payment-failed",
+              "unservable"
+            ],
+            "example": "denied",
+            "description": "What happened. `paid` and `payment-failed` are refused: /verify writes those."
+          },
+          "classifiedAs": {
+            "type": "string",
+            "enum": [
+              "human",
+              "agent"
+            ],
+            "example": "agent"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "read",
+              "citation"
+            ]
+          },
+          "priceMicro": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 1000,
+            "description": "What the request would have paid, integer micro-USDC."
+          },
+          "at": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "When the decision happened (epoch ms). Defaults to now; clamped."
+          },
+          "agent": {
+            "$ref": "#/components/schemas/ReportedAgent"
+          },
+          "referrerHost": {
+            "type": "string",
+            "maxLength": 253,
+            "pattern": "^[a-z0-9.-]+$/i",
+            "example": "chatgpt.com",
+            "description": "On a person's read, the host of the site that sent them."
+          },
+          "identityCheck": {
+            "type": "string",
+            "enum": [
+              "signature",
+              "ip-verified",
+              "unverified",
+              "forged"
+            ]
+          },
+          "claimedOperator": {
+            "type": "string",
+            "maxLength": 64,
+            "example": "google",
+            "description": "The crawler operator the user agent claimed. Unknown ids are dropped."
+          },
+          "observeOnly": {
+            "type": "boolean",
+            "description": "The site was observing. Kept only on a `denied` row."
+          },
+          "crawlerBudget": {
+            "type": "string",
+            "maxLength": 16,
+            "example": "within",
+            "description": "`within` or `over`. Kept only on a `denied` row."
+          },
+          "paymentPresented": {
+            "type": "boolean",
+            "description": "An observing site received a payment it did not settle."
+          },
+          "freeReason": {
+            "type": "string",
+            "maxLength": 16,
+            "example": "terms",
+            "description": "`unpriced`, `terms` or `fleet`. Kept only on an agent's `served-free` row."
+          },
+          "forgedFrom": {
+            "type": "string",
+            "maxLength": 64,
+            "example": "203.0.113.0/24",
+            "description": "On a forged row: the caller's network as a /24 or /48. A full address is dropped."
+          }
+        },
+        "required": [
+          "resource",
+          "verdict",
+          "classifiedAs"
+        ]
+      },
+      "ReportedAgent": {
+        "type": "object",
+        "properties": {
+          "ua": {
+            "type": "string"
+          },
+          "classifyReason": {
+            "type": "string"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "verifiedAgent": {
+            "type": "string"
+          },
+          "sigInvalid": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/_naulon/enforce-config": {
+      "get": {
+        "summary": "The enforcement config for a resource's publisher",
+        "tags": [
+          "Enforce"
+        ],
+        "security": [
+          {
+            "naulonKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "https://your-site.com/articles/x"
+            },
+            "required": false,
+            "name": "resource",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The config.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforcementConfig"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Resource not owned by this key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/_naulon/enforce-status": {
+      "get": {
+        "summary": "Check a key and whether the gate is self-hosted",
+        "tags": [
+          "Enforce"
+        ],
+        "security": [
+          {
+            "naulonKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Your site's address. Lets a gate that issues per-site keys tell whose key this is."
+            },
+            "required": false,
+            "description": "Your site's address. Lets a gate that issues per-site keys tell whose key this is.",
+            "name": "resource",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The key works.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforcementStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The key does not serve this site.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/_naulon/quote": {
+      "get": {
+        "summary": "Price one resource",
+        "tags": [
+          "Enforce"
+        ],
+        "security": [
+          {
+            "naulonKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "https://your-site.com/articles/x"
+            },
+            "required": false,
+            "name": "resource",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "articles/x"
+            },
+            "required": false,
+            "name": "slug",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "read",
+                "citation"
+              ]
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A Web Bot Auth identity (signature directory host) your runtime verified. Never a User-Agent.",
+              "example": "chatgpt.com"
+            },
+            "required": false,
+            "description": "A Web Bot Auth identity (signature directory host) your runtime verified. Never a User-Agent.",
+            "name": "verifiedAgent",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`402` returns the built 402 as `x402: { header, legs }`.",
+              "example": "402"
+            },
+            "required": false,
+            "description": "`402` returns the built 402 as `x402: { header, legs }`.",
+            "name": "build",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`1` from a runtime that can observe a read with nobody to pay."
+            },
+            "required": false,
+            "description": "`1` from a runtime that can observe a read with nobody to pay.",
+            "name": "observe",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The quote.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Quote"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No toll: a free read."
+          },
+          "400": {
+            "description": "Missing or invalid params.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Resource not owned by this key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/_naulon/verify": {
+      "post": {
+        "summary": "Settle a relayed payment",
+        "tags": [
+          "Enforce"
+        ],
+        "security": [
+          {
+            "naulonKey": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settled: serve the resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, quote or legs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Not settled, or the site is observing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owned, or suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/_naulon/license/check": {
+      "post": {
+        "summary": "Does this licence entitle a free re-read?",
+        "tags": [
+          "Enforce"
+        ],
+        "security": [
+          {
+            "naulonKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LicenseCheckBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The verdict.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LicenseCheckResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Resource not owned by this key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnforceError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/_naulon/observe": {
+      "post": {
+        "summary": "Report gating decisions",
+        "tags": [
+          "Enforce"
+        ],
+        "security": [
+          {
+            "naulonKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ObservationReport"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/ObservationReport"
+                    },
+                    "minItems": 1,
+                    "maxItems": 50
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObserveAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A money verdict, or a malformed report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObserveError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObserveError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A host not owned by this key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObserveError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}

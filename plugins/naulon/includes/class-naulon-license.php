@@ -397,7 +397,7 @@ class Naulon_License {
 	 * @return bool
 	 */
 	private function is_stale( array $stored ) {
-		if ( '' === Naulon_Settings::api_key() ) {
+		if ( ! Naulon_Settings::is_connected() ) {
 			return false; // nothing to fetch with — not stale, just absent.
 		}
 		return '' === $stored['xml'] || ( time() - $stored['fetched_at'] ) > self::MAX_AGE;

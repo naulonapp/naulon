@@ -150,6 +150,9 @@ class Naulon_Cron {
 		if ( ! Naulon_Settings::is_connected() || ! Naulon_Settings::is_verified() ) {
 			return false; // nothing to reconcile — there is no local claim to withdraw.
 		}
+		if ( Naulon_Settings::is_self_hosted() ) {
+			return false; // the gate's own key is the proof, and a self-hosted gate keeps no challenge list.
+		}
 
 		$response = Naulon_Client::instance()->list_challenges();
 		if ( ! $response['ok'] || ! isset( $response['body']['challenges'] ) || ! is_array( $response['body']['challenges'] ) ) {

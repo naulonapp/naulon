@@ -315,6 +315,13 @@ export interface PublisherConfig {
    * publisher still has an origin to serve.
    */
   suspended?: boolean;
+  /**
+   * SHA-256 (lowercase hex) of a key that lets this publisher's own runtime call the gate's in-app
+   * enforce API for its hosts, and no other publisher's. Set by a platform that gives each site its
+   * own key; absent, only the gate operator's key (`NAULON_ENFORCE_KEY`) reaches this publisher.
+   * Never sent to a runtime.
+   */
+  enforceKeySha256?: string;
 }
 
 export interface PublisherResolver {
