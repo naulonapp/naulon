@@ -263,6 +263,23 @@ class EnforcerTest extends WP_UnitTestCase {
 		$this->assertSame( 'settlement failed', $decision['reason'] );
 	}
 
+	public function test_a_settlement_that_gives_no_verdict_serves_the_read() {
+		// Billing again could charge the buyer twice for one read, so a missing verdict serves it.
+		$this->as_agent();
+		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
+		foreach ( array(
+			array( 'error' => 'operation timed out' ),
+			array( 'code' => 500, 'body' => array( 'error' => 'boom' ) ),
+			array( 'code' => 200, 'body' => 'not an object' ),
+		) as $canned ) {
+			$this->responses['/_naulon/verify'] = $canned;
+			$decision = $this->decide();
+			$this->assertSame( 'free', $decision['action'], wp_json_encode( $canned ) );
+			$this->assertSame( 'settlement unavailable', $decision['reason'] );
+			$this->assertSame( '', $decision['receipt'], 'no receipt is claimed' );
+		}
+	}
+
 	// ── Re-read ──────────────────────────────────────────────────────────────────────────
 
 	public function test_a_valid_license_re_reads_free_without_paying_again() {
@@ -286,9 +303,25 @@ class EnforcerTest extends WP_UnitTestCase {
 		$this->assertSame( 'pay', $this->decide()['action'] );
 	}
 
-	public function test_an_unreachable_license_check_does_not_serve_on_an_unverified_claim() {
-		// If it did, the license header would become a password for free reads.
-		$this->responses['/_naulon/license/check'] = array( 'error' => 'connection refused' );
+	public function test_a_license_check_that_gives_no_verdict_serves_the_read() {
+		// Any gate failure serves the read: no answer, a 5xx, or a 2xx that is not JSON.
+		$this->as_agent();
+		$_SERVER['HTTP_X_NAULON_LICENSE'] = 'anything';
+		foreach ( array(
+			array( 'error' => 'connection refused' ),
+			array( 'code' => 502, 'body' => array( 'error' => 'bad gateway' ) ),
+			array( 'code' => 200, 'body' => 'not an object' ),
+		) as $canned ) {
+			$this->responses['/_naulon/license/check'] = $canned;
+			$decision = $this->decide();
+			$this->assertSame( 'free', $decision['action'], wp_json_encode( $canned ) );
+			$this->assertSame( 'licence check unavailable', $decision['reason'] );
+		}
+	}
+
+	public function test_a_license_check_refused_with_a_4xx_never_serves_on_the_claim() {
+		// A 4xx is an answer about this request. Serving on it would make the header a password.
+		$this->responses['/_naulon/license/check'] = array( 'code' => 400, 'body' => array( 'error' => 'bad request' ) );
 		$this->as_agent();
 		$_SERVER['HTTP_X_NAULON_LICENSE'] = 'anything';
 

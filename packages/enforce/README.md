@@ -41,10 +41,14 @@ The decision kernel and the framework-agnostic middleware core:
   When the publisher's configuration names a licence server
   (`PublisherConfig.licenceServer`), a crawler presenting `Authorization: License` is checked
   there: the middleware forwards the licence and the crawler's Web Bot Auth signature to the
-  server's `/introspect` and passes only when it answers `permitted`. Anything else is the
+  server's `/introspect` and passes only when it answers `permitted`. Any other answer is the
   ordinary 402, with the reason in the body's `licence_error`, except a charge already in
   flight or unconfirmed, which is a 503 with no x402 offer. The server must share an origin
   with `verifyUrl`, because the check carries your API key.
+  When the gate gives no verdict at all (the licence server or `/verify` is unreachable,
+  answers 5xx, or answers 2xx without one, or the gate's keys were never fetched), the page is
+  served, logged with `console.error`, and marked `X-Naulon-Verdict: served free (<step>
+  unavailable)`. A 4xx is an answer, so it never serves the page.
 - `withNaulon(handler, opts)` wraps a generic `fetch` handler.
 - `localQuoteSource(fn)` / `httpQuoteSource(url, key)`: pluggable price and payees.
 - `httpPublisherConfigSource(url, key)`: what is tolled and for whom, read from the

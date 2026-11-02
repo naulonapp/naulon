@@ -540,11 +540,15 @@ class Naulon_Enforcer {
 		$kind     = $this->requested_kind();
 
 		// Already paid for this exact article? Verified by the control plane, which owns the
-		// keys and the rules. A failure here falls through to the 402 — never serve on an
-		// unverified claim, or the license header becomes a free-read password.
+		// keys and the rules. Its answer is final: not entitled falls through to the 402, so a
+		// header that earns a refusal is never a free pass. No answer at all is a gate failure,
+		// and a gate failure serves the read.
 		$license = $this->header( self::LICENSE_HEADER );
 		if ( '' !== $license ) {
 			$checked = Naulon_Client::instance()->license_check( $license, $resource, $slug, $kind, $this->header( self::PROOF_HEADER ) );
+			if ( self::gave_no_verdict( $checked ) ) {
+				return $this->logged( $this->free( 'licence check unavailable' ), $subject );
+			}
 			if ( $checked['ok'] && ! empty( $checked['body']['entitled'] ) ) {
 				return $this->logged(
 					array(
@@ -617,8 +621,14 @@ class Naulon_Enforcer {
 			);
 		}
 
-		// Settlement failed. Re-present the price rather than serving: the agent asked to pay
-		// and did not succeed, so the honest answer is the bill again, not free content.
+		// No verdict from the settling side: the read is served, whether or not the payment moved,
+		// because billing again could charge the buyer twice for one read.
+		if ( self::gave_no_verdict( $settled ) ) {
+			return $this->logged( $this->free( 'settlement unavailable' ), $subject );
+		}
+
+		// Settlement refused. Re-present the price rather than serving: the agent asked to pay
+		// and the control plane said no, so the honest answer is the bill again, not free content.
 		return $this->logged(
 			array(
 				'action'      => 'pay',
@@ -1024,6 +1034,22 @@ class Naulon_Enforcer {
 	private function send_403( array $decision ) {
 		$this->no_store();
 		$this->emit_denial( $this->denial_response( $decision, (string) get_permalink() ) );
+	}
+
+	/**
+	 * Whether a control-plane call ended without an answer: unreachable (status 0), a 5xx, or a
+	 * 2xx whose body is not JSON. Any of these is a gate failure, which serves the read. A 4xx is
+	 * the control plane answering about this request and is never treated as one.
+	 *
+	 * @param array $response A Naulon_Client response: {ok, status, body, error}.
+	 * @return bool
+	 */
+	public static function gave_no_verdict( array $response ) {
+		$status = isset( $response['status'] ) ? (int) $response['status'] : 0;
+		if ( 0 === $status || $status >= 500 ) {
+			return true;
+		}
+		return $status >= 200 && $status < 300 && ! is_array( isset( $response['body'] ) ? $response['body'] : null );
 	}
 
 	private function free( $reason ) {

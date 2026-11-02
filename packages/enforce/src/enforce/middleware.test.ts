@@ -186,9 +186,53 @@ test("API mode: an unreachable JWKS is reported on the first request, not discov
     console.error = realError;
   }
   assert.ok(
-    errs.some((e) => /preflight FAILED/i.test(e) && /re-reads will be refused/i.test(e)),
+    errs.some((e) => /preflight FAILED/i.test(e) && /presented licence is served free/i.test(e)),
     `the first request must say the keys are unreachable AND what it costs; got ${JSON.stringify(errs)}`,
   );
+});
+
+// Any gate failure serves the read. Keys that never arrived are one; a deployment with no identity
+// to pin is a configuration fault, so a licence header there must never be a free pass.
+test("a licence presented while the gate's keys cannot be fetched is served free, and logged", async () => {
+  const errs: string[] = [];
+  const realError = console.error;
+  console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
+  try {
+    const fetchImpl = (async () => {
+      throw new Error("getaddrinfo ENOTFOUND gate.example");
+    }) as unknown as typeof fetch;
+    const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+    const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": mintFor("x") } }));
+    assert.equal(out.response, null, "the read is served");
+    assert.match(out.setHeaders?.["X-Naulon-Verdict"] ?? "", /served free \(licence keys unavailable\)/);
+    assert.equal(out.setHeaders?.["cache-control"], "no-store");
+  } finally {
+    console.error = realError;
+  }
+  assert.ok(errs.some((e) => /licence keys could not complete/.test(e)), JSON.stringify(errs));
+});
+
+test("a licence on a site with no identity to pin still 402s: a misconfiguration is not an outage", async () => {
+  const fetchImpl = (async () => {
+    throw new Error("unreachable");
+  }) as unknown as typeof fetch;
+  const { licenseIdentity: _drop, ...noIdentity } = opts.publisher;
+  const mw = naulonMiddleware({ ...opts, publisher: noIdentity, fetchImpl, licenseVerification: {} } as never);
+  const realError = console.error;
+  console.error = () => {};
+  try {
+    const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": "junk" } }));
+    assert.equal(out.response?.status, 402);
+  } finally {
+    console.error = realError;
+  }
+});
+
+test("a junk licence while the keys ARE reachable is the ordinary 402", async () => {
+  const fetchImpl = (async () => new Response(JSON.stringify(GATE_JWKS), { status: 200 })) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": "junk" } }));
+  assert.equal(out.response?.status, 402);
 });
 
 test("API mode: a reachable JWKS stays SILENT — the probe is not noise", async () => {
@@ -736,18 +780,24 @@ test("a licence the server refused gets the ordinary 402, naming why in the head
   assert.equal(body.licence_error_description, "sign it");
 });
 
-test("a licence server that cannot be reached is a retryable 503 that still sells the read, never a free one", async () => {
-  const { mw } = licenceRig({ throws: true });
-  const out = await mw(licensedGet());
-  assert.equal(out.response?.status, 503);
-  assert.equal(out.response?.headers.get("retry-after"), "2");
-  assert.ok(out.response?.headers.get("PAYMENT-REQUIRED"), "the read is still for sale over x402");
-  assert.match(out.response?.headers.get("X-Naulon-Verdict") ?? "", /licence refused \(licence_server_unavailable\)/);
-  assert.equal(((await out.response!.json()) as Record<string, unknown>).licence_error, "licence_server_unavailable");
+test("a licence server that gives no verdict serves the read: no answer, a 5xx, or a 2xx that is not one", async () => {
+  const realError = console.error;
+  console.error = () => {};
+  try {
+    for (const reply of [{ throws: true }, { status: 502, json: { error: "bad_gateway" } }, { status: 200, json: null }, { status: 200, json: [1] }]) {
+      const { mw } = licenceRig(reply);
+      const out = await mw(licensedGet());
+      assert.equal(out.response, null, JSON.stringify(reply));
+      assert.match(out.setHeaders?.["X-Naulon-Verdict"] ?? "", /served free \(licence check unavailable\)/);
+      assert.equal(out.setHeaders?.["X-Naulon-License"], undefined, "no record is invented");
+    }
+  } finally {
+    console.error = realError;
+  }
 });
 
-test("a licence server that answers 4xx or nonsense is not a retry: the read is simply for sale", async () => {
-  for (const reply of [{ status: 401, json: { error: "invalid_client" } }, { status: 200, json: null }]) {
+test("a licence server that answers 4xx is an answer: the read is simply for sale", async () => {
+  for (const reply of [{ status: 401, json: { error: "invalid_client" } }, { status: 400, json: { error: "invalid_request" } }, { status: 404 }]) {
     const { mw } = licenceRig(reply);
     const out = await mw(licensedGet());
     assert.equal(out.response?.status, 402);
@@ -1073,16 +1123,31 @@ test("a payment /verify refused answers with the offer, a remedy and the raw rea
   assert.equal(body.failure.detail, "insufficient_balance");
 });
 
-test("an unreachable /verify answers 402 with a retryable remedy, not a bare string", async () => {
-  const fakeFetch = (async () => { throw new Error("ECONNREFUSED"); }) as unknown as typeof fetch;
-  const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
-  const out = await mw(
-    new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
-  );
-  assert.equal(out.response?.status, 402);
-  const body = (await out.response!.json()) as Refusal;
-  assert.equal(body.failure.code, "settlement_failed");
-  assert.equal(body.failure.detail, "verify unreachable");
+test("a /verify that gives no verdict serves the read: unreachable, a 5xx, or a 2xx without ok", async () => {
+  const replies: Array<() => Response> = [
+    () => { throw new Error("ECONNREFUSED"); },
+    () => new Response(JSON.stringify({ error: "boom" }), { status: 500 }),
+    () => new Response("<html>bad gateway</html>", { status: 502 }),
+    () => new Response("not json", { status: 200 }),
+    () => new Response(JSON.stringify({ ok: false }), { status: 200 }),
+  ];
+  const errs: string[] = [];
+  const realError = console.error;
+  console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
+  try {
+    for (const [i, reply] of replies.entries()) {
+      const mw = naulonMiddleware({ ...opts, fetchImpl: (async () => reply()) as unknown as typeof fetch });
+      const out = await mw(
+        new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
+      );
+      assert.equal(out.response, null, `reply ${i}`);
+      assert.match(out.setHeaders?.["X-Naulon-Verdict"] ?? "", /served free \(settlement unavailable\)/);
+      assert.equal(out.setHeaders?.["PAYMENT-RESPONSE"], undefined, "no receipt is claimed");
+    }
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(errs.filter((e) => /settlement could not complete/.test(e)).length, replies.length, "each one is logged");
 });
 
 // ── Final-review fixes ─────────────────────────────────────────────────────────

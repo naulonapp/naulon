@@ -39,6 +39,15 @@ Ships `@naulon/sdk` **0.7.0**, `@naulon/shared` **0.7.0** and `@naulon/enforce` 
 - `@naulon/sdk`: `slugForScope(path, scope)`, the one function that keys a path for a toll scope.
 - `@naulon/shared`: `splitList`, and `PublisherConfig.enforceKeySha256`.
 
+### Changed
+- `@naulon/enforce` serves the page when the gate gives no verdict, as rule 4 of
+  `docs/protocol/in-app.md` already required: a licence server or `/verify` that is unreachable,
+  answers 5xx, or answers 2xx with no verdict, and a licence presented before the gate's keys could
+  ever be fetched. It used to answer 503 or 402. A 4xx is still an answer and still sells the read,
+  and a licence server's `in_flight` or `server_error` is still a 503. Each served read is logged
+  and carries `X-Naulon-Verdict: served free (<step> unavailable)`.
+- The WordPress plugin does the same for its licence check and its settlement.
+
 ### Fixed
 - Site mode no longer quotes a price for paths under the gate's own `/_naulon/` namespace.
 - The WordPress plugin connects to a self-hosted gate. It used to store the gate's address
