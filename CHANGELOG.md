@@ -49,6 +49,8 @@ Ships `@naulon/sdk` **0.7.0**, `@naulon/shared` **0.7.0** and `@naulon/enforce` 
 - The WordPress plugin does the same for its licence check and its settlement.
 
 ### Fixed
+- `@naulon/wayfarer` requires `@x402/core` and `@x402/evm` 2.29.0, the first releases on zod
+  4.6.6, so an install no longer pulls the zod 3 that GHSA-mrhx-c7xc-m3w5 covers.
 - Site mode no longer quotes a price for paths under the gate's own `/_naulon/` namespace.
 - The WordPress plugin connects to a self-hosted gate. It used to store the gate's address
   without a key, so every call went unauthenticated and nothing was charged.
