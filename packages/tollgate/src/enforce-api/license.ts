@@ -68,15 +68,24 @@ export function mountLicense(app: OpenAPIHono, deps: EnforceApiDeps): void {
     // `licenseEntitlesRead` reads the licence and the proof off the agent's Request. That request
     // happened at the publisher's runtime, so the two headers it needs are rebuilt from what was
     // forwarded.
-    const headers = new Headers({ [LICENSE_HEADER]: license });
-    if (proof) headers.set(PROOF_HEADER, proof);
-    const check = await entitles(
-      license,
-      slug,
-      kind as TollKind,
-      new Request(resource, { headers }),
-      deps.licenseKeys ? { jwks: deps.licenseKeys, issuer: publisher.licenseIdentity } : undefined,
-    );
+    //
+    // Everything here reads the agent's own bytes, so a throw is the agent's doing and answers as a
+    // refusal. A 5xx would be read by the runtime as the gate failing, and serve the page free on
+    // demand (a licence carrying a byte `Headers` refuses was exactly that).
+    let check: Awaited<ReturnType<typeof entitles>>;
+    try {
+      const headers = new Headers({ [LICENSE_HEADER]: license });
+      if (proof) headers.set(PROOF_HEADER, proof);
+      check = await entitles(
+        license,
+        slug,
+        kind as TollKind,
+        new Request(resource, { headers }),
+        deps.licenseKeys ? { jwks: deps.licenseKeys, issuer: publisher.licenseIdentity } : undefined,
+      );
+    } catch {
+      return c.json({ entitled: false }, 200);
+    }
     const disclosable = !check.ok && check.reason === "no_verifier" ? { reason: "no_verifier" as const } : {};
     return c.json(check.ok ? { entitled: true } : { entitled: false, ...disclosable }, 200);
   });

@@ -451,7 +451,7 @@ async function settleMock(pairs: LegPair[], now: number, publisherId?: string): 
     const { requirements, payload } = pairs[i]!;
     const m = (payload ?? {}) as { payer?: string; amount?: string; nonce?: string };
     if (!m.payer) return { ok: false, stage: "verify", error: `leg ${i}: missing payer` };
-    if (m.amount === undefined || BigInt(m.amount) < BigInt(requirements.amount)) {
+    if (typeof m.amount !== "string" || !/^\d+$/.test(m.amount) || BigInt(m.amount) < BigInt(requirements.amount)) {
       return { ok: false, stage: "verify", error: `leg ${i}: insufficient payment amount` };
     }
     if (!m.nonce) return { ok: false, stage: "verify", error: `leg ${i}: missing nonce` };

@@ -621,9 +621,9 @@ class Naulon_Enforcer {
 			);
 		}
 
-		// No verdict from the settling side: the read is served, whether or not the payment moved,
-		// because billing again could charge the buyer twice for one read.
-		if ( self::gave_no_verdict( $settled ) ) {
+		// No verdict from the settling side (including a 2xx that does not say ok): the read is
+		// served, whether or not the payment moved, because billing again could charge twice.
+		if ( self::gave_no_verdict( $settled ) || ( $settled['ok'] && empty( $settled['body']['ok'] ) ) ) {
 			return $this->logged( $this->free( 'settlement unavailable' ), $subject );
 		}
 

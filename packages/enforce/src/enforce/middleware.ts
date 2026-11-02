@@ -302,17 +302,19 @@ export function naulonMiddleware(
 
     // One JWKS fetch in flight at a time, so the first request's probe and a re-read arriving with
     // it share the round trip. Resolves to null on success, or the reason it failed.
-    let inflight: Promise<string | null> | undefined;
-    const refresh = (): Promise<string | null> => {
-      inflight ??= (async (): Promise<string | null> => {
+    // `transient` marks a failure of the gate (no answer, a 5xx, a body that is not JSON) apart from
+    // a 4xx, which is a misconfigured key URL and must never become a free pass.
+    let inflight: Promise<{ reason: string; transient: boolean } | null> | undefined;
+    const refresh = (): Promise<{ reason: string; transient: boolean } | null> => {
+      inflight ??= (async (): Promise<{ reason: string; transient: boolean } | null> => {
         try {
           const res = await doFetch(jwksUrl, { headers: { accept: "application/json" } });
-          if (!res.ok) return `-> HTTP ${res.status}`;
+          if (!res.ok) return { reason: `-> HTTP ${res.status}`, transient: res.status >= 500 };
           cached = (await res.json()) as JwkSet;
           fetchedAt = clock();
           return null;
         } catch (err) {
-          return `unreachable (${err instanceof Error ? err.message : String(err)})`;
+          return { reason: `unreachable (${err instanceof Error ? err.message : String(err)})`, transient: true };
         }
       })().finally(() => {
         inflight = undefined;
@@ -332,7 +334,10 @@ export function naulonMiddleware(
       if (probed) return;
       probed = true;
       void refresh().then((failure) => {
-        if (failure) console.error(`[naulon] license verification preflight FAILED: ${jwksUrl} ${failure}. Until the keys arrive, a presented licence is served free.`);
+        if (failure) {
+          const cost = failure.transient ? "Until the keys arrive, a presented licence is served free." : "Paid re-reads will be refused.";
+          console.error(`[naulon] license verification preflight FAILED: ${jwksUrl} ${failure.reason}. ${cost}`);
+        }
       });
     };
 
@@ -360,7 +365,7 @@ export function naulonMiddleware(
       // A failed refresh keeps `cached` (stale-if-error); with no good fetch ever, it stays undefined.
       if (!(cached && clock() - fetchedAt < ttl)) {
         const failure = await refresh();
-        if (!cached && failure) return { outage: `${jwksUrl} ${failure}` };
+        if (!cached && failure?.transient) return { outage: `${jwksUrl} ${failure.reason}` };
       }
       return cached ? { jwks: cached, issuer } : undefined;
     };
@@ -708,11 +713,16 @@ export function naulonMiddleware(
         }
         // No verdict: no answer, a 5xx, or a 2xx that is not one. A gate failure, so the read is
         // served. A 4xx is the server's answer about this request, so that read stays for sale.
-        if (!checked.ok && (checked.status === 0 || checked.status >= 500 || (checked.status >= 200 && checked.status < 300))) {
+        // `in_flight` and `server_error` are answers whatever status carries them (a licence server
+        // may send either as a 503), so they reach the no-offer 503 below rather than a free read.
+        const explicit = !checked.ok && (checked.description === "in_flight" || checked.description === "server_error");
+        if (!checked.ok && !explicit && (checked.status === 0 || checked.status >= 500 || (checked.status >= 200 && checked.status < 300))) {
           return servedOnGateFailure("licence check", checked.description);
         }
-        const why = checked.ok ? (checked.error ?? (checked.active ? "not_permitted" : "invalid_token")) : "licence_check_failed";
-        const description = checked.ok ? checked.reason : checked.description;
+        const why = checked.ok
+          ? (checked.error ?? (checked.active ? "not_permitted" : "invalid_token"))
+          : explicit ? checked.description : "licence_check_failed";
+        const description = checked.ok ? checked.reason : explicit ? undefined : checked.description;
         // A charge already running for this URL (`in_flight`), or one whose outcome nobody could
         // confirm (`server_error`): retry, and never an x402 offer, which would invite a second
         // payment for the same read. The hosted gate answers these the same way.

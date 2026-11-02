@@ -271,6 +271,7 @@ class EnforcerTest extends WP_UnitTestCase {
 			array( 'error' => 'operation timed out' ),
 			array( 'code' => 500, 'body' => array( 'error' => 'boom' ) ),
 			array( 'code' => 200, 'body' => 'not an object' ),
+			array( 'code' => 200, 'body' => array( 'ok' => false ) ),
 		) as $canned ) {
 			$this->responses['/_naulon/verify'] = $canned;
 			$decision = $this->decide();

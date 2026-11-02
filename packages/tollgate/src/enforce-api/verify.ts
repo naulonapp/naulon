@@ -178,15 +178,24 @@ export function mountVerify(app: OpenAPIHono, deps: EnforceApiDeps): void {
       return c.json(failed(`this site requires every leg to be signed: ${legs.length} legs were quoted, 1 was signed`), 402);
     }
 
-    const settled = await settle({
-      payment,
-      legs: legs as never,
-      quote: quote as never,
-      publisher,
-      host,
-      resource: canonicalResource(host, pricePath),
-      now: clock(),
-    });
+    // A throw here answers as a refused payment, never a 5xx: a runtime serves the page when the
+    // gate gives no verdict, so a payment able to make settle throw would read free on demand.
+    // The facilitator calls catch their own failures, so a throw is a fault on this side; logged.
+    let settled: Awaited<ReturnType<typeof settle>>;
+    try {
+      settled = await settle({
+        payment,
+        legs: legs as never,
+        quote: quote as never,
+        publisher,
+        host,
+        resource: canonicalResource(host, pricePath),
+        now: clock(),
+      });
+    } catch (err) {
+      console.error("[naulon] /verify: settle threw; refusing the payment:", err);
+      settled = { ok: false, error: "settlement failed" };
+    }
 
     const q = quote as { slug?: unknown; kind?: unknown; price?: unknown };
     const observedAgent: ReportedAgent | undefined = agent;

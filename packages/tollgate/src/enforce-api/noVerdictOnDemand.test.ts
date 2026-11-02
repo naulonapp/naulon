@@ -33,6 +33,8 @@ const CRAFTED_PAYMENTS = [
   b64('{"payload":null}'),
   b64('{"payload":{"authorization":null,"signature":7}}'),
   b64(JSON.stringify({ x402Version: 2, payload: { authorization: { from: 1, value: {} } } })),
+  b64(JSON.stringify({ payer: "0xp", amount: "abc", nonce: "n" })),
+  b64(JSON.stringify({ payer: "0xp", amount: 7, nonce: "n" })),
   "A".repeat(200_000),
 ];
 const RESOURCE = "http://h.test/essays/x";
@@ -64,12 +66,12 @@ test("no crafted payment makes /verify answer 5xx", async () => {
 
 test("no crafted licence makes /license/check answer 5xx", async () => {
   const a = app();
-  const licences = ["x", "a.b.c", `${b64("{}")}.${b64("null")}.sig`, `${b64('{"alg":"none"}')}.${b64("{}")}.`, "e".repeat(100_000), "..", "a.b.c.d.e"];
+  const licences = ["€", "a\nb", "a\u0000b", "x", "a.b.c", `${b64("{}")}.${b64("null")}.sig`, `${b64('{"alg":"none"}')}.${b64("{}")}.`, "e".repeat(100_000), "..", "a.b.c.d.e"];
   for (const license of licences) {
     const res = await a.request("/_naulon/license/check", {
       method: "POST",
       headers: keyHeaders,
-      body: JSON.stringify({ license, resource: "http://h.test/essays/x", slug: "essays/x", kind: "read", proof: "junk" }),
+      body: JSON.stringify({ license, resource: "http://h.test/essays/x", slug: "essays/x", kind: "read", proof: license }),
     });
     assert.ok(res.status < 500, `licence ${license.slice(0, 40)} answered ${res.status}`);
   }

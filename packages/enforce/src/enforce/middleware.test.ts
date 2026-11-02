@@ -212,6 +212,19 @@ test("a licence presented while the gate's keys cannot be fetched is served free
   assert.ok(errs.some((e) => /licence keys could not complete/.test(e)), JSON.stringify(errs));
 });
 
+test("a JWKS URL answering 4xx is a misconfiguration: a presented licence still 402s", async () => {
+  const fetchImpl = (async () => new Response("not found", { status: 404 })) as unknown as typeof fetch;
+  const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+  const realError = console.error;
+  console.error = () => {};
+  try {
+    const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "X-Naulon-License": "junk" } }));
+    assert.equal(out.response?.status, 402);
+  } finally {
+    console.error = realError;
+  }
+});
+
 test("a licence on a site with no identity to pin still 402s: a misconfiguration is not an outage", async () => {
   const fetchImpl = (async () => {
     throw new Error("unreachable");
@@ -813,6 +826,16 @@ test("a charge already running, or one nobody could confirm, is a 503 with no x4
     assert.equal(out.response?.status, 503, error);
     assert.equal(out.response?.headers.get("PAYMENT-REQUIRED"), null, "an offer here would sell the same read twice");
     assert.equal(out.response?.headers.get("retry-after"), "2");
+    assert.equal(((await out.response!.json()) as Record<string, unknown>).error, error);
+  }
+});
+
+test("an in_flight or server_error sent with a 503 stays a 503 with no offer, never a free read", async () => {
+  for (const error of ["in_flight", "server_error"]) {
+    const { mw } = licenceRig({ status: 503, json: { error } });
+    const out = await mw(licensedGet());
+    assert.equal(out.response?.status, 503, error);
+    assert.equal(out.response?.headers.get("PAYMENT-REQUIRED"), null);
     assert.equal(((await out.response!.json()) as Record<string, unknown>).error, error);
   }
 });
