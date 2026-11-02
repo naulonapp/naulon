@@ -302,17 +302,19 @@ export function naulonMiddleware(
 
     // One JWKS fetch in flight at a time, so the first request's probe and a re-read arriving with
     // it share the round trip. Resolves to null on success, or the reason it failed.
-    let inflight: Promise<string | null> | undefined;
-    const refresh = (): Promise<string | null> => {
-      inflight ??= (async (): Promise<string | null> => {
+    // `transient` marks a failure of the gate (no answer, a 5xx, a body that is not JSON) apart from
+    // a 4xx, which is a misconfigured key URL and must never become a free pass.
+    let inflight: Promise<{ reason: string; transient: boolean } | null> | undefined;
+    const refresh = (): Promise<{ reason: string; transient: boolean } | null> => {
+      inflight ??= (async (): Promise<{ reason: string; transient: boolean } | null> => {
         try {
           const res = await doFetch(jwksUrl, { headers: { accept: "application/json" } });
-          if (!res.ok) return `-> HTTP ${res.status}`;
+          if (!res.ok) return { reason: `-> HTTP ${res.status}`, transient: res.status >= 500 };
           cached = (await res.json()) as JwkSet;
           fetchedAt = clock();
           return null;
         } catch (err) {
-          return `unreachable (${err instanceof Error ? err.message : String(err)})`;
+          return { reason: `unreachable (${err instanceof Error ? err.message : String(err)})`, transient: true };
         }
       })().finally(() => {
         inflight = undefined;
@@ -332,12 +334,18 @@ export function naulonMiddleware(
       if (probed) return;
       probed = true;
       void refresh().then((failure) => {
-        if (failure) console.error(`[naulon] license verification preflight FAILED: ${jwksUrl} ${failure}. Paid re-reads will be refused.`);
+        if (failure) {
+          const cost = failure.transient ? "Until the keys arrive, a presented licence is served free." : "Paid re-reads will be refused.";
+          console.error(`[naulon] license verification preflight FAILED: ${jwksUrl} ${failure.reason}. ${cost}`);
+        }
       });
     };
 
     let warnedMissingIdentity = false;
-    const resolve = async (issuer: string | undefined): Promise<LicenseVerification | undefined> => {
+    // Three answers: keys to verify with; `{ outage }` when the keys were never fetched because the
+    // minting gate could not be reached (a gate failure, which serves the read); or undefined when
+    // this deployment has no identity to pin, a configuration fault that must keep refusing.
+    const resolve = async (issuer: string | undefined): Promise<LicenseVerification | { outage: string } | undefined> => {
       // Without an issuer we cannot pin iss/aud, so verification would be unsafe — skip
       // (the re-read falls through to the normal 402 path, same as an unconfigured mount).
       //
@@ -355,7 +363,10 @@ export function naulonMiddleware(
         return undefined;
       }
       // A failed refresh keeps `cached` (stale-if-error); with no good fetch ever, it stays undefined.
-      if (!(cached && clock() - fetchedAt < ttl)) await refresh();
+      if (!(cached && clock() - fetchedAt < ttl)) {
+        const failure = await refresh();
+        if (!cached && failure?.transient) return { outage: `${jwksUrl} ${failure.reason}` };
+      }
       return cached ? { jwks: cached, issuer } : undefined;
     };
     return { preflight, resolve };
@@ -488,10 +499,11 @@ export function naulonMiddleware(
     }
     // Observing: every decision runs and is reported, but no read is charged.
     const observing = !chargesReads(publisher as { tollMode?: TollMode });
-    const licenseVerification =
-      req.headers.get(LICENSE_HEADER)
-        ? await resolveVerification.resolve((publisher as { licenseIdentity?: string }).licenseIdentity)
-        : undefined;
+    const verifier = req.headers.get(LICENSE_HEADER)
+      ? await resolveVerification.resolve((publisher as { licenseIdentity?: string }).licenseIdentity)
+      : undefined;
+    const keysOutage = verifier && "outage" in verifier ? verifier.outage : undefined;
+    const licenseVerification = verifier && "jwks" in verifier ? verifier : undefined;
     const d = await decide({
       raw: req,
       host: url.host,
@@ -596,6 +608,30 @@ export function naulonMiddleware(
       };
     };
 
+    // Any gate failure serves the read, at every step: a control plane that cannot answer must
+    // never cost a reader the page or a publisher their site. Only a failure qualifies. An answer,
+    // a refusal included, is honoured, so a header that provokes a 4xx never becomes a free pass.
+    // Not reported as an observation: no verdict was reached, and the outage is the control plane's own,
+    // read on the enforcement-status plane. Logged here so the site's own logs say it first.
+    const servedOnGateFailure = (step: string, detail: string): MiddlewareResult => {
+      console.error(`[naulon] ${step} could not complete (${detail}); the read was served free.`);
+      return {
+        response: null,
+        setHeaders: { "cache-control": "no-store", "X-Naulon-Verdict": headerSafe(`served free (${step} unavailable)`) },
+      };
+    };
+
+    // A licence nobody could verify because the minting gate's keys never arrived. Only that cause:
+    // a deployment with no identity to pin is a configuration fault and keeps refusing.
+    if (
+      keysOutage !== undefined &&
+      !observing &&
+      (d.kind === "payment-required" || d.kind === "payment-presented") &&
+      d.obs.licenceRefusal === "no_verifier"
+    ) {
+      return servedOnGateFailure("licence keys", keysOutage);
+    }
+
     switch (d.kind) {
       // Not a gated route at all (non-article / unknown article) — the gate emits no
       // observation here either, and inventing one would put every asset request into
@@ -635,9 +671,9 @@ export function naulonMiddleware(
 
       // A presented RSL licence. This origin cannot witness a charge on its own word, so it asks
       // the licence server, which charges only on the crawler's own signature by the key the licence
-      // is bound to (`witness: crawler-signed`). Anything short of `permitted` is the ordinary 402:
-      // a licence nobody could check is not a licence, and the read still sells over x402. GET only:
-      // a HEAD has no body to sell.
+      // is bound to (`witness: crawler-signed`). A server that answers anything short of `permitted`
+      // leaves the read for sale over x402; one that cannot answer at all serves it. GET only: a HEAD
+      // has no body to sell.
       case "licence-presented": {
         const server = (publisher as { licenceServer?: string }).licenceServer;
         // Observing never asks the licence server: a permitted licence is a charge.
@@ -675,13 +711,18 @@ export function naulonMiddleware(
           if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
           return { response: null, setHeaders };
         }
-        // Only a check nobody could complete (no answer, or a 5xx) is worth a retry. A licence server
-        // that answered 4xx or nonsense will answer it again, so that read is simply for sale.
-        const transient = !checked.ok && (checked.status === 0 || checked.status >= 500);
+        // No verdict: no answer, a 5xx, or a 2xx that is not one. A gate failure, so the read is
+        // served. A 4xx is the server's answer about this request, so that read stays for sale.
+        // `in_flight` and `server_error` are answers whatever status carries them (a licence server
+        // may send either as a 503), so they reach the no-offer 503 below rather than a free read.
+        const explicit = !checked.ok && (checked.description === "in_flight" || checked.description === "server_error");
+        if (!checked.ok && !explicit && (checked.status === 0 || checked.status >= 500 || (checked.status >= 200 && checked.status < 300))) {
+          return servedOnGateFailure("licence check", checked.description);
+        }
         const why = checked.ok
           ? (checked.error ?? (checked.active ? "not_permitted" : "invalid_token"))
-          : transient ? "licence_server_unavailable" : "licence_check_failed";
-        const description = checked.ok ? checked.reason : checked.description;
+          : explicit ? checked.description : "licence_check_failed";
+        const description = checked.ok ? checked.reason : explicit ? undefined : checked.description;
         // A charge already running for this URL (`in_flight`), or one whose outcome nobody could
         // confirm (`server_error`): retry, and never an x402 offer, which would invite a second
         // payment for the same read. The hosted gate answers these the same way.
@@ -699,15 +740,8 @@ export function naulonMiddleware(
             }),
           };
         }
-        // Anything else leaves the read for sale: the ordinary 402, carrying why the licence did not
-        // pay. A licence server nobody could reach is a retry as well, so it says so.
-        const refused = paymentRequired(d, `licence refused (${why})`, { error: why, ...(description ? { description } : {}) });
-        if (why === "licence_server_unavailable" && refused.response) {
-          const headers = new Headers(refused.response.headers);
-          headers.set("retry-after", "2");
-          return { response: new Response(refused.response.body, { status: 503, headers }) };
-        }
-        return refused;
+        // Anything else leaves the read for sale: the ordinary 402, carrying why the licence did not pay.
+        return paymentRequired(d, `licence refused (${why})`, { error: why, ...(description ? { description } : {}) });
       }
 
       case "payment-required":
@@ -736,10 +770,10 @@ export function naulonMiddleware(
         // Reporting it here too would double-count, and a client that can assert "paid"
         // is a client that can inflate its own earnings.
         //
-        // The one uncovered case is /verify being UNREACHABLE below: no settle happened,
-        // so the cloud writes nothing, and this runtime has no verdict it is allowed to
-        // report. That request is missing from the audit page by design — it is an
-        // outage symptom, which the enforcement-status plane is where you read.
+        // The one uncovered case is a /verify that gives no verdict below: the read is served
+        // free and this runtime has no verdict it is allowed to report. That request is missing
+        // from the audit page by design: it is an outage symptom, which the
+        // enforcement-status plane is where you read.
         //
         // Custody-free settlement: the buyer's signature goes to the hosted
         // /verify, which settles buyer→author and mints the receipt.
@@ -764,11 +798,16 @@ export function naulonMiddleware(
             }),
           });
           status = res.status;
-          body = (await res.json().catch(() => ({}))) as VerifyResponse;
-        } catch {
-          // /verify unreachable → refuse this paid attempt (fail-closed on the
-          // payment leg: we can't confirm settlement, so we can't serve paid).
-          return { response: refusal(d, { failure: { reason: "settlement_failed", detail: "verify unreachable" } }) };
+          const parsed: unknown = await res.json().catch(() => null);
+          body = (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}) as VerifyResponse;
+        } catch (err) {
+          return servedOnGateFailure("settlement", `verify unreachable: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        // No verdict: a 5xx, or a 2xx that does not say `ok`. Served, whether or not the payment
+        // moved, because a second charge for this read is the outcome a buyer cannot undo. A 4xx is
+        // the settling side's answer and is refused below.
+        if (status >= 500 || (status >= 200 && status < 300 && body.ok !== true)) {
+          return servedOnGateFailure("settlement", `verify answered HTTP ${status} with no verdict`);
         }
 
         if (status === 200 && body.ok) {

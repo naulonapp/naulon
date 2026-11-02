@@ -124,7 +124,9 @@ signature. When the publisher's configuration names a licence server, the SDK mi
 forwards a presented licence and the request's signature to that server's `/introspect`,
 serves the page only when it answers `permitted`, and otherwise answers the ordinary 402
 with the reason in `licence_error`. A charge already running for that read, or one nobody
-could confirm, is a 503 with no x402 offer instead, so the read is never sold twice. The
+could confirm, is a 503 with no x402 offer instead, so the read is never sold twice. A server
+that gives no answer, a 5xx, or a reply that is not a verdict serves the page, because a gate
+failure never costs a read. The
 licence and the site's API key go only to a server on the same origin as the site's
 `verifyUrl`. Its records carry `witness: crawler-signed`.
 

@@ -292,8 +292,9 @@ export type IntrospectResult =
  * Ask a licence server whether a presented licence permits reading `resource`.
  *
  * Every failure (unreachable, non-2xx, not JSON, a server URL a token may not be sent to) is
- * `ok: false`, which a caller must treat as "not permitted": a licence nobody could check is not a
- * licence.
+ * `ok: false`, and never a permit. `status` tells a caller which kind it was: 0 for no answer, a 5xx,
+ * or a 2xx that was not a verdict means nobody could check the licence, while a 4xx is the server's
+ * answer about this request.
  */
 /** How long `introspectLicence` waits for a licence server before refusing the read. */
 export const INTROSPECT_TIMEOUT_MS = 10_000;

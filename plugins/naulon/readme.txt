@@ -166,6 +166,7 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * Connect to a gate you host yourself. Paste its address and its key (`NAULON_ENFORCE_KEY`), or put the key in `wp-config.php` as `NAULON_GATE_KEY`. Before this, a self-hosted gate never answered the plugin, so nothing was charged.
 * A site connected to its own gate by address alone, without a key, now shows as not connected until you add the key.
 * The licence the plugin publishes is read from the same enforcement document on every gate, hosted or your own.
+* If naulon cannot answer a licence check or a payment, the agent now gets the article instead of being asked to pay again. A refusal from naulon still asks for payment.
 
 = 0.7.3 =
 * New name: naulon - Get paid when AI reads your work. Nothing else changed.
