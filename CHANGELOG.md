@@ -14,6 +14,15 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## python-v0.1.0
+
+The first release of `naulon` on PyPI: tolls AI agents from inside a Python web app, with Django,
+WSGI and ASGI adapters and no runtime dependencies (Python 3.10 or newer). It reads the policy from
+a gate in the background, so a person's request never waits on the network, and it asks the gate
+for the 402, settlement and licence checks. It passes every contract fixture the TypeScript and PHP
+runtimes pass. `naulon[botauth]` adds Web Bot Auth signature checks. Needs a gate on protocol 1.1
+(v0.16.0 or later).
+
 ## v0.16.0
 
 Ships `@naulon/sdk` **0.7.0**, `@naulon/shared` **0.7.0** and `@naulon/enforce` **0.11.0**.
@@ -55,8 +64,20 @@ Ships `@naulon/sdk` **0.7.0**, `@naulon/shared` **0.7.0** and `@naulon/enforce` 
 - A read served on a gate failure is recorded as `served-free` with `freeReason: unavailable`, from
   the gate, `@naulon/enforce` and the WordPress plugin, so an outage shows on the audit page.
   `@naulon/enforce` also stops waiting on `/verify` after 15 s.
+- `/_naulon/verify` and `/_naulon/license/check` put the outcome in a `verdict` field on every
+  answer about the payment: `paid`, `refused`, `pending` or `unavailable` (protocol 1.1.0).
+  `@naulon/enforce` and the WordPress plugin act on that field through one rule,
+  `gateAnswer(status, body)` in `@naulon/shared`: the verdict when there is one, `refused` for a
+  4xx without one, and the page for no answer, a 5xx or a success without one. A 4xx stays a
+  refusal because the agent can provoke one with its own payment header. `pending` answers 503
+  with `Retry-After` and no second offer. Run a 1.1 gate before these runtimes: an older gate's
+  paid reads are served without a receipt.
+- `@naulon/shared` exports `GATE_VERDICTS`, `FREE_REASONS`, `gateVerdictOf` and `gateAnswer`.
+  `verdict-cases.json` and `botauth-vectors.json` join the contract fixtures.
 
 ### Fixed
+- An enforce route given a body it cannot read, a resource URL with no host, or `legs: [null]`
+  answers `refused` instead of a validator error or a 500.
 - `@naulon/wayfarer` requires `@x402/core` and `@x402/evm` 2.29.0, the first releases on zod
   4.6.6, so an install no longer pulls the zod 3 that GHSA-mrhx-c7xc-m3w5 covers.
 - Site mode no longer quotes a price for paths under the gate's own `/_naulon/` namespace.

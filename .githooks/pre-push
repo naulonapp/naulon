@@ -39,3 +39,9 @@ make lint || { echo "pre-push: typecheck failed. Fix it, or push with --no-verif
 
 echo "pre-push: make test"
 make test || { echo "pre-push: tests failed. Fix them, or push with --no-verify if you know why." >&2; exit 1; }
+
+# The Python package has its own toolchain, so `make test` never sees it.
+if echo "$changed" | grep -qE '^packages/(python|shared/test-fixtures)/'; then
+  echo "pre-push: make test-python"
+  make test-python || { echo "pre-push: the Python suite failed. Fix it, or push with --no-verify if you know why." >&2; exit 1; }
+fi

@@ -37,7 +37,7 @@ const BANNED: { pattern: RegExp; what: string }[] = [
   { pattern: new RegExp(["inner", "axiom"].join(""), "i"), what: "the private reference publisher" },
 ];
 
-const SCANNED = /\.(ts|tsx|js|mjs|cjs|md|json|yml|yaml|php|txt|sh)$/;
+const SCANNED = /\.(ts|tsx|js|mjs|cjs|md|json|yml|yaml|php|py|toml|txt|sh)$/;
 
 /**
  * Build output and third-party trees only. `.git` is skipped because history is not something a
@@ -53,6 +53,10 @@ const SKIP_DIRS = new Set([
   "coverage",
   "vendor",
   ".git",
+  ".venv",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
 ]);
 
 function* walk(dir: string): Generator<string> {
