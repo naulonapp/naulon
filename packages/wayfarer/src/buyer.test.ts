@@ -22,6 +22,7 @@ import {
   probe,
   probePrice,
   quotedTotalAtomic,
+  receiptOf,
   tollMovedOrNull,
   type Quoted,
 } from "./buyer.ts";
@@ -546,4 +547,22 @@ test("classifySignerRefusal stops on a frozen account instead of re-signing", ()
   const c = classifySignerRefusal("account_frozen — spending is frozen because a change on this account was reported");
   assert.equal(c?.errorCode, "rejected", "the owner lifts a freeze; funding changes nothing");
   assert.equal(c?.retryable, false);
+});
+
+// receiptOf: only the gate's own receipt makes a read "paid". An in-app site serves the page free
+// when its gate is down, and that 200 looks like any other except for the missing header.
+const receipt = (body: unknown): Headers =>
+  new Headers({ "payment-response": Buffer.from(typeof body === "string" ? body : JSON.stringify(body)).toString("base64") });
+
+test("receiptOf: a readable receipt confirms the charge and carries its reference", () => {
+  assert.deepEqual(receiptOf(receipt({ success: true, transaction: "0xabc" })), { charge: "confirmed", settlementRef: "0xabc" });
+  assert.deepEqual(receiptOf(receipt({ transaction: "tid-1" })), { charge: "confirmed", settlementRef: "tid-1" });
+});
+
+test("receiptOf: no receipt, a refused one, or one that does not parse leaves the charge unconfirmed", () => {
+  assert.deepEqual(receiptOf(new Headers()), { charge: "unconfirmed" });
+  assert.deepEqual(receiptOf(receipt({ success: false, transaction: "0xabc" })), { charge: "unconfirmed" });
+  assert.deepEqual(receiptOf(receipt("not json")), { charge: "unconfirmed" });
+  assert.deepEqual(receiptOf(receipt("42")), { charge: "unconfirmed" });
+  assert.deepEqual(receiptOf(receipt("null")), { charge: "unconfirmed" });
 });

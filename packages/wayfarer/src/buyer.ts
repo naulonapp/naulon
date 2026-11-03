@@ -70,6 +70,16 @@ export interface Fetched {
    *  settlement leg (== quotedTotalAtomic of the quote actually signed). Callers debit
    *  budgets on THIS, not paidUsdc, so a fee'd toll is never under-counted. */
   costUsdc?: number;
+  /**
+   * Whether the gate said it took the money, on a paid read (absent on a free one).
+   *
+   * `confirmed`: the 200 carried a readable `PAYMENT-RESPONSE`, the gate's receipt.
+   * `unconfirmed`: the page was served with no receipt. A site whose gate could not be reached serves
+   * the page free, so the payment may never have settled. The signed authorization did leave this
+   * process and stays valid until it expires, so callers still debit `costUsdc` from the budget; only
+   * the claim "paid" is withheld.
+   */
+  charge?: ChargeStatus;
   /** Citation License (compact JWS) the gate handed back on a paid read. */
   license?: string;
   /** Title, byline, date, canonical URL, word count and approximate tokens, when known. */
@@ -97,6 +107,26 @@ export interface Fetched {
    * `errorCode`, where a gate 503 and a dead socket both read as `origin_error`.
    */
   unpaid?: boolean;
+}
+
+export type ChargeStatus = "confirmed" | "unconfirmed";
+
+/**
+ * What a paid 200 says about the money: the gate's receipt, when it sent one. Every buyer reads the
+ * response through this, so "paid" means the same thing on every rail.
+ */
+export function receiptOf(headers: Pick<Headers, "get">): { charge: ChargeStatus; settlementRef?: string } {
+  const raw = headers.get("payment-response");
+  if (!raw) return { charge: "unconfirmed" };
+  try {
+    const receipt: unknown = JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
+    if (typeof receipt !== "object" || receipt === null) return { charge: "unconfirmed" };
+    const { success, transaction } = receipt as { success?: unknown; transaction?: unknown };
+    if (success === false) return { charge: "unconfirmed" };
+    return { charge: "confirmed", ...(typeof transaction === "string" && transaction ? { settlementRef: transaction } : {}) };
+  } catch {
+    return { charge: "unconfirmed" };
+  }
 }
 
 /**

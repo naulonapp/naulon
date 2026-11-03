@@ -25,9 +25,9 @@ runtimes pass. `naulon[botauth]` adds Web Bot Auth signature checks. Needs a gat
 
 ## v0.16.0
 
-Ships `@naulon/sdk` **0.7.0**, `@naulon/shared` **0.7.0** and `@naulon/enforce` **0.11.0**.
-`@naulon/wayfarer` **0.7.5** and `@naulon/wayfarer-mcp` **0.7.6** change only to require the new
-`sdk` and `shared`. The Docker image serves the in-app enforce API. The WordPress plugin is 0.8.0.
+Ships `@naulon/sdk` **0.7.0**, `@naulon/shared` **0.7.0**, `@naulon/enforce` **0.11.0**,
+`@naulon/wayfarer` **0.7.5** and `@naulon/wayfarer-mcp` **0.7.6**. The Docker image serves the
+in-app enforce API. The WordPress plugin is 0.8.0.
 
 ### Added
 - A self-hosted gate serves the in-app enforce API when `NAULON_ENFORCE_KEY` is set:
@@ -72,6 +72,12 @@ Ships `@naulon/sdk` **0.7.0**, `@naulon/shared` **0.7.0** and `@naulon/enforce` 
   refusal because the agent can provoke one with its own payment header. `pending` answers 503
   with `Retry-After` and no second offer. Run a 1.1 gate before these runtimes: an older gate's
   paid reads are served without a receipt.
+- `@naulon/wayfarer` says whether a bought read was charged. A paid read carries
+  `charge: "confirmed"` when the 200 came with the gate's `PAYMENT-RESPONSE`, and
+  `charge: "unconfirmed"` when it did not, which is what a site sends when its gate is down and it
+  serves the page free. An unconfirmed read is still debited from the budget, because the signed
+  authorization was sent, but the run log and `naulon_pay_and_read` no longer call it paid.
+  `receiptOf(headers)` is the one reader of that header.
 - `@naulon/shared` exports `GATE_VERDICTS`, `FREE_REASONS`, `gateVerdictOf` and `gateAnswer`.
   `verdict-cases.json` and `botauth-vectors.json` join the contract fixtures.
 

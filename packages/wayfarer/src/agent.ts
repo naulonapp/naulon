@@ -19,7 +19,7 @@ import {
   type JwkSet,
 } from "@naulon/shared";
 import { appraise } from "./appraise.ts";
-import { quotedTotalAtomic, rereadWithLicense, selectBuyer } from "./buyer.ts";
+import { quotedTotalAtomic, rereadWithLicense, selectBuyer, type Fetched } from "./buyer.ts";
 import { gatewayBuyer, type GatewaySigner } from "./gateway.ts";
 import { type MemoSigner } from "./memo.ts";
 import { railBuyer, type RailSigners } from "./rail.ts";
@@ -261,6 +261,15 @@ export interface RunOptions {
 
 /** Lowercased hostname (no port) — what domain policy (`allowDomains`) matches on, mirroring
  *  `payHostOf`/decide.ts's own host resolution. Returns undefined for an unparseable URL. */
+/** The log line for a bought read. A page served without the gate's receipt is not called paid. */
+function paidLine(result: Fetched, d: { slug: string; price: number }): string {
+  const usdc = (result.paidUsdc ?? d.price).toFixed(6);
+  if (result.charge === "unconfirmed") {
+    return `? served ${d.slug} with no receipt: $${usdc} authorized, charge unconfirmed (the site's gate may not have answered)`;
+  }
+  return `✓ paid $${usdc} for ${d.slug} (ref ${result.settlementRef})`;
+}
+
 function hostnameOf(u: string | undefined): string | undefined {
   if (!u) return undefined;
   try {
@@ -537,9 +546,9 @@ export async function run(
       const mark =
         verified === true ? " → 🎫 license verified" : verified === false ? " → ⚠ license UNVERIFIED" : " → 🎫 license";
       // The proof page, not a truncated id: the log is what a human reads back.
-      log(`  ✓ paid $${(result.paidUsdc ?? d.price).toFixed(6)} for ${d.slug} (ref ${result.settlementRef})${mark} ${links.proofUrl ?? licenseId ?? ""}`);
+      log(`  ${paidLine(result, d)}${mark} ${links.proofUrl ?? licenseId ?? ""}`);
     } else {
-      log(`  ✓ paid $${(result.paidUsdc ?? d.price).toFixed(6)} for ${d.slug} (ref ${result.settlementRef})`);
+      log(`  ${paidLine(result, d)}`);
     }
 
     sources.push({
@@ -548,6 +557,7 @@ export async function run(
       content: result.content ?? "",
       paidUsdc: result.paidUsdc ?? d.price,
       settlementRef: result.settlementRef,
+      ...(result.charge ? { charge: result.charge } : {}),
       licenseId,
       ...links,
     });
