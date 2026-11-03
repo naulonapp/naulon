@@ -1,5 +1,6 @@
 /** Wayfarer domain types — the shapes that flow through discover → … → ground. */
 import type { Usdc } from "@naulon/shared";
+import type { ChargeStatus } from "./buyer.ts";
 
 /** An essay the agent could pay to read, before it has decided anything. */
 export interface Candidate {
@@ -81,6 +82,8 @@ export interface Source {
   content: string;
   paidUsdc: number;
   settlementRef?: string;
+  /** `unconfirmed` when the page came back without the gate's receipt; see `Fetched.charge`. */
+  charge?: ChargeStatus;
   /** Citation License `jti` proving this read was paid for (verifiable at the gate). */
   licenseId?: string;
   /** The page a reader opens to see this record checked against the issuer's published keys, in

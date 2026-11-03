@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from naulon import ranges
-from naulon._log import warn_once
+from naulon._log import warn_error, warn_once
 from naulon.settings import Settings
 from naulon.transport import Breaker, Transport
 
@@ -172,7 +172,7 @@ class ConfigCache:
                 else:
                     self.refresh_now(key)
             except Exception as err:  # the worker must outlive any one bad answer
-                warn_once("config.worker", "naulon: config refresh failed (%s)", type(err).__name__)
+                warn_error("config.worker", "naulon: config refresh failed", err)
 
     def refresh_now(self, host: str) -> None:
         """Fetch `host`'s policy now, on this thread. The worker calls it; so may a test."""

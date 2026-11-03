@@ -2919,6 +2919,47 @@ test("a real transaction hash on a chain with an explorer DOES get a link — th
   });
 });
 
+// ── a page served without a receipt ───────────────────────────────────────────
+// An in-app site whose gate is down serves the page free and sends no PAYMENT-RESPONSE. The signed
+// authorization still left the buyer, so the budget is debited, but nothing may call it paid.
+
+test("a 200 with no receipt says the charge is unconfirmed, and still debits the budget", async () => {
+  await withStubGate(payGate("5000"), async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1", BUYER_PRIVATE_KEY: undefined }, async () => {
+      const events: DecisionAuditEvent[] = [];
+      const spy: MemoSigner = {
+        address: "0x000000000000000000000000000000000000BEEF",
+        async signTypedData() {
+          return `0x${"11".repeat(65)}` as `0x${string}`;
+        },
+      };
+      const client = await connectedClientWith({ signer: spy, auditSink: (e) => events.push(e) });
+      const p = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } }))
+        .structuredContent as PayResult & { charge?: string };
+      assert.equal(p.ok, true, `the page is still returned, got ${JSON.stringify(p)}`);
+      assert.equal(p.charge, "unconfirmed");
+      assert.equal(p.costUsdc, 0.005, "the authorized total is reported");
+      assert.equal(p.spentSessionUsdc, 0.005, "and debited from the session");
+      const [e] = events;
+      assert.equal(e?.charge, "unconfirmed", "the audit event carries it too");
+      assert.match(e?.reason ?? "", /charge unconfirmed/);
+      assert.doesNotMatch(e?.reason ?? "", /^paid /, "the reason does not claim a payment");
+    });
+  });
+});
+
+test("a 200 carrying the gate's receipt says the charge is confirmed", async () => {
+  await withStubGate(payGateSettling("6b1e5a2c-0f3d-4a7e-9c11-2f8b7d4e1a55"), async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1" }, async () => {
+      const client = await connectedClient();
+      const p = (await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } }))
+        .structuredContent as PayResult & { charge?: string };
+      assert.equal(p.ok, true, `expected a paid read, got ${JSON.stringify(p)}`);
+      assert.equal(p.charge, "confirmed");
+    });
+  });
+});
+
 
 // ── the second payment, on the granular MCP path ──────────────────────────────
 // The held pre-check `console.warn`s and falls through to pay. A console line is the operator's

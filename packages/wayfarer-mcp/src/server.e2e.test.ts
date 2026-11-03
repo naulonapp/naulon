@@ -15,6 +15,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { encodePaymentResponse } from "@naulon/shared";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -49,7 +50,7 @@ function payGate(amountAtomic: string) {
     if (req.headers["payment-signature"]) {
       res.writeHead(200, {
         "content-type": "text/plain",
-        "payment-response": Buffer.from(JSON.stringify({ settlement: "mock-settle-ref", network: "arc-testnet" })).toString("base64"),
+        "payment-response": encodePaymentResponse({ transaction: "mock-settle-ref", network: "arc-testnet", payer: "0x1" }),
       });
       res.end("paid content body");
     } else {
@@ -198,7 +199,7 @@ function articleGate(accepts: string[]) {
       accepts.push(String(req.headers.accept ?? ""));
       res.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
-        "payment-response": Buffer.from(JSON.stringify({ settlement: "mock-settle-ref", network: "arc-testnet" })).toString("base64"),
+        "payment-response": encodePaymentResponse({ transaction: "mock-settle-ref", network: "arc-testnet", payer: "0x1" }),
       });
       res.end(page);
     } else {

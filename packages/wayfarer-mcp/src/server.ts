@@ -69,7 +69,7 @@ import {
   tollgateBase,
   verifyAgainst,
 } from "@naulon/wayfarer";
-import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners } from "@naulon/wayfarer";
+import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners, ChargeStatus } from "@naulon/wayfarer";
 import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, networkByCaip2, settlementRefKind, usageSentence, usdc } from "@naulon/shared";
 import type { SettlementNetwork } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
@@ -273,6 +273,8 @@ export interface DecisionAuditEvent {
   costUsdc?: number;
   /** The on-chain / settlement reference (pay decisions only). */
   settlementRef?: string;
+  /** `unconfirmed` when the page came back without the gate's receipt, so the charge is not known to have settled (pay decisions only). */
+  charge?: ChargeStatus;
   /** The Citation License jti (pay decisions only). */
   licenseId?: string;
   /** The policy's agent tag, if configured — audit attribution, not identity. */
@@ -1292,6 +1294,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
               "facilitator, so this is usually a transfer id whose on-chain batch lands later. Read " +
               "settlementRefKind before describing it as on-chain.",
           ),
+        charge: z
+          .enum(["confirmed", "unconfirmed"])
+          .optional()
+          .describe(
+            "`confirmed`: the gate sent its receipt, so the charge settled. `unconfirmed`: the site served the " +
+              "page with no receipt, which it does when its gate cannot be reached, so the charge may never " +
+              "have settled. Say the read was served and the charge is unconfirmed; do not say it was paid. " +
+              "costUsdc is still debited from the budget, because the signed authorization was sent.",
+          ),
         heldRefusal: z
           .string()
           .optional()
@@ -1678,14 +1689,17 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       emitAudit({
         slug,
         action: "pay",
-        reason: heldRefusal
-          ? `paid $${round6(result.paidUsdc ?? 0)} (true total $${cost}) — SECOND PAYMENT: a live licence was refused (${heldRefusal})`
-          : `paid $${round6(result.paidUsdc ?? 0)} (true total $${cost})`,
+        reason:
+          (result.charge === "unconfirmed"
+            ? `authorized $${round6(result.paidUsdc ?? 0)} (true total $${cost}), charge unconfirmed: the page came back with no receipt`
+            : `paid $${round6(result.paidUsdc ?? 0)} (true total $${cost})`) +
+          (heldRefusal ? ` — SECOND PAYMENT: a live licence was refused (${heldRefusal})` : ""),
         ...(heldRefusal ? { heldRefusal } : {}),
         priceUsdc: quoted.priceUsdc,
         paidUsdc: result.paidUsdc,
         costUsdc: cost,
         ...(result.settlementRef ? { settlementRef: result.settlementRef } : {}),
+        ...(result.charge ? { charge: result.charge } : {}),
         ...(licenseId ? { licenseId } : {}),
         agentId: policyFromConfig().agentId,
       });
@@ -1705,6 +1719,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         content: result.content,
         ...readFacts(result),
         settlementRef: result.settlementRef,
+        ...(result.charge ? { charge: result.charge } : {}),
         ...(result.settlementRef ? { settlementRefKind: settlementRefKind(result.settlementRef) } : {}),
         ...(explorerUrl ? { explorerTxUrl: explorerUrl } : {}),
         ...(heldExp === undefined

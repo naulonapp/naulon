@@ -256,6 +256,9 @@ test("a settled toll emits a `paid` observation attributed to the resolved tenan
   assert.equal(seen[0]?.verdict, "paid");
   assert.equal(seen[0]?.publisherId, "pub_a");
   assert.equal(seen[0]?.host, "h.test");
+  // The page the agent asked for, from the resource it paid for: the audit trace shows it, and the
+  // slug alone is not a path on a site whose articles sit under a prefix.
+  assert.equal(seen[0]?.path, "/essays/x");
   assert.equal(seen[0]?.slug, "essays/x");
   assert.equal(seen[0]?.kind, "citation");
   assert.equal(seen[0]?.priceUsdc, 0.003);

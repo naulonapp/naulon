@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from naulon import ip
-from naulon._log import warn_once
+from naulon._log import warn_error, warn_once
 from naulon.transport import Response
 
 WELL_KNOWN_PATH = "/.well-known/http-message-signatures-directory"
@@ -571,7 +571,7 @@ def verify(
     try:
         return _verify(req, fetch, cache, now)
     except Exception as err:
-        warn_once("botauth", "naulon: a signature could not be checked (%s)", type(err).__name__)
+        warn_error("botauth", "naulon: a signature could not be checked", err)
         return Outcome("unverified", reason="verifier error")
 
 

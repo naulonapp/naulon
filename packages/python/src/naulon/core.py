@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from naulon import botauth
-from naulon._log import warn_once
+from naulon._log import warn_error
 from naulon.client import FREE, Answer, Built, GateClient
 from naulon.config import ConfigCache
 from naulon.decide import Pass, Recheck, Refuse, Toll, Who, decide
@@ -156,7 +156,7 @@ class Naulon:
                 return Continue()
             return Continue(action)
         except Exception as err:
-            warn_once("core.handle", "naulon: request passed through after an internal error (%s)", type(err).__name__)
+            warn_error("core.handle", "naulon: request passed through after an internal error", err)
             return Continue()
 
     # ── phase 2 ──────────────────────────────────────────────────────────────────────────────────
@@ -191,7 +191,7 @@ class Naulon:
                 return KEEP
             return self._toll(facts, pending)
         except Exception as err:
-            warn_once("core.finish", "naulon: the page was served after an internal error (%s)", type(err).__name__)
+            warn_error("core.finish", "naulon: the page was served after an internal error", err)
             return KEEP
 
     def _served_free(self, facts: RequestFacts, t: Toll, why: str) -> Outcome:
@@ -309,7 +309,7 @@ class Naulon:
                 obs["agent"] = self._agent_block(who)
             self.observations.put(obs)
         except Exception as err:
-            warn_once("core.report", "naulon: a decision report was dropped (%s)", type(err).__name__)
+            warn_error("core.report", "naulon: a decision report was dropped", err)
 
 
 def _header_safe(v: str) -> bool:

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OpenAPIHono } from "@hono/zod-openapi";
-import { fleetAgentHost, mountEnforceApi, type EnforceApiDeps, type EnforceAuth } from "./index.ts";
+import { fleetAgentHost, mountEnforceApi, rulesOf, type EnforceApiDeps, type EnforceAuth } from "./index.ts";
 
 /**
  * A resolved publisher carrying fields that must never reach a runtime (`originAuthSecret`, a
@@ -191,4 +191,9 @@ test("a host's status row schema and summary reach the OpenAPI document", async 
   const doc = app.getOpenAPI31Document({ openapi: "3.1.0", info: { title: "t", version: "1" } }) as { paths: Record<string, { get?: { summary?: string } }>; components?: { schemas?: Record<string, unknown> } };
   assert.equal(doc.paths["/_naulon/enforce-status"]?.get?.summary, "Per-host enforcement report");
   assert.ok(doc.components?.schemas?.StatusRowTest, "the row schema is documented");
+});
+
+test("rules name each allowed crawler once, when the SEO allowlist and the policy repeat it", () => {
+  const p = { seoAllowlist: ["googlebot", "bingbot"], crawlerPolicy: { allow: ["googlebot", "bingbot", "duckduckbot"], block: [] } };
+  assert.deepEqual(rulesOf(p as unknown as Parameters<typeof rulesOf>[0]).allow, ["googlebot", "bingbot", "duckduckbot"]);
 });

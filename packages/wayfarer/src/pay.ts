@@ -16,6 +16,7 @@ import {
   probeFailure,
   probePrice,
   quotedTotalAtomic,
+  receiptOf,
   tollMovedOrNull,
   type Buyer,
   type Fetched,
@@ -65,17 +66,7 @@ export function mockBuyer(): Buyer {
         return { ok: false, error, ...classifyPaymentError(error) };
       }
       if (!res.ok) return { ok: false, error: `origin returned ${res.status}`, errorCode: "origin_error", retryable: true };
-      let settlementRef: string | undefined;
-      const respHeader = res.headers.get("payment-response");
-      if (respHeader) {
-        try {
-          settlementRef = (JSON.parse(Buffer.from(respHeader, "base64").toString("utf8")) as {
-            transaction?: string;
-          }).transaction;
-        } catch {
-          /* ignore */
-        }
-      }
+      const { charge, settlementRef } = receiptOf(res.headers);
       const license = res.headers.get("x-naulon-license") ?? undefined;
       // Mirror paidFetch: a body-read throw after the 200 is settlement-ambiguous, not a
       // safe retry. costUsdc carries the true total (all legs) for correct budget debit.
@@ -92,7 +83,7 @@ export function mockBuyer(): Buyer {
         };
       }
       const costUsdc = Number(quotedTotalAtomic(quoted)) / 1_000_000;
-      return { ok: true, ...read, settlementRef, paidUsdc: quoted.priceUsdc, costUsdc, license };
+      return { ok: true, ...read, settlementRef, charge, paidUsdc: quoted.priceUsdc, costUsdc, license };
     },
   };
 }

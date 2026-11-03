@@ -13,6 +13,7 @@ import {
   probeFailure,
   payeeRefusedOrNull,
   quotedTotalAtomic,
+  receiptOf,
   tollMovedOrNull,
   type Fetched,
   type PayGuard,
@@ -87,17 +88,7 @@ export async function runPaidFetch(
   if (!res.ok) {
     return { ok: false, error: `origin returned ${res.status}`, errorCode: "origin_error", retryable: true, unpaid: true };
   }
-  let settlementRef: string | undefined;
-  const respHeader = res.headers.get("payment-response");
-  if (respHeader) {
-    try {
-      settlementRef = (JSON.parse(Buffer.from(respHeader, "base64").toString("utf8")) as {
-        transaction?: string;
-      }).transaction;
-    } catch {
-      /* ignore */
-    }
-  }
+  const { charge, settlementRef } = receiptOf(res.headers);
   const license = res.headers.get("x-naulon-license") ?? undefined;
   // The gate settles the payment BEFORE it writes the 200 body, so by here the money has
   // already moved. If reading the body throws (a mid-stream socket reset — a routine fetch
@@ -119,7 +110,7 @@ export async function runPaidFetch(
   // costUsdc is the TRUE total the buyer authorized (all legs), so callers debit budgets on
   // it — not paidUsdc (author leg only), which under-counts a fee'd toll.
   const costUsdc = Number(quotedTotalAtomic(quoted)) / 1_000_000;
-  return { ok: true, ...read, settlementRef, paidUsdc: quoted.priceUsdc, costUsdc, license };
+  return { ok: true, ...read, settlementRef, charge, paidUsdc: quoted.priceUsdc, costUsdc, license };
 }
 
 // Re-export the two classifiers so a rail's `onSignError` can build the same typed result the

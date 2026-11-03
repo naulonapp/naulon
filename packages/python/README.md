@@ -70,7 +70,9 @@ app = NaulonASGI(app)
 | `NAULON_TIMEOUT` | `2.0` | Seconds to wait for the gate on an agent request |
 
 Django may set the same keys in `settings.NAULON` (`GATE`, `KEY`, `ENABLED`, `TIMEOUT`); the
-environment wins. Behind a proxy that writes the caller's address into a single-value header, name
+environment wins. The middleware prices the URL Django sees, so behind a proxy that terminates TLS set
+`USE_X_FORWARDED_HOST = True` and `SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")`,
+and only when the proxy overwrites both headers on every request. Behind a proxy that writes the caller's address into a single-value header, name
 it in `NAULON["TRUST_PROXY_HEADERS"]` (for example `"X-Real-IP"`). `X-Forwarded-For` is refused:
 the caller writes its first entry.
 

@@ -39,6 +39,7 @@ export {
   rereadWithLicense,
   selectBuyer,
   quotedTotalAtomic,
+  receiptOf,
   tollMovedOrNull,
   classifyPaymentError,
   // Public because it is a CONTRACT, not a helper: it decides whether a signer's refusal is terminal
@@ -48,7 +49,7 @@ export {
   // host can assert the two halves agree, instead of finding out in production.
   classifySignerRefusal,
 } from "./buyer.ts";
-export type { Buyer, Quoted, LegRequirements, Fetched, FetchErrorCode, PayGuard, ProbeOutcome } from "./buyer.ts";
+export type { Buyer, Quoted, LegRequirements, Fetched, FetchErrorCode, PayGuard, ProbeOutcome, ChargeStatus } from "./buyer.ts";
 export { mockBuyer } from "./pay.ts";
 export { readAccept, readBody, type ReadFormat, type ReadResult } from "./readable.ts";
 export {

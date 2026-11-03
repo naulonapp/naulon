@@ -11,7 +11,7 @@ import urllib.parse
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
-from naulon._log import warn_once
+from naulon._log import warn_error
 from naulon.core import Continue, Keep, Naulon, Respond
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
@@ -102,7 +102,7 @@ class NaulonWSGI:
             facts = facts_of(environ)
             decision = naulon.handle(facts)
         except Exception as err:
-            warn_once("wsgi.start", "naulon: request passed through after an internal error (%s)", type(err).__name__)
+            warn_error("wsgi.start", "naulon: request passed through after an internal error", err)
             return self.app(environ, start_response)
         if isinstance(decision, Respond):
             start_response(_status_line(decision.status), decision.headers)
@@ -145,7 +145,7 @@ class NaulonWSGI:
         try:
             tollable = code == 200 and bool(self.tollable(environ, code, headers))
         except Exception as err:
-            warn_once("wsgi.tollable_raised", "naulon: the tollable hook raised (%s); not tolled", type(err).__name__)
+            warn_error("wsgi.tollable_raised", "naulon: the tollable hook raised; not tolled", err)
             tollable = False
         assert self.naulon is not None
 

@@ -83,7 +83,8 @@ export function rulesOf(p: PublisherConfig) {
   const refusesAny = Boolean(policy && (policy.search === "prohibit" || policy["ai-train"] === "prohibit" || policy["ai-input"] === "prohibit"));
   return {
     block: p.crawlerPolicy?.block ?? [],
-    allow: [...(p.seoAllowlist ?? []), ...(p.crawlerPolicy?.allow ?? [])],
+    // Once each: a fleet copies the SEO allowlist into the crawler policy's allow list too.
+    allow: [...new Set([...(p.seoAllowlist ?? []), ...(p.crawlerPolicy?.allow ?? [])])],
     charge: p.crawlerPolicy?.charge ?? [],
     refuse: {
       crawlers: refusesAny

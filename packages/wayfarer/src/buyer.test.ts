@@ -13,6 +13,7 @@
  * emits in mock mode and what the real gate accepts.
  */
 import assert from "node:assert/strict";
+import { encodePaymentResponse } from "@naulon/shared";
 import { test } from "node:test";
 import {
   assemblePayment,
@@ -22,6 +23,7 @@ import {
   probe,
   probePrice,
   quotedTotalAtomic,
+  receiptOf,
   tollMovedOrNull,
   type Quoted,
 } from "./buyer.ts";
@@ -546,4 +548,28 @@ test("classifySignerRefusal stops on a frozen account instead of re-signing", ()
   const c = classifySignerRefusal("account_frozen — spending is frozen because a change on this account was reported");
   assert.equal(c?.errorCode, "rejected", "the owner lifts a freeze; funding changes nothing");
   assert.equal(c?.retryable, false);
+});
+
+// receiptOf: only the gate's own receipt makes a read "paid". An in-app site serves the page free
+// when its gate is down, and that 200 looks like any other except for the missing header.
+const receipt = (body: unknown): Headers =>
+  new Headers({ "payment-response": Buffer.from(typeof body === "string" ? body : JSON.stringify(body)).toString("base64") });
+
+test("receiptOf: the receipt the gate writes confirms the charge and carries its reference", () => {
+  const gate = new Headers({ "payment-response": encodePaymentResponse({ transaction: "0xabc", network: "eip155:5042002", payer: "0x1" }) });
+  assert.deepEqual(receiptOf(gate), { charge: "confirmed", settlementRef: "0xabc" });
+  assert.deepEqual(receiptOf(receipt({ transaction: "tid-1" })), { charge: "confirmed", settlementRef: "tid-1" });
+});
+
+test("receiptOf: a licence the gate minted confirms the charge when the receipt header did not arrive", () => {
+  assert.deepEqual(receiptOf(new Headers({ "x-naulon-license": "a.b.c" })), { charge: "confirmed" });
+});
+
+test("receiptOf: no receipt, a refused one, or one that does not parse leaves the charge unconfirmed", () => {
+  assert.deepEqual(receiptOf(new Headers()), { charge: "unconfirmed" });
+  assert.deepEqual(receiptOf(receipt({ success: false, transaction: "0xabc" })), { charge: "unconfirmed" });
+  assert.deepEqual(receiptOf(receipt("not json")), { charge: "unconfirmed" });
+  assert.deepEqual(receiptOf(receipt("42")), { charge: "unconfirmed" });
+  assert.deepEqual(receiptOf(receipt("null")), { charge: "unconfirmed" });
+  assert.deepEqual(receiptOf(receipt({})), { charge: "unconfirmed" }, "an empty object is no receipt");
 });

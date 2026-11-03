@@ -1223,3 +1223,50 @@ test("PROOF-1: proofLinksFor points the record at the FLEET gate, with the publi
   // No usable identity ⇒ no links, never a guessed host.
   assert.deepEqual(proofLinksFor({ jti: "j-5", aud: "not-an-identity", paidUrl: "http://gate.test/x" }), {});
 });
+
+// A page served with no PAYMENT-RESPONSE is what an in-app site sends when its gate is down: the
+// read is free there, but the signed authorization already left. The run keeps the money counted
+// and stops calling it paid.
+test("run(): a source served without a receipt is debited but logged and kept as an unconfirmed charge", async () => {
+  const CATALOG = "http://catalog.test/unconfirmed";
+  const GATE = "http://gate-unconfirmed.test";
+  await withEnv(
+    {
+      WAYFARER_BUDGET_USDC: "0.1",
+      RSS_URL: undefined,
+      PUBLISHER_URL: undefined,
+      CATALOG_URL: CATALOG,
+      OPENAI_API_KEY: undefined,
+      TOLLGATE_URL: GATE,
+      WAYFARER_LICENSE_PATH: join(tmpdir(), `naulon-unconfirmed-${process.pid}.json`),
+    },
+    async () => {
+      const real = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL, init?: { headers?: Record<string, string> }) => {
+        const u = String(url);
+        if (u.startsWith(CATALOG)) {
+          return new Response(JSON.stringify([{ slug: "essay", title: "Essay", summary: "payment and passage" }]), { status: 200 });
+        }
+        if (u.includes("/.well-known/")) return new Response(null, { status: 404 });
+        if (init?.headers?.["payment-signature"]) return new Response("the page", { status: 200 });
+        const header = Buffer.from(
+          JSON.stringify({
+            accepts: [{ network: "arc-testnet", asset: "0xUSDC", payTo: "0x00000000000000000000000000000000000000Ad", amount: "1000", maxTimeoutSeconds: 120, extra: { nonce: "n" } }],
+          }),
+        ).toString("base64");
+        return new Response(JSON.stringify({ error: "payment required" }), { status: 402, headers: { "payment-required": header } });
+      }) as typeof globalThis.fetch;
+      try {
+        const lines: string[] = [];
+        const result = await run("payment and passage", (l) => lines.push(l), { heldStore: memoryHeldStore([]) });
+        const source = result.sources.find((s) => s.slug === "essay");
+        assert.equal(source?.charge, "unconfirmed");
+        assert.equal(result.spent, 0.001, "the authorized amount stays debited");
+        assert.ok(lines.some((l) => l.includes("charge unconfirmed")), lines.join("\n"));
+        assert.ok(!lines.some((l) => l.includes("✓ paid")), "nothing is logged as paid");
+      } finally {
+        globalThis.fetch = real;
+      }
+    },
+  );
+});

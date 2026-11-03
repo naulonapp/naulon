@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import traceback
 from typing import Any
 
 logger = logging.getLogger("naulon")
@@ -29,6 +30,18 @@ def warn_once(key: str, msg: str, *args: Any) -> None:
     """Log at WARNING unless `key` was logged in the last minute. Never logs a key or a payment."""
     if _due(key, time.monotonic()):
         logger.warning(msg, *args)
+
+
+def warn_error(key: str, msg: str, err: BaseException) -> None:
+    """`warn_once` for a caught exception. Neither line carries the exception's message, because it
+    can quote a payment header or a key, and a host whose root logger runs at DEBUG would print it
+    without ever asking for naulon's. The WARNING names the type; DEBUG adds the frames, which point
+    at the line that raised."""
+    if _due(key, time.monotonic()):
+        logger.warning("%s (%s; set the naulon logger to DEBUG for where it was raised)", msg, type(err).__name__)
+        if logger.isEnabledFor(logging.DEBUG):
+            frames = "".join(traceback.format_tb(err.__traceback__))
+            logger.debug("naulon: %s raised %s at\n%s", key, type(err).__name__, frames.rstrip())
 
 
 def reset() -> None:
