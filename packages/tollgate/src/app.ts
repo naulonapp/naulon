@@ -1284,6 +1284,18 @@ export function createApp(
         ...(extra.mandate ? { mandate: extra.mandate } : {}),
       }));
       if (!settled.ok) {
+        if (settled.unavailable) {
+          // The payment rail could not be asked, and nothing was broadcast. A gate failure never
+          // costs a read: serve what the origin delivered, with no licence and no receipt.
+          emitObs(p.obs, "served-free", { kind: p.tollKind, freeReason: "unavailable" });
+          await outcome("unpaid");
+          console.error(`[tollgate] payment rail unavailable; serving ${host}${path} free: ${settled.error ?? ""}`);
+          const free =
+            prefetched ??
+            (await proxyToOrigin(raw, path, clientIp, publisher.originUrl, publisher.originAuthSecret, publisher.id, onUpstreamOutcome, proxySigning));
+          free.headers.set("X-Naulon-Verdict", headerSafe("served free (payment rail unavailable)"));
+          return stampGateCacheHeaders(free, { noStore: true });
+        }
         // Let the origin's body go. This is the ONE branch that prefetches and then does not
         // serve what it fetched: the success path below hands `prefetched` to the client, and the
         // `!prefetched.ok` branch above returns the response itself. Here we return a fresh 402

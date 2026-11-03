@@ -254,13 +254,16 @@ test("API mode: a reachable JWKS stays SILENT — the probe is not noise", async
   console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
   try {
     const fetchImpl = (async () => new Response(JSON.stringify(GATE_JWKS), { status: 200 })) as unknown as typeof fetch;
-    const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+    // Its own origin, so a late preflight from an earlier test's real-DNS lookup of `http://cloud`
+    // (they run without a fetchImpl) cannot land in this capture and read as this deployment's.
+    const mw = naulonMiddleware({ ...opts, verifyUrl: "http://silent.test/_naulon/verify", fetchImpl, licenseVerification: {} });
     await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
     await new Promise((r) => setTimeout(r, 0));
   } finally {
     console.error = realError;
   }
-  assert.deepEqual(errs, [], "a healthy deployment must log nothing, or the warning stops being read");
+  const mine = errs.filter((e) => e.includes("silent.test"));
+  assert.deepEqual(mine, [], "a healthy deployment must log nothing, or the warning stops being read");
 });
 
 test("API mode: the hot path (no license header) adds NO JWKS fetch beyond the first-request probe", async () => {
@@ -1227,4 +1230,57 @@ test("an in-app 402 links the buyer guide its control plane priced with, not the
   const body = (await out.response!.json()) as Refusal & { links: { guide: string; fund?: string } };
   assert.equal(body.links.guide, "https://fleet.example/for-buyers");
   assert.equal(body.links.fund, "https://fleet.example/buyer");
+});
+
+test("a read served on a gate failure is reported free for `unavailable`, once", async () => {
+  const realError = console.error;
+  console.error = () => {};
+  try {
+    for (const [reply, expected] of [
+      [() => { throw new Error("ECONNREFUSED"); }, 1],
+      [() => new Response(JSON.stringify({ error: "boom" }), { status: 500 }), 1],
+      // The gate's /verify already recorded this one when it answered that its rail was down.
+      [() => new Response(JSON.stringify({ ok: false, error: "payment_rail_unavailable" }), { status: 503 }), 0],
+    ] as Array<[() => Response, number]>) {
+      const seen: Array<Record<string, unknown>> = [];
+      const mw = naulonMiddleware({ ...opts, fetchImpl: (async () => reply()) as unknown as typeof fetch, observe: (r) => void seen.push(r as never) });
+      const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }));
+      assert.equal(out.response, null);
+      const free = seen.filter((r) => r.verdict === "served-free");
+      assert.equal(free.length, expected);
+      if (expected) assert.equal(free[0]!.freeReason, "unavailable");
+    }
+  } finally {
+    console.error = realError;
+  }
+});
+
+test("a /verify that hangs is served, not held open", async () => {
+  const realError = console.error;
+  const realSetTimeout = globalThis.setTimeout;
+  console.error = () => {};
+  // The 15 s wait collapsed to zero: the race, not the clock, is what is under test.
+  globalThis.setTimeout = ((fn: () => void) => realSetTimeout(fn, 0)) as typeof setTimeout;
+  try {
+    const seen: Array<Record<string, unknown>> = [];
+    const mw = naulonMiddleware({ ...opts, fetchImpl: (() => new Promise(() => {})) as unknown as typeof fetch, observe: (r) => void seen.push(r as never) });
+    const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }));
+    assert.equal(out.response, null);
+    assert.match(out.setHeaders?.["X-Naulon-Verdict"] ?? "", /served free \(settlement unavailable\)/);
+    // The gate may still settle and record it, so this runtime does not count it.
+    assert.equal(seen.filter((r) => r.verdict === "served-free").length, 0);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    console.error = realError;
+  }
+});
+
+test("a /verify that says ok:true on any 2xx is a paid read, never re-billed", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    fetchImpl: (async () => new Response(JSON.stringify({ ok: true, responseHeader: "rh", licenseJws: "jws" }), { status: 201 })) as unknown as typeof fetch,
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }));
+  assert.equal(out.response, null);
+  assert.equal(out.setHeaders?.["X-Naulon-License"], "jws");
 });

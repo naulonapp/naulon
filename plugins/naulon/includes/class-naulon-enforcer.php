@@ -366,7 +366,7 @@ class Naulon_Enforcer {
 		// Readiness screens, which otherwise only ever see fleet-proxied traffic and therefore
 		// tell an enforcing site that nothing is priced. Cost is bounded to the crawler that
 		// caused it — see Naulon_Observer.
-		if ( '' !== $subject->resource ) {
+		if ( '' !== $subject->resource && empty( $decision['unreported'] ) ) {
 			Naulon_Observer::instance()->record(
 				array(
 					'resource'      => $subject->resource,
@@ -381,6 +381,7 @@ class Naulon_Enforcer {
 					'forged_from'       => $this->forged_from,
 					'crawler_budget'    => isset( $decision['crawler_budget'] ) ? $decision['crawler_budget'] : null,
 					'payment_presented' => ! empty( $decision['payment_presented'] ),
+					'free_reason'       => isset( $decision['free_reason'] ) ? $decision['free_reason'] : '',
 				)
 			);
 		}
@@ -547,7 +548,7 @@ class Naulon_Enforcer {
 		if ( '' !== $license ) {
 			$checked = Naulon_Client::instance()->license_check( $license, $resource, $slug, $kind, $this->header( self::PROOF_HEADER ) );
 			if ( self::gave_no_verdict( $checked ) ) {
-				return $this->logged( $this->free( 'licence check unavailable' ), $subject );
+				return $this->logged( $this->free( 'licence check unavailable', array( 'free_reason' => 'unavailable' ) ), $subject );
 			}
 			if ( $checked['ok'] && ! empty( $checked['body']['entitled'] ) ) {
 				return $this->logged(
@@ -624,7 +625,13 @@ class Naulon_Enforcer {
 		// No verdict from the settling side (including a 2xx that does not say ok): the read is
 		// served, whether or not the payment moved, because billing again could charge twice.
 		if ( self::gave_no_verdict( $settled ) || ( $settled['ok'] && empty( $settled['body']['ok'] ) ) ) {
-			return $this->logged( $this->free( 'settlement unavailable' ), $subject );
+			// A gate whose payment rail was down already recorded this read when it answered so;
+			// reporting it again would count one outage twice.
+			$rail_down = 503 === (int) $settled['status'] && isset( $settled['body']['error'] ) && 'payment_rail_unavailable' === $settled['body']['error'];
+			return $this->logged(
+				$this->free( 'settlement unavailable', $rail_down ? array( 'unreported' => true ) : array( 'free_reason' => 'unavailable' ) ),
+				$subject
+			);
 		}
 
 		// Settlement refused. Re-present the price rather than serving: the agent asked to pay
@@ -1052,13 +1059,16 @@ class Naulon_Enforcer {
 		return $status >= 200 && $status < 300 && ! is_array( isset( $response['body'] ) ? $response['body'] : null );
 	}
 
-	private function free( $reason ) {
-		return array(
-			'action'  => 'free',
-			'header'  => '',
-			'receipt' => '',
-			'license' => '',
-			'reason'  => $reason,
+	private function free( $reason, array $extra = array() ) {
+		return array_merge(
+			array(
+				'action'  => 'free',
+				'header'  => '',
+				'receipt' => '',
+				'license' => '',
+				'reason'  => $reason,
+			),
+			$extra
 		);
 	}
 

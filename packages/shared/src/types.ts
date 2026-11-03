@@ -264,8 +264,10 @@ export interface PaymentEvidence {
  *  - `unpriced`: the page has no price (the credits source does not toll it).
  *  - `terms`:    the site's terms make AI reading free.
  *  - `fleet`:    the gate's own signed origin pull.
+ *  - `unavailable`: the gate or its payment rail gave no verdict, so the read was served rather
+ *    than refused. An outage, recorded so the publisher can see what it cost.
  */
-export type FreeReason = "unpriced" | "terms" | "fleet";
+export type FreeReason = "unpriced" | "terms" | "fleet" | "unavailable";
 
 export type ObservationVerdict =
   /** Read free — a human, or a crawler the publisher allow-listed (e.g. search). */

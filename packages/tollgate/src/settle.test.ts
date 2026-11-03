@@ -265,3 +265,22 @@ test("a replayed nonce is a verify-stage refusal — nothing was re-spent", asyn
   assert.equal(replay.ok, false);
   assert.equal(replay.stage, "verify");
 });
+
+/* Once money has moved nothing may become a refusal: a refusal sends the buyer a fresh offer for a
+ * read they already paid for. A tail that cannot attribute the payment keeps it and its receipt. */
+test("a throw after the payment settled keeps the payment, never a refusal", async () => {
+  const now = Date.now() + 5000;
+  const a = args("busy.example.com", now);
+  const errs: string[] = [];
+  const realError = console.error;
+  console.error = (...m: unknown[]) => void errs.push(m.map(String).join(" "));
+  try {
+    const res = await settleAndAttribute({ ...a, quote: { ...(a.quote as object), price: Number.NaN } as never });
+    assert.equal(res.ok, true, res.error);
+    assert.ok(res.responseHeader, "the receipt stands");
+    assert.equal(res.licenseJws, undefined);
+  } finally {
+    console.error = realError;
+  }
+  assert.ok(errs.some((e) => /AFTER the payment settled/.test(e)), JSON.stringify(errs));
+});

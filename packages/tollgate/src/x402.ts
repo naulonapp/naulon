@@ -89,6 +89,13 @@ export interface VerifyResult {
    * not credit.
    */
   stage?: "verify" | "settle";
+  /**
+   * On a `verify` refusal: the facilitator could not be asked at all (no connection, a hang, an
+   * infrastructure 502/503/504, or a body that is not JSON). Nothing was broadcast. It is a
+   * failure of the payment rail, not an answer about this payment, so the read is served rather
+   * than billed again. Never set for anything the buyer's own payload can cause.
+   */
+  unavailable?: true;
   payer?: string;
   settlementRef?: string;
   responseHeader?: string;
@@ -339,6 +346,65 @@ function mockRef(r: PaymentRequirements): string {
   return `mock-${r.payTo.slice(2, 10)}-${r.amount}`;
 }
 
+/** How long a facilitator verify may take before the rail counts as unavailable. Verify only
+ *  checks a signature and a balance, so a healthy facilitator answers well inside this. */
+export const FACILITATOR_VERIFY_TIMEOUT_MS = 8_000;
+
+let verifyTimeoutMs = FACILITATOR_VERIFY_TIMEOUT_MS;
+/** Test seam: shorten the verify timeout so a hang can be exercised. Pass nothing to restore it. */
+export function setFacilitatorVerifyTimeoutForTest(ms: number = FACILITATOR_VERIFY_TIMEOUT_MS): void {
+  verifyTimeoutMs = ms;
+}
+
+class FacilitatorTimeout extends Error {}
+
+const NETWORK_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EPIPE"]);
+
+/**
+ * Whether a throw from the facilitator client means the rail could not be asked, as opposed to
+ * an answer about the payment. Only causes a buyer cannot produce with their own payload count:
+ * no connection, our timeout, a body that is not JSON (a proxy's error page), and the
+ * infrastructure statuses 502, 503 and 504. A 400 or 500 carrying JSON is the facilitator
+ * reading the payment, so it stays a refusal: a payload able to provoke one must not read free.
+ */
+export function facilitatorUnavailable(err: unknown): boolean {
+  if (err instanceof FacilitatorTimeout) return true;
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: unknown; cause?: { code?: unknown } }).cause?.code ?? (err as { code?: unknown }).code;
+  if (typeof code === "string" && (NETWORK_CODES.has(code) || code.startsWith("UND_ERR_"))) return true;
+  if (err instanceof TypeError && /fetch failed/i.test(err.message)) return true;
+  // Anchored to the SDK's own prefix: the rest of its message is Circle's response body, which can
+  // echo the buyer's payload, so a bare "(503)" anywhere in it could be planted.
+  return /^Circle Gateway verify failed \((502|503|504)\):/.test(err.message);
+}
+
+/**
+ * A verify throw is an outage only when `facilitatorUnavailable` says so, or when the reply was not
+ * JSON (the SDK parses every reply, so a status page and a block page look the same) AND an
+ * independent health probe also fails. The buyer's payload can provoke a non-JSON block page; it
+ * cannot change what Circle's `/v1/x402/supported` answers to a request it never touched.
+ */
+async function railDown(err: unknown, net: SettlementNetwork): Promise<boolean> {
+  if (facilitatorUnavailable(err)) return true;
+  if (!(err instanceof SyntaxError)) return false;
+  const base = getConfig().GATEWAY_API_URL ?? net.gatewayApiUrl;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const res = await Promise.race([
+      fetch(`${base}/v1/x402/supported`, { headers: facilitatorHeaders(net) }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new FacilitatorTimeout("health probe timed out")), verifyTimeoutMs);
+      }),
+    ]);
+    void res.body?.cancel().catch(() => {});
+    return res.status >= 500;
+  } catch {
+    return true;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Gateway mode: verify all legs against the real facilitator, then settle the author
  *  synchronously and DEFER the rest to the drain (O5). */
 async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: number, publisherId?: string): Promise<VerifyResult> {
@@ -356,11 +422,25 @@ async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: numb
     const { requirements, payload } = pairs[i]!;
     let v: { isValid: boolean; invalidReason?: string; payer?: string };
     try {
-      v = await facilitator.verify(payload, requirements);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        v = await Promise.race([
+          facilitator.verify(payload, requirements),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new FacilitatorTimeout(`the facilitator did not answer within ${verifyTimeoutMs} ms`)),
+              verifyTimeoutMs,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (err) {
       return {
         ok: false,
         stage: "verify",
+        ...((await railDown(err, net)) ? { unavailable: true as const } : {}),
         error: `leg ${i} (${requirements.payTo}): ${err instanceof Error ? err.message : String(err)}`,
       };
     }
@@ -393,7 +473,13 @@ async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: numb
   // authorization; `drainPendingLegs` settles it on-chain within `validBefore`,
   // batched and idempotently (O1/O5). No partial-failure window — only the author leg
   // is synchronous, so a leg can never fail "after the author was paid".
-  await deferExtraLegs(pairs, now, publisherId, legSettlements);
+  // The author leg has settled, so a failure to persist the deferred legs must not undo the read:
+  // logged, and the payment stands. A throw here used to surface as a refusal of a paid read.
+  try {
+    await deferExtraLegs(pairs, now, publisherId, legSettlements);
+  } catch (err) {
+    console.error("[x402] deferring the extra legs failed AFTER the author leg settled:", err);
+  }
 
   const payer = authorSettle.payer ?? payers[0] ?? "unknown";
   const responseHeader = Buffer.from(
@@ -471,7 +557,13 @@ async function settleMock(pairs: LegPair[], now: number, publisherId?: string): 
   // each leg's nonce then). Same model as gateway — the author leg is the only
   // synchronous one, so there is no partial-failure window. O1 idempotency is the
   // drain's atomic `markSettled`.
-  await deferExtraLegs(pairs, now, publisherId, legSettlements);
+  // The author leg has settled, so a failure to persist the deferred legs must not undo the read:
+  // logged, and the payment stands. A throw here used to surface as a refusal of a paid read.
+  try {
+    await deferExtraLegs(pairs, now, publisherId, legSettlements);
+  } catch (err) {
+    console.error("[x402] deferring the extra legs failed AFTER the author leg settled:", err);
+  }
 
   const payer = mocks[0]!.payer;
   const responseHeader = Buffer.from(

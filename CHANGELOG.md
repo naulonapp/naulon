@@ -48,6 +48,14 @@ Ships `@naulon/sdk` **0.7.0**, `@naulon/shared` **0.7.0** and `@naulon/enforce` 
   and carries `X-Naulon-Verdict: served free (<step> unavailable)`.
 - The WordPress plugin does the same for its licence check and its settlement.
 
+- The gate serves the page when its payment rail cannot be asked: no connection, a hang past
+  8 s, a 502/503/504 or a reply that is not JSON. In proxy mode it serves the origin's page with no
+  licence or receipt; `/_naulon/verify` answers `503 payment_rail_unavailable`, which every runtime
+  serves. A 400 or 500 carrying JSON is an answer about the payment and still sells the read.
+- A read served on a gate failure is recorded as `served-free` with `freeReason: unavailable`, from
+  the gate, `@naulon/enforce` and the WordPress plugin, so an outage shows on the audit page.
+  `@naulon/enforce` also stops waiting on `/verify` after 15 s.
+
 ### Fixed
 - `@naulon/wayfarer` requires `@x402/core` and `@x402/evm` 2.29.0, the first releases on zod
   4.6.6, so an install no longer pulls the zod 3 that GHSA-mrhx-c7xc-m3w5 covers.

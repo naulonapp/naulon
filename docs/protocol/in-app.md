@@ -23,7 +23,7 @@ from either.
 |---|---|---|
 | `GET /_naulon/enforce-config?resource=<url>` | In the background, every few minutes per host | The policy: `enforcement` (scope), `rules` (who is blocked, free, charged), the x402 manifest and the RSL licence |
 | `GET /_naulon/quote?resource=<url>&slug=<slug>&kind=read&build=402` | An agent asked for a tolled article | `200` with `x402.header` (send it as the 402's `PAYMENT-REQUIRED` header) and `x402.legs`, or `204`: serve it free |
-| `POST /_naulon/verify` | The agent retried with a payment | `200 {ok:true, responseHeader, licenseJws, chargedMicro}`: serve the article. `402`: not settled, answer the agent with a fresh quote |
+| `POST /_naulon/verify` | The agent retried with a payment | `200 {ok:true, responseHeader, licenseJws, chargedMicro}`: serve the article. `402`: not settled, answer the agent with a fresh quote. `503 payment_rail_unavailable`: the payment could not be checked, so serve the page (rule 4); the gate has already recorded the read |
 | `POST /_naulon/license/check` | The agent presented `X-Naulon-License` | `{entitled: true}`: serve it free |
 | `POST /_naulon/observe` | After any decision you made yourself | `202`. Batch up to 50. `paid` and `payment-failed` are refused: `/verify` writes those |
 | `GET /_naulon/enforce-status` | When a key is saved | `200` means the key works; `selfHosted` says which kind of gate it is |

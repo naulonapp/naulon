@@ -190,6 +190,7 @@ class Naulon_Observer {
 	 *     @type string     $classified_as Optional. 'human' is honoured only with an identity check.
 	 *     @type array|null $identity      Optional. Naulon_Identity::check() result.
 	 *     @type string     $forged_from   Optional. The /24 or /48 a forged claim came from.
+	 *     @type string     $free_reason   Optional. Why a free read was free: unpriced|terms|fleet|unavailable.
 	 * }
 	 * @return array|null
 	 */
@@ -233,6 +234,10 @@ class Naulon_Observer {
 			$shaped['priceMicro'] = $price;
 		}
 
+		// Why an agent read free, from the control plane's closed set; anything else is left out.
+		if ( 'served-free' === $verdict && isset( $report['free_reason'] ) && in_array( $report['free_reason'], array( 'unpriced', 'terms', 'fleet', 'unavailable' ), true ) ) {
+			$shaped['freeReason'] = $report['free_reason'];
+		}
 		if ( 'denied' === $verdict && isset( $report['crawler_budget'] ) && in_array( $report['crawler_budget'], array( 'within', 'over' ), true ) ) {
 			$shaped['crawlerBudget'] = $report['crawler_budget'];
 		}

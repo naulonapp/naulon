@@ -370,7 +370,7 @@
             "type": "string",
             "maxLength": 16,
             "example": "terms",
-            "description": "`unpriced`, `terms` or `fleet`. Kept only on an agent's `served-free` row."
+            "description": "`unpriced`, `terms`, `fleet` or `unavailable` (the gate gave no verdict, so the read was served). Kept only on an agent's `served-free` row."
           },
           "forgedFrom": {
             "type": "string",
@@ -718,6 +718,16 @@
           },
           "403": {
             "description": "Not owned, or suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The payment rail could not be asked (`payment_rail_unavailable`). Nothing was broadcast: serve the page.",
             "content": {
               "application/json": {
                 "schema": {

@@ -647,3 +647,23 @@ test("an observing publisher never settles, even when an older runtime forwards 
   assert.equal(res.status, 402);
   assert.equal(((await res.json()) as { error?: string }).error, "observing");
 });
+
+test("a payment rail that could not be asked answers 503 and is recorded as a free read", async () => {
+  const seen: InAppObservation[] = [];
+  const app = new OpenAPIHono();
+  mountEnforceVerify(app, {
+    resolver: { resolve: async () => publisherOf("pub_a") } as never,
+    verify: (async () => null) as never,
+    apiKeyResolve: (async () => ({ tenantId: "pub_a", ownerUserId: "u1", scopes: ["tenant.read"] })) as never,
+    settle: (async () => ({ ok: false, stage: "verify", unavailable: true, error: "fetch failed" })) as never,
+    build402: (() => ({ legs: EXPECTED_LEGS })) as never,
+    observe: (o: InAppObservation) => void seen.push(o),
+  });
+  const res = await app.request("/_naulon/verify", { method: "POST", headers: keyHeaders, body: body() });
+  assert.equal(res.status, 503, "no verdict, so the runtime serves the page");
+  assert.equal(((await res.json()) as { error: string }).error, "payment_rail_unavailable");
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]!.verdict, "served-free");
+  assert.equal((seen[0] as { freeReason?: string }).freeReason, "unavailable");
+  assert.equal((seen[0] as { failureReason?: string }).failureReason, undefined);
+});
