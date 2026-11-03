@@ -136,6 +136,7 @@ const PATHS = [
   "/essays/%2e%2e/x", "/hello-world/", "/blog/", "/feed/", "/rss/", "/rss.xml", "/feed.xml", "/atom.xml", "/sitemap.xml",
   "/sitemap-posts.xml", "/robots.txt", "/llms.txt", "/favicon.ico", "/static/app.js", "/style.css", "/logo.png", "/paper.pdf",
   "/data.json", "/api/x", "/_naulon/quote", "/.well-known/x402", "/license.xml", "/ESSAYS/X",
+  "/%65ssays/x", "/essays/%78", "/%2Fessays/x", "/essays/a%2Fb",
 ];
 
 export interface ScopeCases {

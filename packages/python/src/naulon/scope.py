@@ -83,9 +83,26 @@ def slug_from_site_path(
     return decode_slug(pathname)
 
 
-def slug_for_scope(path: str, enforcement: Mapping[str, Any]) -> str | None:
+_PCT = re.compile(r"%([0-9A-Fa-f]{2})")
+_UNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+
+def normalize_unreserved(path: str) -> str:
+    """Decode the percent-encodings of unreserved characters (RFC 3986 §6.2.2.2), as
+    `normalizeUnreserved` in @naulon/sdk does. A framework routes `/%62log/x` as `/blog/x`, so
+    scoping the literal spelling would let an agent read any article free."""
+
+    def one(m: re.Match[str]) -> str:
+        c = chr(int(m.group(1), 16))
+        return c if c in _UNRESERVED else m.group(0)
+
+    return _PCT.sub(one, path)
+
+
+def slug_for_scope(raw_path: str, enforcement: Mapping[str, Any]) -> str | None:
     """The slug `path` is tolled under, or None when it reads free. `enforcement` is the
     `enforcement` object of `/_naulon/enforce-config` (`articlePrefixes`, `gateScope`)."""
+    path = normalize_unreserved(raw_path)
     scope = enforcement.get("gateScope")
     if isinstance(scope, dict) and scope.get("mode") == "site":
         return slug_from_site_path(

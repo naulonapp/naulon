@@ -126,3 +126,47 @@ def test_rotation_refetches_at_most_once_a_minute() -> None:
     now[0] = 61
     botauth.verify(req, fetch, cache, other["now"] / 1000)
     assert len(calls) == 2
+
+
+def test_a_resolver_that_hangs_is_abandoned_at_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+    import threading
+    import time
+
+    release = threading.Event()
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: release.wait(5) or [])
+    start = time.monotonic()
+    assert (
+        botauth.pinned_fetch("https://slow.example/.well-known/http-message-signatures-directory", timeout=0.3) is None
+    )
+    assert time.monotonic() - start < 1.0
+    release.set()
+
+
+def test_a_burst_for_one_directory_fetches_once() -> None:
+    import threading
+    import time
+
+    verified = next(c for c in DOC["cases"] if c["expect"]["status"] == "verified")
+    r, d = verified["request"], verified["directory"]
+    req = botauth.SignedRequest(r["authority"], r["method"], r["path"], r["targetUri"], r["headers"])
+    calls: list[str] = []
+
+    def slow_fetch(url: str) -> Response:
+        calls.append(url)
+        time.sleep(0.2)
+        return Response(d["status"], {k.lower(): v for k, v in d["headers"].items()}, d["body"].encode())
+
+    cache = botauth.DirectoryCache()
+    results: list[str] = []
+    threads = [
+        threading.Thread(
+            target=lambda: results.append(botauth.verify(req, slow_fetch, cache, verified["now"] / 1000).status)
+        )
+        for _ in range(10)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(calls) == 1 and results == ["verified"] * 10

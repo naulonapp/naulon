@@ -99,3 +99,34 @@ def test_close_is_called_on_the_app_iterator_for_a_person_too() -> None:
     app = App([b"x"])
     run(NaulonWSGI(app, naulon=naulon(gate())), environ(BROWSER_UA))
     assert app.closed == 1
+
+
+def test_a_stream_that_is_not_an_article_is_never_held_for_a_second_chunk() -> None:
+    pulled: list[int] = []
+
+    def sse() -> Iterator[bytes]:
+        yield b"data: hello\n\n"
+        pulled.append(2)
+        raise AssertionError("the second chunk must not be pulled before headers go out")
+
+    class Stream(App):
+        def __call__(self, environ: dict[str, Any], start_response: Callable[..., Any]) -> Any:
+            start_response("200 OK", [("Content-Type", "text/event-stream")])
+            return sse()
+
+    got: dict[str, Any] = {}
+    it = NaulonWSGI(Stream([]), naulon=naulon(gate()))(
+        environ(AGENT_UA), lambda s, h, e=None: got.update(s=s) or (lambda b: None)
+    )
+    first = next(iter(it))
+    assert got["s"].startswith("200") and first == b"data: hello\n\n" and pulled == []
+
+
+def test_path_info_is_decoded_once() -> None:
+    from naulon.adapters.wsgi import facts_of
+
+    env = environ(AGENT_UA, "/blog/100%-off")
+    assert facts_of(env).path == "/blog/100%25-off"
+    from naulon.scope import slug_for_scope
+
+    assert slug_for_scope(facts_of(env).path, {"articlePrefixes": ["blog"]}) == "100%-off"

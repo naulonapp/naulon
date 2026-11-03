@@ -141,3 +141,19 @@ def test_a_gate_without_ranges_never_opens_the_breaker() -> None:
     for _ in range(20):
         c._refresh_ranges()
     assert b.allow(), "an optional document's 503 is not a gate failure"
+
+
+def test_a_flood_of_made_up_hosts_never_evicts_a_real_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    import naulon.config as cfg
+
+    monkeypatch.setattr(cfg, "MAX_UNKNOWN_HOSTS", 50)
+    monkeypatch.setattr(cfg, "MAX_QUEUED", 10)
+    t = FakeTransport({"/_naulon/enforce-config": json_response(200, config_doc())})
+    c = cache(t)
+    c.refresh_now("blog.test")
+    c._ensure_worker = lambda: None  # type: ignore[method-assign]
+    for i in range(500):
+        c.get(f"junk-{i}.test")
+    assert c.get("blog.test") == config_doc(), "the real host keeps its policy"
+    assert c._queue.qsize() <= 10, "the queue stays bounded"
+    assert len(c._entries) <= 51

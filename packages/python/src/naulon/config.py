@@ -31,6 +31,10 @@ RANGES_RETRY_S = 600.0
 # How soon to ask again after a failure when nothing good is cached yet.
 RETRY_S = 60.0
 _RANGES_KEY = "\x00ranges"
+# Host headers are the caller's to write. At most this many hosts without a policy are remembered,
+# and at most this many fetches wait in the queue; a host with a good policy is never evicted.
+MAX_UNKNOWN_HOSTS = 10_000
+MAX_QUEUED = 1_000
 
 
 @dataclass
@@ -81,12 +85,15 @@ class ConfigCache:
         with self._lock:
             e = self._entries.get(key)
             if e is None:
+                if len(self._entries) >= MAX_UNKNOWN_HOSTS:
+                    self._evict_unknown()
                 e = _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme)
                 self._entries[key] = e
-                if len(self._entries) > 10_000:
-                    # A host header is the caller's to write. Bound the table rather than grow it.
-                    self._entries = {key: e}
+            # A host with a policy is refreshed whatever the queue holds; an unknown one only while
+            # the queue has room, so a flood of made-up hosts cannot starve the real ones.
             due = not e.pending and now - e.fetched_at >= self._settings.refresh_s
+            if due and e.doc is None and self._queue.qsize() >= MAX_QUEUED:
+                due = False
             if due:
                 e.pending = True
             doc = e.doc
@@ -94,6 +101,13 @@ class ConfigCache:
             self._enqueue(key)
         self._ranges_due(now)
         return doc
+
+    def _evict_unknown(self) -> None:
+        """Drop the oldest half of the hosts that hold no policy. Called with the lock held. A host
+        with a good policy is never dropped: losing it would serve its agents free."""
+        unknown = [k for k, e in self._entries.items() if e.doc is None and not e.pending]
+        for k in unknown[: max(1, len(unknown) // 2)]:
+            del self._entries[k]
 
     def ranges(self) -> ranges.Compiled | None:
         return self._ranges

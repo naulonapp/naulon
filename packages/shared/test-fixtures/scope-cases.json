@@ -82,7 +82,11 @@
     "/_naulon/quote",
     "/.well-known/x402",
     "/license.xml",
-    "/ESSAYS/X"
+    "/ESSAYS/X",
+    "/%65ssays/x",
+    "/essays/%78",
+    "/%2Fessays/x",
+    "/essays/a%2Fb"
   ],
   "expect": [
     [
@@ -116,7 +120,11 @@
       null,
       null,
       null,
-      null
+      null,
+      "x",
+      "x",
+      null,
+      "a/b"
     ],
     [
       null,
@@ -149,7 +157,11 @@
       null,
       null,
       null,
-      null
+      null,
+      "x",
+      "x",
+      null,
+      "a/b"
     ],
     [
       "/",
@@ -182,7 +194,11 @@
       null,
       null,
       null,
-      "/ESSAYS/X"
+      "/ESSAYS/X",
+      "/essays/x",
+      "/essays/x",
+      "//essays/x",
+      "/essays/a/b"
     ],
     [
       "/",
@@ -215,7 +231,11 @@
       null,
       null,
       null,
-      "/ESSAYS/X"
+      "/ESSAYS/X",
+      "/essays/x",
+      "/essays/x",
+      "//essays/x",
+      "/essays/a/b"
     ]
   ]
 }

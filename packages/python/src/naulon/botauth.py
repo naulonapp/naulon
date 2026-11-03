@@ -9,6 +9,7 @@ never charges anyone: the user agent path decides as if the request were unsigne
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import hashlib
 import http.client
 import json
@@ -414,32 +415,62 @@ class _PinnedHTTPS(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)  # type: ignore[attr-defined]
 
 
+# DNS has no timeout of its own in the stdlib, so it runs on this small pool and is abandoned at the
+# deadline. A resolver stuck past it holds one of these threads, never a request thread.
+_DNS_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="naulon-dns")
+# At most this many directory fetches run at once; the rest read `unverified` at once.
+_FETCH_SLOTS = threading.BoundedSemaphore(4)
+
+
 def pinned_fetch(url: str, timeout: float = DIRECTORY_TIMEOUT_S) -> Response | None:
     """GET a key directory without following redirects, refusing any host that resolves to a
     private, loopback, link-local, metadata or otherwise reserved address. The connection goes to
-    the address that was checked, so a second DNS answer cannot swap it. None on any failure."""
+    the address that was checked, so a second DNS answer cannot swap it.
+
+    `timeout` bounds the whole fetch (resolve, connect, TLS and every read), not each step, so a
+    server that drips its answer cannot hold the thread past it. None on any failure."""
+    if not _FETCH_SLOTS.acquire(blocking=False):
+        return None
     try:
+        deadline = time.monotonic() + timeout
         u = urllib.parse.urlsplit(url)
         host = u.hostname or ""
-        addresses = [str(info[4][0]) for info in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)]
+        infos = _DNS_POOL.submit(socket.getaddrinfo, host, 443, type=socket.SOCK_STREAM).result(timeout=timeout)
+        addresses = [str(info[4][0]) for info in infos]
         if not addresses:
             return None
         for a in addresses:
             parsed = ip.parse(a)
             if parsed is None or not ip.usable(parsed, []):
                 return None
-        conn = _PinnedHTTPS(host, addresses[0], timeout)
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        conn = _PinnedHTTPS(host, addresses[0], left)
         try:
             conn.request(
                 "GET", u.path or "/", headers={"Accept": DIRECTORY_CONTENT_TYPE, "User-Agent": "naulon-python"}
             )
             res = conn.getresponse()
-            body = res.read(DIRECTORY_MAX_BYTES + 1)
-            return Response(res.status, {k.lower(): v for k, v in res.getheaders()}, body)
+            chunks: list[bytes] = []
+            size = 0
+            while size <= DIRECTORY_MAX_BYTES:
+                left = deadline - time.monotonic()
+                if left <= 0 or conn.sock is None:
+                    return None
+                conn.sock.settimeout(left)
+                chunk = res.read1(8192)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+            return Response(res.status, {k.lower(): v for k, v in res.getheaders()}, b"".join(chunks))
         finally:
             conn.close()
     except Exception:
         return None
+    finally:
+        _FETCH_SLOTS.release()
 
 
 def _directory_signature_ok(res: Response, url: str, keys: Mapping[str, str]) -> bool:
@@ -611,7 +642,27 @@ def _verify(
     return Outcome("verified", agent=agent_host, keyid=keyid, covers=tuple(c.name for c in entry.components))
 
 
+_inflight: dict[str, threading.Event] = {}
+_inflight_lock = threading.Lock()
+
+
 def _load(url: str, fetch: Callable[[str], Response | None], cache: DirectoryCache) -> dict[str, str] | None:
-    keys = parse_directory(fetch(url), url)
-    cache.set(url, keys)
-    return keys
+    """Fetch one directory, once at a time per URL: a burst of signed requests waits on the fetch
+    already running rather than starting its own."""
+    with _inflight_lock:
+        running = _inflight.get(url)
+        if running is None:
+            _inflight[url] = threading.Event()
+    if running is not None:
+        running.wait(DIRECTORY_TIMEOUT_S + 1)
+        cached = cache.get(url)
+        return cached if cached is not False else None
+    try:
+        keys = parse_directory(fetch(url), url)
+        cache.set(url, keys)
+        return keys
+    finally:
+        with _inflight_lock:
+            done = _inflight.pop(url, None)
+        if done is not None:
+            done.set()

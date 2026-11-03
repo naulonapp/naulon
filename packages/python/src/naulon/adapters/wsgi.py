@@ -7,6 +7,7 @@ untouched, never tolled. The app iterator's `close()` is always called.
 
 from __future__ import annotations
 
+import urllib.parse
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
@@ -40,9 +41,10 @@ def facts_of(environ: dict[str, Any]) -> RequestFacts:
     if isinstance(raw_path, str) and raw_path.startswith("/"):
         path, _, query = raw_path.partition("?")
     else:
-        # PATH_INFO is decoded by the server and carried as latin-1 by WSGI convention.
+        # PATH_INFO is decoded by the server and carried as latin-1 by WSGI convention. Re-quoted, as
+        # Django's get_full_path does, so the slug is decoded once: `100%25-off` stays `100%-off`.
         path = str(environ.get("SCRIPT_NAME", "")) + str(environ.get("PATH_INFO", ""))
-        path = path.encode("latin-1", "replace").decode("utf-8", "replace")
+        path = urllib.parse.quote(path.encode("latin-1", "replace"), safe="/:@!$&'()*+,;=-._~")
         query = str(environ.get("QUERY_STRING", ""))
     return RequestFacts(
         method=str(environ.get("REQUEST_METHOD", "GET")),
@@ -134,13 +136,8 @@ class NaulonWSGI:
             if "status" in held and not held.get("sent"):
                 start_response(held["status"], held["headers"], held["exc_info"])
             return _Closing(_chain(first, it), app_iter)
-        second = next(it, None) if first is not None else None
         status_text: str = held["status"]
         headers: list[tuple[str, str]] = held["headers"]
-        if second is not None:
-            start_response(status_text, headers, held["exc_info"])
-            return _Closing(_chain(first, _chain(second, it)), app_iter)
-
         try:
             code = int(status_text.split(" ", 1)[0])
         except ValueError:
@@ -151,12 +148,23 @@ class NaulonWSGI:
             warn_once("wsgi.tollable_raised", "naulon: the tollable hook raised (%s); not tolled", type(err).__name__)
             tollable = False
         assert self.naulon is not None
+
+        rest: Iterator[bytes] = it
+        if tollable:
+            # Only an article is held for a second chunk, to tell a single-body response from a
+            # stream. Anything else is decided from its headers and passed on at once, so an event
+            # stream or a long poll is never held waiting for a chunk that may not come.
+            second = next(it, None) if first is not None else None
+            if second is not None:
+                start_response(status_text, headers, held["exc_info"])
+                return _Closing(_chain(first, _chain(second, it)), app_iter)
+            rest = iter(())
         outcome = self.naulon.finish(facts, decision, code, tollable)
         if isinstance(outcome, Keep):
             names = {n.lower() for n, _ in outcome.add_headers}
             kept = [(n, v) for n, v in headers if n.lower() not in names] + outcome.add_headers
             start_response(status_text, kept, held["exc_info"])
-            return _Closing(_chain(first, iter(())), app_iter)
+            return _Closing(_chain(first, rest), app_iter)
         _close(app_iter)
         r = outcome.response
         start_response(_status_line(r.status), r.headers)

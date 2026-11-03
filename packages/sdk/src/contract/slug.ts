@@ -295,7 +295,22 @@ export interface TollScope {
  * the scope branch is written: the gate, the payee checks and any other runtime key a path through
  * this, so the slug a payment is checked against is always the slug the toll priced.
  */
-export function slugForScope(path: string, scope: TollScope): string | null {
+/**
+ * Decode the percent-encodings of unreserved characters (`A-Z a-z 0-9 - . _ ~`), which RFC 3986
+ * §6.2.2.2 says are the same URI either way. A framework routes `/%62log/x` as `/blog/x`, so a scope
+ * that matched only the literal spelling would let an agent read any article free by encoding one
+ * letter of its path. Everything else stays encoded: `%2F` is not a separator, and a slug keeps its
+ * own encoded characters for `decodeSlug`.
+ */
+export function normalizeUnreserved(path: string): string {
+  return path.replace(/%([0-9A-Fa-f]{2})/g, (m, hex: string) => {
+    const c = String.fromCharCode(parseInt(hex, 16));
+    return /[A-Za-z0-9\-._~]/.test(c) ? c : m;
+  });
+}
+
+export function slugForScope(rawPath: string, scope: TollScope): string | null {
+  const path = normalizeUnreserved(rawPath);
   const s = scope.gateScope;
   return s?.mode === "site"
     ? slugFromSitePath(path, [...s.excludePrefixes], { includeExtensions: s.includeExtensions })

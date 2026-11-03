@@ -7,6 +7,7 @@ On an agent's request `http.response.start` is held until the first body message
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
@@ -21,6 +22,10 @@ Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 Tollable = Callable[[Scope, int, list[tuple[str, str]]], bool]
+
+# `finish` may wait on the gate or a signer's key directory. It runs here rather than on the default
+# executor, so a slow agent path can never take the threads the app itself runs blocking work on.
+_FINISH_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="naulon-finish")
 
 
 def default_tollable(scope: Scope, status: int, headers: list[tuple[str, str]]) -> bool:
@@ -136,7 +141,8 @@ class NaulonASGI:
             tollable = False
         try:
             # `finish` may ask the gate over the network: off the event loop.
-            outcome = await asyncio.to_thread(self.naulon.finish, facts, decision, status, tollable)
+            loop = asyncio.get_running_loop()
+            outcome = await loop.run_in_executor(_FINISH_POOL, self.naulon.finish, facts, decision, status, tollable)
         except Exception as err:
             warn_once("asgi.finish", "naulon: the page was served after an internal error (%s)", type(err).__name__)
             outcome = Keep()

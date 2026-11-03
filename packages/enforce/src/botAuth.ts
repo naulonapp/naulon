@@ -10,7 +10,7 @@
  */
 
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
-import { lookup } from "node:dns/promises";
+import { Resolver } from "node:dns/promises";
 import { isIP } from "node:net";
 import { isUsablePublicIp, parseIp } from "@naulon/shared";
 
@@ -527,8 +527,30 @@ function directoryUrlFor(agentUrl: string, allowInsecureHttp: boolean): { url: s
   return { url: `https://${hostname}${WELL_KNOWN_PATH}`, agentHost: hostname };
 }
 
+/**
+ * The name's A and AAAA records, through c-ares with its own timeout. Never `dns.lookup`: that runs
+ * on libuv's four-thread pool with no timeout, so four signed requests naming slow-resolving hosts
+ * would stall every other lookup, file read and crypto call in the process. Raced against a hard
+ * deadline as well; an unanswered name has no addresses, which refuses the fetch.
+ */
+const RESOLVE_DEADLINE_MS = 2_000;
 async function systemResolve(host: string): Promise<string[]> {
-  return (await lookup(host, { all: true })).map((a) => a.address);
+  const resolver = new Resolver({ timeout: 1_000, tries: 1 });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<string[]>((resolve) => {
+    timer = setTimeout(() => {
+      resolver.cancel();
+      resolve([]);
+    }, RESOLVE_DEADLINE_MS);
+  });
+  const answer = Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]).then((rs) =>
+    rs.flatMap((r) => (r.status === "fulfilled" ? r.value : [])),
+  );
+  try {
+    return await Promise.race([answer, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Every address `host` resolves to is a public one. A private, loopback, link-local or metadata
