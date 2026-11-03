@@ -165,10 +165,10 @@ class ConfigCache:
             return "failed"
         self._breaker.record(True)
         if res.status in (401, 403, 404):
-            if res.status != 404:
-                warn_once(
-                    f"config.{res.status}", "naulon: the gate refused this key for %s (HTTP %d)", host, res.status
-                )
+            # 403 and 404 mean the gate tolls no site at this host, which is normal for a host that has
+            # not turned naulon on. Only 401 says the key itself is wrong.
+            if res.status == 401:
+                warn_once("config.401", "naulon: the gate refused NAULON_KEY (HTTP 401); nothing is tolled")
             return None
         if res.status != 200:
             return "failed"
