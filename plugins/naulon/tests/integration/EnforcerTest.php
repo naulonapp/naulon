@@ -278,7 +278,18 @@ class EnforcerTest extends WP_UnitTestCase {
 			$this->assertSame( 'free', $decision['action'], wp_json_encode( $canned ) );
 			$this->assertSame( 'settlement unavailable', $decision['reason'] );
 			$this->assertSame( '', $decision['receipt'], 'no receipt is claimed' );
+			$this->assertSame( 'unavailable', $decision['free_reason'] );
 		}
+	}
+
+	public function test_a_payment_rail_the_gate_reported_down_is_served_and_not_reported_twice() {
+		$this->responses['/_naulon/verify'] = array( 'code' => 503, 'body' => array( 'ok' => false, 'error' => 'payment_rail_unavailable' ) );
+		$this->as_agent();
+		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
+
+		$decision = $this->decide();
+		$this->assertSame( 'free', $decision['action'] );
+		$this->assertTrue( $decision['unreported'] );
 	}
 
 	// ── Re-read ──────────────────────────────────────────────────────────────────────────
@@ -317,6 +328,7 @@ class EnforcerTest extends WP_UnitTestCase {
 			$decision = $this->decide();
 			$this->assertSame( 'free', $decision['action'], wp_json_encode( $canned ) );
 			$this->assertSame( 'licence check unavailable', $decision['reason'] );
+			$this->assertSame( 'unavailable', $decision['free_reason'] );
 		}
 	}
 

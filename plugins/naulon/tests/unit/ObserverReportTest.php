@@ -247,4 +247,11 @@ final class ObserverReportTest extends TestCase {
 			'too many decimals is nothing'   => array( 'USD 0.0000001', null, null ),
 		);
 	}
+
+	public function test_a_free_read_carries_its_reason_from_the_closed_set_only() {
+		$this->assertSame( 'unavailable', Naulon_Observer::shape( $this->base( array( 'free_reason' => 'unavailable' ) ) )['freeReason'] );
+		$this->assertArrayNotHasKey( 'freeReason', Naulon_Observer::shape( $this->base( array( 'free_reason' => 'because' ) ) ) );
+		$this->assertArrayNotHasKey( 'freeReason', Naulon_Observer::shape( $this->base() ) );
+		$this->assertArrayNotHasKey( 'freeReason', Naulon_Observer::shape( $this->base( array( 'action' => 'pay', 'free_reason' => 'unavailable' ) ) ) );
+	}
 }

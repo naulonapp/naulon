@@ -62,7 +62,7 @@ const ObservationBody = z
     // Strings rather than enums, so an unknown value drops the field instead of failing the batch.
     crawlerBudget: z.string().max(16).optional().openapi({ example: "within", description: "`within` or `over`. Kept only on a `denied` row." }),
     paymentPresented: z.boolean().optional().openapi({ description: "An observing site received a payment it did not settle." }),
-    freeReason: z.string().max(16).optional().openapi({ example: "terms", description: "`unpriced`, `terms` or `fleet`. Kept only on an agent's `served-free` row." }),
+    freeReason: z.string().max(16).optional().openapi({ example: "terms", description: "`unpriced`, `terms`, `fleet` or `unavailable` (the gate gave no verdict, so the read was served). Kept only on an agent's `served-free` row." }),
     forgedFrom: z.string().max(64).optional().openapi({ example: "203.0.113.0/24", description: "On a forged row: the caller's network as a /24 or /48. A full address is dropped." }),
   })
   .openapi("ObservationReport");
@@ -87,7 +87,7 @@ const observeRoute = createRoute({
 });
 
 const OPERATOR_IDS = new Set(CRAWLER_PROOF.map((r) => r.id));
-const FREE_REASONS: ReadonlySet<string> = new Set<FreeReason>(["unpriced", "terms", "fleet"]);
+const FREE_REASONS: ReadonlySet<string> = new Set<FreeReason>(["unpriced", "terms", "fleet", "unavailable"]);
 const OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 /** a.b.c.0/24 or x:y:z::/48, the only forms a client may send. Never a full address. */
 const TRUNCATED = new RegExp(`^(?:(?:${OCTET}\\.){3}0\\/24|[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,2}::\\/48)$`, "i");

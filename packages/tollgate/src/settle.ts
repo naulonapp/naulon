@@ -54,6 +54,8 @@ export interface SettleResult {
   /** Set on failure — `verify` when nothing was broadcast, `settle` when the author leg's relay
    *  failed. Carried verbatim from `verifyAndSettle`; see `VerifyResult.stage`. */
   stage?: "verify" | "settle";
+  /** The payment rail could not be asked; nothing was broadcast. See `VerifyResult.unavailable`. */
+  unavailable?: true;
   settlementRef?: string;
   /** The resolved payer wallet (a real 0x… address, else undefined). */
   payer?: string;
@@ -144,7 +146,14 @@ export async function settleAndAttribute(args: SettleArgs): Promise<SettleResult
   // indivisible thing from many payees, and a caller able to pass one without the other could ship
   // a sale that pays some of its authors and issues nothing. See `VerifyOptions.requireEveryLeg`.
   const result = await verifyAndSettle(payment, legs, now, publisher.id, { requireEveryLeg: licence !== undefined });
-  if (!result.ok) return { ok: false, error: result.error, ...(result.stage ? { stage: result.stage } : {}) };
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.error,
+      ...(result.stage ? { stage: result.stage } : {}),
+      ...(result.unavailable ? { unavailable: true as const } : {}),
+    };
+  }
 
   // Paid. Resolve the chain this settled on from the author leg the 402 advertised
   // (per-tenant), falling back to the fleet default — so the license + the earnings

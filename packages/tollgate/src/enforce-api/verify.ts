@@ -85,6 +85,10 @@ const verifyRoute = createRoute({
     401: { description: "Missing or invalid key.", content: { "application/json": { schema: VerifyError } } },
     402: { description: "Not settled, or the site is observing.", content: { "application/json": { schema: VerifyError } } },
     403: { description: "Not owned, or suspended.", content: { "application/json": { schema: VerifyError } } },
+    503: {
+      description: "The payment rail could not be asked (`payment_rail_unavailable`). Nothing was broadcast: serve the page.",
+      content: { "application/json": { schema: VerifyError } },
+    },
   },
 });
 
@@ -205,11 +209,14 @@ export function mountVerify(app: OpenAPIHono, deps: EnforceApiDeps): void {
         host,
         slug: typeof q.slug === "string" ? q.slug : "",
         kind: q.kind === "citation" ? "citation" : "read",
-        verdict: settled.ok ? "paid" : "payment-failed",
+        // An unavailable rail is a read the runtime serves free on the 503 below, so it is recorded
+        // as one rather than as a failed payment.
+        verdict: settled.ok ? "paid" : settled.unavailable ? "served-free" : "payment-failed",
         classifiedAs: "agent",
         ...(typeof q.price === "number" ? { priceUsdc: q.price } : {}),
+        ...(settled.unavailable ? { freeReason: "unavailable" as const } : {}),
         // A closed set, never `settled.error`: that string names legs, payees and amounts.
-        ...(settled.ok ? {} : { failureReason: classifyPaymentFailure(settled.error) }),
+        ...(settled.ok || settled.unavailable ? {} : { failureReason: classifyPaymentFailure(settled.error) }),
         ...(settled.ok && settled.eventId ? { licenseJti: settled.eventId } : {}),
         at: clock(),
         ...(observedAgent ? { agent: observedAgent } : {}),
@@ -218,6 +225,9 @@ export function mountVerify(app: OpenAPIHono, deps: EnforceApiDeps): void {
       // The decision log never costs the buyer the read they paid for.
     }
 
+    // The payment rail could not be asked: no verdict, so a 5xx, which every runtime reads as
+    // "serve the page" (docs/protocol/in-app.md, rule 4). Nothing was broadcast.
+    if (!settled.ok && settled.unavailable) return c.json(failed("payment_rail_unavailable"), 503);
     if (!settled.ok) return c.json(failed(settled.error ?? "settlement failed"), 402);
     return c.json(
       {

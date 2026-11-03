@@ -261,6 +261,9 @@ export function resolvePublisher(
   return { ...(hasLocal ? (local as object) : {}), ...remote };
 }
 
+/** How long the hosted /verify may take. It settles on chain, so it gets longer than a lookup. */
+const VERIFY_TIMEOUT_MS = 15_000;
+
 /** Same scheme, host and port. A URL that does not parse is never the same origin. */
 function sameOrigin(a: string, b: string): boolean {
   try {
@@ -611,10 +614,18 @@ export function naulonMiddleware(
     // Any gate failure serves the read, at every step: a control plane that cannot answer must
     // never cost a reader the page or a publisher their site. Only a failure qualifies. An answer,
     // a refusal included, is honoured, so a header that provokes a 4xx never becomes a free pass.
-    // Not reported as an observation: no verdict was reached, and the outage is the control plane's own,
-    // read on the enforcement-status plane. Logged here so the site's own logs say it first.
-    const servedOnGateFailure = (step: string, detail: string): MiddlewareResult => {
+    // Reported as a free read for `unavailable`, so the publisher's audit page shows what an outage
+    // cost, and logged so the site's own logs say it first. `reported: false` when the gate already
+    // recorded it (its /verify answered that the payment rail was unavailable). A report sent while
+    // the gate is down is lost with it; the enforcement-status plane covers that case.
+    const servedOnGateFailure = (
+      p: { obs: DecideObs; tollKind: "read" | "citation" },
+      step: string,
+      detail: string,
+      reported = true,
+    ): MiddlewareResult => {
       console.error(`[naulon] ${step} could not complete (${detail}); the read was served free.`);
+      if (reported) report(p.obs, "served-free", resource, { kind: p.tollKind, freeReason: "unavailable" });
       return {
         response: null,
         setHeaders: { "cache-control": "no-store", "X-Naulon-Verdict": headerSafe(`served free (${step} unavailable)`) },
@@ -629,7 +640,7 @@ export function naulonMiddleware(
       (d.kind === "payment-required" || d.kind === "payment-presented") &&
       d.obs.licenceRefusal === "no_verifier"
     ) {
-      return servedOnGateFailure("licence keys", keysOutage);
+      return servedOnGateFailure(d, "licence keys", keysOutage);
     }
 
     switch (d.kind) {
@@ -717,7 +728,7 @@ export function naulonMiddleware(
         // may send either as a 503), so they reach the no-offer 503 below rather than a free read.
         const explicit = !checked.ok && (checked.description === "in_flight" || checked.description === "server_error");
         if (!checked.ok && !explicit && (checked.status === 0 || checked.status >= 500 || (checked.status >= 200 && checked.status < 300))) {
-          return servedOnGateFailure("licence check", checked.description);
+          return servedOnGateFailure(d, "licence check", checked.description);
         }
         const why = checked.ok
           ? (checked.error ?? (checked.active ? "not_permitted" : "invalid_token"))
@@ -780,7 +791,10 @@ export function naulonMiddleware(
         let body: VerifyResponse;
         let status: number;
         try {
-          const res = await doFetch(opts.verifyUrl, {
+          // Raced, not aborted (`fetchImpl` carries no signal): a /verify that hangs must become a
+          // served read, not a request held open until the platform kills it.
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const res = await Promise.race([doFetch(opts.verifyUrl, {
             method: "POST",
             headers: {
               authorization: `Bearer ${opts.apiKey}`,
@@ -796,18 +810,22 @@ export function naulonMiddleware(
               resource,
               agent: agentOf(d.obs),
             }),
-          });
+          }), new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`no answer within ${VERIFY_TIMEOUT_MS} ms`)), VERIFY_TIMEOUT_MS);
+          })]).finally(() => clearTimeout(timer));
           status = res.status;
           const parsed: unknown = await res.json().catch(() => null);
           body = (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}) as VerifyResponse;
         } catch (err) {
-          return servedOnGateFailure("settlement", `verify unreachable: ${err instanceof Error ? err.message : String(err)}`);
+          return servedOnGateFailure(d, "settlement", `verify unreachable: ${err instanceof Error ? err.message : String(err)}`);
         }
         // No verdict: a 5xx, or a 2xx that does not say `ok`. Served, whether or not the payment
         // moved, because a second charge for this read is the outcome a buyer cannot undo. A 4xx is
         // the settling side's answer and is refused below.
         if (status >= 500 || (status >= 200 && status < 300 && body.ok !== true)) {
-          return servedOnGateFailure("settlement", `verify answered HTTP ${status} with no verdict`);
+          // The gate already recorded a read its payment rail could not take; do not count it twice.
+          const railDown = status === 503 && body.error === "payment_rail_unavailable";
+          return servedOnGateFailure(d, "settlement", `verify answered HTTP ${status} with no verdict`, !railDown);
         }
 
         if (status === 200 && body.ok) {

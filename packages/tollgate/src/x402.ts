@@ -89,6 +89,13 @@ export interface VerifyResult {
    * not credit.
    */
   stage?: "verify" | "settle";
+  /**
+   * On a `verify` refusal: the facilitator could not be asked at all (no connection, a hang, an
+   * infrastructure 502/503/504, or a body that is not JSON). Nothing was broadcast. It is a
+   * failure of the payment rail, not an answer about this payment, so the read is served rather
+   * than billed again. Never set for anything the buyer's own payload can cause.
+   */
+  unavailable?: true;
   payer?: string;
   settlementRef?: string;
   responseHeader?: string;
@@ -339,6 +346,36 @@ function mockRef(r: PaymentRequirements): string {
   return `mock-${r.payTo.slice(2, 10)}-${r.amount}`;
 }
 
+/** How long a facilitator verify may take before the rail counts as unavailable. Verify only
+ *  checks a signature and a balance, so a healthy facilitator answers well inside this. */
+export const FACILITATOR_VERIFY_TIMEOUT_MS = 8_000;
+
+let verifyTimeoutMs = FACILITATOR_VERIFY_TIMEOUT_MS;
+/** Test seam: shorten the verify timeout so a hang can be exercised. Pass nothing to restore it. */
+export function setFacilitatorVerifyTimeoutForTest(ms: number = FACILITATOR_VERIFY_TIMEOUT_MS): void {
+  verifyTimeoutMs = ms;
+}
+
+class FacilitatorTimeout extends Error {}
+
+const NETWORK_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EPIPE"]);
+
+/**
+ * Whether a throw from the facilitator client means the rail could not be asked, as opposed to
+ * an answer about the payment. Only causes a buyer cannot produce with their own payload count:
+ * no connection, our timeout, a body that is not JSON (a proxy's error page), and the
+ * infrastructure statuses 502, 503 and 504. A 400 or 500 carrying JSON is the facilitator
+ * reading the payment, so it stays a refusal: a payload able to provoke one must not read free.
+ */
+export function facilitatorUnavailable(err: unknown): boolean {
+  if (err instanceof FacilitatorTimeout || err instanceof SyntaxError) return true;
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: unknown; cause?: { code?: unknown } }).cause?.code ?? (err as { code?: unknown }).code;
+  if (typeof code === "string" && (NETWORK_CODES.has(code) || code.startsWith("UND_ERR_"))) return true;
+  if (err instanceof TypeError && /fetch failed/i.test(err.message)) return true;
+  return /\((502|503|504)\)/.test(err.message);
+}
+
 /** Gateway mode: verify all legs against the real facilitator, then settle the author
  *  synchronously and DEFER the rest to the drain (O5). */
 async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: number, publisherId?: string): Promise<VerifyResult> {
@@ -356,11 +393,25 @@ async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: numb
     const { requirements, payload } = pairs[i]!;
     let v: { isValid: boolean; invalidReason?: string; payer?: string };
     try {
-      v = await facilitator.verify(payload, requirements);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        v = await Promise.race([
+          facilitator.verify(payload, requirements),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new FacilitatorTimeout(`the facilitator did not answer within ${verifyTimeoutMs} ms`)),
+              verifyTimeoutMs,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (err) {
       return {
         ok: false,
         stage: "verify",
+        ...(facilitatorUnavailable(err) ? { unavailable: true as const } : {}),
         error: `leg ${i} (${requirements.payTo}): ${err instanceof Error ? err.message : String(err)}`,
       };
     }
