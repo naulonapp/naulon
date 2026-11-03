@@ -132,3 +132,12 @@ def test_ranges_are_fetched_in_the_background_and_a_bad_document_is_ignored() ->
     wait_for(lambda: "/.well-known/naulon/crawler-ranges.json" in t.paths())
     time.sleep(0.05)
     assert c.ranges() is None, "a /0 refuses the whole document"
+
+
+def test_a_gate_without_ranges_never_opens_the_breaker() -> None:
+    t = FakeTransport({"/.well-known/naulon/crawler-ranges.json": Response(503, {}, b"")})
+    b = Breaker(threshold=5)
+    c = ConfigCache(S, t, b)
+    for _ in range(20):
+        c._refresh_ranges()
+    assert b.allow(), "an optional document's 503 is not a gate failure"

@@ -130,7 +130,7 @@ class GateClient:
         self._lock = threading.Lock()
 
     def _call(self, method: str, path: str, body: Any = None, timeout: float | None = None) -> Response | None:
-        if self._s.gate is None or not self._b.allow():
+        if self._s.gate is None:
             return None
         headers = {"accept": "application/json", "user-agent": "naulon-python"}
         if self._s.key:
@@ -139,6 +139,10 @@ class GateClient:
         if body is not None:
             headers["content-type"] = "application/json"
             data = json.dumps(body, separators=(",", ":")).encode()
+        # Asked last, after anything that can raise: a probe granted here is always recorded below,
+        # or the breaker would stay half-open with nobody holding the probe.
+        if not self._b.allow():
+            return None
         res = self._t.request(
             method, f"{self._s.gate}{path}", headers=headers, body=data, timeout=timeout or self._s.timeout
         )

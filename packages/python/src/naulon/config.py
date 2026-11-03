@@ -25,6 +25,9 @@ from naulon.transport import Breaker, Transport
 
 RANGES_PATH = "/.well-known/naulon/crawler-ranges.json"
 RANGES_REFRESH_S = 21_600.0
+# A gate may publish no ranges at all (a self-hosted one without them answers 503), so a failed
+# fetch is retried slowly and never counts against the circuit breaker.
+RANGES_RETRY_S = 600.0
 # How soon to ask again after a failure when nothing good is cached yet.
 RETRY_S = 60.0
 _RANGES_KEY = "\x00ranges"
@@ -183,9 +186,10 @@ class ConfigCache:
     def _refresh_ranges(self) -> None:
         gate = self._settings.gate
         compiled = None
-        if gate is not None and self._breaker.allow():
+        if gate is not None:
+            # Off the breaker on purpose: the ranges are optional, and their 503 says nothing about
+            # whether the gate can price or settle. Counted, it held the breaker open for good.
             res = self._transport.request("GET", f"{gate}{RANGES_PATH}", headers={}, body=None, timeout=10.0)
-            self._breaker.record(res is not None and res.status < 500)
             if res is not None and res.status == 200:
                 try:
                     valid = ranges.validate(json.loads(res.body))
@@ -199,8 +203,8 @@ class ConfigCache:
                 self._ranges = compiled
                 self._ranges_at = now
             else:
-                # Keep the last good copy, and ask again in a minute rather than six hours.
-                self._ranges_at = now - RANGES_REFRESH_S + RETRY_S
+                # Keep the last good copy, and ask again in ten minutes rather than six hours.
+                self._ranges_at = now - RANGES_REFRESH_S + RANGES_RETRY_S
 
 
 def _auth(s: Settings) -> dict[str, str]:
