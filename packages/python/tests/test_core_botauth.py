@@ -86,7 +86,45 @@ def test_the_first_signed_request_never_fetches_before_the_view() -> None:
     assert t.calls == []
 
 
-def test_a_deferred_check_on_a_404_does_nothing() -> None:
+def test_a_deferred_check_on_a_404_keeps_the_page_when_nothing_refuses() -> None:
+    from naulon.core import Keep
+
     n, t, f = setup(case("a signed request verifies"))
-    assert n.finish(f, n.handle(f), 404, False) == n.finish(f, n.handle(f), 404, False)
-    assert t.calls == []
+    assert n.finish(f, n.handle(f), 404, False) == Keep()
+    assert not any("/_naulon/quote" in u for _, u, _ in t.calls), "a 404 is never priced"
+
+
+def test_a_blocked_crawler_is_refused_before_the_view_even_while_its_signature_waits() -> None:
+    from naulon.core import Respond
+
+    n, t, f = setup(case("a signed request verifies"))
+    t.routes["/_naulon/enforce-config"] = json_response(200, config_doc(block=["gptbot"]))
+    n.config.refresh_now("gate.example")
+    t.calls.clear()
+    d = n.handle(f)
+    assert isinstance(d, Respond) and d.status == 403
+    assert not any("http-message-signatures-directory" in u for _, u, _ in t.calls)
+
+
+def test_a_refusal_the_deferred_check_reaches_applies_to_a_non_article_too() -> None:
+    from naulon.core import Continue, Replace
+    from naulon.decide import Recheck
+
+    # A verified signer refused by the site's terms, behind a browser user agent: unsigned it reads as
+    # a person, so the refusal exists only once the signature is checked.
+    n, t, f = setup(case("a signed request verifies"))
+    f = RequestFacts(
+        f.method,
+        f.scheme,
+        f.host,
+        f.path,
+        f.query,
+        {**f.headers, "user-agent": "Mozilla/5.0", "accept": "text/html"},
+        f.client_ip,
+    )
+    t.routes["/_naulon/enforce-config"] = json_response(200, config_doc(refuse={"crawlers": [], "agents": True}))
+    n.config.refresh_now("gate.example")
+    d = n.handle(f)
+    assert isinstance(d, Continue) and isinstance(d.pending, Recheck)
+    out = n.finish(f, d, 404, False)
+    assert isinstance(out, Replace) and out.response.status == 403

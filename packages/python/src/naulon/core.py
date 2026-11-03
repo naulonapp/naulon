@@ -136,11 +136,15 @@ class Naulon:
                 facts, doc, self.config.ranges(), self._wall(), lambda: self._check_signature(facts, may_fetch=False)
             )
             if isinstance(action, Recheck):
-                # A signer whose key directory is not cached yet: decided after the view, off the loop.
+                # A signer whose key directory is not cached yet. Whatever the request would get
+                # unsigned still applies now: a refusal never waits for the signature. Only what a
+                # verified signature could add is decided after the view, off the loop.
+                unsigned = decide(facts, doc, self.config.ranges(), self._wall())
+                if isinstance(unsigned, Refuse):
+                    return self._refuse(facts, unsigned)
                 return Continue(action)
             if isinstance(action, Refuse):
-                self._report(facts, action.slug, "blocked", "read", action.who)
-                return Respond(403, [("Content-Type", "text/plain; charset=utf-8"), *NO_STORE], action.reason.encode())
+                return self._refuse(facts, action)
             if isinstance(action, Pass) and not action.report:
                 return Continue()
             return Continue(action)
@@ -150,28 +154,31 @@ class Naulon:
 
     # ── phase 2 ──────────────────────────────────────────────────────────────────────────────────
 
+    def _refuse(self, facts: RequestFacts, r: Refuse) -> Respond:
+        self._report(facts, r.slug, "blocked", "read", r.who)
+        return Respond(403, [("Content-Type", "text/plain; charset=utf-8"), *NO_STORE], r.reason.encode())
+
     def finish(self, facts: RequestFacts, decision: Decision, status: int, tollable: bool) -> Outcome:
         if not isinstance(decision, Continue) or decision.pending is None:
-            return KEEP
-        # Rule 9: only an article is ever reported or tolled. A 404, a redirect, a listing or a
-        # streaming response goes out untouched.
-        if status != 200 or not tollable:
             return KEEP
         try:
             pending = decision.pending
             if isinstance(pending, Recheck):
+                # The deferred signature check runs whatever the view answered: a refusal it reaches
+                # applies to any response, exactly as one reached before the view would have.
                 doc = self.config.get(facts.host, facts.scheme)
                 again = decide(
                     facts, doc, self.config.ranges(), self._wall(), lambda: self._check_signature(facts, may_fetch=True)
                 )
                 if isinstance(again, Refuse):
-                    self._report(facts, again.slug, "blocked", "read", again.who)
-                    return Replace(
-                        Respond(403, [("Content-Type", "text/plain; charset=utf-8"), *NO_STORE], again.reason.encode())
-                    )
+                    return Replace(self._refuse(facts, again))
                 if isinstance(again, Recheck) or (isinstance(again, Pass) and not again.report):
                     return KEEP
                 pending = again
+            # Rule 9: only an article is ever reported or tolled. A 404, a redirect, a listing or a
+            # streaming response goes out untouched.
+            if status != 200 or not tollable:
+                return KEEP
             if isinstance(pending, Pass):
                 self._report(facts, pending.slug, "served-free", pending.kind, pending.who, freeReason=pending.free)
                 return KEEP
