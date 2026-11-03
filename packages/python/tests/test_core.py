@@ -174,3 +174,23 @@ def test_before_the_first_config_everything_passes() -> None:
     t = gate()
     n = Naulon(Settings(gate="http://gate", key="k"), transport=t)
     assert n.handle(facts()) == Continue()
+
+
+def test_the_402_names_its_price_and_a_paid_read_its_charge() -> None:
+    from naulon.core import format_crawler_price
+
+    assert [format_crawler_price(m) for m in (5000, 50_000, 1_000_000, 1, 0)] == [
+        "USD 0.005",
+        "USD 0.05",
+        "USD 1.00",
+        "USD 0.000001",
+        "USD 0.00",
+    ]
+    n = naulon(gate())
+    out = n.finish(facts(), n.handle(facts()), 200, True)
+    assert headers_of(out)["crawler-price"] == "USD 0.005"
+    n = naulon(gate({"/_naulon/verify": json_response(200, {"verdict": "paid", "chargedMicro": "5000"})}))
+    f = facts(PAYMENT_SIGNATURE="s")
+    assert headers_of(n.finish(f, n.handle(f), 200, True))["crawler-charged"] == "USD 0.005"
+    n = naulon(gate({"/_naulon/verify": json_response(200, {"verdict": "paid", "chargedMicro": "4.2"})}))
+    assert "crawler-charged" not in headers_of(n.finish(f, n.handle(f), 200, True))

@@ -70,7 +70,9 @@ app = NaulonASGI(app)
 | `NAULON_TIMEOUT` | `2.0` | Seconds to wait for the gate on an agent request |
 
 Django may set the same keys in `settings.NAULON` (`GATE`, `KEY`, `ENABLED`, `TIMEOUT`); the
-environment wins.
+environment wins. Behind a proxy that writes the caller's address into a single-value header, name
+it in `NAULON["TRUST_PROXY_HEADERS"]` (for example `"X-Real-IP"`). `X-Forwarded-For` is refused:
+the caller writes its first entry.
 
 ## Hosted or self-hosted
 

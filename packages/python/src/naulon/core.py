@@ -67,14 +67,21 @@ Outcome = Keep | Replace
 KEEP = Keep()
 
 
+def format_crawler_price(micro: int) -> str:
+    """`USD 0.005`: the pay-per-crawl price vocabulary a crawler already speaks. Same format as the
+    TS middleware's `formatCrawlerPrice`: at least two decimals, trailing zeros past them trimmed."""
+    whole, frac = divmod(micro, 1_000_000)
+    digits = str(frac).rjust(6, "0").rstrip("0").ljust(2, "0")
+    return f"USD {whole}.{digits}"
+
+
 def _payment_required(built: Built, resource: str) -> Respond:
     import json
 
-    return Respond(
-        402,
-        [("PAYMENT-REQUIRED", built.header), ("Content-Type", "application/json; charset=utf-8"), *NO_STORE],
-        json.dumps({"error": "payment required", "resource": resource}).encode(),
-    )
+    headers = [("PAYMENT-REQUIRED", built.header), ("Content-Type", "application/json; charset=utf-8"), *NO_STORE]
+    if built.ask_micro > 0:
+        headers.append(("crawler-price", format_crawler_price(built.ask_micro)))
+    return Respond(402, headers, json.dumps({"error": "payment required", "resource": resource}).encode())
 
 
 def _retry() -> Respond:
@@ -238,6 +245,10 @@ class Naulon:
                 v = answer.body.get(wire)
                 if isinstance(v, str) and v and _header_safe(v):
                     headers.append((name, v))
+            # A claim that money moved, so only from the gate's own settled figure, never the ask.
+            charged = answer.body.get("chargedMicro")
+            if isinstance(charged, str) and charged.isdigit() and len(charged) <= 15:
+                headers.append(("crawler-charged", format_crawler_price(int(charged))))
             return Keep(headers)
         if answer.verdict == "pending":
             return Replace(_retry())
