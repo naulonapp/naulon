@@ -267,7 +267,28 @@ export interface PaymentEvidence {
  *  - `unavailable`: the gate or its payment rail gave no verdict, so the read was served rather
  *    than refused. An outage, recorded so the publisher can see what it cost.
  */
-export type FreeReason = "unpriced" | "terms" | "fleet" | "unavailable";
+export const FREE_REASONS = ["unpriced", "terms", "fleet", "unavailable"] as const;
+export type FreeReason = (typeof FREE_REASONS)[number];
+
+/**
+ * The gate's answer about a payment or a licence, carried as `verdict` on every body `/verify` and
+ * `/license/check` write. A runtime switches on this field and never on the HTTP status:
+ *  - `paid`:        serve the resource (settled now, or a licence already paid for).
+ *  - `refused`:     not paid; answer the agent with the 402 again.
+ *  - `pending`:     a charge for this read is already running; answer 503 with `Retry-After`, never
+ *    a second offer.
+ *  - `unavailable`: the gate could not decide (its payment rail was down); serve the page.
+ * An answer without the field, or no answer at all, is no verdict, and the page is served.
+ */
+export const GATE_VERDICTS = ["paid", "refused", "pending", "unavailable"] as const;
+export type GateVerdict = (typeof GATE_VERDICTS)[number];
+
+/** The `verdict` a gate body carries, or null when it carries none (which a runtime serves). */
+export function gateVerdictOf(body: unknown): GateVerdict | null {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
+  const v = (body as { verdict?: unknown }).verdict;
+  return typeof v === "string" && (GATE_VERDICTS as readonly string[]).includes(v) ? (v as GateVerdict) : null;
+}
 
 export type ObservationVerdict =
   /** Read free — a human, or a crawler the publisher allow-listed (e.g. search). */

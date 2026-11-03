@@ -91,6 +91,7 @@ class DecisionRecordTest extends WP_UnitTestCase {
 				'code' => 200,
 				'body' => array(
 					'ok'             => true,
+					'verdict'        => 'paid',
 					'settlementRef'  => '0xsettled',
 					'payer'          => '0x9999999999999999999999999999999999999999',
 					'responseHeader' => 'receipt',
@@ -273,7 +274,7 @@ class DecisionRecordTest extends WP_UnitTestCase {
 	}
 
 	public function test_a_failed_settlement_writes_no_earnings() {
-		$this->responses['/_naulon/verify'] = array( 'code' => 402, 'body' => array( 'ok' => false, 'error' => 'bad signature' ) );
+		$this->responses['/_naulon/verify'] = array( 'code' => 402, 'body' => array( 'ok' => false, 'verdict' => 'refused', 'error' => 'bad signature' ) );
 		$_SERVER['HTTP_USER_AGENT']         = 'GPTBot/1.2';
 		$_SERVER['HTTP_ACCEPT']             = '*/*';
 		$_SERVER['HTTP_PAYMENT_SIGNATURE']  = 'buyer-signature';

@@ -90,7 +90,7 @@ test("a valid license for an owned resource → entitled:true", async () => {
   const { app, seen } = appWith({ entitled: true });
   const res = await app.request("/_naulon/license/check", post(body()));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { entitled: true });
+  assert.deepEqual(await res.json(), { entitled: true, verdict: "paid" });
   assert.equal(seen.entitles.length, 1);
   assert.equal(seen.entitles[0]?.slug, "blog/post");
   assert.equal(seen.entitles[0]?.kind, "read");
@@ -122,7 +122,7 @@ test("a rejected license → entitled:false with no reason (no oracle for forgin
   const { app } = appWith({ entitled: false });
   const res = await app.request("/_naulon/license/check", post(body()));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { entitled: false });
+  assert.deepEqual(await res.json(), { entitled: false, verdict: "refused" });
 });
 
 // The one refusal that is NOT about the token, and therefore the one that may be disclosed.
@@ -133,14 +133,14 @@ test("no_verifier IS disclosed — a deployment fault must be visible to the cal
   const appNoVerifier = mountWithEntitles(async () => ({ ok: false, reason: "no_verifier" }));
   const res = await appNoVerifier.request("/_naulon/license/check", post(body()));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { entitled: false, reason: "no_verifier" });
+  assert.deepEqual(await res.json(), { entitled: false, verdict: "refused", reason: "no_verifier" });
 });
 
 test("a TOKEN-side refusal still discloses nothing — the forging oracle stays shut", async () => {
   for (const reason of ["unverifiable", "grant_none", "not_covered", "kind_mismatch", "revoked"]) {
     const a = mountWithEntitles(async () => ({ ok: false, reason }));
     const res = await a.request("/_naulon/license/check", post(body()));
-    assert.deepEqual(await res.json(), { entitled: false }, `${reason} must not reach the caller`);
+    assert.deepEqual(await res.json(), { entitled: false, verdict: "refused" }, `${reason} must not reach the caller`);
   }
 });
 
@@ -159,7 +159,7 @@ test("an in-app host missing from hosts[] resolves by proven ownership", async (
   });
   const res = await app.request("/_naulon/license/check", post(body()));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { entitled: true });
+  assert.deepEqual(await res.json(), { entitled: true, verdict: "paid" });
   assert.deepEqual(seen.stamped, [{ tenantId: "pub_a", host: "site.example.com" }]);
 });
 
@@ -173,7 +173,7 @@ test("a suspended publisher entitles nothing", async () => {
   const { app, seen } = appWith({ resolve: () => publisher({ suspended: true }) });
   const res = await app.request("/_naulon/license/check", post(body()));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { entitled: false });
+  assert.deepEqual(await res.json(), { entitled: false, verdict: "refused" });
   assert.deepEqual(seen.entitles, []);
 });
 

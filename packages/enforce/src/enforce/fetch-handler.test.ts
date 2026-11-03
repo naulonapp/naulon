@@ -41,7 +41,7 @@ test("agent, no payment → 402, handler NEVER runs", async () => {
 
 test("agent + payment ok → handler runs, PAYMENT-RESPONSE stamped on its response", async () => {
   const fakeFetch = (async () =>
-    new Response(JSON.stringify({ ok: true, responseHeader: "rh", licenseJws: "jws" }), { status: 200 })) as unknown as typeof fetch;
+    new Response(JSON.stringify({ ok: true, verdict: "paid", responseHeader: "rh", licenseJws: "jws" }), { status: 200 })) as unknown as typeof fetch;
   const wrapped = withNaulon(article, { ...opts, fetchImpl: fakeFetch });
   const res = await wrapped(
     new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),

@@ -12,7 +12,7 @@
  * Telemetry, not a toll: the answer is `202` as soon as the batch is accepted and shaped.
  */
 import { createRoute, z, type OpenAPIHono } from "@hono/zod-openapi";
-import { CRAWLER_PROOF, type FreeReason, type PublisherConfig } from "@naulon/shared";
+import { CRAWLER_PROOF, FREE_REASONS, type FreeReason, type PublisherConfig } from "@naulon/shared";
 import { authBeforeValidation, ownedPublisher } from "./authorize.ts";
 import type { EnforceApiDeps } from "./index.ts";
 import type { InAppObservation, ReportedAgent } from "./observation.ts";
@@ -87,7 +87,7 @@ const observeRoute = createRoute({
 });
 
 const OPERATOR_IDS = new Set(CRAWLER_PROOF.map((r) => r.id));
-const FREE_REASONS: ReadonlySet<string> = new Set<FreeReason>(["unpriced", "terms", "fleet", "unavailable"]);
+const FREE_REASON_SET: ReadonlySet<string> = new Set<string>(FREE_REASONS);
 const OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 /** a.b.c.0/24 or x:y:z::/48, the only forms a client may send. Never a full address. */
 const TRUNCATED = new RegExp(`^(?:(?:${OCTET}\\.){3}0\\/24|[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,2}::\\/48)$`, "i");
@@ -150,7 +150,7 @@ export function mountObserve(app: OpenAPIHono, deps: EnforceApiDeps): void {
       const crawlerBudget = priced && (r.crawlerBudget === "within" || r.crawlerBudget === "over") ? r.crawlerBudget : undefined;
       const paymentPresented = observeOnly && r.paymentPresented === true;
       const freeReason =
-        r.verdict === "served-free" && r.classifiedAs === "agent" && FREE_REASONS.has(r.freeReason ?? "") ? (r.freeReason as FreeReason) : undefined;
+        r.verdict === "served-free" && r.classifiedAs === "agent" && FREE_REASON_SET.has(r.freeReason ?? "") ? (r.freeReason as FreeReason) : undefined;
       shaped.push({
         publisherId: publisher.id,
         host,

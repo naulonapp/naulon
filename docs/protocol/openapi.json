@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "naulon in-app enforce API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "What a runtime tolling from inside a publisher's app asks the gate. See docs/protocol/in-app.md."
   },
   "components": {
@@ -109,6 +109,12 @@
               true
             ]
           },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "paid"
+            ]
+          },
           "settlementRef": {
             "type": "string"
           },
@@ -126,7 +132,8 @@
           }
         },
         "required": [
-          "ok"
+          "ok",
+          "verdict"
         ]
       },
       "VerifyError": {
@@ -137,6 +144,16 @@
             "enum": [
               false
             ]
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "paid",
+              "refused",
+              "pending",
+              "unavailable"
+            ],
+            "description": "What the runtime does: `paid` serve, `refused` answer the 402 again, `unavailable` serve the page. Switch on this, never on the HTTP status."
           },
           "error": {
             "type": "string"
@@ -198,10 +215,25 @@
         "properties": {
           "entitled": {
             "type": "boolean"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "paid",
+              "refused"
+            ],
+            "description": "`paid`: serve it free, the read was paid for. `refused`: answer the 402. Switch on this, never on the HTTP status."
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "no_verifier"
+            ]
           }
         },
         "required": [
-          "entitled"
+          "entitled",
+          "verdict"
         ]
       },
       "LicenseCheckBody": {
@@ -209,15 +241,18 @@
         "properties": {
           "license": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "The licence JWS the agent presented (required)."
           },
           "resource": {
             "type": "string",
-            "format": "uri"
+            "description": "Absolute URL of the resource being re-read (required).",
+            "example": "https://your-site.com/articles/x"
           },
           "slug": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Canonical slug the licence must be scoped to (required)."
           },
           "kind": {
             "type": "string",
@@ -225,17 +260,13 @@
               "read",
               "citation"
             ],
-            "default": "read"
+            "description": "Defaults to `read`."
           },
           "proof": {
-            "type": "string"
+            "type": "string",
+            "description": "The agent's holder-of-key proof header, forwarded verbatim when it sent one."
           }
-        },
-        "required": [
-          "license",
-          "resource",
-          "slug"
-        ]
+        }
       },
       "ObserveAccepted": {
         "type": "object",
@@ -697,7 +728,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid key.",
+            "description": "Missing or invalid key. Carries no verdict: serve the page.",
             "content": {
               "application/json": {
                 "schema": {
@@ -707,7 +738,7 @@
             }
           },
           "402": {
-            "description": "Not settled, or the site is observing.",
+            "description": "Not settled, or the site is observing (`verdict: refused`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -717,7 +748,7 @@
             }
           },
           "403": {
-            "description": "Not owned, or suspended.",
+            "description": "Suspended (`verdict: refused`), or the resource is not this key's (no verdict: serve the page).",
             "content": {
               "application/json": {
                 "schema": {
@@ -727,7 +758,7 @@
             }
           },
           "503": {
-            "description": "The payment rail could not be asked (`payment_rail_unavailable`). Nothing was broadcast: serve the page.",
+            "description": "The payment rail could not be asked (`payment_rail_unavailable`, `verdict: unavailable`). Nothing was broadcast: serve the page.",
             "content": {
               "application/json": {
                 "schema": {
@@ -751,7 +782,7 @@
           }
         ],
         "requestBody": {
-          "required": true,
+          "required": false,
           "content": {
             "application/json": {
               "schema": {
@@ -772,17 +803,17 @@
             }
           },
           "400": {
-            "description": "Bad request.",
+            "description": "Bad request (`verdict: refused`).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnforceError"
+                  "$ref": "#/components/schemas/LicenseCheckResult"
                 }
               }
             }
           },
           "401": {
-            "description": "Missing or invalid key.",
+            "description": "Missing or invalid key. Carries no verdict: serve the page.",
             "content": {
               "application/json": {
                 "schema": {
@@ -792,7 +823,7 @@
             }
           },
           "403": {
-            "description": "Resource not owned by this key.",
+            "description": "Resource not owned by this key. Carries no verdict: serve the page.",
             "content": {
               "application/json": {
                 "schema": {

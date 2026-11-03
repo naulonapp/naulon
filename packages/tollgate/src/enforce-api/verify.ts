@@ -18,11 +18,11 @@
  */
 import { createRoute, z, type OpenAPIHono } from "@hono/zod-openapi";
 import { build402, settledChargedMicro, tollPrice, type SettlementLegReq } from "@naulon/enforce";
-import { classifyPaymentFailure, toAtomicUsdc, usdc } from "@naulon/shared";
+import { classifyPaymentFailure, GATE_VERDICTS, toAtomicUsdc, usdc, type GateVerdict } from "@naulon/shared";
 import { canonicalResource } from "../resource.ts";
 import { settleAndAttribute } from "../settle.ts";
 import { isSingleLegPayment } from "../x402.ts";
-import { authBeforeValidation, authorize, targetOf } from "./authorize.ts";
+import { authBeforeValidation, authorize, refuseUnreadable, targetOf } from "./authorize.ts";
 import type { EnforceApiDeps } from "./index.ts";
 import type { ReportedAgent } from "./observation.ts";
 import { SECURITY } from "./schemas.ts";
@@ -58,9 +58,14 @@ const VerifyBodyDoc = z
   })
   .openapi("VerifyRequest");
 
+const VerdictField = z.enum(GATE_VERDICTS).openapi({
+  description: "What the runtime does: `paid` serve, `refused` answer the 402 again, `unavailable` serve the page. Switch on this, never on the HTTP status.",
+});
+
 const VerifyOk = z
   .object({
     ok: z.literal(true),
+    verdict: z.literal("paid"),
     settlementRef: z.string().optional(),
     payer: z.string().optional(),
     responseHeader: z.string().optional(),
@@ -70,7 +75,7 @@ const VerifyOk = z
   })
   .openapi("VerifyReceipt");
 
-const VerifyError = z.object({ ok: z.literal(false), error: z.string() }).openapi("VerifyError");
+const VerifyError = z.object({ ok: z.literal(false), verdict: VerdictField.optional(), error: z.string() }).openapi("VerifyError");
 
 const verifyRoute = createRoute({
   method: "post",
@@ -82,21 +87,26 @@ const verifyRoute = createRoute({
   responses: {
     200: { description: "Settled: serve the resource.", content: { "application/json": { schema: VerifyOk } } },
     400: { description: "Malformed body, quote or legs.", content: { "application/json": { schema: VerifyError } } },
-    401: { description: "Missing or invalid key.", content: { "application/json": { schema: VerifyError } } },
-    402: { description: "Not settled, or the site is observing.", content: { "application/json": { schema: VerifyError } } },
-    403: { description: "Not owned, or suspended.", content: { "application/json": { schema: VerifyError } } },
+    401: { description: "Missing or invalid key. Carries no verdict: serve the page.", content: { "application/json": { schema: VerifyError } } },
+    402: { description: "Not settled, or the site is observing (`verdict: refused`).", content: { "application/json": { schema: VerifyError } } },
+    403: { description: "Suspended (`verdict: refused`), or the resource is not this key's (no verdict: serve the page).", content: { "application/json": { schema: VerifyError } } },
     503: {
-      description: "The payment rail could not be asked (`payment_rail_unavailable`). Nothing was broadcast: serve the page.",
+      description: "The payment rail could not be asked (`payment_rail_unavailable`, `verdict: unavailable`). Nothing was broadcast: serve the page.",
       content: { "application/json": { schema: VerifyError } },
     },
   },
 });
 
-const failed = (error: string): { ok: false; error: string } => ({ ok: false, error });
+/** A refusal of the key or the host. It is about the runtime's setup, not the payment, so it carries
+ *  no verdict and the runtime serves the page; the hosted plane's own auth answers the same way. */
+const notAuthorized = (error: string): { ok: false; error: string } => ({ ok: false, error });
+
+/** Every answer about the payment carries its verdict (docs/protocol/in-app.md). */
+const failed = (error: string, verdict: Exclude<GateVerdict, "paid"> = "refused") => ({ ok: false as const, verdict, error });
 
 /** (payTo, amount) for one settlement leg; the address lowercased so checksum case never mismatches. */
 function legKey(leg: unknown): string {
-  const r = (leg as { requirements?: { payTo?: unknown; amount?: unknown } }).requirements;
+  const r = typeof leg === "object" && leg !== null ? (leg as { requirements?: { payTo?: unknown; amount?: unknown } | null }).requirements : undefined;
   const payTo = typeof r?.payTo === "string" ? r.payTo.toLowerCase() : "";
   const amount = typeof r?.amount === "string" || typeof r?.amount === "number" ? String(r.amount) : "";
   return `${payTo}@${amount}`;
@@ -129,17 +139,17 @@ export function mountVerify(app: OpenAPIHono, deps: EnforceApiDeps): void {
   const derive402 = deps.impl?.build402 ?? build402;
   const clock = deps.now ?? Date.now;
 
-  authBeforeValidation(app, "/_naulon/verify", deps, failed);
+  authBeforeValidation(app, "/_naulon/verify", deps, notAuthorized, () => failed("bad request"));
 
   app.openapi(verifyRoute, async (c) => {
     const parsed = VerifyBodyStrict.safeParse(await c.req.json().catch(() => undefined));
-    if (!parsed.success) {
-      // Still authenticate first, so the refusal order matches every other route.
-      const authed = await authorize(c, deps, { error: "bad request" }, failed);
-      return (authed.ok ? c.json(failed("bad request"), 400) : authed.response) as never;
-    }
+    // The key was authenticated before this handler ran (`authBeforeValidation`), so a body this gate
+    // cannot read is an answer about the request: refused, never a free read.
+    if (!parsed.success) return c.json(failed("bad request"), 400) as never;
     const { payment, legs, quote, resource, agent } = parsed.data;
-    const authed = await authorize(c, deps, targetOf(resource), failed);
+    const target = targetOf(resource);
+    if ("error" in target) return c.json(failed(target.error), 400) as never;
+    const authed = await authorize(c, deps, target, notAuthorized);
     if (!authed.ok) return authed.response as never;
     const { publisher, host, path: pricePath } = authed;
 
@@ -225,13 +235,14 @@ export function mountVerify(app: OpenAPIHono, deps: EnforceApiDeps): void {
       // The decision log never costs the buyer the read they paid for.
     }
 
-    // The payment rail could not be asked: no verdict, so a 5xx, which every runtime reads as
-    // "serve the page" (docs/protocol/in-app.md, rule 4). Nothing was broadcast.
-    if (!settled.ok && settled.unavailable) return c.json(failed("payment_rail_unavailable"), 503);
+    // The payment rail could not be asked: `unavailable`, which every runtime serves
+    // (docs/protocol/in-app.md, rule 4). Nothing was broadcast.
+    if (!settled.ok && settled.unavailable) return c.json(failed("payment_rail_unavailable", "unavailable"), 503);
     if (!settled.ok) return c.json(failed(settled.error ?? "settlement failed"), 402);
     return c.json(
       {
         ok: true,
+        verdict: "paid" as const,
         settlementRef: settled.settlementRef,
         payer: settled.payer,
         responseHeader: settled.responseHeader,
@@ -242,5 +253,5 @@ export function mountVerify(app: OpenAPIHono, deps: EnforceApiDeps): void {
       },
       200,
     );
-  });
+  }, refuseUnreadable(() => failed("bad request")));
 }

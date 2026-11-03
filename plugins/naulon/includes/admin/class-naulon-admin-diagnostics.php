@@ -409,6 +409,8 @@ class Naulon_Admin_Diagnostics {
 				return __( 'paid', 'naulon' );
 			case 'reread':
 				return __( 're-read with a license', 'naulon' );
+			case 'retry':
+				return __( 'asked to retry (payment in progress)', 'naulon' );
 			default:
 				return __( 'served free', 'naulon' );
 		}

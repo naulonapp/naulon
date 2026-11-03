@@ -10,7 +10,7 @@ export const SECURITY = [{ naulonKey: [] }];
  * refusals. A runtime in any language is written against this, not against the gate's package
  * version. Bump the major for any change an existing runtime would break on.
  */
-export const ENFORCE_API_VERSION = "1.0.0";
+export const ENFORCE_API_VERSION = "1.1.0";
 
 /** Where the OpenAPI document for this API is served. */
 export const OPENAPI_PATH = "/_naulon/openapi.json";

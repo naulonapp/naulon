@@ -57,6 +57,12 @@ defined( 'ABSPATH' ) || exit;
 
 class Naulon_Observer {
 
+	/**
+	 * Why an agent read was free. Mirrors `FREE_REASONS` in `@naulon/shared`;
+	 * `VerdictFixturesTest` holds it to `test-fixtures/verdict-cases.json`.
+	 */
+	const FREE_REASONS = array( 'unpriced', 'terms', 'fleet', 'unavailable' );
+
 	/** Reports that have not been accepted yet. Bounded; see the class docblock. */
 	const OPTION_PENDING = 'naulon_observe_pending';
 
@@ -138,6 +144,7 @@ class Naulon_Observer {
 			case 'free':
 				return 'served-free';
 			case 'pay':
+			case 'retry':
 			case 'observed':
 				// An observed read is the same policy decision as a 402, served instead of
 				// refused. `observeOnly` on the report is what tells the two apart.
@@ -235,7 +242,7 @@ class Naulon_Observer {
 		}
 
 		// Why an agent read free, from the control plane's closed set; anything else is left out.
-		if ( 'served-free' === $verdict && isset( $report['free_reason'] ) && in_array( $report['free_reason'], array( 'unpriced', 'terms', 'fleet', 'unavailable' ), true ) ) {
+		if ( 'served-free' === $verdict && isset( $report['free_reason'] ) && in_array( $report['free_reason'], self::FREE_REASONS, true ) ) {
 			$shaped['freeReason'] = $report['free_reason'];
 		}
 		if ( 'denied' === $verdict && isset( $report['crawler_budget'] ) && in_array( $report['crawler_budget'], array( 'within', 'over' ), true ) ) {

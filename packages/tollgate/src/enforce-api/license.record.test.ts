@@ -72,33 +72,33 @@ const ask = (app: OpenAPIHono, license: string) =>
 test("a real access licence entitles the re-read through the hosted check", async () => {
   const res = await ask(realApp(), mintLicense(mintInput, KEY, NOW));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { entitled: true });
+  assert.deepEqual(await res.json(), { entitled: true, verdict: "paid" });
 });
 
 test("with licensing off the check says no_verifier, the one reason a caller may see", async () => {
   const res = await ask(realApp(null), mintLicense(mintInput, KEY, NOW));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { entitled: false, reason: "no_verifier" });
+  assert.deepEqual(await res.json(), { entitled: false, verdict: "refused", reason: "no_verifier" });
 });
 
 test("a licence signed by a key the gate does not hold is refused, with no reason given", async () => {
   const stranger = loadSigningKey();
   const res = await ask(realApp(), mintLicense(mintInput, stranger, NOW));
-  assert.deepEqual(await res.json(), { entitled: false });
+  assert.deepEqual(await res.json(), { entitled: false, verdict: "refused" });
 });
 
 test("a CITATION RECORD does not — the WordPress path refuses it too", async () => {
   const res = await ask(realApp(), mintCitationRecord(mintInput, KEY, NOW));
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { entitled: false }, "a record grants nothing, on every runtime");
+  assert.deepEqual(await res.json(), { entitled: false, verdict: "refused" }, "a record grants nothing, on every runtime");
 });
 
 test("a scoped licence entitles a path inside its scope", async () => {
   const scoped = mintLicense({ ...(mintInput as object), scope: { patterns: ["/essays/*"] } } as never, KEY, NOW);
-  assert.deepEqual(await (await ask(realApp(), scoped)).json(), { entitled: true });
+  assert.deepEqual(await (await ask(realApp(), scoped)).json(), { entitled: true, verdict: "paid" });
 });
 
 test("a scoped licence is refused outside its scope", async () => {
   const scoped = mintLicense({ ...(mintInput as object), scope: { patterns: ["/journal/*"] } } as never, KEY, NOW);
-  assert.deepEqual(await (await ask(realApp(), scoped)).json(), { entitled: false });
+  assert.deepEqual(await (await ask(realApp(), scoped)).json(), { entitled: false, verdict: "refused" });
 });

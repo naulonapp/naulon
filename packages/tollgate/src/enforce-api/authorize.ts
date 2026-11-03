@@ -57,15 +57,35 @@ export async function ownedPublisher(deps: EnforceApiDeps, publisherId: string, 
  * Authenticate a JSON POST route before its body validator runs, so an unauthenticated caller always
  * gets 401 and never a validation 400. The host offered to `auth` is the first report's `resource`.
  */
-export function authBeforeValidation(app: OpenAPIHono, path: string, deps: EnforceApiDeps, body: ErrorBody = plain): void {
+export function authBeforeValidation(
+  app: OpenAPIHono,
+  path: string,
+  deps: EnforceApiDeps,
+  body: ErrorBody = plain,
+  /** The body for an authenticated request that is not JSON at all. Without it the validator answers
+   *  with its own text, which on a verdict route carries no verdict. */
+  unreadable?: () => Record<string, unknown>,
+): void {
   app.use(path, async (c, next) => {
     if (c.req.method !== "POST") return next();
-    const raw: unknown = await c.req.json().catch(() => undefined);
+    const NOT_JSON = Symbol("not json");
+    const raw: unknown = await c.req.json().catch(() => NOT_JSON);
     const first: unknown = Array.isArray(raw) ? raw[0] : raw;
-    const resource = (first as { resource?: unknown } | undefined)?.resource;
+    const resource = typeof first === "object" && first !== null ? (first as { resource?: unknown }).resource : undefined;
     const target = targetOf(typeof resource === "string" ? resource : undefined);
     const auth = await deps.auth(c, "host" in target ? target.host : null);
     if (!auth.ok) return "response" in auth ? auth.response : c.json(body(auth.error), auth.status);
+    if (raw === NOT_JSON && unreadable) return c.json(unreadable(), 400);
     return next();
   });
+}
+
+/**
+ * The route validator's hook for the two routes that answer with a verdict. Without it the validator
+ * answers a body it cannot read with its own error shape, which carries no verdict, and a runtime
+ * serves the page on no verdict. The key was authenticated before validation, so the body is an
+ * answer about this request: refused.
+ */
+export function refuseUnreadable(body: () => Record<string, unknown>) {
+  return (result: { success: boolean }, c: Context): never => (result.success ? undefined : c.json(body(), 400)) as never;
 }

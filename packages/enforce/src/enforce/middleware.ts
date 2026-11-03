@@ -49,7 +49,7 @@ import { introspectLicence } from "@naulon/sdk/rsl";
 import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
 import type { DecideObs } from "../decide.ts";
 import type { ObservationReport, ObservationReporter, ReportableVerdict } from "./observation-sink.ts";
-import type { FreeReason } from "@naulon/shared";
+import { gateVerdictOf, type FreeReason } from "@naulon/shared";
 
 export interface NaulonMiddlewareOptionsBase {
   /**
@@ -618,6 +618,19 @@ export function naulonMiddleware(
       };
     };
 
+    // A charge for this read is already running, or its outcome is not yet known: 503 and retry,
+    // never an x402 offer, which would invite a second payment for the same read.
+    const retryLater = (verdict: string, body: Record<string, string> = { error: "pending" }): Response =>
+      new Response(JSON.stringify(body), {
+        status: 503,
+        headers: {
+          "content-type": PAYMENT_BODY_CONTENT_TYPE,
+          "retry-after": "2",
+          "cache-control": "no-store",
+          "X-Naulon-Verdict": headerSafe(verdict),
+        },
+      });
+
     // Any gate failure serves the read, at every step: a control plane that cannot answer must
     // never cost a reader the page or a publisher their site. Only a failure qualifies. An answer,
     // a refusal included, is honoured, so a header that provokes a 4xx never becomes a free pass.
@@ -746,17 +759,7 @@ export function naulonMiddleware(
         // payment for the same read. The hosted gate answers these the same way.
         if (why === "in_flight" || why === "server_error") {
           report(d.obs, "denied", resource, { kind: d.tollKind, priceUsdc: d.quote.price });
-          return {
-            response: new Response(JSON.stringify({ error: why, ...(description ? { error_description: description } : {}) }), {
-              status: 503,
-              headers: {
-                "content-type": PAYMENT_BODY_CONTENT_TYPE,
-                "retry-after": "2",
-                "cache-control": "no-store",
-                "X-Naulon-Verdict": headerSafe(`licence refused (${why})`),
-              },
-            }),
-          };
+          return { response: retryLater(`licence refused (${why})`, { error: why, ...(description ? { error_description: description } : {}) }) };
         }
         // Anything else leaves the read for sale: the ordinary 402, carrying why the licence did not pay.
         return paymentRequired(d, `licence refused (${why})`, { error: why, ...(description ? { description } : {}) });
@@ -796,7 +799,6 @@ export function naulonMiddleware(
         // Custody-free settlement: the buyer's signature goes to the hosted
         // /verify, which settles buyer→author and mints the receipt.
         let body: VerifyResponse;
-        let status: number;
         try {
           // Raced, not aborted (`fetchImpl` carries no signal): a /verify that hangs must become a
           // served read, not a request held open until the platform kills it.
@@ -820,34 +822,39 @@ export function naulonMiddleware(
           }), new Promise<never>((_, reject) => {
             timer = setTimeout(() => reject(new VerifyTimeout(`no answer within ${VERIFY_TIMEOUT_MS} ms`)), VERIFY_TIMEOUT_MS);
           })]).finally(() => clearTimeout(timer));
-          status = res.status;
           const parsed: unknown = await res.json().catch(() => null);
           body = (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}) as VerifyResponse;
         } catch (err) {
           return servedOnGateFailure(d, "settlement", `verify unreachable: ${err instanceof Error ? err.message : String(err)}`, !(err instanceof VerifyTimeout));
         }
-        // No verdict: a 5xx, or a 2xx that does not say `ok`. Served, whether or not the payment
-        // moved, because a second charge for this read is the outcome a buyer cannot undo. A 4xx is
-        // the settling side's answer and is refused below.
-        if (status >= 500 || (status >= 200 && status < 300 && body.ok !== true)) {
-          // The gate already recorded a read its payment rail could not take; do not count it twice.
-          const railDown = status === 503 && body.error === "payment_rail_unavailable";
-          return servedOnGateFailure(d, "settlement", `verify answered HTTP ${status} with no verdict`, !railDown);
-        }
 
-        if (status >= 200 && status < 300 && body.ok === true) {
-          const setHeaders: Record<string, string> = {};
-          if (body.responseHeader) setHeaders[PAYMENT_RESPONSE_HEADER] = body.responseHeader;
-          if (body.licenseJws) setHeaders[LICENSE_HEADER] = body.licenseJws;
-          // `crawler-charged` is a claim that money moved, so it is emitted only from the
-          // settling side's own figure and only after it said `ok`. A control plane that
-          // does not report one gets no header rather than the ask — overstating what left
-          // a buyer's wallet is the one failure this header cannot have.
-          const charged = chargedMicroOf(body.chargedMicro);
-          if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
-          return { response: null, setHeaders };
+        // The gate's verdict, never the HTTP status (docs/protocol/in-app.md). No verdict serves the
+        // read, whether or not the payment moved, because a second charge for this read is the
+        // outcome a buyer cannot undo.
+        switch (gateVerdictOf(body)) {
+          case "paid": {
+            const setHeaders: Record<string, string> = {};
+            if (body.responseHeader) setHeaders[PAYMENT_RESPONSE_HEADER] = body.responseHeader;
+            if (body.licenseJws) setHeaders[LICENSE_HEADER] = body.licenseJws;
+            // `crawler-charged` is a claim that money moved, so it is emitted only from the
+            // settling side's own figure. A control plane that does not report one gets no
+            // header rather than the ask: overstating what left a buyer's wallet is the one
+            // failure this header cannot have.
+            const charged = chargedMicroOf(body.chargedMicro);
+            if (charged !== null) setHeaders[CRAWLER_CHARGED_HEADER] = formatCrawlerPrice(charged);
+            return { response: null, setHeaders };
+          }
+          case "refused":
+            break;
+          // A charge for this read is already running: retry, never a second offer.
+          case "pending":
+            return { response: retryLater("settlement pending") };
+          // The gate could not decide and has already recorded the read; do not count it twice.
+          case "unavailable":
+            return servedOnGateFailure(d, "settlement", "verify answered unavailable", false);
+          case null:
+            return servedOnGateFailure(d, "settlement", "verify gave no verdict");
         }
-        // Off the wire unchecked: anything but a string is treated as no reason at all.
         const reason = typeof body.error === "string" && body.error ? body.error : "payment rejected";
         return { response: refusal(d, { failure: { reason: classifyPaymentFailure(reason), detail: reason } }) };
       }

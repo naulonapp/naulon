@@ -162,6 +162,28 @@ class Naulon_Client {
 	}
 
 	/**
+	 * The verdicts `/verify` and `/license/check` answer with. Mirrors `GATE_VERDICTS` in
+	 * `@naulon/shared`; `GateVerdictTest` holds it to `test-fixtures/vocabulary.json`.
+	 */
+	const VERDICTS = array( 'paid', 'refused', 'pending', 'unavailable' );
+
+	/**
+	 * The gate's verdict on a response, or null when it gave none. Read from the body, never from
+	 * the HTTP status: the status only says how the answer travelled. No answer, a body that is not
+	 * a JSON object, or one without a known `verdict` is no verdict, and the caller serves the page.
+	 *
+	 * @param array $response A response from request(): {ok, status, body, error}.
+	 * @return string|null
+	 */
+	public static function verdict_of( array $response ) {
+		$body = isset( $response['body'] ) ? $response['body'] : null;
+		if ( ! is_array( $body ) || ! isset( $body['verdict'] ) || ! is_string( $body['verdict'] ) ) {
+			return null;
+		}
+		return in_array( $body['verdict'], self::VERDICTS, true ) ? $body['verdict'] : null;
+	}
+
+	/**
 	 * Settle a presented payment. The control plane verifies the buyer's signature, moves the
 	 * money buyer→author (custody-free — nothing is ever held here or there), and mints the
 	 * re-read license.

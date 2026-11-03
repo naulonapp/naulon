@@ -146,6 +146,7 @@ class FileTollTest extends WP_UnitTestCase {
 		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'signed-payment';
 		$this->settle                      = array(
 			'ok'             => true,
+			'verdict'        => 'paid',
 			'settlementRef'  => 'ref-1',
 			'payer'          => '0x3333333333333333333333333333333333333333',
 			'responseHeader' => 'receipt-bytes',
