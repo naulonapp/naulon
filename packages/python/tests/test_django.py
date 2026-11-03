@@ -155,6 +155,11 @@ def test_settings_and_trusted_proxy_header_are_read(monkeypatch: pytest.MonkeyPa
     n, hook, proxy = adapter._setup()
     assert n is not None and n.settings.gate == "http://gate" and hook is adapter.default_tollable
     assert proxy == "HTTP_X_REAL_IP"
-    req = rf.get("/x/", HTTP_HOST="blog.test", HTTP_X_REAL_IP="198.51.100.7, 10.0.0.1", REMOTE_ADDR="10.0.0.2")
+    req = rf.get("/x/", HTTP_HOST="blog.test", HTTP_X_REAL_IP="198.51.100.7", REMOTE_ADDR="10.0.0.2")
     assert adapter.facts_of(req, proxy).client_ip == "198.51.100.7"
     assert adapter.facts_of(req, None).client_ip == "10.0.0.2"
+
+
+@pytest.mark.parametrize("header", ["X-Forwarded-For", "x-forwarded-for", "HTTP_X_FORWARDED_FOR", "Forwarded"])
+def test_a_header_the_caller_can_append_to_is_never_trusted(header: str) -> None:
+    assert adapter._meta_key(header) is None

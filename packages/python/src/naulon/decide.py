@@ -77,7 +77,12 @@ class Toll:
     crawler_budget: Mapping[str, str] = field(default_factory=dict)
 
 
-Action = Pass | Refuse | Toll
+@dataclass(frozen=True)
+class Recheck:
+    """A signed request whose signer's key directory is not cached: decide again after the view."""
+
+
+Action = Pass | Refuse | Toll | Recheck
 
 
 def _armed(config: Mapping[str, Any]) -> frozenset[str]:
@@ -114,6 +119,8 @@ def decide(
     signature = None
     if check_signature is not None and all(facts.header(h) for h in SIGNATURE_HEADERS):
         signature = check_signature()
+        if signature.deferred:
+            return Recheck()
     verified = signature.agent if signature is not None and signature.status == "verified" else None
 
     ua = facts.header("user-agent")

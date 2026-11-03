@@ -75,3 +75,54 @@ def test_the_directory_cache_fetches_once_per_ttl() -> None:
     for _ in range(5):
         assert botauth.verify(req, fetch, cache, verified["now"] / 1000).status == "verified"
     assert calls == ["https://signer.example/.well-known/http-message-signatures-directory"]
+
+
+@pytest.mark.parametrize(
+    "agent",
+    ["https://user:pw@signer.example", "https://signer.example:8443", "https://10.0.0.1", "https://[::1]",
+     "https://0x7f000001", "https://2130706433", "https://metadata", "https://signer.123", "http://signer.example",
+     "https://localhost", "https://a.localhost"],
+)  # fmt: skip
+def test_a_directory_host_the_caller_could_aim_inward_is_refused(agent: str) -> None:
+    assert botauth._directory_url(agent) is None
+
+
+def test_a_strict_dns_name_on_443_is_allowed() -> None:
+    assert botauth._directory_url("https://crawler.exa.ai") == (
+        "https://crawler.exa.ai/.well-known/http-message-signatures-directory",
+        "crawler.exa.ai",
+    )
+    assert botauth._directory_url("https://chatgpt.com:443") is not None
+
+
+def test_the_pinned_fetch_refuses_a_name_that_resolves_inward(monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+
+    for addr in ("127.0.0.1", "10.66.0.2", "169.254.169.254", "192.168.1.1", "::1", "fd00::1"):
+        family = socket.AF_INET6 if ":" in addr else socket.AF_INET
+        monkeypatch.setattr(socket, "getaddrinfo", lambda *a, _f=family, _a=addr, **k: [(_f, 1, 6, "", (_a, 443))])
+        connected: list[object] = []
+        monkeypatch.setattr(socket, "create_connection", lambda *a, _c=connected, **k: _c.append(a) or None)
+        assert botauth.pinned_fetch("https://evil.example/.well-known/http-message-signatures-directory") is None
+        assert connected == [], addr
+
+
+def test_rotation_refetches_at_most_once_a_minute() -> None:
+    verified = next(c for c in DOC["cases"] if c["expect"]["status"] == "verified")
+    other = next(c for c in DOC["cases"] if c["name"] == "a keyid the directory does not list fails")
+    r, d = other["request"], verified["directory"]
+    req = botauth.SignedRequest(r["authority"], r["method"], r["path"], r["targetUri"], r["headers"])
+    now = [0.0]
+    calls: list[str] = []
+
+    def fetch(url: str) -> Response:
+        calls.append(url)
+        return Response(d["status"], {k.lower(): v for k, v in d["headers"].items()}, d["body"].encode())
+
+    cache = botauth.DirectoryCache(clock=lambda: now[0])
+    for _ in range(20):
+        assert botauth.verify(req, fetch, cache, other["now"] / 1000).status == "invalid"
+    assert len(calls) == 1
+    now[0] = 61
+    botauth.verify(req, fetch, cache, other["now"] / 1000)
+    assert len(calls) == 2

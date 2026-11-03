@@ -21,7 +21,7 @@ from naulon import botauth
 from naulon._log import warn_once
 from naulon.client import FREE, Answer, Built, GateClient
 from naulon.config import ConfigCache
-from naulon.decide import Pass, Refuse, Toll, Who, decide
+from naulon.decide import Pass, Recheck, Refuse, Toll, Who, decide
 from naulon.facts import RequestFacts
 from naulon.observe import ObservationQueue
 from naulon.settings import Settings
@@ -46,7 +46,7 @@ class Respond:
 class Continue:
     """Run the view. `pending` is what `finish` still has to do once the view has answered."""
 
-    pending: Pass | Toll | None = None
+    pending: Pass | Toll | Recheck | None = None
 
 
 Decision = Continue | Respond
@@ -101,6 +101,7 @@ class Naulon:
         transport: Transport | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
+        directory_fetch: Callable[[str], Response | None] = botauth.pinned_fetch,
     ) -> None:
         self.settings = settings
         self._wall = wall
@@ -109,10 +110,12 @@ class Naulon:
         self.config = ConfigCache(settings, t, breaker, clock=clock)
         self.client = GateClient(settings, t, breaker, clock=clock)
         self.observations = ObservationQueue(self.client.observe, clock=clock)
-        self._transport = t
+        self._directory_fetch = directory_fetch
         self._directories = botauth.DirectoryCache(clock=clock)
 
-    def _check_signature(self, facts: RequestFacts) -> botauth.Outcome:
+    def _check_signature(self, facts: RequestFacts, may_fetch: bool) -> botauth.Outcome:
+        """The request's Web Bot Auth result. Before the view (`may_fetch` False) it answers from the
+        directory cache only, so no request thread or event loop waits on a signer's server."""
         req = botauth.SignedRequest(
             authority=facts.host,
             method=facts.method,
@@ -120,13 +123,7 @@ class Naulon:
             target_uri=facts.url + (f"?{facts.query}" if facts.query else ""),
             headers=facts.headers,
         )
-
-        def fetch(url: str) -> Response | None:
-            return self._transport.request(
-                "GET", url, headers={"accept": botauth.DIRECTORY_CONTENT_TYPE}, body=None, timeout=3.0
-            )
-
-        return botauth.verify(req, fetch, self._directories, self._wall())
+        return botauth.verify(req, self._directory_fetch if may_fetch else None, self._directories, self._wall())
 
     # ── phase 1 ──────────────────────────────────────────────────────────────────────────────────
 
@@ -135,7 +132,12 @@ class Naulon:
             return Continue()
         try:
             doc = self.config.get(facts.host, facts.scheme)
-            action = decide(facts, doc, self.config.ranges(), self._wall(), lambda: self._check_signature(facts))
+            action = decide(
+                facts, doc, self.config.ranges(), self._wall(), lambda: self._check_signature(facts, may_fetch=False)
+            )
+            if isinstance(action, Recheck):
+                # A signer whose key directory is not cached yet: decided after the view, off the loop.
+                return Continue(action)
             if isinstance(action, Refuse):
                 self._report(facts, action.slug, "blocked", "read", action.who)
                 return Respond(403, [("Content-Type", "text/plain; charset=utf-8"), *NO_STORE], action.reason.encode())
@@ -157,6 +159,19 @@ class Naulon:
             return KEEP
         try:
             pending = decision.pending
+            if isinstance(pending, Recheck):
+                doc = self.config.get(facts.host, facts.scheme)
+                again = decide(
+                    facts, doc, self.config.ranges(), self._wall(), lambda: self._check_signature(facts, may_fetch=True)
+                )
+                if isinstance(again, Refuse):
+                    self._report(facts, again.slug, "blocked", "read", again.who)
+                    return Replace(
+                        Respond(403, [("Content-Type", "text/plain; charset=utf-8"), *NO_STORE], again.reason.encode())
+                    )
+                if isinstance(again, Recheck) or (isinstance(again, Pass) and not again.report):
+                    return KEEP
+                pending = again
             if isinstance(pending, Pass):
                 self._report(facts, pending.slug, "served-free", pending.kind, pending.who, freeReason=pending.free)
                 return KEEP

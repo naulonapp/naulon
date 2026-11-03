@@ -24,7 +24,12 @@ def setup(c: dict[str, Any]) -> tuple[Naulon, Any, RequestFacts]:
         {"/.well-known/http-message-signatures-directory": Response(d["status"], d["headers"], d["body"].encode())}
     )
     t.routes["/_naulon/enforce-config"] = json_response(200, config_doc())
-    n = Naulon(Settings(gate="http://gate", key="k"), transport=t, wall=lambda: c["now"] / 1000)
+    n = Naulon(
+        Settings(gate="http://gate", key="k"),
+        transport=t,
+        wall=lambda: c["now"] / 1000,
+        directory_fetch=lambda url: t.request("GET", url, headers={}, body=None, timeout=3),
+    )
     n.observations._ensure_worker = lambda: None  # type: ignore[method-assign]
     n.config.refresh_now("gate.example")
     n.config._refresh_ranges()
@@ -63,3 +68,25 @@ def test_an_unsigned_request_never_fetches_a_directory() -> None:
     assert not any("http-message-signatures-directory" in u for _, u, _ in t.calls)
     agent = list(n.observations._items)[0]["agent"]
     assert "verified" not in agent and "sigInvalid" not in agent, "no verdict on a signature that was never presented"
+
+
+def test_the_first_signed_request_never_fetches_before_the_view() -> None:
+    from naulon.core import Continue
+    from naulon.decide import Recheck
+
+    n, t, f = setup(case("a signed request verifies"))
+    d = n.handle(f)
+    assert isinstance(d, Continue) and isinstance(d.pending, Recheck)
+    assert t.calls == [], "no directory fetch on the request thread or the event loop"
+    n.finish(f, d, 200, True)
+    assert any("http-message-signatures-directory" in u for _, u, _ in t.calls)
+    t.calls.clear()
+    d2 = n.handle(f)
+    assert not isinstance(d2.pending, Recheck), "a cached directory decides before the view"  # type: ignore[union-attr]
+    assert t.calls == []
+
+
+def test_a_deferred_check_on_a_404_does_nothing() -> None:
+    n, t, f = setup(case("a signed request verifies"))
+    assert n.finish(f, n.handle(f), 404, False) == n.finish(f, n.handle(f), 404, False)
+    assert t.calls == []

@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import re
+import socket
+import ssl
 import threading
 import time
 import urllib.parse
@@ -32,6 +35,10 @@ NEG_TTL_S = 10 * 60
 CACHE_CAP = 256
 SKEW_S = 10
 MAX_VALIDITY_S = 86_400
+# A directory is refetched for an unknown keyid (a rotation) at most this often.
+ROTATION_REFETCH_S = 60
+DIRECTORY_TIMEOUT_S = 3.0
+_DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 
 Status = Literal["absent", "verified", "invalid", "unverified"]
 _KEY_START = re.compile(r"[a-z*]")
@@ -74,6 +81,8 @@ class Outcome:
     keyid: str | None = None
     covers: tuple[str, ...] = field(default_factory=tuple)
     reason: str = ""
+    # Needs a directory that is not cached: run again with a fetch, off the request thread.
+    deferred: bool = False
 
 
 class _Cursor:
@@ -366,17 +375,71 @@ def available() -> bool:
     return True
 
 
+def _dns_name(host: str) -> bool:
+    """A strict DNS name: dotted labels, and a top-level label with a letter (never an address)."""
+    labels = host.split(".")
+    return (
+        len(host) <= 253
+        and len(labels) >= 2
+        and all(_DNS_LABEL.match(label) for label in labels)
+        and any(ch.isalpha() for ch in labels[-1])
+    )
+
+
 def _directory_url(agent_url: str) -> tuple[str, str] | None:
     """The directory URL and the agent host, or None when refused. The agent URL is the caller's:
-    HTTPS only, no IP literals, no loopback."""
+    HTTPS on the default port, a strict DNS name, no userinfo, no loopback, no address literal."""
     try:
         u = urllib.parse.urlsplit(agent_url)
+        port = u.port
     except ValueError:
         return None
-    host = (u.hostname or "").lower()
-    if u.scheme != "https" or host in ("localhost",) or host.endswith(".localhost") or ip.parse(host) is not None:
+    host = (u.hostname or "").lower().rstrip(".")
+    if u.scheme != "https" or u.username is not None or u.password is not None or port not in (None, 443):
         return None
-    return f"https://{u.netloc}{WELL_KNOWN_PATH}", host
+    if host == "localhost" or host.endswith(".localhost") or ip.parse(host) is not None or not _dns_name(host):
+        return None
+    return f"https://{host}{WELL_KNOWN_PATH}", host
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    """HTTPS to one checked address, with the certificate verified for the host name."""
+
+    def __init__(self, host: str, address: str, timeout: float) -> None:
+        super().__init__(host, 443, timeout=timeout, context=ssl.create_default_context())
+        self._address = address
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self._address, 443), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)  # type: ignore[attr-defined]
+
+
+def pinned_fetch(url: str, timeout: float = DIRECTORY_TIMEOUT_S) -> Response | None:
+    """GET a key directory without following redirects, refusing any host that resolves to a
+    private, loopback, link-local, metadata or otherwise reserved address. The connection goes to
+    the address that was checked, so a second DNS answer cannot swap it. None on any failure."""
+    try:
+        u = urllib.parse.urlsplit(url)
+        host = u.hostname or ""
+        addresses = [str(info[4][0]) for info in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)]
+        if not addresses:
+            return None
+        for a in addresses:
+            parsed = ip.parse(a)
+            if parsed is None or not ip.usable(parsed, []):
+                return None
+        conn = _PinnedHTTPS(host, addresses[0], timeout)
+        try:
+            conn.request(
+                "GET", u.path or "/", headers={"Accept": DIRECTORY_CONTENT_TYPE, "User-Agent": "naulon-python"}
+            )
+            res = conn.getresponse()
+            body = res.read(DIRECTORY_MAX_BYTES + 1)
+            return Response(res.status, {k.lower(): v for k, v in res.getheaders()}, body)
+        finally:
+            conn.close()
+    except Exception:
+        return None
 
 
 def _directory_signature_ok(res: Response, url: str, keys: Mapping[str, str]) -> bool:
@@ -425,6 +488,12 @@ def parse_directory(res: Response | None, url: str) -> dict[str, str] | None:
 class DirectoryCache:
     """LRU + TTL cache of key directories. A None entry is negative and expires sooner."""
 
+    def age(self, url: str) -> float | None:
+        """Seconds since `url` was last fetched, or None when it never was (or was evicted)."""
+        with self._lock:
+            hit = self._entries.get(url)
+            return None if hit is None else self._clock() - hit[1]
+
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._entries: OrderedDict[str, tuple[dict[str, str] | None, float]] = OrderedDict()
@@ -451,8 +520,13 @@ class DirectoryCache:
                 self._entries.popitem(last=False)
 
 
-def verify(req: SignedRequest, fetch: Callable[[str], Response | None], cache: DirectoryCache, now: float) -> Outcome:
-    """Verify a request's Web Bot Auth signature. `now` is epoch seconds. Never raises."""
+def verify(
+    req: SignedRequest, fetch: Callable[[str], Response | None] | None, cache: DirectoryCache, now: float
+) -> Outcome:
+    """Verify a request's Web Bot Auth signature. `now` is epoch seconds. Never raises.
+
+    With `fetch` None the check answers from the cache alone, and a directory it has not cached yet
+    comes back `deferred`: the caller runs it again, with a fetch, off its request thread."""
     try:
         return _verify(req, fetch, cache, now)
     except Exception as err:
@@ -460,7 +534,9 @@ def verify(req: SignedRequest, fetch: Callable[[str], Response | None], cache: D
         return Outcome("unverified", reason="verifier error")
 
 
-def _verify(req: SignedRequest, fetch: Callable[[str], Response | None], cache: DirectoryCache, now: float) -> Outcome:
+def _verify(
+    req: SignedRequest, fetch: Callable[[str], Response | None] | None, cache: DirectoryCache, now: float
+) -> Outcome:
     h = req.headers
     sig_input, sig_raw, agent_raw = h.get("signature-input"), h.get("signature"), h.get("signature-agent")
     if sig_input is None or sig_raw is None or agent_raw is None:
@@ -507,13 +583,24 @@ def _verify(req: SignedRequest, fetch: Callable[[str], Response | None], cache: 
         return Outcome("unverified", reason="the botauth extra is not installed")
 
     cached = cache.get(dir_url)
-    was_cached = cached is not False
-    keys = cached if cached is not False else _load(dir_url, fetch, cache)
+    if cached is False:
+        if fetch is None:
+            return Outcome("unverified", reason="key directory not cached yet", deferred=True)
+        cached = _load(dir_url, fetch, cache)
+        was_cached = False
+    else:
+        was_cached = True
+    keys = cached
     if keys is None:
         return Outcome("unverified", reason="key directory unavailable")
     x = keys.get(keyid)
-    if x is None and was_cached:
-        keys = _load(dir_url, fetch, cache)  # rotation grace: refetch once
+    age = cache.age(dir_url)
+    if x is None and was_cached and age is not None and age >= ROTATION_REFETCH_S:
+        # Rotation grace: the cached directory may predate a new key. Refetched at most once a
+        # minute per directory, so an unknown keyid cannot make every request a fetch.
+        if fetch is None:
+            return Outcome("unverified", reason="key directory may have rotated", deferred=True)
+        keys = _load(dir_url, fetch, cache)
         if keys is None:
             return Outcome("unverified", reason="key directory unavailable")
         x = keys.get(keyid)

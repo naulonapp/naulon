@@ -79,12 +79,24 @@ def reset() -> None:
         _state.clear()
 
 
-def _meta_key(header: str) -> str:
+# A list the caller can prepend to: its first entry is whatever the caller sent, so trusting it would
+# let a forger mark its own crawler claim verified. Same refusal as the WordPress plugin and the TS SDK.
+_APPENDABLE = frozenset({"HTTP_X_FORWARDED_FOR", "HTTP_FORWARDED"})
+
+
+def _meta_key(header: str) -> str | None:
     h = header.upper().replace("-", "_")
-    return h if h.startswith("HTTP_") or h == "REMOTE_ADDR" else f"HTTP_{h}"
+    key = h if h.startswith("HTTP_") or h == "REMOTE_ADDR" else f"HTTP_{h}"
+    if key in _APPENDABLE:
+        warn_once(
+            "django.proxy", "naulon: TRUST_PROXY_HEADERS cannot be %s, which the caller can write; ignored", header
+        )
+        return None
+    return key
 
 
 def _client_ip(request: HttpRequest, proxy: str | None) -> str | None:
+    """The caller's address: `REMOTE_ADDR`, or the single-value header a trusted proxy writes."""
     raw = request.META.get(proxy) if proxy else request.META.get("REMOTE_ADDR")
     if not isinstance(raw, str):
         return None
