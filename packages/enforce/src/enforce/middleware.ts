@@ -261,8 +261,15 @@ export function resolvePublisher(
   return { ...(hasLocal ? (local as object) : {}), ...remote };
 }
 
-/** How long the hosted /verify may take. It settles on chain, so it gets longer than a lookup. */
-const VERIFY_TIMEOUT_MS = 15_000;
+/**
+ * How long the hosted /verify may take. It verifies every leg (up to 8 s each) and then settles on
+ * chain, so it gets far longer than a lookup: this is a guard against a hung connection, not a
+ * judgement on a slow settle. A read served on this timeout is not reported, because the gate may
+ * still settle and record it.
+ */
+const VERIFY_TIMEOUT_MS = 60_000;
+
+class VerifyTimeout extends Error {}
 
 /** Same scheme, host and port. A URL that does not parse is never the same origin. */
 function sameOrigin(a: string, b: string): boolean {
@@ -811,13 +818,13 @@ export function naulonMiddleware(
               agent: agentOf(d.obs),
             }),
           }), new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`no answer within ${VERIFY_TIMEOUT_MS} ms`)), VERIFY_TIMEOUT_MS);
+            timer = setTimeout(() => reject(new VerifyTimeout(`no answer within ${VERIFY_TIMEOUT_MS} ms`)), VERIFY_TIMEOUT_MS);
           })]).finally(() => clearTimeout(timer));
           status = res.status;
           const parsed: unknown = await res.json().catch(() => null);
           body = (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}) as VerifyResponse;
         } catch (err) {
-          return servedOnGateFailure(d, "settlement", `verify unreachable: ${err instanceof Error ? err.message : String(err)}`);
+          return servedOnGateFailure(d, "settlement", `verify unreachable: ${err instanceof Error ? err.message : String(err)}`, !(err instanceof VerifyTimeout));
         }
         // No verdict: a 5xx, or a 2xx that does not say `ok`. Served, whether or not the payment
         // moved, because a second charge for this read is the outcome a buyer cannot undo. A 4xx is
@@ -828,7 +835,7 @@ export function naulonMiddleware(
           return servedOnGateFailure(d, "settlement", `verify answered HTTP ${status} with no verdict`, !railDown);
         }
 
-        if (status === 200 && body.ok) {
+        if (status >= 200 && status < 300 && body.ok === true) {
           const setHeaders: Record<string, string> = {};
           if (body.responseHeader) setHeaders[PAYMENT_RESPONSE_HEADER] = body.responseHeader;
           if (body.licenseJws) setHeaders[LICENSE_HEADER] = body.licenseJws;

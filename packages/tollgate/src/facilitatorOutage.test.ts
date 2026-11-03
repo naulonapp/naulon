@@ -59,7 +59,6 @@ test("a facilitator that cannot be asked marks the refusal unavailable", async (
     { status: 503, body: "<html>Service Unavailable</html>", type: "text/html" },
     { status: 502, body: JSON.stringify({ error: "bad gateway" }) },
     { status: 504, body: JSON.stringify({ error: "timeout" }) },
-    { status: 200, body: "not json", type: "text/plain" },
   ] as Reply[]) {
     const out = await verifyWith(r);
     assert.equal(out.ok, false, JSON.stringify(r));
@@ -72,6 +71,12 @@ test("a facilitator that answers about the payment is a refusal, never unavailab
   for (const r of [
     { status: 400, body: JSON.stringify({ error: "invalid payload" }) },
     { status: 500, body: JSON.stringify({ error: "internal" }) },
+    // A reply that is not JSON while the rail itself is healthy: a block page or a size limit the
+    // payload provoked. The health probe answers 2xx/4xx, so it stays a refusal.
+    { status: 200, body: "not json", type: "text/plain" },
+    { status: 403, body: "<html>blocked</html>", type: "text/html" },
+    { status: 413, body: "<html>too large</html>", type: "text/html" },
+    { status: 400, body: JSON.stringify({ error: "Circle Gateway verify failed (503): planted" }) },
     { status: 200, body: JSON.stringify({ isValid: false, invalidReason: "invalid_signature" }) },
   ] as Reply[]) {
     const out = await verifyWith(r);
@@ -86,4 +91,7 @@ test("the classifier reads causes, not wording a payload could steer", () => {
   assert.equal(x402.facilitatorUnavailable(new Error(`Circle Gateway verify failed (400): {"error":"x"}`)), false);
   assert.equal(x402.facilitatorUnavailable(new Error(`Circle Gateway verify failed (503): {}`)), true);
   assert.equal(x402.facilitatorUnavailable("a string"), false);
+  // The body after the status is Circle echoing input; a planted status in it is not an outage.
+  assert.equal(x402.facilitatorUnavailable(new Error(`Circle Gateway verify failed (400): {"echo":"(503)"}`)), false);
+  assert.equal(x402.facilitatorUnavailable(new Error(`something (503) else`)), false);
 });

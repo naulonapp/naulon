@@ -1259,12 +1259,25 @@ test("a /verify that hangs is served, not held open", async () => {
   // The 15 s wait collapsed to zero: the race, not the clock, is what is under test.
   globalThis.setTimeout = ((fn: () => void) => realSetTimeout(fn, 0)) as typeof setTimeout;
   try {
-    const mw = naulonMiddleware({ ...opts, fetchImpl: (() => new Promise(() => {})) as unknown as typeof fetch });
+    const seen: Array<Record<string, unknown>> = [];
+    const mw = naulonMiddleware({ ...opts, fetchImpl: (() => new Promise(() => {})) as unknown as typeof fetch, observe: (r) => void seen.push(r as never) });
     const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }));
     assert.equal(out.response, null);
     assert.match(out.setHeaders?.["X-Naulon-Verdict"] ?? "", /served free \(settlement unavailable\)/);
+    // The gate may still settle and record it, so this runtime does not count it.
+    assert.equal(seen.filter((r) => r.verdict === "served-free").length, 0);
   } finally {
     globalThis.setTimeout = realSetTimeout;
     console.error = realError;
   }
+});
+
+test("a /verify that says ok:true on any 2xx is a paid read, never re-billed", async () => {
+  const mw = naulonMiddleware({
+    ...opts,
+    fetchImpl: (async () => new Response(JSON.stringify({ ok: true, responseHeader: "rh", licenseJws: "jws" }), { status: 201 })) as unknown as typeof fetch,
+  });
+  const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }));
+  assert.equal(out.response, null);
+  assert.equal(out.setHeaders?.["X-Naulon-License"], "jws");
 });
