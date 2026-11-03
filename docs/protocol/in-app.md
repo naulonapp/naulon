@@ -44,8 +44,8 @@ from either.
 
 ## Reading the gate's answer
 
-`/verify` and `/license/check` put the outcome in one field, `verdict`. Switch on it and never on
-the HTTP status, which only says how the answer travelled.
+`/verify` and `/license/check` put the outcome in one field, `verdict`. Act on it whatever the
+HTTP status says.
 
 | `verdict` | What your runtime does |
 |---|---|
@@ -53,12 +53,17 @@ the HTTP status, which only says how the answer travelled.
 | `refused` | Not paid. Answer the agent with the 402 again |
 | `pending` | A charge for this read is already running. Answer `503` with `Retry-After: 2` and no offer |
 | `unavailable` | The gate could not decide. Serve the page; the gate has already recorded the read |
-| missing | No verdict: no answer, a body that is not a JSON object, an unknown value, or a refusal of your key. Serve the page |
 
-A refusal of your key or of the resource's host (`401`, or `403` "resource not owned by this key")
-carries no verdict on purpose: it is about your setup, not the payment. A gate older than protocol
-1.1 sends no `verdict` at all, so every answer from it is no verdict and every paid read is served.
-Run a 1.1 gate before a runtime that reads the field.
+An answer without a known `verdict` is read by its status:
+
+- a **4xx** is `refused`. The agent writes the payment header, so its size or bytes can trip a body
+  limit, a firewall or a rate limiter in front of the gate. Serving on that would make the header a
+  free pass. A refusal of your key is a 4xx too.
+- **no answer, a 5xx, or a success** is no verdict: serve the page. No request can choose those.
+
+[verdict-cases.json](https://github.com/naulonapp/naulon/blob/main/packages/shared/test-fixtures/verdict-cases.json)
+lists both rules case by case. A gate older than protocol 1.1 sends no `verdict`, so its paid reads
+are served without a receipt. Run a 1.1 gate before a runtime that reads the field.
 
 ## Rules your runtime must keep
 
@@ -70,7 +75,8 @@ These are what stop an integration from ever breaking the site it runs on.
 3. **Network calls happen only on the agent path,** with a short timeout (2 seconds is what the
    WordPress plugin uses) and a circuit breaker.
 4. **Any gate failure serves the page free.** Config, quote, verify, licence or observe: a
-   timeout, a refused connection or an answer with no verdict means the reader gets the page.
+   timeout, a refused connection, a 5xx or garbage means the reader gets the page. A 4xx is an
+   answer, not a failure.
 5. **Never invite a second payment for one read.** On `pending`, or when a licence server answers
    `in_flight` or `server_error` for a licence an agent presented, answer `503` with `Retry-After`
    and no x402 offer.

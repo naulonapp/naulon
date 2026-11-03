@@ -1156,11 +1156,8 @@ test("a /verify that gives no verdict serves the read, whatever its status says"
     () => new Response("<html>bad gateway</html>", { status: 502 }),
     () => new Response("not json", { status: 200 }),
     () => new Response(JSON.stringify({ ok: false }), { status: 200 }),
-    // A gate older than the verdict field: its answers carry none, so they are no verdict.
+    // A success from a gate older than the verdict field carries none: served, never billed twice.
     () => new Response(JSON.stringify({ ok: true, responseHeader: "rh" }), { status: 200 }),
-    () => new Response(JSON.stringify({ ok: false, error: "bad sig" }), { status: 402 }),
-    // A refusal of the runtime's key is about the setup, not the payment.
-    () => new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401 }),
     () => new Response(JSON.stringify({ ok: true, verdict: "PAID" }), { status: 200 }),
     () => new Response(JSON.stringify([{ verdict: "paid" }]), { status: 200 }),
   ];
@@ -1279,6 +1276,20 @@ test("a /verify that hangs is served, not held open", async () => {
   } finally {
     globalThis.setTimeout = realSetTimeout;
     console.error = realError;
+  }
+});
+
+test("a 4xx without a verdict is refused: a buyer can provoke one in front of the gate", async () => {
+  for (const reply of [
+    () => new Response(JSON.stringify({ ok: false, error: "bad sig" }), { status: 402 }),
+    () => new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401 }),
+    () => new Response("<html>blocked by WAF</html>", { status: 403 }),
+    () => new Response("payload too large", { status: 413 }),
+    () => new Response(JSON.stringify({ error: "slow down" }), { status: 429 }),
+  ]) {
+    const mw = naulonMiddleware({ ...opts, fetchImpl: (async () => reply()) as unknown as typeof fetch });
+    const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }));
+    assert.equal(out.response?.status, 402, "the bill again, never a free read");
   }
 });
 

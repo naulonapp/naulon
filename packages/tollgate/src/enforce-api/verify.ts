@@ -87,9 +87,9 @@ const verifyRoute = createRoute({
   responses: {
     200: { description: "Settled: serve the resource.", content: { "application/json": { schema: VerifyOk } } },
     400: { description: "Malformed body, quote or legs.", content: { "application/json": { schema: VerifyError } } },
-    401: { description: "Missing or invalid key. Carries no verdict: serve the page.", content: { "application/json": { schema: VerifyError } } },
+    401: { description: "Missing or invalid key. No verdict; a runtime reads a 4xx without one as refused.", content: { "application/json": { schema: VerifyError } } },
     402: { description: "Not settled, or the site is observing (`verdict: refused`).", content: { "application/json": { schema: VerifyError } } },
-    403: { description: "Suspended (`verdict: refused`), or the resource is not this key's (no verdict: serve the page).", content: { "application/json": { schema: VerifyError } } },
+    403: { description: "Suspended (`verdict: refused`), or the resource is not this key's (no verdict, read as refused).", content: { "application/json": { schema: VerifyError } } },
     503: {
       description: "The payment rail could not be asked (`payment_rail_unavailable`, `verdict: unavailable`). Nothing was broadcast: serve the page.",
       content: { "application/json": { schema: VerifyError } },
@@ -97,8 +97,8 @@ const verifyRoute = createRoute({
   },
 });
 
-/** A refusal of the key or the host. It is about the runtime's setup, not the payment, so it carries
- *  no verdict and the runtime serves the page; the hosted plane's own auth answers the same way. */
+/** A refusal of the key or the host. It carries no verdict, because the hosted plane's own auth answers
+ *  with a body of its own; a runtime reads any 4xx without one as refused (`gateAnswer`). */
 const notAuthorized = (error: string): { ok: false; error: string } => ({ ok: false, error });
 
 /** Every answer about the payment carries its verdict (docs/protocol/in-app.md). */

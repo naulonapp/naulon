@@ -728,7 +728,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid key. Carries no verdict: serve the page.",
+            "description": "Missing or invalid key. No verdict; a runtime reads a 4xx without one as refused.",
             "content": {
               "application/json": {
                 "schema": {
@@ -748,7 +748,7 @@
             }
           },
           "403": {
-            "description": "Suspended (`verdict: refused`), or the resource is not this key's (no verdict: serve the page).",
+            "description": "Suspended (`verdict: refused`), or the resource is not this key's (no verdict, read as refused).",
             "content": {
               "application/json": {
                 "schema": {
@@ -813,7 +813,7 @@
             }
           },
           "401": {
-            "description": "Missing or invalid key. Carries no verdict: serve the page.",
+            "description": "Missing or invalid key. No verdict; a runtime reads a 4xx without one as refused.",
             "content": {
               "application/json": {
                 "schema": {
@@ -823,7 +823,7 @@
             }
           },
           "403": {
-            "description": "Resource not owned by this key. Carries no verdict: serve the page.",
+            "description": "Resource not owned by this key. No verdict; read as refused.",
             "content": {
               "application/json": {
                 "schema": {

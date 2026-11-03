@@ -1,8 +1,8 @@
 <?php
 /**
- * The gate's verdict vocabulary and how to read it, from
+ * The gate's verdict vocabulary and how to read an answer, from
  * packages/shared/test-fixtures/verdict-cases.json, which the gate generates from its own
- * GATE_VERDICTS, FREE_REASONS and gateVerdictOf(). A runtime that reads a verdict differently from
+ * GATE_VERDICTS, FREE_REASONS and gateAnswer(). A runtime that reads a verdict differently from
  * the gate is how one payment ends up served by one runtime and billed again by another.
  *
  * @package naulon
@@ -29,7 +29,7 @@ class VerdictFixturesTest extends TestCase {
 	public function cases() {
 		$out = array();
 		foreach ( self::doc()['cases'] as $c ) {
-			$out[ $c['name'] ] = array( $c['body'], $c['verdict'] );
+			$out[ $c['name'] ] = array( $c['status'], $c['body'], $c['verdict'] );
 		}
 		return $out;
 	}
@@ -37,8 +37,8 @@ class VerdictFixturesTest extends TestCase {
 	/**
 	 * @dataProvider cases
 	 */
-	public function test_case( $body, $verdict ) {
-		$this->assertSame( $verdict, Naulon_Client::verdict_of( array( 'ok' => true, 'status' => 200, 'body' => $body ) ) );
+	public function test_case( $status, $body, $verdict ) {
+		$this->assertSame( $verdict, Naulon_Client::verdict_of( array( 'ok' => $status >= 200 && $status < 300, 'status' => $status, 'body' => $body ) ) );
 	}
 
 	public function test_no_answer_is_no_verdict() {

@@ -275,8 +275,6 @@ class EnforcerTest extends WP_UnitTestCase {
 			array( 'code' => 200, 'body' => 'not an object' ),
 			array( 'code' => 200, 'body' => array( 'ok' => false ) ),
 			array( 'code' => 200, 'body' => array( 'ok' => true ) ),
-			array( 'code' => 402, 'body' => array( 'ok' => false, 'error' => 'bad sig' ) ),
-			array( 'code' => 401, 'body' => array( 'ok' => false, 'error' => 'unauthorized' ) ),
 			array( 'code' => 200, 'body' => array( 'verdict' => 'PAID' ) ),
 		) as $canned ) {
 			$this->responses['/_naulon/verify'] = $canned;
@@ -309,6 +307,23 @@ class EnforcerTest extends WP_UnitTestCase {
 		$this->assertSame( 503, $denial['status'] );
 		$this->assertContains( 'Retry-After: 2', $denial['headers'] );
 		$this->assertSame( array(), preg_grep( '/^payment-required:/i', $denial['headers'] ), 'no second offer' );
+	}
+
+	public function test_a_4xx_without_a_verdict_re_presents_the_bill() {
+		// The agent can provoke one in front of the gate (a body limit, a firewall, a rate limiter),
+		// so it is refused, never a free read.
+		$this->as_agent();
+		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
+		foreach ( array(
+			array( 'code' => 402, 'body' => array( 'ok' => false, 'error' => 'bad sig' ) ),
+			array( 'code' => 401, 'body' => array( 'ok' => false, 'error' => 'unauthorized' ) ),
+			array( 'code' => 403, 'body' => 'blocked by a firewall' ),
+			array( 'code' => 413, 'body' => 'payload too large' ),
+			array( 'code' => 429, 'body' => array( 'error' => 'slow down' ) ),
+		) as $canned ) {
+			$this->responses['/_naulon/verify'] = $canned;
+			$this->assertSame( 'pay', $this->decide()['action'], wp_json_encode( $canned ) );
+		}
 	}
 
 	public function test_a_paid_verdict_serves_whatever_the_status() {
@@ -351,7 +366,6 @@ class EnforcerTest extends WP_UnitTestCase {
 			array( 'code' => 502, 'body' => array( 'error' => 'bad gateway' ) ),
 			array( 'code' => 200, 'body' => 'not an object' ),
 			array( 'code' => 200, 'body' => array( 'entitled' => true ) ),
-			array( 'code' => 403, 'body' => array( 'error' => 'resource not owned by this key' ) ),
 		) as $canned ) {
 			$this->responses['/_naulon/license/check'] = $canned;
 			$decision = $this->decide();

@@ -68,7 +68,7 @@ const keyHeaders = { authorization: "Bearer nln_live_test", "content-type": "app
 test("missing key → 401", async () => {
   const res = await appWith({}).request("/_naulon/verify", { method: "POST", body: "{}" });
   assert.equal(res.status, 401);
-  assert.equal(((await res.json()) as { verdict?: string }).verdict, undefined, "a key refusal is no verdict: the runtime serves");
+  assert.equal(((await res.json()) as { verdict?: string }).verdict, undefined, "a key refusal carries no verdict; runtimes read the 4xx as refused");
 });
 
 test("valid key + resource owned by tenant → 200 ok:true with settlementRef + license", async () => {

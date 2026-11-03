@@ -57,8 +57,8 @@ const checkRoute = createRoute({
   responses: {
     200: { description: "The verdict.", content: { "application/json": { schema: CheckResult } } },
     400: { description: "Bad request (`verdict: refused`).", content: { "application/json": { schema: CheckResult } } },
-    401: { description: "Missing or invalid key. Carries no verdict: serve the page.", content: { "application/json": { schema: ErrorSchema } } },
-    403: { description: "Resource not owned by this key. Carries no verdict: serve the page.", content: { "application/json": { schema: ErrorSchema } } },
+    401: { description: "Missing or invalid key. No verdict; a runtime reads a 4xx without one as refused.", content: { "application/json": { schema: ErrorSchema } } },
+    403: { description: "Resource not owned by this key. No verdict; read as refused.", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
 

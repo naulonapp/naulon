@@ -49,7 +49,7 @@ import { introspectLicence } from "@naulon/sdk/rsl";
 import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
 import type { DecideObs } from "../decide.ts";
 import type { ObservationReport, ObservationReporter, ReportableVerdict } from "./observation-sink.ts";
-import { gateVerdictOf, type FreeReason } from "@naulon/shared";
+import { gateAnswer, type FreeReason } from "@naulon/shared";
 
 export interface NaulonMiddlewareOptionsBase {
   /**
@@ -799,6 +799,7 @@ export function naulonMiddleware(
         // Custody-free settlement: the buyer's signature goes to the hosted
         // /verify, which settles buyer→author and mints the receipt.
         let body: VerifyResponse;
+        let status: number;
         try {
           // Raced, not aborted (`fetchImpl` carries no signal): a /verify that hangs must become a
           // served read, not a request held open until the platform kills it.
@@ -822,16 +823,17 @@ export function naulonMiddleware(
           }), new Promise<never>((_, reject) => {
             timer = setTimeout(() => reject(new VerifyTimeout(`no answer within ${VERIFY_TIMEOUT_MS} ms`)), VERIFY_TIMEOUT_MS);
           })]).finally(() => clearTimeout(timer));
+          status = res.status;
           const parsed: unknown = await res.json().catch(() => null);
           body = (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}) as VerifyResponse;
         } catch (err) {
           return servedOnGateFailure(d, "settlement", `verify unreachable: ${err instanceof Error ? err.message : String(err)}`, !(err instanceof VerifyTimeout));
         }
 
-        // The gate's verdict, never the HTTP status (docs/protocol/in-app.md). No verdict serves the
-        // read, whether or not the payment moved, because a second charge for this read is the
-        // outcome a buyer cannot undo.
-        switch (gateVerdictOf(body)) {
+        // The gate's verdict (docs/protocol/in-app.md, `gateAnswer`). No verdict serves the read,
+        // whether or not the payment moved, because a second charge for this read is the outcome a
+        // buyer cannot undo. A 4xx without one is refused: the buyer can provoke it.
+        switch (gateAnswer(status, body)) {
           case "paid": {
             const setHeaders: Record<string, string> = {};
             if (body.responseHeader) setHeaders[PAYMENT_RESPONSE_HEADER] = body.responseHeader;
