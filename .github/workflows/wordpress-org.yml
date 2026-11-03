@@ -20,6 +20,12 @@ on:
       mode:
         type: string
         default: release
+    # Required, so a caller that forgets to pass them fails here instead of publishing as nobody.
+    secrets:
+      SVN_USERNAME:
+        required: true
+      SVN_PASSWORD:
+        required: true
   workflow_dispatch:
     inputs:
       mode:

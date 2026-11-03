@@ -355,6 +355,11 @@ jobs:
     uses: ./.github/workflows/wordpress-org.yml
     with:
       mode: release
+    # A called workflow sees an environment's secrets only when the caller passes them; unpassed,
+    # they resolve to empty strings and nothing errors. Passed by name, so no other secret travels.
+    secrets:
+      SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+      SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
     permissions:
       contents: read
 
