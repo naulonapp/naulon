@@ -73,11 +73,12 @@ in-app enforce API. The WordPress plugin is 0.8.0.
   with `Retry-After` and no second offer. Run a 1.1 gate before these runtimes: an older gate's
   paid reads are served without a receipt.
 - `@naulon/wayfarer` says whether a bought read was charged. A paid read carries
-  `charge: "confirmed"` when the 200 came with the gate's `PAYMENT-RESPONSE`, and
-  `charge: "unconfirmed"` when it did not, which is what a site sends when its gate is down and it
-  serves the page free. An unconfirmed read is still debited from the budget, because the signed
-  authorization was sent, but the run log and `naulon_pay_and_read` no longer call it paid.
-  `receiptOf(headers)` is the one reader of that header.
+  `charge: "confirmed"` when the 200 came with the gate's `PAYMENT-RESPONSE` or a licence it minted,
+  and `charge: "unconfirmed"` when it came with neither, which is what a site sends when its gate is
+  down and it serves the page free. An unconfirmed read is still debited from the budget, because
+  the signed authorization was sent, but the run log and `naulon_pay_and_read` no longer call it
+  paid. `@naulon/shared` exports `encodePaymentResponse` and `decodePaymentResponse`, which the gate
+  and every buyer now use for that header.
 - `@naulon/shared` exports `GATE_VERDICTS`, `FREE_REASONS`, `gateVerdictOf` and `gateAnswer`.
   `verdict-cases.json` and `botauth-vectors.json` join the contract fixtures.
 

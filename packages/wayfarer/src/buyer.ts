@@ -8,7 +8,7 @@
  */
 import type { ArticleMeta, Extraction } from "@naulon/extract";
 import { readAccept, readBody, type ReadFormat } from "./readable.ts";
-import { activeNetwork, getConfig } from "@naulon/shared";
+import { activeNetwork, decodePaymentResponse, getConfig } from "@naulon/shared";
 import { agentFetch } from "./sign.ts";
 
 const AGENT_UA = "naulon-wayfarer/0.1";
@@ -112,21 +112,16 @@ export interface Fetched {
 export type ChargeStatus = "confirmed" | "unconfirmed";
 
 /**
- * What a paid 200 says about the money: the gate's receipt, when it sent one. Every buyer reads the
- * response through this, so "paid" means the same thing on every rail.
+ * What a paid 200 says about the money. Every buyer reads the response through this, so "paid" means
+ * the same thing on every rail. The gate's receipt confirms the charge; so does a licence it minted,
+ * because the gate signs one only after the payment settled, and an in-app runtime forwards the
+ * licence even when the receipt header was dropped on the way (an optional field on `/verify`, a
+ * proxy that strips it).
  */
 export function receiptOf(headers: Pick<Headers, "get">): { charge: ChargeStatus; settlementRef?: string } {
-  const raw = headers.get("payment-response");
-  if (!raw) return { charge: "unconfirmed" };
-  try {
-    const receipt: unknown = JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
-    if (typeof receipt !== "object" || receipt === null) return { charge: "unconfirmed" };
-    const { success, transaction } = receipt as { success?: unknown; transaction?: unknown };
-    if (success === false) return { charge: "unconfirmed" };
-    return { charge: "confirmed", ...(typeof transaction === "string" && transaction ? { settlementRef: transaction } : {}) };
-  } catch {
-    return { charge: "unconfirmed" };
-  }
+  const receipt = decodePaymentResponse(headers.get("payment-response"));
+  if (receipt) return { charge: "confirmed", ...(receipt.transaction ? { settlementRef: receipt.transaction } : {}) };
+  return { charge: headers.get("x-naulon-license") ? "confirmed" : "unconfirmed" };
 }
 
 /**

@@ -18,6 +18,7 @@
 import { createHash } from "node:crypto";
 import {
   activeNetwork,
+  encodePaymentResponse,
   getConfig,
   networkByCaip2,
   type ForgoneLeg,
@@ -482,9 +483,7 @@ async function settleGateway(pairs: LegPair[], net: SettlementNetwork, now: numb
   }
 
   const payer = authorSettle.payer ?? payers[0] ?? "unknown";
-  const responseHeader = Buffer.from(
-    JSON.stringify({ success: true, transaction: authorSettle.transaction, network: author.requirements.network, payer }),
-  ).toString("base64");
+  const responseHeader = encodePaymentResponse({ transaction: authorSettle.transaction, network: author.requirements.network, payer });
   const evidence = paymentEvidence(author.payload, author.requirements, net.chainId);
   return { ok: true, payer, settlementRef: authorSettle.transaction, responseHeader, legSettlements, ...(evidence ? { evidence } : {}) };
 }
@@ -566,9 +565,7 @@ async function settleMock(pairs: LegPair[], now: number, publisherId?: string): 
   }
 
   const payer = mocks[0]!.payer;
-  const responseHeader = Buffer.from(
-    JSON.stringify({ success: true, transaction: mockRef(author.requirements), network: author.requirements.network, payer }),
-  ).toString("base64");
+  const responseHeader = encodePaymentResponse({ transaction: mockRef(author.requirements), network: author.requirements.network, payer });
   return { ok: true, payer, settlementRef: mockRef(author.requirements), responseHeader, legSettlements };
 }
 
