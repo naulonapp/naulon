@@ -170,3 +170,27 @@ def test_a_burst_for_one_directory_fetches_once() -> None:
     for t in threads:
         t.join()
     assert len(calls) == 1 and results == ["verified"] * 10
+
+
+def test_stuck_lookups_hold_their_slots_so_they_cannot_pile_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+    import threading
+    import time
+
+    release = threading.Event()
+    started: list[str] = []
+
+    def hang(host: str, *a: object, **k: object) -> list[object]:
+        started.append(host)
+        release.wait(5)
+        return []
+
+    monkeypatch.setattr(socket, "getaddrinfo", hang)
+    for i in range(6):
+        assert botauth.pinned_fetch(f"https://slow{i}.example/x", timeout=0.1) is None
+    assert len(started) == 4, "a fifth fetch never queues behind four stuck lookups"
+    release.set()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and botauth._FETCH_SLOTS._value < 4:  # type: ignore[attr-defined]
+        time.sleep(0.01)
+    assert botauth._FETCH_SLOTS._value == 4, "every slot comes back once the lookups finish"  # type: ignore[attr-defined]

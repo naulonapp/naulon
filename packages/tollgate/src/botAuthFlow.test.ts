@@ -55,6 +55,10 @@ const PUB: PublisherConfig = {
 
 const app = createApp({ async resolve(h) { return h === HOST ? PUB : undefined; } });
 
+// The signer's directory is served by the stubbed fetch below under a made-up host, which the
+// address check would otherwise resolve for real and refuse.
+const { useBotAuthResolver } = await import("@naulon/enforce");
+useBotAuthResolver(async () => ["93.184.216.34"]);
 const realFetch = globalThis.fetch;
 before(() => {
   globalThis.fetch = (async (input: string | URL | Request) => {

@@ -553,6 +553,17 @@ async function systemResolve(host: string): Promise<string[]> {
   }
 }
 
+let resolveOverride: ((host: string) => Promise<string[]>) | null = null;
+
+/**
+ * Replace the resolver that guards the default directory fetch, for tests that serve a signer's
+ * directory from a stubbed global `fetch` under a made-up host. `null` restores the system one.
+ * Production never calls this.
+ */
+export function useBotAuthResolver(resolve: ((host: string) => Promise<string[]>) | null): void {
+  resolveOverride = resolve;
+}
+
 /** Every address `host` resolves to is a public one. A private, loopback, link-local or metadata
  *  address means the caller is aiming the fetch at the network this gate runs in. */
 async function resolvesPublic(host: string, resolve: (host: string) => Promise<string[]>): Promise<boolean> {
@@ -626,7 +637,7 @@ async function fetchDirectory(dirUrl: string, opts: BotAuthOptions): Promise<Dir
     // The fetch resolves the name again, so a rebinding answer can still differ; the request is
     // HTTPS with the certificate checked against this name, which an inward address cannot present.
     const guarded = opts.resolveHost !== undefined || opts.fetchFn === undefined;
-    if (guarded && !opts.allowInsecureHttp && !(await resolvesPublic(new URL(dirUrl).hostname, opts.resolveHost ?? systemResolve))) {
+    if (guarded && !opts.allowInsecureHttp && !(await resolvesPublic(new URL(dirUrl).hostname, opts.resolveHost ?? resolveOverride ?? systemResolve))) {
       return null;
     }
     const res = await fetchFn(dirUrl, {

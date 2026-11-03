@@ -2,6 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { naulonMiddleware } from "./middleware.ts";
 import { localQuoteSource, httpQuoteSource } from "./quote-source.ts";
+import { useBotAuthResolver } from "../botAuth.ts";
+
+// Directories in these tests are served by a stubbed fetch under made-up hosts; the address check
+// would resolve them for real and refuse.
+useBotAuthResolver(async () => ["93.184.216.34"]);
 
 const quote = localQuoteSource(async () =>
   ({

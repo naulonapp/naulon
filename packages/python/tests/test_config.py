@@ -155,5 +155,22 @@ def test_a_flood_of_made_up_hosts_never_evicts_a_real_one(monkeypatch: pytest.Mo
     for i in range(500):
         c.get(f"junk-{i}.test")
     assert c.get("blog.test") == config_doc(), "the real host keeps its policy"
-    assert c._queue.qsize() <= 10, "the queue stays bounded"
+    assert c.queued() <= 11, "the unknown lane stays bounded"
     assert len(c._entries) <= 51
+
+
+def test_a_real_host_asked_for_during_a_flood_is_fetched_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    import naulon.config as cfg
+
+    monkeypatch.setattr(cfg, "MAX_QUEUED", 10)
+    t = FakeTransport({"/_naulon/enforce-config": json_response(200, config_doc())})
+    c = cache(t)
+    c._ensure_worker = lambda: None  # type: ignore[method-assign]
+    c.get("real.test")
+    for i in range(500):
+        c.get(f"junk-{i}.test")
+    c.get("real.test")  # its own next request
+    first = c._pop()
+    if first == "\x00ranges":
+        first = c._pop()
+    assert first == "real.test", "newest first: the host people are actually reaching wins"

@@ -8,9 +8,9 @@ forks after import (gunicorn's pre-fork model) gets a live worker in every child
 
 from __future__ import annotations
 
+import collections
 import json
 import os
-import queue
 import threading
 import time
 import urllib.parse
@@ -62,7 +62,12 @@ class ConfigCache:
         self._ranges: ranges.Compiled | None = None
         self._ranges_at: float | None = None
         self._ranges_pending = False
-        self._queue: queue.SimpleQueue[str] = queue.SimpleQueue()
+        self._wake = threading.Condition(self._lock)
+        # Two lanes. Hosts that hold a policy (and the ranges) refresh first, in order. Hosts without
+        # one wait newest-first in a bounded lane: a flood of made-up hosts pushes the oldest out, and
+        # a real host asked for again moves back to the front, so it is never starved.
+        self._known: collections.deque[str] = collections.deque()
+        self._unknown: collections.OrderedDict[str, None] = collections.OrderedDict()
         self._worker: threading.Thread | None = None
         self._pid = os.getpid()
         if hasattr(os, "register_at_fork"):
@@ -71,7 +76,9 @@ class ConfigCache:
     def _after_fork(self) -> None:
         # A child inherits the parent's dict but not its thread. Start over, keeping what was cached.
         self._lock = threading.Lock()
-        self._queue = queue.SimpleQueue()
+        self._wake = threading.Condition(self._lock)
+        self._known = collections.deque()
+        self._unknown = collections.OrderedDict()
         self._worker = None
         self._pid = os.getpid()
         for e in self._entries.values():
@@ -89,18 +96,44 @@ class ConfigCache:
                     self._evict_unknown()
                 e = _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme)
                 self._entries[key] = e
-            # A host with a policy is refreshed whatever the queue holds; an unknown one only while
-            # the queue has room, so a flood of made-up hosts cannot starve the real ones.
             due = not e.pending and now - e.fetched_at >= self._settings.refresh_s
-            if due and e.doc is None and self._queue.qsize() >= MAX_QUEUED:
-                due = False
             if due:
                 e.pending = True
+                self._push(key, known=e.doc is not None)
+            elif e.pending and key in self._unknown:
+                self._unknown.move_to_end(key)  # asked again: back to the front of its lane
             doc = e.doc
         if due:
-            self._enqueue(key)
+            self._ensure_worker()
         self._ranges_due(now)
         return doc
+
+    def _push(self, key: str, known: bool) -> None:
+        """Queue a fetch. Called with the lock held."""
+        if known:
+            self._known.append(key)
+        else:
+            self._unknown[key] = None
+            self._unknown.move_to_end(key)
+            while len(self._unknown) > MAX_QUEUED:
+                dropped, _ = self._unknown.popitem(last=False)
+                gone = self._entries.get(dropped)
+                if gone is not None:
+                    gone.pending = False  # a later request queues it again
+        self._wake.notify()
+
+    def _pop(self) -> str:
+        with self._lock:
+            while not self._known and not self._unknown:
+                self._wake.wait()
+            if self._known:
+                return self._known.popleft()
+            key, _ = self._unknown.popitem(last=True)
+            return key
+
+    def queued(self) -> int:
+        with self._lock:
+            return len(self._known) + len(self._unknown)
 
     def _evict_unknown(self) -> None:
         """Drop the oldest half of the hosts that hold no policy. Called with the lock held. A host
@@ -117,12 +150,9 @@ class ConfigCache:
             due = not self._ranges_pending and (self._ranges_at is None or now - self._ranges_at >= RANGES_REFRESH_S)
             if due:
                 self._ranges_pending = True
+                self._push(_RANGES_KEY, known=True)
         if due:
-            self._enqueue(_RANGES_KEY)
-
-    def _enqueue(self, key: str) -> None:
-        self._ensure_worker()
-        self._queue.put(key)
+            self._ensure_worker()
 
     def _ensure_worker(self) -> None:
         if self._pid != os.getpid():
@@ -134,9 +164,8 @@ class ConfigCache:
             self._worker.start()
 
     def _run(self) -> None:
-        q = self._queue
         while True:
-            key = q.get()
+            key = self._pop()
             try:
                 if key == _RANGES_KEY:
                     self._refresh_ranges()

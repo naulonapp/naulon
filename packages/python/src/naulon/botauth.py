@@ -431,11 +431,20 @@ def pinned_fetch(url: str, timeout: float = DIRECTORY_TIMEOUT_S) -> Response | N
     server that drips its answer cannot hold the thread past it. None on any failure."""
     if not _FETCH_SLOTS.acquire(blocking=False):
         return None
+    release = True
     try:
         deadline = time.monotonic() + timeout
         u = urllib.parse.urlsplit(url)
         host = u.hostname or ""
-        infos = _DNS_POOL.submit(socket.getaddrinfo, host, 443, type=socket.SOCK_STREAM).result(timeout=timeout)
+        lookup = _DNS_POOL.submit(socket.getaddrinfo, host, 443, type=socket.SOCK_STREAM)
+        try:
+            infos = lookup.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            # The lookup thread is still stuck. Its slot stays taken until it finishes, so stuck
+            # lookups never outnumber the slots and later fetches read `unverified` at once.
+            release = False
+            lookup.add_done_callback(lambda _: _FETCH_SLOTS.release())
+            return None
         addresses = [str(info[4][0]) for info in infos]
         if not addresses:
             return None
@@ -470,7 +479,8 @@ def pinned_fetch(url: str, timeout: float = DIRECTORY_TIMEOUT_S) -> Response | N
     except Exception:
         return None
     finally:
-        _FETCH_SLOTS.release()
+        if release:
+            _FETCH_SLOTS.release()
 
 
 def _directory_signature_ok(res: Response, url: str, keys: Mapping[str, str]) -> bool:

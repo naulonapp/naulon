@@ -36,16 +36,16 @@ class Settings:
         """Read `GATE`, `KEY`, `ENABLED`, `TIMEOUT` from `m`; `NAULON_*` in the environment wins."""
         env = os.environ if environ is None else environ
 
-        def pick(name: str) -> Any:
-            from_env = env.get(f"NAULON_{name}")
-            return from_env if from_env is not None else m.get(name)
+        # Spelled out, not built from a prefix, so every name a reader can set is greppable.
+        def pick(from_env: str | None, from_mapping: Any) -> Any:
+            return from_env if from_env is not None else from_mapping
 
-        gate = _text(pick("GATE"))
+        gate = _text(pick(env.get("NAULON_GATE"), m.get("GATE")))
         return cls(
             gate=gate.rstrip("/") if gate else None,
-            key=_text(pick("KEY")),
-            enabled=_flag(pick("ENABLED")),
-            timeout=_seconds(pick("TIMEOUT")),
+            key=_text(pick(env.get("NAULON_KEY"), m.get("KEY"))),
+            enabled=_flag(pick(env.get("NAULON_ENABLED"), m.get("ENABLED"))),
+            timeout=_seconds(pick(env.get("NAULON_TIMEOUT"), m.get("TIMEOUT"))),
         )
 
 
