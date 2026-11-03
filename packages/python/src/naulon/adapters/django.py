@@ -20,7 +20,7 @@ from django.conf import settings as django_settings
 from django.http import HttpRequest, HttpResponse, HttpResponseBase
 from django.utils.module_loading import import_string
 
-from naulon._log import warn_once
+from naulon._log import warn_error, warn_once
 from naulon.core import Continue, Decision, Keep, Naulon, Respond
 from naulon.facts import RequestFacts, lower_headers
 from naulon.settings import Settings
@@ -133,7 +133,7 @@ def _start(request: HttpRequest) -> tuple[Naulon, RequestFacts, Decision, Tollab
         facts = facts_of(request, proxy)
         return naulon, facts, naulon.handle(facts), hook
     except Exception as err:
-        warn_once("django.start", "naulon: request passed through after an internal error (%s)", type(err).__name__)
+        warn_error("django.start", "naulon: request passed through after an internal error", err)
         return None
 
 
@@ -143,7 +143,7 @@ def _is_tollable(hook: Tollable, request: HttpRequest, response: HttpResponseBas
     try:
         return bool(hook(request, response))
     except Exception as err:
-        warn_once("django.tollable_raised", "naulon: the tollable hook raised (%s); not tolled", type(err).__name__)
+        warn_error("django.tollable_raised", "naulon: the tollable hook raised; not tolled", err)
         return False
 
 
@@ -163,7 +163,7 @@ def _apply(
             return response
         return _to_django(outcome.response)
     except Exception as err:
-        warn_once("django.finish", "naulon: the page was served after an internal error (%s)", type(err).__name__)
+        warn_error("django.finish", "naulon: the page was served after an internal error", err)
         return response
 
 

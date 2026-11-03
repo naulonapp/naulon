@@ -13,7 +13,7 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
-from naulon._log import warn_once
+from naulon._log import warn_error, warn_once
 
 BATCH = 50
 FLUSH_S = 5.0
@@ -85,4 +85,4 @@ class ObservationQueue:
             try:
                 self.flush()
             except Exception as err:
-                warn_once("observe.worker", "naulon: report flush failed (%s)", type(err).__name__)
+                warn_error("observe.worker", "naulon: report flush failed", err)

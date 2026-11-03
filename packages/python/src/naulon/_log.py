@@ -31,6 +31,15 @@ def warn_once(key: str, msg: str, *args: Any) -> None:
         logger.warning(msg, *args)
 
 
+def warn_error(key: str, msg: str, err: BaseException) -> None:
+    """`warn_once` for a caught exception. The WARNING names only the exception's type, because its
+    message can quote a payment header or a key. The traceback goes to DEBUG, which a host turns on
+    deliberately to find the cause."""
+    if _due(key, time.monotonic()):
+        logger.warning("%s (%s; set the naulon logger to DEBUG for the traceback)", msg, type(err).__name__)
+        logger.debug("naulon: traceback for %s", key, exc_info=err)
+
+
 def reset() -> None:
     """Test seam."""
     with _lock:

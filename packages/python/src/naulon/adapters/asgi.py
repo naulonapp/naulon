@@ -11,7 +11,7 @@ import concurrent.futures
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
-from naulon._log import warn_once
+from naulon._log import warn_error
 from naulon.core import Continue, Keep, Naulon, Respond
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
@@ -89,7 +89,7 @@ class NaulonASGI:
             facts = facts_of(scope)
             decision = naulon.handle(facts)
         except Exception as err:
-            warn_once("asgi.start", "naulon: request passed through after an internal error (%s)", type(err).__name__)
+            warn_error("asgi.start", "naulon: request passed through after an internal error", err)
             await self.app(scope, receive, send)
             return
         if isinstance(decision, Respond):
@@ -137,14 +137,14 @@ class NaulonASGI:
         try:
             tollable = status == 200 and bool(self.tollable(scope, status, headers))
         except Exception as err:
-            warn_once("asgi.tollable_raised", "naulon: the tollable hook raised (%s); not tolled", type(err).__name__)
+            warn_error("asgi.tollable_raised", "naulon: the tollable hook raised; not tolled", err)
             tollable = False
         try:
             # `finish` may ask the gate over the network: off the event loop.
             loop = asyncio.get_running_loop()
             outcome = await loop.run_in_executor(_FINISH_POOL, self.naulon.finish, facts, decision, status, tollable)
         except Exception as err:
-            warn_once("asgi.finish", "naulon: the page was served after an internal error (%s)", type(err).__name__)
+            warn_error("asgi.finish", "naulon: the page was served after an internal error", err)
             outcome = Keep()
         if isinstance(outcome, Keep):
             if outcome.add_headers:

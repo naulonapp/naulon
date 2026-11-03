@@ -217,6 +217,7 @@ export function mountVerify(app: OpenAPIHono, deps: EnforceApiDeps): void {
       deps.observe({
         publisherId: publisher.id,
         host,
+        path: pricePath,
         slug: typeof q.slug === "string" ? q.slug : "",
         kind: q.kind === "citation" ? "citation" : "read",
         // An unavailable rail is a read the runtime serves free on the 503 below, so it is recorded
