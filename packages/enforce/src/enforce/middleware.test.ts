@@ -254,13 +254,16 @@ test("API mode: a reachable JWKS stays SILENT — the probe is not noise", async
   console.error = (...a: unknown[]) => void errs.push(a.map(String).join(" "));
   try {
     const fetchImpl = (async () => new Response(JSON.stringify(GATE_JWKS), { status: 200 })) as unknown as typeof fetch;
-    const mw = naulonMiddleware({ ...opts, fetchImpl, licenseVerification: {} });
+    // Its own origin, so a late preflight from an earlier test's real-DNS lookup of `http://cloud`
+    // (they run without a fetchImpl) cannot land in this capture and read as this deployment's.
+    const mw = naulonMiddleware({ ...opts, verifyUrl: "http://silent.test/_naulon/verify", fetchImpl, licenseVerification: {} });
     await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0" } }));
     await new Promise((r) => setTimeout(r, 0));
   } finally {
     console.error = realError;
   }
-  assert.deepEqual(errs, [], "a healthy deployment must log nothing, or the warning stops being read");
+  const mine = errs.filter((e) => e.includes("silent.test"));
+  assert.deepEqual(mine, [], "a healthy deployment must log nothing, or the warning stops being read");
 });
 
 test("API mode: the hot path (no license header) adds NO JWKS fetch beyond the first-request probe", async () => {
