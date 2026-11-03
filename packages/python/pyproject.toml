@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "naulon"
+version = "0.1.0"
+description = "Charge AI agents to read your site from inside any Python web app. People always read free."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = []
+authors = [{ name = "naulon" }]
+keywords = ["x402", "ai-crawlers", "paywall", "django", "wsgi", "asgi", "usdc", "agents"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Framework :: Django",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Internet :: WWW/HTTP :: WSGI :: Middleware",
+  "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+botauth = ["cryptography>=42"]
+dev = ["pytest>=8", "mypy>=1.10", "ruff>=0.5", "Django>=5", "cryptography>=42"]
+
+[project.urls]
+Homepage = "https://naulon.app"
+Documentation = "https://github.com/naulonapp/naulon/blob/main/docs/protocol/in-app.md"
+Source = "https://github.com/naulonapp/naulon/tree/main/packages/python"
+Issues = "https://github.com/naulonapp/naulon/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/naulon"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["django.*", "cryptography.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = ["S101", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -27,3 +27,9 @@ test("an explicit header and none", () => {
 test("Vercel behind Cloudflare without the preset returns Cloudflare's address, which the check then refuses", () => {
   assert.equal(sdkClientIp(req({ "x-vercel-forwarded-for": "173.245.48.9" }), undefined, { VERCEL: "1" }), "173.245.48.9");
 });
+
+test("a header the caller can append to is never trusted, whatever its case", () => {
+  for (const header of ["X-Forwarded-For", "x-forwarded-for", "Forwarded"]) {
+    assert.equal(sdkClientIp(req({ "x-forwarded-for": "66.249.64.9", forwarded: "for=66.249.64.9" }), { header }, {}), null, header);
+  }
+});

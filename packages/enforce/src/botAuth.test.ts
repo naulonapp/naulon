@@ -511,3 +511,35 @@ test("verifyBotAuth: the verified signature bytes are reported, and a relabelled
     if (again.status === "verified") assert.equal(again.agent.signature, raw);
   }
 });
+
+test("verifyBotAuth: a directory host the caller aims inward is never fetched", async () => {
+  const { signBotAuth, botAuthKeyFromSeed } = await import("@naulon/shared");
+  const key = botAuthKeyFromSeed(Buffer.alloc(32, 7).toString("base64url"));
+  for (const address of ["127.0.0.1", "10.66.0.2", "169.254.169.254", "::1", "fd00::1"]) {
+    const h = signBotAuth({ key, authority: "gate.example", tag: "web-bot-auth", agent: "evil.example" });
+    let fetched = 0;
+    const out = await verifyBotAuth(
+      { authority: "gate.example", method: "GET", path: "/x", targetUri: "http://gate.example/x", headers: { ...h, "signature-agent": h["signature-agent"]! } },
+      {
+        fetchFn: (async () => { fetched++; return new Response("{}"); }) as unknown as typeof fetch,
+        resolveHost: async () => [address],
+        cache: new DirectoryCache(),
+      },
+    );
+    assert.equal(out.status, "unverified", address);
+    assert.equal(fetched, 0, address);
+  }
+});
+
+test("verifyBotAuth: a Signature-Agent with a port, userinfo or a non-DNS host is refused", async () => {
+  const { signBotAuth, botAuthKeyFromSeed } = await import("@naulon/shared");
+  const key = botAuthKeyFromSeed(Buffer.alloc(32, 7).toString("base64url"));
+  for (const agent of ["https://signer.example:8443", "https://u:p@signer.example", "https://metadata", "https://signer.123", "https://0x7f000001"]) {
+    const h = signBotAuth({ key, authority: "gate.example", tag: "web-bot-auth", agent });
+    const out = await verifyBotAuth(
+      { authority: "gate.example", method: "GET", path: "/x", targetUri: "http://gate.example/x", headers: { ...h, "signature-agent": h["signature-agent"]! } },
+      { fetchFn: (async () => { throw new Error("must not fetch"); }) as unknown as typeof fetch, cache: new DirectoryCache() },
+    );
+    assert.equal(out.status, "invalid", agent);
+  }
+});

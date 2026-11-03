@@ -13,25 +13,39 @@
 import { createRoute, z, type OpenAPIHono } from "@hono/zod-openapi";
 import { LICENSE_HEADER, PROOF_HEADER, licenseEntitlesRead } from "@naulon/enforce";
 import type { TollKind } from "@naulon/shared";
-import { authorize, targetOf } from "./authorize.ts";
+import { authBeforeValidation, authorize, refuseUnreadable, targetOf } from "./authorize.ts";
 import type { EnforceApiDeps } from "./index.ts";
 import { ErrorSchema, SECURITY } from "./schemas.ts";
 
+/** The shape the handler enforces. Parsed in the handler, not by the route validator, so a body
+ *  this gate cannot read still gets a verdict rather than a bare validation error. */
+const CheckBodyStrict = z.object({
+  license: z.string().min(1),
+  resource: z.string().url(),
+  slug: z.string().min(1),
+  kind: z.enum(["read", "citation"]).default("read"),
+  proof: z.string().optional(),
+});
+
 const CheckBody = z
   .object({
-    /** The licence JWS the agent presented. */
-    license: z.string().min(1),
-    /** Absolute URL of the resource being re-read. */
-    resource: z.string().url(),
-    /** Canonical slug the licence must be scoped to. */
-    slug: z.string().min(1),
-    kind: z.enum(["read", "citation"]).default("read"),
-    /** The agent's holder-of-key proof header, forwarded verbatim when it sent one. */
-    proof: z.string().optional(),
+    license: z.string().min(1).optional().openapi({ description: "The licence JWS the agent presented (required)." }),
+    resource: z.string().optional().openapi({ description: "Absolute URL of the resource being re-read (required).", example: "https://your-site.com/articles/x" }),
+    slug: z.string().min(1).optional().openapi({ description: "Canonical slug the licence must be scoped to (required)." }),
+    kind: z.enum(["read", "citation"]).optional().openapi({ description: "Defaults to `read`." }),
+    proof: z.string().optional().openapi({ description: "The agent's holder-of-key proof header, forwarded verbatim when it sent one." }),
   })
   .openapi("LicenseCheckBody");
 
-const CheckResult = z.object({ entitled: z.boolean() }).openapi("LicenseCheckResult");
+const CheckResult = z
+  .object({
+    entitled: z.boolean(),
+    verdict: z.enum(["paid", "refused"]).openapi({ description: "`paid`: serve it free, the read was paid for. `refused`: answer the 402. Switch on this, never on the HTTP status." }),
+    reason: z.literal("no_verifier").optional(),
+  })
+  .openapi("LicenseCheckResult");
+
+const refused = { entitled: false, verdict: "refused" } as const;
 
 const checkRoute = createRoute({
   method: "post",
@@ -39,12 +53,12 @@ const checkRoute = createRoute({
   summary: "Does this licence entitle a free re-read?",
   tags: ["Enforce"],
   security: SECURITY,
-  request: { body: { content: { "application/json": { schema: CheckBody } }, required: true } },
+  request: { body: { content: { "application/json": { schema: CheckBody } }, required: false } },
   responses: {
     200: { description: "The verdict.", content: { "application/json": { schema: CheckResult } } },
-    400: { description: "Bad request.", content: { "application/json": { schema: ErrorSchema } } },
-    401: { description: "Missing or invalid key.", content: { "application/json": { schema: ErrorSchema } } },
-    403: { description: "Resource not owned by this key.", content: { "application/json": { schema: ErrorSchema } } },
+    400: { description: "Bad request (`verdict: refused`).", content: { "application/json": { schema: CheckResult } } },
+    401: { description: "Missing or invalid key. No verdict; a runtime reads a 4xx without one as refused.", content: { "application/json": { schema: ErrorSchema } } },
+    403: { description: "Resource not owned by this key. No verdict; read as refused.", content: { "application/json": { schema: ErrorSchema } } },
   },
 });
 
@@ -52,9 +66,16 @@ export function mountLicense(app: OpenAPIHono, deps: EnforceApiDeps): void {
   const entitles = deps.impl?.entitles ?? licenseEntitlesRead;
   const clock = deps.now ?? Date.now;
 
+  authBeforeValidation(app, "/_naulon/license/check", deps, undefined, () => refused);
+
   app.openapi(checkRoute, async (c) => {
-    const { license, resource, slug, kind, proof } = c.req.valid("json");
-    const authed = await authorize(c, deps, targetOf(resource));
+    const parsed = CheckBodyStrict.safeParse(await c.req.json().catch(() => undefined));
+    // Authenticated already (`authBeforeValidation`): an unreadable body is refused, never served free.
+    if (!parsed.success) return c.json(refused, 400) as never;
+    const { license, resource, slug, kind, proof } = parsed.data;
+    const target = targetOf(resource);
+    if ("error" in target) return c.json(refused, 400) as never;
+    const authed = await authorize(c, deps, target);
     if (!authed.ok) return authed.response as never;
     const { publisher, host } = authed;
 
@@ -63,7 +84,7 @@ export function mountLicense(app: OpenAPIHono, deps: EnforceApiDeps): void {
     } catch {
       // A heartbeat never costs a verdict.
     }
-    if (publisher.suspended) return c.json({ entitled: false }, 200);
+    if (publisher.suspended) return c.json(refused, 200);
 
     // `licenseEntitlesRead` reads the licence and the proof off the agent's Request. That request
     // happened at the publisher's runtime, so the two headers it needs are rebuilt from what was
@@ -84,9 +105,9 @@ export function mountLicense(app: OpenAPIHono, deps: EnforceApiDeps): void {
         deps.licenseKeys ? { jwks: deps.licenseKeys, issuer: publisher.licenseIdentity } : undefined,
       );
     } catch {
-      return c.json({ entitled: false }, 200);
+      return c.json(refused, 200);
     }
     const disclosable = !check.ok && check.reason === "no_verifier" ? { reason: "no_verifier" as const } : {};
-    return c.json(check.ok ? { entitled: true } : { entitled: false, ...disclosable }, 200);
-  });
+    return c.json(check.ok ? { entitled: true, verdict: "paid" as const } : { ...refused, ...disclosable }, 200);
+  }, refuseUnreadable(() => refused));
 }

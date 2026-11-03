@@ -16,6 +16,9 @@
 
 export type ClientIpOption = "vercel" | "netlify" | "cloudflare" | "none" | { header: string };
 
+/** Headers a client can append to, never trusted as the caller's address. */
+const APPENDABLE: ReadonlySet<string> = new Set(["x-forwarded-for", "forwarded"]);
+
 const PRESETS: Record<"vercel" | "netlify" | "cloudflare", readonly string[]> = {
   vercel: ["x-vercel-forwarded-for", "x-real-ip"],
   netlify: ["x-nf-client-connection-ip"],
@@ -39,7 +42,13 @@ export function sdkClientIp(
 ): string | null {
   if (opt === "none") return null;
   const first = (h: string): string | null => req.headers.get(h)?.split(",")[0]?.trim() || null;
-  if (typeof opt === "object") return first(opt.header.toLowerCase());
+  if (typeof opt === "object") {
+    const name = opt.header.toLowerCase();
+    // A list the caller can prepend to: its first entry is whatever the caller sent, so trusting it
+    // would let a forger mark its own claim verified. The WordPress plugin refuses the same two.
+    if (APPENDABLE.has(name)) return null;
+    return first(name);
+  }
   const preset = opt ?? detect(req, env);
   if (!preset) return null;
   for (const h of PRESETS[preset]) {

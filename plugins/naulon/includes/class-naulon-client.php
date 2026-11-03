@@ -162,6 +162,33 @@ class Naulon_Client {
 	}
 
 	/**
+	 * The verdicts `/verify` and `/license/check` answer with. Mirrors `GATE_VERDICTS` in
+	 * `@naulon/shared`; `GateVerdictTest` holds it to `test-fixtures/vocabulary.json`.
+	 */
+	const VERDICTS = array( 'paid', 'refused', 'pending', 'unavailable' );
+
+	/**
+	 * What to do with an answer from `/verify` or `/license/check`, as `gateAnswer` in
+	 * `@naulon/shared` reads it: the body's `verdict` when it has one; otherwise `refused` for a 4xx,
+	 * and null (no verdict: serve the page) for anything else.
+	 *
+	 * A 4xx without a verdict is refused because the agent can provoke one: its payment header can
+	 * trip a body limit, a firewall or a rate limiter in front of the gate, and serving on that would
+	 * make the header a free pass. Only a failure no request can choose serves the page.
+	 *
+	 * @param array $response A response from request(): {ok, status, body, error}.
+	 * @return string|null
+	 */
+	public static function verdict_of( array $response ) {
+		$body = isset( $response['body'] ) ? $response['body'] : null;
+		if ( is_array( $body ) && isset( $body['verdict'] ) && is_string( $body['verdict'] ) && in_array( $body['verdict'], self::VERDICTS, true ) ) {
+			return $body['verdict'];
+		}
+		$status = isset( $response['status'] ) ? (int) $response['status'] : 0;
+		return ( $status >= 400 && $status < 500 ) ? 'refused' : null;
+	}
+
+	/**
 	 * Settle a presented payment. The control plane verifies the buyer's signature, moves the
 	 * money buyer→author (custody-free — nothing is ever held here or there), and mints the
 	 * re-read license.

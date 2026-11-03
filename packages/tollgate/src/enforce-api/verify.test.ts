@@ -68,6 +68,7 @@ const keyHeaders = { authorization: "Bearer nln_live_test", "content-type": "app
 test("missing key → 401", async () => {
   const res = await appWith({}).request("/_naulon/verify", { method: "POST", body: "{}" });
   assert.equal(res.status, 401);
+  assert.equal(((await res.json()) as { verdict?: string }).verdict, undefined, "a key refusal carries no verdict; runtimes read the 4xx as refused");
 });
 
 test("valid key + resource owned by tenant → 200 ok:true with settlementRef + license", async () => {
@@ -79,6 +80,7 @@ test("valid key + resource owned by tenant → 200 ok:true with settlementRef + 
   assert.equal(res.status, 200);
   const j = (await res.json()) as { ok: boolean; settlementRef: string; licenseJws: string };
   assert.equal(j.ok, true);
+  assert.equal((j as { verdict?: string }).verdict, "paid");
   assert.equal(j.settlementRef, "mock-ref");
   assert.equal(j.licenseJws, "jws");
 });
@@ -90,6 +92,7 @@ test("cross-tenant: resource resolves to a DIFFERENT tenant → 403", async () =
     body: body(),
   });
   assert.equal(res.status, 403);
+  assert.equal(((await res.json()) as { verdict?: string }).verdict, undefined, "a host refusal is no verdict");
 });
 
 test("unknown host (no publisher) → 403", async () => {
@@ -99,6 +102,7 @@ test("unknown host (no publisher) → 403", async () => {
     body: body(),
   });
   assert.equal(res.status, 403);
+  assert.equal(((await res.json()) as { verdict?: string }).verdict, undefined);
 });
 
 test("suspended publisher → 403", async () => {
@@ -108,6 +112,7 @@ test("suspended publisher → 403", async () => {
     body: body(),
   });
   assert.equal(res.status, 403);
+  assert.equal(((await res.json()) as { verdict?: string }).verdict, "refused");
 });
 
 test("settle failure (bad signature) → 402 with error", async () => {
@@ -119,12 +124,14 @@ test("settle failure (bad signature) → 402 with error", async () => {
   assert.equal(res.status, 402);
   const j = (await res.json()) as { ok: boolean; error: string };
   assert.equal(j.ok, false);
+  assert.equal((j as { verdict?: string }).verdict, "refused");
   assert.equal(j.error, "invalid signature");
 });
 
 test("malformed body → 400", async () => {
   const res = await appWith({}).request("/_naulon/verify", { method: "POST", headers: keyHeaders, body: JSON.stringify({ payment: "x" }) });
   assert.equal(res.status, 400);
+  assert.equal(((await res.json()) as { verdict?: string }).verdict, "refused");
 });
 
 // ── in-app liveness stamp ────────────────────────────────────
@@ -660,8 +667,10 @@ test("a payment rail that could not be asked answers 503 and is recorded as a fr
     observe: (o: InAppObservation) => void seen.push(o),
   });
   const res = await app.request("/_naulon/verify", { method: "POST", headers: keyHeaders, body: body() });
-  assert.equal(res.status, 503, "no verdict, so the runtime serves the page");
-  assert.equal(((await res.json()) as { error: string }).error, "payment_rail_unavailable");
+  assert.equal(res.status, 503);
+  const j = (await res.json()) as { error: string; verdict: string };
+  assert.equal(j.error, "payment_rail_unavailable");
+  assert.equal(j.verdict, "unavailable", "the runtime serves the page");
   assert.equal(seen.length, 1);
   assert.equal(seen[0]!.verdict, "served-free");
   assert.equal((seen[0] as { freeReason?: string }).freeReason, "unavailable");

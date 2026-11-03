@@ -93,6 +93,7 @@ class ObserveReportTest extends WP_UnitTestCase {
 				'code' => 200,
 				'body' => array(
 					'ok'             => true,
+					'verdict'        => 'paid',
 					'settlementRef'  => '0xsettled',
 					'payer'          => '0x9999999999999999999999999999999999999999',
 					'responseHeader' => 'receipt',

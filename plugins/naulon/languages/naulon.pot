@@ -411,6 +411,10 @@ msgid "re-read with a license"
 msgstr ""
 
 #: includes/admin/class-naulon-admin-diagnostics.php:413
+msgid "asked to retry (payment in progress)"
+msgstr ""
+
+#: includes/admin/class-naulon-admin-diagnostics.php:413
 msgid "served free"
 msgstr ""
 

@@ -215,6 +215,7 @@ class EnforcerTest extends WP_UnitTestCase {
 			'code' => 200,
 			'body' => array(
 				'ok'             => true,
+				'verdict'        => 'paid',
 				'settlementRef'  => '0xdeadbeef',
 				'responseHeader' => 'receipt-bytes',
 				'licenseJws'     => 'the.license.jws',
@@ -234,7 +235,7 @@ class EnforcerTest extends WP_UnitTestCase {
 		// /verify re-derives the legs a quote implies and refuses a mismatch. Anything we
 		// invented or reshaped here would fail that check — and the x402 wrapper must not be
 		// echoed back as part of the quote.
-		$this->responses['/_naulon/verify'] = array( 'code' => 200, 'body' => array( 'ok' => true ) );
+		$this->responses['/_naulon/verify'] = array( 'code' => 200, 'body' => array( 'ok' => true, 'verdict' => 'paid' ) );
 		$this->as_agent();
 		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
 		$this->decide();
@@ -254,7 +255,7 @@ class EnforcerTest extends WP_UnitTestCase {
 	}
 
 	public function test_a_failed_settlement_re_presents_the_bill_rather_than_serving() {
-		$this->responses['/_naulon/verify'] = array( 'code' => 402, 'body' => array( 'ok' => false, 'error' => 'settlement failed' ) );
+		$this->responses['/_naulon/verify'] = array( 'code' => 402, 'body' => array( 'ok' => false, 'verdict' => 'refused', 'error' => 'settlement failed' ) );
 		$this->as_agent();
 		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
 
@@ -265,6 +266,7 @@ class EnforcerTest extends WP_UnitTestCase {
 
 	public function test_a_settlement_that_gives_no_verdict_serves_the_read() {
 		// Billing again could charge the buyer twice for one read, so a missing verdict serves it.
+		// The status never decides: a gate older than the field, or a key refusal, is no verdict.
 		$this->as_agent();
 		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
 		foreach ( array(
@@ -272,6 +274,8 @@ class EnforcerTest extends WP_UnitTestCase {
 			array( 'code' => 500, 'body' => array( 'error' => 'boom' ) ),
 			array( 'code' => 200, 'body' => 'not an object' ),
 			array( 'code' => 200, 'body' => array( 'ok' => false ) ),
+			array( 'code' => 200, 'body' => array( 'ok' => true ) ),
+			array( 'code' => 200, 'body' => array( 'verdict' => 'PAID' ) ),
 		) as $canned ) {
 			$this->responses['/_naulon/verify'] = $canned;
 			$decision = $this->decide();
@@ -283,7 +287,7 @@ class EnforcerTest extends WP_UnitTestCase {
 	}
 
 	public function test_a_payment_rail_the_gate_reported_down_is_served_and_not_reported_twice() {
-		$this->responses['/_naulon/verify'] = array( 'code' => 503, 'body' => array( 'ok' => false, 'error' => 'payment_rail_unavailable' ) );
+		$this->responses['/_naulon/verify'] = array( 'code' => 503, 'body' => array( 'ok' => false, 'verdict' => 'unavailable', 'error' => 'payment_rail_unavailable' ) );
 		$this->as_agent();
 		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
 
@@ -292,10 +296,48 @@ class EnforcerTest extends WP_UnitTestCase {
 		$this->assertTrue( $decision['unreported'] );
 	}
 
+	public function test_a_pending_settlement_asks_to_retry_and_never_offers_again() {
+		$this->responses['/_naulon/verify'] = array( 'code' => 409, 'body' => array( 'ok' => false, 'verdict' => 'pending', 'error' => 'in_flight' ) );
+		$this->as_agent();
+		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
+
+		$decision = $this->decide();
+		$this->assertSame( 'retry', $decision['action'] );
+		$denial = Naulon_Enforcer::instance()->denial_response( $decision, 'https://example.test/x' );
+		$this->assertSame( 503, $denial['status'] );
+		$this->assertContains( 'Retry-After: 2', $denial['headers'] );
+		$this->assertSame( array(), preg_grep( '/^payment-required:/i', $denial['headers'] ), 'no second offer' );
+	}
+
+	public function test_a_4xx_without_a_verdict_re_presents_the_bill() {
+		// The agent can provoke one in front of the gate (a body limit, a firewall, a rate limiter),
+		// so it is refused, never a free read.
+		$this->as_agent();
+		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
+		foreach ( array(
+			array( 'code' => 402, 'body' => array( 'ok' => false, 'error' => 'bad sig' ) ),
+			array( 'code' => 401, 'body' => array( 'ok' => false, 'error' => 'unauthorized' ) ),
+			array( 'code' => 403, 'body' => 'blocked by a firewall' ),
+			array( 'code' => 413, 'body' => 'payload too large' ),
+			array( 'code' => 429, 'body' => array( 'error' => 'slow down' ) ),
+		) as $canned ) {
+			$this->responses['/_naulon/verify'] = $canned;
+			$this->assertSame( 'pay', $this->decide()['action'], wp_json_encode( $canned ) );
+		}
+	}
+
+	public function test_a_paid_verdict_serves_whatever_the_status() {
+		$this->responses['/_naulon/verify'] = array( 'code' => 500, 'body' => array( 'ok' => true, 'verdict' => 'paid', 'responseHeader' => 'r' ) );
+		$this->as_agent();
+		$_SERVER['HTTP_PAYMENT_SIGNATURE'] = 'buyer-signature';
+
+		$this->assertSame( 'settled', $this->decide()['action'] );
+	}
+
 	// ── Re-read ──────────────────────────────────────────────────────────────────────────
 
 	public function test_a_valid_license_re_reads_free_without_paying_again() {
-		$this->responses['/_naulon/license/check'] = array( 'code' => 200, 'body' => array( 'entitled' => true ) );
+		$this->responses['/_naulon/license/check'] = array( 'code' => 200, 'body' => array( 'entitled' => true, 'verdict' => 'paid' ) );
 		$this->as_agent();
 		$_SERVER['HTTP_X_NAULON_LICENSE'] = 'the.license.jws';
 
@@ -308,7 +350,7 @@ class EnforcerTest extends WP_UnitTestCase {
 	}
 
 	public function test_an_invalid_license_falls_through_to_the_402_and_is_never_trusted() {
-		$this->responses['/_naulon/license/check'] = array( 'code' => 200, 'body' => array( 'entitled' => false ) );
+		$this->responses['/_naulon/license/check'] = array( 'code' => 200, 'body' => array( 'entitled' => false, 'verdict' => 'refused' ) );
 		$this->as_agent();
 		$_SERVER['HTTP_X_NAULON_LICENSE'] = 'forged';
 
@@ -323,6 +365,7 @@ class EnforcerTest extends WP_UnitTestCase {
 			array( 'error' => 'connection refused' ),
 			array( 'code' => 502, 'body' => array( 'error' => 'bad gateway' ) ),
 			array( 'code' => 200, 'body' => 'not an object' ),
+			array( 'code' => 200, 'body' => array( 'entitled' => true ) ),
 		) as $canned ) {
 			$this->responses['/_naulon/license/check'] = $canned;
 			$decision = $this->decide();
@@ -332,9 +375,9 @@ class EnforcerTest extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_a_license_check_refused_with_a_4xx_never_serves_on_the_claim() {
-		// A 4xx is an answer about this request. Serving on it would make the header a password.
-		$this->responses['/_naulon/license/check'] = array( 'code' => 400, 'body' => array( 'error' => 'bad request' ) );
+	public function test_a_license_check_refused_never_serves_on_the_claim() {
+		// A refusal is an answer about this request. Serving on it would make the header a password.
+		$this->responses['/_naulon/license/check'] = array( 'code' => 400, 'body' => array( 'entitled' => false, 'verdict' => 'refused' ) );
 		$this->as_agent();
 		$_SERVER['HTTP_X_NAULON_LICENSE'] = 'anything';
 

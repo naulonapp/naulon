@@ -62,6 +62,25 @@ jobs:
           fi
           echo "::warning title=npm is behind ${prev}::Published packages changed since ${prev} and are not on the registry:${behind}. Cut a release when the change is worth installing — bump each one, add its CHANGELOG.md section, then tag."
 
+  # The Python package. 3.10 is the floor it promises; 3.13 is what Bear and most hosts run.
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e '.[dev,botauth]'
+      - run: pytest -q
+      - run: mypy src
+      - run: ruff check src tests
+
   # The WordPress plugin is PHP, so the Node job above cannot see it. Until this job
   # existed, plugins/naulon/tests/ ran NOWHERE — including VersionTest, written
   # precisely to stop a build shipping under a version already in the wild, which is

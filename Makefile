@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install hooks deps-check build-shared build-enforce build-wayfarer build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-build docker-down
+.PHONY: help install hooks test-python deps-check build-shared build-enforce build-wayfarer build-sdk dev demo origin tollgate wayfarer dashboard seed settle test lint clean generate-wallets docker-up docker-build docker-down
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[33m%-18s\033[0m %s\n", $$1, $$2}'
@@ -85,6 +85,10 @@ deps-check: ## Is node_modules what the lockfile says?
 
 test: build-sdk ## Run unit tests
 	npm test
+
+test-python: ## Python package: tests, mypy --strict and ruff (creates packages/python/.venv)
+	@cd packages/python && { [ -x .venv/bin/pytest ] || { python3 -m venv .venv && .venv/bin/pip install -q -e '.[dev,botauth]'; }; } \
+		&& .venv/bin/pytest -q && .venv/bin/mypy src && .venv/bin/ruff check src tests
 
 lint: build-sdk ## Typecheck the whole workspace
 	npm run lint

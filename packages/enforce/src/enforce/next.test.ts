@@ -47,7 +47,7 @@ test("agent, no payment → 402 short-circuit (not next())", async () => {
 
 test("agent + payment ok → next() carrying the paid receipt headers", async () => {
   const fakeFetch = (async () =>
-    new Response(JSON.stringify({ ok: true, responseHeader: "rh", licenseJws: "jws" }), { status: 200 })) as unknown as typeof fetch;
+    new Response(JSON.stringify({ ok: true, verdict: "paid", responseHeader: "rh", licenseJws: "jws" }), { status: 200 })) as unknown as typeof fetch;
   const mw = createNaulonMiddleware({ ...opts, fetchImpl: fakeFetch }, NextResponse);
   const res = await mw(
     new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),

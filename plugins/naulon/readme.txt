@@ -167,6 +167,7 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 * A site connected to its own gate by address alone, without a key, now shows as not connected until you add the key.
 * The licence the plugin publishes is read from the same enforcement document on every gate, hosted or your own.
 * If naulon cannot answer a licence check or a payment, the agent now gets the article instead of being asked to pay again. A refusal from naulon still asks for payment.
+* While a payment for a read is still being confirmed, the agent is asked to retry in two seconds instead of being offered the price again.
 
 = 0.7.3 =
 * New name: naulon - Get paid when AI reads your work. Nothing else changed.

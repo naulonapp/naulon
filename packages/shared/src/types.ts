@@ -267,7 +267,44 @@ export interface PaymentEvidence {
  *  - `unavailable`: the gate or its payment rail gave no verdict, so the read was served rather
  *    than refused. An outage, recorded so the publisher can see what it cost.
  */
-export type FreeReason = "unpriced" | "terms" | "fleet" | "unavailable";
+export const FREE_REASONS = ["unpriced", "terms", "fleet", "unavailable"] as const;
+export type FreeReason = (typeof FREE_REASONS)[number];
+
+/**
+ * The gate's answer about a payment or a licence, carried as `verdict` on every body `/verify` and
+ * `/license/check` write:
+ *  - `paid`:        serve the resource (settled now, or a licence already paid for).
+ *  - `refused`:     not paid; answer the agent with the 402 again.
+ *  - `pending`:     a charge for this read is already running; answer 503 with `Retry-After`, never
+ *    a second offer.
+ *  - `unavailable`: the gate could not decide (its payment rail was down); serve the page.
+ * Read it with `gateAnswer`, never by hand.
+ */
+export const GATE_VERDICTS = ["paid", "refused", "pending", "unavailable"] as const;
+export type GateVerdict = (typeof GATE_VERDICTS)[number];
+
+/** The `verdict` a gate body carries, or null when it carries none. */
+export function gateVerdictOf(body: unknown): GateVerdict | null {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return null;
+  const v = (body as { verdict?: unknown }).verdict;
+  return typeof v === "string" && (GATE_VERDICTS as readonly string[]).includes(v) ? (v as GateVerdict) : null;
+}
+
+/**
+ * What a runtime does with an answer from `/verify` or `/license/check`: the body's `verdict` when it
+ * has one; otherwise `refused` for a 4xx, and null (no verdict: serve the page) for anything else.
+ * `status` is 0 when no answer arrived.
+ *
+ * A 4xx without a verdict is refused because a buyer can provoke one: the payment header is theirs,
+ * so its size or bytes can trip a body limit (413), a WAF (403) or a rate limiter (429) in front of
+ * the gate. Serving on that would make the header a free pass. Only a failure no request can choose
+ * (no answer, a 5xx, a success without a verdict) serves the page.
+ */
+export function gateAnswer(status: number, body: unknown): GateVerdict | null {
+  const v = gateVerdictOf(body);
+  if (v !== null) return v;
+  return status >= 400 && status < 500 ? "refused" : null;
+}
 
 export type ObservationVerdict =
   /** Read free — a human, or a crawler the publisher allow-listed (e.g. search). */

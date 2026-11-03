@@ -2,6 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { naulonMiddleware } from "./middleware.ts";
 import { localQuoteSource, httpQuoteSource } from "./quote-source.ts";
+import { useBotAuthResolver } from "../botAuth.ts";
+
+// Directories in these tests are served by a stubbed fetch under made-up hosts; the address check
+// would resolve them for real and refuse.
+useBotAuthResolver(async () => ["93.184.216.34"]);
 
 const quote = localQuoteSource(async () =>
   ({
@@ -43,7 +48,7 @@ test("agent, no payment → 402 with PAYMENT-REQUIRED header", async () => {
 
 test("agent + payment, cloud verify ok → pass + PAYMENT-RESPONSE/license on setHeaders", async () => {
   const fakeFetch = (async () =>
-    new Response(JSON.stringify({ ok: true, settlementRef: "0xabc", responseHeader: "rh", licenseJws: "jws" }), {
+    new Response(JSON.stringify({ ok: true, verdict: "paid", settlementRef: "0xabc", responseHeader: "rh", licenseJws: "jws" }), {
       status: 200,
     })) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
@@ -84,7 +89,7 @@ test("cloud QuoteSource: 204 (no toll) → pass (free)", async () => {
 
 test("agent + payment, cloud verify 402 → 402 passthrough of the error", async () => {
   const fakeFetch = (async () =>
-    new Response(JSON.stringify({ ok: false, error: "bad sig" }), { status: 402 })) as unknown as typeof fetch;
+    new Response(JSON.stringify({ ok: false, verdict: "refused", error: "bad sig" }), { status: 402 })) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
   const out = await mw(
     new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
@@ -357,7 +362,7 @@ test("a blocked crawler is reported", async () => {
 
 test("a settled payment is NOT reported here — /verify owns the money verdicts", async () => {
   const { seen, observe } = reporter();
-  const fakeFetch = (async () => new Response(JSON.stringify({ ok: true, licenseJws: "jws" }), { status: 200 })) as unknown as typeof fetch;
+  const fakeFetch = (async () => new Response(JSON.stringify({ ok: true, verdict: "paid", licenseJws: "jws" }), { status: 200 })) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch, observe: observe as never });
   const out = await mw(
     new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "payment-signature": "eyJ4Ijp0cnVlfQ==" }) }),
@@ -368,7 +373,7 @@ test("a settled payment is NOT reported here — /verify owns the money verdicts
 
 test("a REFUSED payment is not reported here either — no client asserts its own money", async () => {
   const { seen, observe } = reporter();
-  const fakeFetch = (async () => new Response(JSON.stringify({ ok: false, error: "bad sig" }), { status: 402 })) as unknown as typeof fetch;
+  const fakeFetch = (async () => new Response(JSON.stringify({ ok: false, verdict: "refused", error: "bad sig" }), { status: 402 })) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch, observe: observe as never });
   const out = await mw(
     new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "payment-signature": "eyJ4Ijp0cnVlfQ==" }) }),
@@ -381,7 +386,7 @@ test("the /verify body carries the agent block, so the cloud's paid row can attr
   let sent: Record<string, unknown> = {};
   const fakeFetch = (async (_url: string, init: RequestInit) => {
     sent = JSON.parse(String(init.body)) as Record<string, unknown>;
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    return new Response(JSON.stringify({ ok: true, verdict: "paid" }), { status: 200 });
   }) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
   await mw(new Request("http://h/essays/x", { headers: ua("GPTBot/1.0", { "payment-signature": "eyJ4Ijp0cnVlfQ==" }) }));
@@ -573,7 +578,7 @@ test("the verdict header is sanitized before it reaches the wire", async () => {
 
 test("crawler-charged comes from the control plane's settled figure, never the ask", async () => {
   const fakeFetch = (async () =>
-    new Response(JSON.stringify({ ok: true, settlementRef: "0xabc", chargedMicro: "4000" }), {
+    new Response(JSON.stringify({ ok: true, verdict: "paid", settlementRef: "0xabc", chargedMicro: "4000" }), {
       status: 200,
     })) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...pennyOpts, fetchImpl: fakeFetch });
@@ -585,7 +590,7 @@ test("crawler-charged comes from the control plane's settled figure, never the a
 });
 
 test("no reported figure means no crawler-charged — never the ask as a stand-in", async () => {
-  for (const receipt of [{ ok: true }, { ok: true, chargedMicro: "" }, { ok: true, chargedMicro: "4.2" }, { ok: true, chargedMicro: "-1" }, { ok: true, chargedMicro: "9".repeat(16) }]) {
+  for (const receipt of [{ ok: true, verdict: "paid" }, { ok: true, verdict: "paid", chargedMicro: "" }, { ok: true, verdict: "paid", chargedMicro: "4.2" }, { ok: true, verdict: "paid", chargedMicro: "-1" }, { ok: true, verdict: "paid", chargedMicro: "9".repeat(16) }]) {
     const fakeFetch = (async () => new Response(JSON.stringify(receipt), { status: 200 })) as unknown as typeof fetch;
     const mw = naulonMiddleware({ ...pennyOpts, fetchImpl: fakeFetch });
     const out = await mw(
@@ -1136,7 +1141,7 @@ test("in-app 402 renders as markdown when asked", async () => {
 
 test("a payment /verify refused answers with the offer, a remedy and the raw reason", async () => {
   const fakeFetch = (async () =>
-    new Response(JSON.stringify({ ok: false, error: "insufficient_balance" }), { status: 402 })) as unknown as typeof fetch;
+    new Response(JSON.stringify({ ok: false, verdict: "refused", error: "insufficient_balance" }), { status: 402 })) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
   const out = await mw(
     new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
@@ -1149,13 +1154,17 @@ test("a payment /verify refused answers with the offer, a remedy and the raw rea
   assert.equal(body.failure.detail, "insufficient_balance");
 });
 
-test("a /verify that gives no verdict serves the read: unreachable, a 5xx, or a 2xx without ok", async () => {
+test("a /verify that gives no verdict serves the read, whatever its status says", async () => {
   const replies: Array<() => Response> = [
     () => { throw new Error("ECONNREFUSED"); },
     () => new Response(JSON.stringify({ error: "boom" }), { status: 500 }),
     () => new Response("<html>bad gateway</html>", { status: 502 }),
     () => new Response("not json", { status: 200 }),
     () => new Response(JSON.stringify({ ok: false }), { status: 200 }),
+    // A success from a gate older than the verdict field carries none: served, never billed twice.
+    () => new Response(JSON.stringify({ ok: true, responseHeader: "rh" }), { status: 200 }),
+    () => new Response(JSON.stringify({ ok: true, verdict: "PAID" }), { status: 200 }),
+    () => new Response(JSON.stringify([{ verdict: "paid" }]), { status: 200 }),
   ];
   const errs: string[] = [];
   const realError = console.error;
@@ -1205,7 +1214,7 @@ test("an in-app 402 is never stored and varies on both User-Agent and Accept", a
 
 test("a refused payment whose reason is not a string still answers 402 with a remedy", async () => {
   const fakeFetch = (async () =>
-    new Response(JSON.stringify({ ok: false, error: { code: 7 } }), { status: 402 })) as unknown as typeof fetch;
+    new Response(JSON.stringify({ ok: false, verdict: "refused", error: { code: 7 } }), { status: 402 })) as unknown as typeof fetch;
   const mw = naulonMiddleware({ ...opts, fetchImpl: fakeFetch });
   const out = await mw(
     new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }),
@@ -1240,7 +1249,7 @@ test("a read served on a gate failure is reported free for `unavailable`, once",
       [() => { throw new Error("ECONNREFUSED"); }, 1],
       [() => new Response(JSON.stringify({ error: "boom" }), { status: 500 }), 1],
       // The gate's /verify already recorded this one when it answered that its rail was down.
-      [() => new Response(JSON.stringify({ ok: false, error: "payment_rail_unavailable" }), { status: 503 }), 0],
+      [() => new Response(JSON.stringify({ ok: false, verdict: "unavailable", error: "payment_rail_unavailable" }), { status: 503 }), 0],
     ] as Array<[() => Response, number]>) {
       const seen: Array<Record<string, unknown>> = [];
       const mw = naulonMiddleware({ ...opts, fetchImpl: (async () => reply()) as unknown as typeof fetch, observe: (r) => void seen.push(r as never) });
@@ -1275,12 +1284,39 @@ test("a /verify that hangs is served, not held open", async () => {
   }
 });
 
-test("a /verify that says ok:true on any 2xx is a paid read, never re-billed", async () => {
+test("a 4xx without a verdict is refused: a buyer can provoke one in front of the gate", async () => {
+  for (const reply of [
+    () => new Response(JSON.stringify({ ok: false, error: "bad sig" }), { status: 402 }),
+    () => new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401 }),
+    () => new Response("<html>blocked by WAF</html>", { status: 403 }),
+    () => new Response("payload too large", { status: 413 }),
+    () => new Response(JSON.stringify({ error: "slow down" }), { status: 429 }),
+  ]) {
+    const mw = naulonMiddleware({ ...opts, fetchImpl: (async () => reply()) as unknown as typeof fetch });
+    const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }));
+    assert.equal(out.response?.status, 402, "the bill again, never a free read");
+  }
+});
+
+test("verdict paid is a paid read whatever the status, never re-billed", async () => {
+  for (const status of [200, 201, 202, 500]) {
+    const mw = naulonMiddleware({
+      ...opts,
+      fetchImpl: (async () => new Response(JSON.stringify({ ok: true, verdict: "paid", responseHeader: "rh", licenseJws: "jws" }), { status })) as unknown as typeof fetch,
+    });
+    const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }));
+    assert.equal(out.response, null, `status ${status}`);
+    assert.equal(out.setHeaders?.["X-Naulon-License"], "jws");
+  }
+});
+
+test("verdict pending answers 503 with Retry-After and never a second offer", async () => {
   const mw = naulonMiddleware({
     ...opts,
-    fetchImpl: (async () => new Response(JSON.stringify({ ok: true, responseHeader: "rh", licenseJws: "jws" }), { status: 201 })) as unknown as typeof fetch,
+    fetchImpl: (async () => new Response(JSON.stringify({ ok: false, verdict: "pending", error: "in_flight" }), { status: 409 })) as unknown as typeof fetch,
   });
   const out = await mw(new Request("http://h/essays/x", { headers: { "user-agent": "GPTBot/1.0", "payment-signature": "eyJ4Ijp0cnVlfQ==" } }));
-  assert.equal(out.response, null);
-  assert.equal(out.setHeaders?.["X-Naulon-License"], "jws");
+  assert.equal(out.response?.status, 503);
+  assert.equal(out.response?.headers.get("retry-after"), "2");
+  assert.equal(out.response?.headers.get("payment-required"), null, "no offer");
 });

@@ -10,7 +10,9 @@
  */
 
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
+import { Resolver } from "node:dns/promises";
 import { isIP } from "node:net";
+import { isUsablePublicIp, parseIp } from "@naulon/shared";
 
 /** One covered component in the signature input: a name plus optional ;key=. */
 export interface CoveredComponent {
@@ -458,6 +460,12 @@ export interface BotAuthOptions {
    * signer walk serves its directory from a loopback port). Never in prod.
    */
   allowInsecureHttp?: boolean;
+  /**
+   * Resolve a directory host to its addresses: every one must be public, or the directory is never
+   * fetched. Checked on the default network path; a caller that injects `fetchFn` has replaced the
+   * network and owns that check, unless it passes this too.
+   */
+  resolveHost?: (host: string) => Promise<string[]>;
   clockSkewSec?: number;
 }
 
@@ -486,10 +494,19 @@ export type BotAuthOutcome =
   /** Verifier/network trouble — fail open, treat as unsigned. */
   | { status: "unverified"; reason: string };
 
+/** A strict DNS name: dotted labels and a top-level label with a letter, never an address. */
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+function isDnsName(host: string): boolean {
+  const labels = host.split(".");
+  return host.length <= 253 && labels.length >= 2 && labels.every((l) => DNS_LABEL.test(l)) && /[a-z]/.test(labels[labels.length - 1]!);
+}
+
 /**
  * Resolve + SSRF-guard the directory URL for a Signature-Agent value. The
- * agent URL is attacker-supplied: HTTPS only, no IP literals, no loopback —
- * except under the explicit local-fixture flag. Null = refused.
+ * agent URL is attacker-supplied: HTTPS on the default port, a strict DNS name,
+ * no userinfo, no IP literal, no loopback — except under the explicit
+ * local-fixture flag. Null = refused. The name's addresses are checked again
+ * before the fetch (`fetchDirectory`).
  */
 function directoryUrlFor(agentUrl: string, allowInsecureHttp: boolean): { url: string; agentHost: string } | null {
   let u: URL;
@@ -505,9 +522,56 @@ function directoryUrlFor(agentUrl: string, allowInsecureHttp: boolean): { url: s
   if (allowInsecureHttp && isLoopback) {
     return { url: `${u.protocol}//${u.host}${WELL_KNOWN_PATH}`, agentHost: hostname };
   }
-  if (u.protocol !== "https:") return null;
-  if (isLoopback || isIP(bare) !== 0) return null;
-  return { url: `https://${u.host}${WELL_KNOWN_PATH}`, agentHost: hostname };
+  if (u.protocol !== "https:" || u.username !== "" || u.password !== "" || (u.port !== "" && u.port !== "443")) return null;
+  if (isLoopback || isIP(bare) !== 0 || !isDnsName(bare.replace(/\.$/, ""))) return null;
+  return { url: `https://${hostname}${WELL_KNOWN_PATH}`, agentHost: hostname };
+}
+
+/**
+ * The name's A and AAAA records, through c-ares with its own timeout. Never `dns.lookup`: that runs
+ * on libuv's four-thread pool with no timeout, so four signed requests naming slow-resolving hosts
+ * would stall every other lookup, file read and crypto call in the process. Raced against a hard
+ * deadline as well; an unanswered name has no addresses, which refuses the fetch.
+ */
+const RESOLVE_DEADLINE_MS = 2_000;
+async function systemResolve(host: string): Promise<string[]> {
+  const resolver = new Resolver({ timeout: 1_000, tries: 1 });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<string[]>((resolve) => {
+    timer = setTimeout(() => {
+      resolver.cancel();
+      resolve([]);
+    }, RESOLVE_DEADLINE_MS);
+  });
+  const answer = Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]).then((rs) =>
+    rs.flatMap((r) => (r.status === "fulfilled" ? r.value : [])),
+  );
+  try {
+    return await Promise.race([answer, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+let resolveOverride: ((host: string) => Promise<string[]>) | null = null;
+
+/**
+ * Replace the resolver that guards the default directory fetch, for tests that serve a signer's
+ * directory from a stubbed global `fetch` under a made-up host. `null` restores the system one.
+ * Production never calls this.
+ */
+export function useBotAuthResolver(resolve: ((host: string) => Promise<string[]>) | null): void {
+  resolveOverride = resolve;
+}
+
+/** Every address `host` resolves to is a public one. A private, loopback, link-local or metadata
+ *  address means the caller is aiming the fetch at the network this gate runs in. */
+async function resolvesPublic(host: string, resolve: (host: string) => Promise<string[]>): Promise<boolean> {
+  const addresses = await resolve(host);
+  return addresses.length > 0 && addresses.every((a) => {
+    const ip = parseIp(a);
+    return ip !== null && isUsablePublicIp(ip, []);
+  });
 }
 
 /** Read a response body with a hard byte cap. Null = over cap / unreadable. */
@@ -570,6 +634,12 @@ function directorySignatureOk(res: Response, dirUrl: string, keys: DirectoryKeys
 async function fetchDirectory(dirUrl: string, opts: BotAuthOptions): Promise<DirectoryKeys | null> {
   const fetchFn = opts.fetchFn ?? fetch;
   try {
+    // The fetch resolves the name again, so a rebinding answer can still differ; the request is
+    // HTTPS with the certificate checked against this name, which an inward address cannot present.
+    const guarded = opts.resolveHost !== undefined || opts.fetchFn === undefined;
+    if (guarded && !opts.allowInsecureHttp && !(await resolvesPublic(new URL(dirUrl).hostname, opts.resolveHost ?? resolveOverride ?? systemResolve))) {
+      return null;
+    }
     const res = await fetchFn(dirUrl, {
       redirect: "manual", // the URL is attacker-supplied — never follow
       signal: AbortSignal.timeout(DIRECTORY_FETCH_TIMEOUT_MS),

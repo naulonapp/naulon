@@ -114,4 +114,5 @@ require_once __DIR__ . '/../includes/class-naulon-roles.php';
 // integers. Everything else in the class talks to options and hooks and lives in the wp-env
 // suite. See ObserverReportTest for why these two are worth the fast suite.
 require_once __DIR__ . '/../includes/class-naulon-observer.php';
+require_once __DIR__ . '/../includes/class-naulon-client.php';
 require_once __DIR__ . '/../includes/class-naulon-privacy.php';

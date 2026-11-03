@@ -193,6 +193,13 @@ class Naulon_Enforcer {
 			$response->header( 'Vary', 'User-Agent' );
 			return $response;
 		}
+		if ( 'retry' === $decision['action'] ) {
+			$response = new WP_REST_Response( array( 'code' => 'naulon_retry' ), 503 );
+			$response->header( 'Retry-After', '2' );
+			$response->header( 'Cache-Control', 'private, no-store' );
+			$response->header( 'Vary', 'User-Agent' );
+			return $response;
+		}
 		if ( 'pay' !== $decision['action'] ) {
 			return $result;
 		}
@@ -224,6 +231,11 @@ class Naulon_Enforcer {
 		}
 		if ( 'blocked' === $decision['action'] ) {
 			$this->send_403( $decision );
+			return;
+		}
+		if ( 'retry' === $decision['action'] ) {
+			$this->no_store();
+			$this->emit_denial( $this->denial_response( $decision, (string) get_permalink() ) );
 			return;
 		}
 		if ( 'settled' === $decision['action'] ) {
@@ -547,10 +559,14 @@ class Naulon_Enforcer {
 		$license = $this->header( self::LICENSE_HEADER );
 		if ( '' !== $license ) {
 			$checked = Naulon_Client::instance()->license_check( $license, $resource, $slug, $kind, $this->header( self::PROOF_HEADER ) );
-			if ( self::gave_no_verdict( $checked ) ) {
+			$verdict = Naulon_Client::verdict_of( $checked );
+			if ( null === $verdict || 'unavailable' === $verdict ) {
 				return $this->logged( $this->free( 'licence check unavailable', array( 'free_reason' => 'unavailable' ) ), $subject );
 			}
-			if ( $checked['ok'] && ! empty( $checked['body']['entitled'] ) ) {
+			if ( 'pending' === $verdict ) {
+				return $this->logged( self::retry( 'licence check pending' ), $subject );
+			}
+			if ( 'paid' === $verdict ) {
 				return $this->logged(
 					array(
 						'action'  => 'reread',
@@ -595,7 +611,8 @@ class Naulon_Enforcer {
 		// side of this call; we hand back the legs and quote we were given and are told what
 		// happened.
 		$settled = Naulon_Client::instance()->settle( $payment, $built['legs'], $built['quote'], $resource );
-		if ( $settled['ok'] && ! empty( $settled['body']['ok'] ) ) {
+		$verdict = Naulon_Client::verdict_of( $settled );
+		if ( 'paid' === $verdict ) {
 			// Write the earnings record before returning. The amounts stored are the ones the
 			// control plane put in the 402 the buyer signed — copied, never recomputed.
 			Naulon_Ledger::record(
@@ -622,14 +639,17 @@ class Naulon_Enforcer {
 			);
 		}
 
-		// No verdict from the settling side (including a 2xx that does not say ok): the read is
-		// served, whether or not the payment moved, because billing again could charge twice.
-		if ( self::gave_no_verdict( $settled ) || ( $settled['ok'] && empty( $settled['body']['ok'] ) ) ) {
-			// A gate whose payment rail was down already recorded this read when it answered so;
-			// reporting it again would count one outage twice.
-			$rail_down = 503 === (int) $settled['status'] && isset( $settled['body']['error'] ) && 'payment_rail_unavailable' === $settled['body']['error'];
+		// A charge for this read is already running: retry, never a second offer.
+		if ( 'pending' === $verdict ) {
+			return $this->logged( self::retry( 'settlement pending' ), $subject );
+		}
+
+		// No verdict from the settling side: the read is served, whether or not the payment moved,
+		// because billing again could charge twice. `unavailable` is the gate saying so itself, and
+		// it already recorded the read; reporting it again would count one outage twice.
+		if ( null === $verdict || 'unavailable' === $verdict ) {
 			return $this->logged(
-				$this->free( 'settlement unavailable', $rail_down ? array( 'unreported' => true ) : array( 'free_reason' => 'unavailable' ) ),
+				$this->free( 'settlement unavailable', 'unavailable' === $verdict ? array( 'unreported' => true ) : array( 'free_reason' => 'unavailable' ) ),
 				$subject
 			);
 		}
@@ -762,6 +782,15 @@ class Naulon_Enforcer {
 						'resource' => esc_url_raw( $resource ),
 					)
 				),
+			);
+		}
+		if ( 'retry' === $decision['action'] ) {
+			$headers[] = 'Retry-After: 2';
+			$headers[] = 'Content-Type: application/json; charset=utf-8';
+			return array(
+				'status'  => 503,
+				'headers' => $headers,
+				'body'    => (string) wp_json_encode( array( 'error' => 'pending' ) ),
 			);
 		}
 		if ( 'blocked' === $decision['action'] ) {
@@ -1044,19 +1073,20 @@ class Naulon_Enforcer {
 	}
 
 	/**
-	 * Whether a control-plane call ended without an answer: unreachable (status 0), a 5xx, or a
-	 * 2xx whose body is not JSON. Any of these is a gate failure, which serves the read. A 4xx is
-	 * the control plane answering about this request and is never treated as one.
+	 * A charge for this read is already running, or its outcome is not known yet: answer 503 with
+	 * Retry-After and no offer, because a 402 here would invite a second payment for one read.
 	 *
-	 * @param array $response A Naulon_Client response: {ok, status, body, error}.
-	 * @return bool
+	 * @param string $reason Logged reason.
+	 * @return array
 	 */
-	public static function gave_no_verdict( array $response ) {
-		$status = isset( $response['status'] ) ? (int) $response['status'] : 0;
-		if ( 0 === $status || $status >= 500 ) {
-			return true;
-		}
-		return $status >= 200 && $status < 300 && ! is_array( isset( $response['body'] ) ? $response['body'] : null );
+	private static function retry( $reason ) {
+		return array(
+			'action'  => 'retry',
+			'header'  => '',
+			'receipt' => '',
+			'license' => '',
+			'reason'  => $reason,
+		);
 	}
 
 	private function free( $reason, array $extra = array() ) {
