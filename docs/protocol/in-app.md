@@ -96,11 +96,36 @@ key then acts for its own site only.
 
 ## Platforms with many sites
 
-A gate started with `NAULON_PLATFORM_URL` and `NAULON_PLATFORM_KEY` asks your platform
-`GET <url>?host=<host>` for each site's record, validated against
-[publisher-record.schema.json](./publisher-record.schema.json). Answer `404` for a site you do not
-toll. Money is integer micro-USDC (`priceMicro`), and the gate keeps serving the last good record
-while your platform is unreachable.
+A platform that hosts many sites on one codebase (a blog host, a newsletter host, a site builder)
+installs the runtime once. Each site's owner turns naulon on for their own site.
+
+**Each owner brings their own key.** The owner signs up with a gate (the hosted one, or yours),
+proves they own their host, and pastes the key the gate gives them into a field on your platform.
+Your runtime sends each request to the gate under the key of that request's site. A key acts only
+for the hosts its owner verified, so a key pasted on the wrong site gets no verdict, and the page is
+served. You hold no money, no wallet and no price: the owner sets those with the gate.
+
+A runtime serving many sites must keep these rules:
+
+1. **Look the key up by host.** `key_for(host)` in Python, `keyFor(host)` in `@naulon/enforce`.
+   The host is the request's `Host`, lowercased, port included.
+2. **No key, no toll.** A site without a key is passed through untouched, with no call to the
+   gate. Never fall back to a platform-wide key: that would toll an owner who never opted in.
+3. **Never share an answer across keys.** Cache the policy document and every quote by host and
+   key together.
+4. **Report under the key of the site the report is about.** Batch reports per key.
+5. **Cache the lookup, briefly.** Thirty seconds per host is enough to spare your database and
+   short enough that a changed or revoked key lands quickly.
+6. **A lookup that fails serves the page.** The fail-open rules above apply to it.
+7. **Store the key as a secret.** Encrypt it at rest, never render it back in full, and never log
+   it. The hosted gate issues keys that can enforce and nothing else.
+
+**Or run the gate for every site yourself.** A gate started with `NAULON_PLATFORM_URL` and
+`NAULON_PLATFORM_KEY` asks your platform `GET <url>?host=<host>` for each site's record, validated
+against [publisher-record.schema.json](./publisher-record.schema.json). Answer `404` for a site you
+do not toll. Money is integer micro-USDC (`priceMicro`), and the gate keeps serving the last good
+record while your platform is unreachable. Give each site its own key with `enforceKeySha256`, and
+the runtime rules above apply unchanged.
 
 ## Conformance
 

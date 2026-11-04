@@ -15,6 +15,9 @@ class RequestFacts:
     query: str = ""
     headers: Mapping[str, str] = field(default_factory=dict)
     client_ip: str | None = None
+    # The key naulon tolls this request's site with. One per site on a multi-site platform, the
+    # single `NAULON_KEY` otherwise. A secret, so never part of the repr.
+    site_key: str | None = field(default=None, repr=False)
 
     @property
     def url(self) -> str:

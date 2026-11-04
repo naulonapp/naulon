@@ -43,13 +43,21 @@ import { headerSafe } from "../headerSafe.ts";
 import { chargesReads, claimsIn, classifyPaymentFailure, externalUrl, getConfig, referrerHost, rslResponseHeaders, type PaymentFailureReason, type TollMode, type JwkSet } from "@naulon/shared";
 import { sdkClientIp, type ClientIpOption } from "./clientIp.ts";
 import { decidingClaim } from "../identity.ts";
-import { httpCrawlerRangesSource } from "./rangesSource.ts";
+import { httpCrawlerRangesSource, type CrawlerRangesSource } from "./rangesSource.ts";
+import { jwksCache, type JwksCache } from "./jwks-cache.ts";
 import type { QuoteSource } from "./quote-source.ts";
 import { introspectLicence } from "@naulon/sdk/rsl";
 import type { PublisherConfigSource, PublisherEnforcementConfig } from "./config-source.ts";
 import type { DecideObs } from "../decide.ts";
 import type { ObservationReport, ObservationReporter, ReportableVerdict } from "./observation-sink.ts";
 import { gateAnswer, type FreeReason } from "@naulon/shared";
+
+/** The gate-wide caches several site engines can share (see `gateCaches`). */
+export interface GateCaches {
+  jwks?: JwksCache;
+  /** `null` turns the ranges check off for every engine holding this. */
+  ranges?: CrawlerRangesSource | null;
+}
 
 export interface NaulonMiddlewareOptionsBase {
   /**
@@ -147,6 +155,12 @@ export interface NaulonMiddlewareOptionsBase {
    * cached for an hour. `false`: no ranges, so every claim reads `unverified`.
    */
   crawlerRanges?: false | { url?: string; ttlMs?: number };
+  /**
+   * Caches that belong to the gate rather than to a site: its published keys and its crawler
+   * ranges. `naulonSites` passes one set to every site's engine so a platform with a thousand sites
+   * fetches them once. A single site leaves this unset and gets its own.
+   */
+  gateCaches?: GateCaches;
 }
 
 /**
@@ -287,7 +301,9 @@ export function naulonMiddleware(
   const clock = opts.now ?? Date.now;
   const cfg = getConfig();
   const rangesSource =
-    opts.crawlerRanges === false
+    opts.gateCaches?.ranges !== undefined
+      ? opts.gateCaches.ranges
+      : opts.crawlerRanges === false
       ? null
       : httpCrawlerRangesSource(opts.crawlerRanges?.url ?? `${new URL(opts.verifyUrl).origin}/.well-known/naulon/crawler-ranges.json`, {
           fetchImpl: doFetch,
@@ -301,36 +317,20 @@ export function naulonMiddleware(
   // turns a paid re-read into a 402.
   const resolveVerification = (() => {
     const lv = opts.licenseVerification ?? {};
-    const jwksUrl = lv.jwksUrl ?? `${new URL(opts.verifyUrl).origin}/.well-known/naulon-jwks.json`;
-    const ttl = lv.cacheTtlMs ?? 600_000;
-    let cached: JwkSet | undefined;
-    let fetchedAt = 0;
+    const keys =
+      opts.gateCaches?.jwks ??
+      jwksCache(lv.jwksUrl ?? `${new URL(opts.verifyUrl).origin}/.well-known/naulon-jwks.json`, {
+        ttlMs: lv.cacheTtlMs ?? 600_000,
+        fetchImpl: doFetch,
+        now: clock,
+      });
+    const jwksUrl = keys.url;
     // `issuer` is resolved PER REQUEST from the config actually in force, not read once
     // from a literal at mount time. Pinning iss/aud to a hand-written constant is how a
     // licence stops verifying the day the control plane restyles what it stamps — and the
     // symptom is a paid reader being charged twice, which nobody reports as a bug.
 
-    // One JWKS fetch in flight at a time, so the first request's probe and a re-read arriving with
-    // it share the round trip. Resolves to null on success, or the reason it failed.
-    // `transient` marks a failure of the gate (no answer, a 5xx, a body that is not JSON) apart from
-    // a 4xx, which is a misconfigured key URL and must never become a free pass.
-    let inflight: Promise<{ reason: string; transient: boolean } | null> | undefined;
-    const refresh = (): Promise<{ reason: string; transient: boolean } | null> => {
-      inflight ??= (async (): Promise<{ reason: string; transient: boolean } | null> => {
-        try {
-          const res = await doFetch(jwksUrl, { headers: { accept: "application/json" } });
-          if (!res.ok) return { reason: `-> HTTP ${res.status}`, transient: res.status >= 500 };
-          cached = (await res.json()) as JwkSet;
-          fetchedAt = clock();
-          return null;
-        } catch (err) {
-          return { reason: `unreachable (${err instanceof Error ? err.message : String(err)})`, transient: true };
-        }
-      })().finally(() => {
-        inflight = undefined;
-      });
-      return inflight;
-    };
+    const refresh = (): Promise<{ reason: string; transient: boolean } | null> => keys.refresh();
 
     // Preflight. If the keys this site needs are unreachable, every paid re-read 402s and the
     // publisher's buyers are silently charged twice; one fetch turns that from an invoice-time
@@ -343,6 +343,8 @@ export function naulonMiddleware(
     const preflight = (): void => {
       if (probed) return;
       probed = true;
+      // Keys shared with other engines (`gateCaches`) may already be in hand: nothing to probe.
+      if (keys.fresh()) return;
       void refresh().then((failure) => {
         if (failure) {
           const cost = failure.transient ? "Until the keys arrive, a presented licence is served free." : "Paid re-reads will be refused.";
@@ -373,11 +375,12 @@ export function naulonMiddleware(
         return undefined;
       }
       // A failed refresh keeps `cached` (stale-if-error); with no good fetch ever, it stays undefined.
-      if (!(cached && clock() - fetchedAt < ttl)) {
+      if (!keys.fresh()) {
         const failure = await refresh();
-        if (!cached && failure?.transient) return { outage: `${jwksUrl} ${failure.reason}` };
+        if (!keys.last() && failure?.transient) return { outage: `${jwksUrl} ${failure.reason}` };
       }
-      return cached ? { jwks: cached, issuer } : undefined;
+      const held = keys.last();
+      return held ? { jwks: held, issuer } : undefined;
     };
     return { preflight, resolve };
   })();

@@ -26,6 +26,8 @@ import * as observationSink from "./observation-sink.ts";
 import * as quoteSource from "./quote-source.ts";
 import * as clientIp from "./clientIp.ts";
 import * as rangesSource from "./rangesSource.ts";
+import * as sites from "./sites.ts";
+import * as jwksCache from "./jwks-cache.ts";
 
 /** Barrels, and the Next adapter — deliberately NOT in the core barrel, because it imports
  *  `next/server` and would pull the framework into every consumer of the kernel. */
@@ -39,6 +41,8 @@ const CORE = {
   "quote-source.ts": quoteSource,
   "clientIp.ts": clientIp,
   "rangesSource.ts": rangesSource,
+  "sites.ts": sites,
+  "jwks-cache.ts": jwksCache,
 } as const;
 
 for (const [file, mod] of Object.entries(CORE)) {

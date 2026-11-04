@@ -1,4 +1,6 @@
 """ASGI middleware: `app = NaulonASGI(app)`. HTTP only; `websocket` and `lifespan` pass straight through.
+A platform hosting many sites passes `key_for=lambda host: ...` (see `naulon.sites`); it may block on
+a database, so a cache miss runs it on a worker thread, never on the event loop.
 
 On an agent's request `http.response.start` is held until the first body message. A body sent with
 `more_body: true` is streaming and goes out untouched, never tolled.
@@ -8,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import dataclasses
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
@@ -15,6 +18,7 @@ from naulon._log import warn_error
 from naulon.core import Continue, Keep, Naulon, Respond
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
+from naulon.sites import DEFAULT_TTL_S, KeyFor, SiteKeys, _Miss
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -74,11 +78,14 @@ class NaulonASGI:
         settings: Settings | None = None,
         tollable: Tollable | None = None,
         naulon: Naulon | None = None,
+        key_for: KeyFor | None = None,
+        key_ttl_s: float = DEFAULT_TTL_S,
     ) -> None:
         self.app = app
         s = settings or Settings.from_env()
         self.naulon = naulon or (Naulon(s) if s.active else None)
         self.tollable = tollable or default_tollable
+        self.sites = SiteKeys(s.key, key_for, key_ttl_s)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http" or self.naulon is None:
@@ -87,6 +94,14 @@ class NaulonASGI:
         naulon = self.naulon
         try:
             facts = facts_of(scope)
+            site_key = self.sites.peek(facts.host)
+            if isinstance(site_key, _Miss):
+                loop = asyncio.get_running_loop()
+                site_key = await loop.run_in_executor(_FINISH_POOL, self.sites.lookup, facts.host)
+            if self.sites.per_site and site_key is None:
+                await self.app(scope, receive, send)  # this site has not turned naulon on
+                return
+            facts = dataclasses.replace(facts, site_key=site_key)
             decision = naulon.handle(facts)
         except Exception as err:
             warn_error("asgi.start", "naulon: request passed through after an internal error", err)

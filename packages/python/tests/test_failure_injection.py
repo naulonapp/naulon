@@ -32,7 +32,7 @@ def test_gate_faults_never_touch_a_person_and_never_raise(fault: str) -> None:
     t = gate()
     n = naulon(t)
     FAULTS[fault](t)
-    n.config.refresh_now("blog.test")
+    n.config.refresh_now("blog.test", "k")
     human = facts(BROWSER_UA)
     d = n.handle(human)
     assert n.finish(human, d, 200, True) == Keep()

@@ -1,4 +1,5 @@
-"""WSGI middleware: `app = NaulonWSGI(app)`.
+"""WSGI middleware: `app = NaulonWSGI(app)`. A platform hosting many sites passes
+`key_for=lambda host: ...`, returning that site's naulon key or None (see `naulon.sites`).
 
 A person's request goes to the app untouched. On an agent's request the status line and headers are
 held until the first body chunk; a response with more than one chunk is streaming and goes out
@@ -7,6 +8,7 @@ untouched, never tolled. The app iterator's `close()` is always called.
 
 from __future__ import annotations
 
+import dataclasses
 import urllib.parse
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
@@ -15,6 +17,7 @@ from naulon._log import warn_error
 from naulon.core import Continue, Keep, Naulon, Respond
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
+from naulon.sites import DEFAULT_TTL_S, KeyFor, SiteKeys
 
 StartResponse = Callable[..., Any]
 WSGIApp = Callable[[dict[str, Any], StartResponse], Iterable[bytes]]
@@ -88,11 +91,14 @@ class NaulonWSGI:
         settings: Settings | None = None,
         tollable: Tollable | None = None,
         naulon: Naulon | None = None,
+        key_for: KeyFor | None = None,
+        key_ttl_s: float = DEFAULT_TTL_S,
     ) -> None:
         self.app = app
         s = settings or Settings.from_env()
         self.naulon = naulon or (Naulon(s) if s.active else None)
         self.tollable = tollable or default_tollable
+        self.sites = SiteKeys(s.key, key_for, key_ttl_s)
 
     def __call__(self, environ: dict[str, Any], start_response: StartResponse) -> Iterable[bytes]:
         if self.naulon is None:
@@ -100,6 +106,10 @@ class NaulonWSGI:
         naulon = self.naulon
         try:
             facts = facts_of(environ)
+            site_key = self.sites.key(facts.host)
+            if self.sites.per_site and site_key is None:
+                return self.app(environ, start_response)  # this site has not turned naulon on
+            facts = dataclasses.replace(facts, site_key=site_key)
             decision = naulon.handle(facts)
         except Exception as err:
             warn_error("wsgi.start", "naulon: request passed through after an internal error", err)

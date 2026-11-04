@@ -87,7 +87,7 @@ def test_the_key_travels_as_a_bearer_token_only_to_the_gate() -> None:
             return super().request(method, url, headers=headers, body=body, timeout=timeout)
 
     c = GateClient(S, Spy({"/_naulon/quote": Response(204)}), Breaker())
-    c.quote("http://b.test/x/", "/x/", "read")
+    c.quote("http://b.test/x/", "/x/", "read", site_key="k")
     assert seen["authorization"] == "Bearer k"
 
 

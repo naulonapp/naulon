@@ -14,7 +14,7 @@ HOST = "blog.test"
 def naulon(t: FakeTransport) -> Naulon:
     n = Naulon(Settings(gate="http://gate", key="k"), transport=t)
     n.observations._ensure_worker = lambda: None  # type: ignore[method-assign]
-    n.config.refresh_now(HOST)
+    n.config.refresh_now(HOST, "k")
     # Warm the ranges too, so a later count of network calls sees only the request path.
     n.config._refresh_ranges()
     t.calls.clear()
@@ -28,4 +28,4 @@ def facts(ua: str = AGENT_UA, path: str = "/hello/", method: str = "GET", **head
 
 
 def reports(n: Naulon) -> list[dict[str, Any]]:
-    return list(n.observations._items)
+    return n.observations.queued()

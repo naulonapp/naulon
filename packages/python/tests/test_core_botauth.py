@@ -31,7 +31,7 @@ def setup(c: dict[str, Any]) -> tuple[Naulon, Any, RequestFacts]:
         directory_fetch=lambda url: t.request("GET", url, headers={}, body=None, timeout=3),
     )
     n.observations._ensure_worker = lambda: None  # type: ignore[method-assign]
-    n.config.refresh_now("gate.example")
+    n.config.refresh_now("gate.example", "k")
     n.config._refresh_ranges()
     t.calls.clear()
     r = c["request"]
@@ -49,7 +49,7 @@ def test_a_verified_signer_is_quoted_as_itself_and_reported_verified() -> None:
     assert isinstance(out, Replace) and out.response.status == 402
     quote_url = next(u for _, u, _ in t.calls if "/_naulon/quote" in u)
     assert "verifiedAgent=signer.example" in quote_url
-    agent = list(n.observations._items)[0]["agent"]
+    agent = n.observations.queued()[0]["agent"]
     assert agent["verified"] is True and agent["verifiedAgent"] == "signer.example"
     assert agent["classifyReason"] == "verified web-bot-auth (signer.example)", "the signature outranks the user agent"
 
@@ -58,7 +58,7 @@ def test_a_tampered_signature_is_reported_and_still_priced_by_its_user_agent() -
     n, t, f = setup(case("a tampered signature fails"))
     out = n.finish(f, n.handle(f), 200, True)
     assert isinstance(out, Replace)
-    agent = list(n.observations._items)[0]["agent"]
+    agent = n.observations.queued()[0]["agent"]
     assert agent.get("sigInvalid") is True and "verified" not in agent
 
 
@@ -66,7 +66,7 @@ def test_an_unsigned_request_never_fetches_a_directory() -> None:
     n, t, f = setup(case("no signature headers is absent"))
     n.finish(f, n.handle(f), 200, True)
     assert not any("http-message-signatures-directory" in u for _, u, _ in t.calls)
-    agent = list(n.observations._items)[0]["agent"]
+    agent = n.observations.queued()[0]["agent"]
     assert "verified" not in agent and "sigInvalid" not in agent, "no verdict on a signature that was never presented"
 
 
@@ -99,7 +99,7 @@ def test_a_blocked_crawler_is_refused_before_the_view_even_while_its_signature_w
 
     n, t, f = setup(case("a signed request verifies"))
     t.routes["/_naulon/enforce-config"] = json_response(200, config_doc(block=["gptbot"]))
-    n.config.refresh_now("gate.example")
+    n.config.refresh_now("gate.example", "k")
     t.calls.clear()
     d = n.handle(f)
     assert isinstance(d, Respond) and d.status == 403
@@ -123,7 +123,7 @@ def test_a_refusal_the_deferred_check_reaches_applies_to_a_non_article_too() -> 
         f.client_ip,
     )
     t.routes["/_naulon/enforce-config"] = json_response(200, config_doc(refuse={"crawlers": [], "agents": True}))
-    n.config.refresh_now("gate.example")
+    n.config.refresh_now("gate.example", "k")
     d = n.handle(f)
     assert isinstance(d, Continue) and isinstance(d.pending, Recheck)
     out = n.finish(f, d, 404, False)

@@ -49,7 +49,11 @@ The decision kernel and the framework-agnostic middleware core:
   answers 5xx, or answers 2xx without one, or the gate's keys were never fetched), the page is
   served, logged with `console.error`, and marked `X-Naulon-Verdict: served free (<step>
   unavailable)`. A 4xx is an answer, so it never serves the page.
-- `withNaulon(handler, opts)` wraps a generic `fetch` handler.
+- `naulonSites({ gate, keyFor })`: the same middleware for a platform that hosts many
+  sites. `keyFor(host)` returns the key that site's owner saved, or `null`; see
+  [Platforms with many sites](#platforms-with-many-sites).
+- `withNaulon(handler, opts)` wraps a generic `fetch` handler. It and the Next adapter take
+  either options or a built middleware (`naulonMiddleware(...)` or `naulonSites(...)`).
 - `localQuoteSource(fn)` / `httpQuoteSource(url, key)`: pluggable price and payees.
 - `httpPublisherConfigSource(url, key)`: what is tolled and for whom, read from the
   control plane and cached per host. It also carries your `/.well-known/x402` manifest
@@ -116,6 +120,29 @@ and export `middleware`. The adapter itself is identical either way.
 managed control plane, or your own self-hosted `POST /_naulon/verify` +
 `GET /_naulon/quote`. The middleware never holds funds: it forwards the buyer's
 signed payment to `verifyUrl`, which settles buyer → author directly.
+
+## Platforms with many sites
+
+If you host sites for other people, install this once and let each site's owner turn it on with a
+key from their own naulon account, pasted into a field you add to their settings:
+
+```ts
+import { naulonSites, withNaulon } from "@naulon/enforce";
+
+const toll = naulonSites({
+  gate: "https://gate.naulon.app",
+  keyFor: async (host) => (await db.site.findUnique({ where: { host } }))?.naulonKey ?? null,
+});
+
+export default { fetch: withNaulon(app.fetch, toll) };
+```
+
+A site whose `keyFor` answers `null` is never touched, and there is no platform-wide key to fall
+back to. Each site gets its own policy, quotes and reports under its own key; the gate's keys and
+crawler ranges are fetched once for all of them. `keyFor` is asked about once per host every 30
+seconds (`keyTtlMs`), and engines are kept for the 1,000 most recently active sites (`maxSites`).
+A `keyFor` that throws serves the page. The owner sets price, wallet and mode with the gate; you
+store only the key, as a secret.
 
 ## Observe mode
 

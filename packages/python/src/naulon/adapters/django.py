@@ -1,9 +1,13 @@
 """Django middleware. Add `"naulon.adapters.django.NaulonMiddleware"` to `MIDDLEWARE`.
 
-Settings come from `settings.NAULON` (`GATE`, `KEY`, `ENABLED`, `TIMEOUT`, `TOLLABLE`,
+Settings come from `settings.NAULON` (`GATE`, `KEY`, `ENABLED`, `TIMEOUT`, `TOLLABLE`, `KEY_FOR`,
 `TRUST_PROXY_HEADERS`), with `NAULON_*` in the environment winning. `TOLLABLE` is a dotted path to
 `tollable(request, response) -> bool`, which decides whether a response is an article. It is called
 only for an agent, after the view ran, and only on a `200`.
+
+`KEY_FOR` is for a platform hosting many sites: a dotted path to `key_for(host) -> str | None`,
+returning the naulon key that site's owner saved, or None for a site that has not turned naulon on
+(see `naulon.sites`). It may query the ORM; under ASGI a cache miss runs it through `sync_to_async`.
 
 The view's own exceptions propagate untouched. A streaming or file response is never read and
 never tolled.
@@ -11,6 +15,7 @@ never tolled.
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -24,6 +29,7 @@ from naulon._log import warn_error, warn_once
 from naulon.core import Continue, Decision, Keep, Naulon, Respond
 from naulon.facts import RequestFacts, lower_headers
 from naulon.settings import Settings
+from naulon.sites import KeyFor, SiteKeys, _Miss
 
 Tollable = Callable[[HttpRequest, HttpResponseBase], bool]
 
@@ -44,7 +50,7 @@ def _config() -> dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
-def _setup() -> tuple[Naulon | None, Tollable, str | None]:
+def _setup() -> tuple[Naulon | None, Tollable, str | None, SiteKeys]:
     """One Naulon per process, built on first use from settings."""
     with _lock:
         if "naulon" not in _state:
@@ -62,11 +68,28 @@ def _setup() -> tuple[Naulon | None, Tollable, str | None]:
                         path,
                     )
                     hook = _never
+            key_for: KeyFor | None = None
+            key_path = conf.get("KEY_FOR")
+            if isinstance(key_path, str) and key_path:
+                try:
+                    key_for = import_string(key_path)
+                except ImportError:
+                    warn_once(
+                        "django.key_for",
+                        "naulon: NAULON['KEY_FOR'] %s could not be imported; nothing is tolled",
+                        key_path,
+                    )
+                    key_for = _no_key
             proxy = conf.get("TRUST_PROXY_HEADERS")
+            _state["sites"] = SiteKeys(settings.key, key_for)
             _state["naulon"] = Naulon(settings) if settings.active else None
             _state["tollable"] = hook
             _state["proxy"] = _meta_key(proxy) if isinstance(proxy, str) and proxy else None
-        return _state["naulon"], _state["tollable"], _state["proxy"]
+        return _state["naulon"], _state["tollable"], _state["proxy"], _state["sites"]
+
+
+def _no_key(host: str) -> str | None:
+    return None
 
 
 def _never(request: HttpRequest, response: HttpResponseBase) -> bool:
@@ -125,13 +148,29 @@ def _to_django(r: Respond) -> HttpResponse:
     return out
 
 
+def _begin(request: HttpRequest) -> tuple[Naulon, RequestFacts, Tollable, SiteKeys] | None:
+    naulon, hook, proxy, sites = _setup()
+    if naulon is None:
+        return None
+    return naulon, facts_of(request, proxy), hook, sites
+
+
+def _decide(
+    naulon: Naulon, facts: RequestFacts, hook: Tollable, sites: SiteKeys, site_key: str | None
+) -> tuple[Naulon, RequestFacts, Decision, Tollable] | None:
+    if sites.per_site and site_key is None:
+        return None  # this site has not turned naulon on
+    facts = dataclasses.replace(facts, site_key=site_key)
+    return naulon, facts, naulon.handle(facts), hook
+
+
 def _start(request: HttpRequest) -> tuple[Naulon, RequestFacts, Decision, Tollable] | None:
     try:
-        naulon, hook, proxy = _setup()
-        if naulon is None:
+        begun = _begin(request)
+        if begun is None:
             return None
-        facts = facts_of(request, proxy)
-        return naulon, facts, naulon.handle(facts), hook
+        naulon, facts, hook, sites = begun
+        return _decide(naulon, facts, hook, sites, sites.key(facts.host))
     except Exception as err:
         warn_error("django.start", "naulon: request passed through after an internal error", err)
         return None
@@ -167,6 +206,22 @@ def _apply(
         return response
 
 
+async def _astart(request: HttpRequest) -> tuple[Naulon, RequestFacts, Decision, Tollable] | None:
+    """`_start` for an async stack: a `key_for` cache miss may touch the ORM, so it runs in a thread."""
+    try:
+        begun = _begin(request)
+        if begun is None:
+            return None
+        naulon, facts, hook, sites = begun
+        site_key = sites.peek(facts.host)
+        if isinstance(site_key, _Miss):
+            site_key = await sync_to_async(sites.lookup)(facts.host)
+        return _decide(naulon, facts, hook, sites, site_key)
+    except Exception as err:
+        warn_error("django.start", "naulon: request passed through after an internal error", err)
+        return None
+
+
 class NaulonMiddleware:
     sync_capable = True
     async_capable = True
@@ -193,7 +248,7 @@ class NaulonMiddleware:
 
     async def __acall__(self, request: HttpRequest) -> HttpResponseBase:
         get_response: Callable[[HttpRequest], Awaitable[HttpResponseBase]] = self.get_response
-        started = _start(request)
+        started = await _astart(request)
         if started is None:
             return await get_response(request)
         naulon, facts, decision, hook = started

@@ -9,13 +9,14 @@ forks after import (gunicorn's pre-fork model) gets a live worker in every child
 from __future__ import annotations
 
 import collections
+import hashlib
 import json
 import os
 import threading
 import time
 import urllib.parse
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from naulon import ranges
@@ -42,7 +43,20 @@ class _Entry:
     doc: dict[str, Any] | None
     fetched_at: float
     scheme: str
+    host: str
+    key: str | None = field(default=None, repr=False)
     pending: bool = False
+
+
+def key_digest(key: str | None) -> str:
+    """A short, stable name for a key, so caches can be keyed by it without holding it twice."""
+    return hashlib.sha256(key.encode()).hexdigest()[:24] if key else ""
+
+
+def _entry_id(host: str, key: str | None) -> str:
+    # One policy per host AND key: on a platform two writers' keys never share an answer, and a key
+    # the gate refused for one host never decides another.
+    return f"{host.lower()}\x00{key_digest(key)}"
 
 
 class ConfigCache:
@@ -85,16 +99,17 @@ class ConfigCache:
             e.pending = False
         self._ranges_pending = False
 
-    def get(self, host: str, scheme: str = "https") -> dict[str, Any] | None:
-        """The cached policy for `host`, or None. Never blocks; schedules a refresh when due."""
-        key = host.lower()
+    def get(self, host: str, scheme: str = "https", site_key: str | None = None) -> dict[str, Any] | None:
+        """The cached policy for `host` under `site_key`, or None. Never blocks; schedules a refresh
+        when due."""
+        key = _entry_id(host, site_key)
         now = self._clock()
         with self._lock:
             e = self._entries.get(key)
             if e is None:
                 if len(self._entries) >= MAX_UNKNOWN_HOSTS:
                     self._evict_unknown()
-                e = _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme)
+                e = _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme, host=host.lower(), key=site_key)
                 self._entries[key] = e
             due = not e.pending and now - e.fetched_at >= self._settings.refresh_s
             if due:
@@ -170,20 +185,31 @@ class ConfigCache:
                 if key == _RANGES_KEY:
                     self._refresh_ranges()
                 else:
-                    self.refresh_now(key)
+                    self._refresh_entry(key)
             except Exception as err:  # the worker must outlive any one bad answer
                 warn_error("config.worker", "naulon: config refresh failed", err)
 
-    def refresh_now(self, host: str) -> None:
-        """Fetch `host`'s policy now, on this thread. The worker calls it; so may a test."""
-        key = host.lower()
+    def refresh_now(self, host: str, site_key: str | None = None) -> None:
+        """Fetch `host`'s policy under `site_key` now, on this thread. A test may call it."""
+        key = _entry_id(host, site_key)
         with self._lock:
-            e = self._entries.setdefault(key, _Entry(doc=None, fetched_at=float("-inf"), scheme="https"))
-            scheme = e.scheme
-        outcome = self._fetch(key, scheme)
+            self._entries.setdefault(
+                key, _Entry(doc=None, fetched_at=float("-inf"), scheme="https", host=host.lower(), key=site_key)
+            )
+        self._refresh_entry(key)
+
+    def _refresh_entry(self, key: str) -> None:
+        with self._lock:
+            e = self._entries.get(key)
+            if e is None:  # evicted while queued
+                return
+            scheme, host, site_key = e.scheme, e.host, e.key
+        outcome = self._fetch(host, scheme, site_key)
         now = self._clock()
         with self._lock:
-            e = self._entries.setdefault(key, _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme))
+            e = self._entries.setdefault(
+                key, _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme, host=host, key=site_key)
+            )
             e.pending = False
             if isinstance(outcome, str):
                 # Keep the last good copy, and ask again in a minute rather than a full interval.
@@ -192,7 +218,7 @@ class ConfigCache:
             e.doc = outcome
             e.fetched_at = now
 
-    def _fetch(self, host: str, scheme: str) -> dict[str, Any] | None | str:
+    def _fetch(self, host: str, scheme: str, site_key: str | None) -> dict[str, Any] | None | str:
         """The document, None for "no publisher here", or "failed" for no usable answer."""
         gate = self._settings.gate
         if gate is None or not self._breaker.allow():
@@ -201,7 +227,7 @@ class ConfigCache:
         res = self._transport.request(
             "GET",
             f"{gate}/_naulon/enforce-config?resource={resource}",
-            headers=_auth(self._settings),
+            headers=_auth(site_key),
             body=None,
             timeout=max(self._settings.timeout, 5.0),
         )
@@ -214,7 +240,7 @@ class ConfigCache:
             # 403 and 404 mean the gate tolls no site at this host, which is normal for a host that has
             # not turned naulon on. Only 401 says the key itself is wrong.
             if res.status == 401:
-                warn_once("config.401", "naulon: the gate refused NAULON_KEY (HTTP 401); nothing is tolled")
+                warn_once("config.401", "naulon: the gate refused a site key (HTTP 401); that site is not tolled")
             return None
         if res.status != 200:
             return "failed"
@@ -250,8 +276,8 @@ class ConfigCache:
                 self._ranges_at = now - RANGES_REFRESH_S + RANGES_RETRY_S
 
 
-def _auth(s: Settings) -> dict[str, str]:
+def _auth(site_key: str | None) -> dict[str, str]:
     h = {"accept": "application/json", "user-agent": "naulon-python"}
-    if s.key:
-        h["authorization"] = f"Bearer {s.key}"
+    if site_key:
+        h["authorization"] = f"Bearer {site_key}"
     return h

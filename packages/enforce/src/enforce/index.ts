@@ -10,5 +10,7 @@ export * from "./config-source.ts";
 export * from "./observation-sink.ts";
 export * from "./middleware.ts";
 export * from "./fetch-handler.ts";
+export * from "./sites.ts";
+export * from "./jwks-cache.ts";
 export * from "./clientIp.ts";
 export * from "./rangesSource.ts";

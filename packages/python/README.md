@@ -69,12 +69,35 @@ app = NaulonASGI(app)
 | `NAULON_ENABLED` | `1` | `0` turns the middleware into a no-op |
 | `NAULON_TIMEOUT` | `2.0` | Seconds to wait for the gate on an agent request |
 
-Django may set the same keys in `settings.NAULON` (`GATE`, `KEY`, `ENABLED`, `TIMEOUT`); the
+Django may set the same keys in `settings.NAULON` (`GATE`, `KEY`, `ENABLED`, `TIMEOUT`, `KEY_FOR`); the
 environment wins. The middleware prices the URL Django sees, so behind a proxy that terminates TLS set
 `USE_X_FORWARDED_HOST = True` and `SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")`,
 and only when the proxy overwrites both headers on every request. Behind a proxy that writes the caller's address into a single-value header, name
 it in `NAULON["TRUST_PROXY_HEADERS"]` (for example `"X-Real-IP"`). `X-Forwarded-For` is refused:
 the caller writes its first entry.
+
+## Platforms with many sites
+
+If you host sites for other people, install the middleware once and let each site's owner turn it
+on. Each owner gets a key from their own naulon account and pastes it into a field you add to their
+site settings. Tell the middleware how to find it:
+
+```python
+# settings.py
+NAULON = {"GATE": "https://gate.naulon.app", "KEY_FOR": "sites.naulon.key_for"}
+
+# sites/naulon.py
+def key_for(host: str) -> str | None:
+    site = Site.objects.filter(domain=host).only("naulon_key").first()
+    return site.naulon_key if site else None
+```
+
+WSGI and ASGI take it as an argument: `NaulonWSGI(app, key_for=key_for)`. A site whose `key_for`
+returns `None` is never touched. There is no fallback to `NAULON_KEY`, so nobody is tolled who did
+not opt in. The answer is cached per host for 30 seconds; under ASGI a lookup runs on a worker
+thread, never on the event loop. Every policy, quote and report is kept per key, so one site's
+answer never reaches another. Store the key as a secret. The owner sets price, wallet and mode in
+their naulon dashboard; you store nothing else.
 
 ## Hosted or self-hosted
 
