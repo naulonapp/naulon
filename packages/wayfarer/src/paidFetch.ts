@@ -7,6 +7,7 @@
 import { readAccept, readBody, type ReadFormat, type ReadResult } from "./readable.ts";
 import {
   AGENT_UA,
+  authorizationsOf,
   classifyPaymentError,
   classifySignerRefusal,
   probe,
@@ -110,7 +111,10 @@ export async function runPaidFetch(
   // costUsdc is the TRUE total the buyer authorized (all legs), so callers debit budgets on
   // it — not paidUsdc (author leg only), which under-counts a fee'd toll.
   const costUsdc = Number(quotedTotalAtomic(quoted)) / 1_000_000;
-  return { ok: true, ...read, settlementRef, charge, paidUsdc: quoted.priceUsdc, costUsdc, license };
+  return {
+    ok: true, ...read, settlementRef, charge, paidUsdc: quoted.priceUsdc, costUsdc, license,
+    ...(charge === "unconfirmed" ? { authorizations: authorizationsOf(paymentSignature, quoted.requirements.network) } : {}),
+  };
 }
 
 // Re-export the two classifiers so a rail's `onSignError` can build the same typed result the

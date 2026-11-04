@@ -2944,6 +2944,12 @@ test("a 200 with no receipt says the charge is unconfirmed, and still debits the
       assert.equal(e?.charge, "unconfirmed", "the audit event carries it too");
       assert.match(e?.reason ?? "", /charge unconfirmed/);
       assert.doesNotMatch(e?.reason ?? "", /^paid /, "the reason does not claim a payment");
+      // The host can only learn what became of the money by asking the rail about each signature.
+      const auths = e?.authorizations ?? [];
+      assert.equal(auths.length, 1, `one leg, one authorization, got ${JSON.stringify(auths)}`);
+      assert.match(auths[0]!.nonce, /^0x[0-9a-f]{64}$/);
+      assert.equal(auths[0]!.amountAtomic, "5000");
+      assert.ok(auths[0]!.validBefore > Math.floor(Date.now() / 1000), "still settleable when reported");
     });
   });
 });
@@ -2956,6 +2962,18 @@ test("a 200 carrying the gate's receipt says the charge is confirmed", async () 
         .structuredContent as PayResult & { charge?: string };
       assert.equal(p.ok, true, `expected a paid read, got ${JSON.stringify(p)}`);
       assert.equal(p.charge, "confirmed");
+    });
+  });
+});
+
+test("a confirmed charge carries no authorizations: the receipt already answers it", async () => {
+  await withStubGate(payGateSettling("6b1e5a2c-0f3d-4a7e-9c11-2f8b7d4e1a55"), async () => {
+    await withEnv({ WAYFARER_BUDGET_USDC: "1" }, async () => {
+      const events: DecisionAuditEvent[] = [];
+      const client = await connectedClientWith({ auditSink: (e) => events.push(e) });
+      await client.callTool({ name: "naulon_pay_and_read", arguments: { slug: "x" } });
+      assert.equal(events[0]?.charge, "confirmed");
+      assert.equal(events[0]?.authorizations, undefined);
     });
   });
 });

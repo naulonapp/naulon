@@ -80,6 +80,15 @@ export interface Fetched {
    * the claim "paid" is withheld.
    */
   charge?: ChargeStatus;
+  /**
+   * Present only when `charge` is `unconfirmed`: every authorization this read signed, one per leg.
+   *
+   * With no receipt, the only way to learn what happened to the money is to ask the settlement rail
+   * about each authorization by its nonce. A settled one shows up there; one still absent after
+   * `validBefore` can never settle. These are the facts that lookup needs, and nothing secret: the
+   * nonce, payee and amount are public once the authorization settles.
+   */
+  authorizations?: SignedAuthorization[];
   /** Citation License (compact JWS) the gate handed back on a paid read. */
   license?: string;
   /** Title, byline, date, canonical URL, word count and approximate tokens, when known. */
@@ -110,6 +119,51 @@ export interface Fetched {
 }
 
 export type ChargeStatus = "confirmed" | "unconfirmed";
+
+/** One signed EIP-3009 authorization, as the settlement rail indexes it. */
+export interface SignedAuthorization {
+  /** CAIP-2 network the authorization was signed for, e.g. `eip155:5042002`. */
+  network: string;
+  /** The authorization's 32-byte nonce, `0x`-prefixed hex. */
+  nonce: string;
+  payTo: string;
+  /** Atomic USDC (6 decimals). */
+  amountAtomic: string;
+  /** Epoch seconds after which the authorization can no longer settle. */
+  validBefore: number;
+}
+
+/**
+ * Read the authorizations back out of a `payment-signature` header this process built.
+ *
+ * Handles both framings `assemblePayment` emits (one bare payload, or an array for an N-leg toll)
+ * and both payload shapes (the gateway envelope nests `payload.authorization`; the memo rail sends
+ * `authorization` at the top). A leg missing any field is left out rather than guessed: an
+ * authorization with no nonce cannot be looked up, and a wrong one would resolve another payment.
+ */
+export function authorizationsOf(paymentSignature: string, network: string): SignedAuthorization[] {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(Buffer.from(paymentSignature, "base64").toString("utf8"));
+  } catch {
+    return [];
+  }
+  const out: SignedAuthorization[] = [];
+  for (const p of Array.isArray(decoded) ? decoded : [decoded]) {
+    if (!p || typeof p !== "object") continue;
+    const rec = p as { payload?: { authorization?: unknown }; authorization?: unknown };
+    const a = (rec.payload?.authorization ?? rec.authorization) as
+      | { nonce?: unknown; to?: unknown; value?: unknown; validBefore?: unknown }
+      | undefined;
+    if (!a || typeof a !== "object") continue;
+    const validBefore = Number(a.validBefore);
+    if (typeof a.nonce !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(a.nonce)) continue;
+    if (typeof a.to !== "string" || !Number.isSafeInteger(validBefore) || validBefore <= 0) continue;
+    if ((typeof a.value !== "string" && typeof a.value !== "number") || !/^\d+$/.test(String(a.value))) continue;
+    out.push({ network, nonce: a.nonce.toLowerCase(), payTo: a.to, amountAtomic: String(a.value), validBefore });
+  }
+  return out;
+}
 
 /**
  * What a paid 200 says about the money. Every buyer reads the response through this, so "paid" means
