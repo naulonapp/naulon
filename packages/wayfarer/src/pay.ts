@@ -10,6 +10,7 @@ import { getWallet } from "./wallet.ts";
 import {
   AGENT_UA,
   assemblePayment,
+  authorizationsOf,
   classifyPaymentError,
   payeeRefusedOrNull,
   probe,
@@ -83,7 +84,10 @@ export function mockBuyer(): Buyer {
         };
       }
       const costUsdc = Number(quotedTotalAtomic(quoted)) / 1_000_000;
-      return { ok: true, ...read, settlementRef, charge, paidUsdc: quoted.priceUsdc, costUsdc, license };
+      return {
+        ok: true, ...read, settlementRef, charge, paidUsdc: quoted.priceUsdc, costUsdc, license,
+        ...(charge === "unconfirmed" ? { authorizations: authorizationsOf(paymentSignature, quoted.requirements.network) } : {}),
+      };
     },
   };
 }

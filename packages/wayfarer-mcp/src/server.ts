@@ -69,7 +69,7 @@ import {
   tollgateBase,
   verifyAgainst,
 } from "@naulon/wayfarer";
-import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners, ChargeStatus } from "@naulon/wayfarer";
+import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner, ProbeOutcome, RailSigners, ChargeStatus, SignedAuthorization } from "@naulon/wayfarer";
 import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, networkByCaip2, settlementRefKind, usageSentence, usdc } from "@naulon/shared";
 import type { SettlementNetwork } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
@@ -275,6 +275,9 @@ export interface DecisionAuditEvent {
   settlementRef?: string;
   /** `unconfirmed` when the page came back without the gate's receipt, so the charge is not known to have settled (pay decisions only). */
   charge?: ChargeStatus;
+  /** With `charge: "unconfirmed"` only: the authorizations the read signed, so the host can ask the
+   *  settlement rail what became of each one. See `Fetched.authorizations`. */
+  authorizations?: SignedAuthorization[];
   /** The Citation License jti (pay decisions only). */
   licenseId?: string;
   /** The policy's agent tag, if configured — audit attribution, not identity. */
@@ -1700,6 +1703,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         costUsdc: cost,
         ...(result.settlementRef ? { settlementRef: result.settlementRef } : {}),
         ...(result.charge ? { charge: result.charge } : {}),
+        ...(result.authorizations?.length ? { authorizations: result.authorizations } : {}),
         ...(licenseId ? { licenseId } : {}),
         agentId: policyFromConfig().agentId,
       });

@@ -17,6 +17,7 @@ import { encodePaymentResponse } from "@naulon/shared";
 import { test } from "node:test";
 import {
   assemblePayment,
+  authorizationsOf,
   classifyPaymentError,
   classifySignerRefusal,
   payeeRefusedOrNull,
@@ -572,4 +573,34 @@ test("receiptOf: no receipt, a refused one, or one that does not parse leaves th
   assert.deepEqual(receiptOf(receipt("42")), { charge: "unconfirmed" });
   assert.deepEqual(receiptOf(receipt("null")), { charge: "unconfirmed" });
   assert.deepEqual(receiptOf(receipt({})), { charge: "unconfirmed" }, "an empty object is no receipt");
+});
+
+// ── authorizationsOf: what an unconfirmed read hands its host to reconcile ────────────
+
+const N1 = `0x${"ab".repeat(32)}`;
+const N2 = `0x${"CD".repeat(32)}`;
+const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64");
+const auth = (nonce: string, value: string | number = "5000") => ({
+  from: "0x2222222222222222222222222222222222222222", to: AUTHOR, value, validAfter: "0", validBefore: "1900000000", nonce,
+});
+
+test("authorizationsOf reads a gateway envelope and a memo payload, single and multi-leg", () => {
+  const gateway = b64({ x402Version: 2, payload: { authorization: auth(N1), signature: "0xs" } });
+  assert.deepEqual(authorizationsOf(gateway, "eip155:5042002"), [
+    { network: "eip155:5042002", nonce: N1, payTo: AUTHOR, amountAtomic: "5000", validBefore: 1900000000 },
+  ]);
+  const legs = b64([{ authorization: auth(N1), signature: "0xs" }, { authorization: { ...auth(N2, 500), to: OPERATOR }, signature: "0xs" }]);
+  const out = authorizationsOf(legs, "eip155:5042002");
+  assert.equal(out.length, 2);
+  assert.equal(out[1]!.nonce, N2.toLowerCase(), "nonces are stored in one case, so a lookup matches");
+  assert.equal(out[1]!.payTo, OPERATOR);
+  assert.equal(out[1]!.amountAtomic, "500");
+});
+
+test("authorizationsOf leaves out a leg it cannot look up, and never throws", () => {
+  assert.deepEqual(authorizationsOf("not base64 json", "n"), []);
+  assert.deepEqual(authorizationsOf(b64({ payer: "0x1", amount: "5000", nonce: "x" }), "n"), [], "the mock rail signs nothing");
+  assert.deepEqual(authorizationsOf(b64({ authorization: auth("0x1234") }), "n"), [], "a short nonce is not a nonce");
+  assert.deepEqual(authorizationsOf(b64({ authorization: { ...auth(N1), validBefore: "soon" } }), "n"), []);
+  assert.deepEqual(authorizationsOf(b64({ authorization: { ...auth(N1), value: "-1" } }), "n"), []);
 });
