@@ -14,6 +14,32 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## python-v0.2.0
+
+Connect for `naulon` on PyPI, the Python half of v0.17.0. Needs a gate that serves
+`/.well-known/naulon` (v0.17.0 or later); `gate.naulon.app` does.
+
+### Added
+- `naulon.connect.Connect`: a site gets its credential from its gate by asking for it, and its
+  owner approves it there. PKCE (S256), one `nln_site_` credential per site, revoked by its owner.
+  It passes the same `connect-cases.json` fixtures as the TypeScript and PHP runtimes.
+- `python -m naulon connect` connects a site from a terminal beside the running app and keeps the
+  credential in `.naulon/`; the app tolls without a restart.
+- `credential_for` may return a credential or a `Site` that names its own gate, for a platform
+  hosting many sites.
+- `connect_proof`, the answer a connected site keeps giving so the gate can check later that the
+  domain still reaches it, and `authorize_site`, which a platform implements so one account cannot
+  connect another account's site.
+
+### Changed
+- With no gate configured, `naulon` uses `https://gate.naulon.app`. In 0.1.0 it did nothing
+  until `NAULON_GATE` was set.
+
+### Fixed
+- The transport refuses a private IPv4 address written inside an IPv6 literal, and the NAT64,
+  6to4, Teredo, IPv4-compatible, documentation, benchmarking and multicast ranges, held to the
+  same fixture as `@naulon/sdk/net`.
+
 ## v0.17.0
 
 Ships `@naulon/shared` **0.8.0**, `@naulon/sdk` **0.7.1**, `@naulon/enforce` **0.12.0**,
