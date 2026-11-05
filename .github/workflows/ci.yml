@@ -11,7 +11,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # Full history: the registry check below walks back from HEAD to each series' last tag.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -27,40 +30,12 @@ jobs:
       - name: Test (incl. license interop conformance)
         run: make test
 
-      # WARNING ONLY — never a red build. Says whether the registry is behind this branch.
-      #
-      # release.yml already refuses a tag whose packages changed without a version bump, which is
-      # the right place to BLOCK. What nothing said, until a human went looking on 2026-08-28, is
-      # that the changes exist at all: `@naulon/enforce` had carried a pricing correction for four
-      # days while npm still served the version before it, and the only way to learn that was to
-      # diff the tree against the last tag by hand. A guard that fires at tag time cannot tell you
-      # a tag is owed.
-      #
-      # Deliberately not a failure: unreleased work is the normal state of a branch. The signal is
-      # for the person deciding whether it is time to cut one.
-      - name: Is npm behind this branch?
+      # Warning only, never a red build: unreleased work is the normal state of a branch. The tag
+      # guard in release.yml is what blocks; this says a release is owed, for each series
+      # (npm and the plugin on v*, the Python package on python-v*), against its own last tag.
+      - name: Is a registry behind this branch?
         if: github.ref == 'refs/heads/main'
-        run: |
-          set -euo pipefail
-          git fetch --tags --quiet || true
-          prev=$(git describe --tags --abbrev=0 2>/dev/null || true)
-          if [ -z "$prev" ]; then echo "no tag yet — nothing to compare"; exit 0; fi
-
-          behind=""
-          for pkg in sdk shared enforce wayfarer wayfarer-mcp; do
-            # Test files never ship (each package builds with them excluded), so a test-only
-            # change is not a reason to release — same exclusion release.yml uses.
-            if git diff --quiet "$prev" HEAD -- "packages/${pkg}" ":(exclude)packages/${pkg}/src/**/*.test.ts"; then
-              continue
-            fi
-            behind="${behind} ${pkg}"
-          done
-
-          if [ -z "$behind" ]; then
-            echo "npm is current with ${prev} — every published package is unchanged since the tag."
-            exit 0
-          fi
-          echo "::warning title=npm is behind ${prev}::Published packages changed since ${prev} and are not on the registry:${behind}. Cut a release when the change is worth installing — bump each one, add its CHANGELOG.md section, then tag."
+        run: node scripts/release.mjs status --github
 
   # The Python package. 3.10 is the floor it promises; 3.13 is what Bear and most hosts run.
   python:
