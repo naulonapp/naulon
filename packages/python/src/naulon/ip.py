@@ -186,9 +186,14 @@ def in_any(a: Addr, cidrs: Sequence[Cidr]) -> bool:
 _RESERVED = compile_prefixes(RESERVED, 0, 0)
 
 
+def is_reserved(a: Addr) -> bool:
+    """True for an address no public host has: private, loopback, link-local, documentation, multicast."""
+    return in_any(a, _RESERVED)
+
+
 def usable(a: Addr, proxy_sets: Iterable[Sequence[Cidr]]) -> bool:
     """True when `a` can be a caller's own public address. A proxy's address is the proxy speaking."""
-    if in_any(a, _RESERVED):
+    if is_reserved(a):
         return False
     return not any(in_any(a, s) for s in proxy_sets)
 

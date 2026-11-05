@@ -25,7 +25,8 @@ from naulon.decide import Pass, Recheck, Refuse, Toll, Who, decide
 from naulon.facts import RequestFacts
 from naulon.observe import ObservationQueue
 from naulon.settings import Settings
-from naulon.transport import Breaker, Response, Transport, UrllibTransport
+from naulon.sites import Gates, Site
+from naulon.transport import GuardedTransport, Response, Transport, UrllibTransport
 
 NO_STORE: tuple[tuple[str, str], ...] = (
     ("Cache-Control", "private, no-store"),
@@ -112,18 +113,23 @@ class Naulon:
     ) -> None:
         self.settings = settings
         self._wall = wall
+        # A test passes one transport for every gate. Otherwise the configured gate gets the stdlib
+        # one, and any gate a platform's writer named gets the guarded one.
         t = transport or UrllibTransport()
-        breaker = Breaker(clock=clock)
-        self.config = ConfigCache(settings, t, breaker, clock=clock)
-        self.client = GateClient(settings, t, breaker, clock=clock)
+        self.gates = Gates(settings.gate, t, transport or GuardedTransport(), clock)
+        self.config = ConfigCache(settings, self.gates, clock=clock)
+        self.client = GateClient(settings, self.gates, clock=clock)
         self.observations = ObservationQueue(self.client.observe, clock=clock)
         self._directory_fetch = directory_fetch
         self._directories = botauth.DirectoryCache(clock=clock)
 
-    def _key(self, facts: RequestFacts) -> str | None:
-        """The key this request's site is tolled under. An adapter with `key_for` sets it per request
-        and never calls the core for a site without one; otherwise it is the single `NAULON_KEY`."""
-        return facts.site_key if facts.site_key is not None else self.settings.key
+    def _site(self, facts: RequestFacts) -> Site | None:
+        """What this request's site is tolled under. An adapter with `credential_for` sets it per
+        request and never calls the core for a site without one; otherwise it is the single
+        `NAULON_KEY` on the configured gate."""
+        if facts.site is not None:
+            return facts.site
+        return Site(self.settings.key) if self.settings.key else None
 
     def _check_signature(self, facts: RequestFacts, may_fetch: bool) -> botauth.Outcome:
         """The request's Web Bot Auth result. Before the view (`may_fetch` False) it answers from the
@@ -143,15 +149,19 @@ class Naulon:
         if not self.settings.active:
             return Continue()
         try:
-            doc = self.config.get(facts.host, facts.scheme, self._key(facts))
+            doc = self.config.get(facts.host, facts.scheme, self._site(facts))
             action = decide(
-                facts, doc, self.config.ranges(), self._wall(), lambda: self._check_signature(facts, may_fetch=False)
+                facts,
+                doc,
+                self.config.ranges(self._site(facts)),
+                self._wall(),
+                lambda: self._check_signature(facts, may_fetch=False),
             )
             if isinstance(action, Recheck):
                 # A signer whose key directory is not cached yet. Whatever the request would get
                 # unsigned still applies now: a refusal never waits for the signature. Only what a
                 # verified signature could add is decided after the view, off the loop.
-                unsigned = decide(facts, doc, self.config.ranges(), self._wall())
+                unsigned = decide(facts, doc, self.config.ranges(self._site(facts)), self._wall())
                 if isinstance(unsigned, Refuse):
                     return self._refuse(facts, unsigned)
                 return Continue(action)
@@ -178,9 +188,13 @@ class Naulon:
             if isinstance(pending, Recheck):
                 # The deferred signature check runs whatever the view answered: a refusal it reaches
                 # applies to any response, exactly as one reached before the view would have.
-                doc = self.config.get(facts.host, facts.scheme, self._key(facts))
+                doc = self.config.get(facts.host, facts.scheme, self._site(facts))
                 again = decide(
-                    facts, doc, self.config.ranges(), self._wall(), lambda: self._check_signature(facts, may_fetch=True)
+                    facts,
+                    doc,
+                    self.config.ranges(self._site(facts)),
+                    self._wall(),
+                    lambda: self._check_signature(facts, may_fetch=True),
                 )
                 if isinstance(again, Refuse):
                     return Replace(self._refuse(facts, again))
@@ -206,7 +220,7 @@ class Naulon:
     def _toll(self, facts: RequestFacts, t: Toll) -> Outcome:
         resource = facts.url
         if t.license:
-            checked = self.client.license_check(t.license, resource, t.slug, t.kind, t.proof, self._key(facts))
+            checked = self.client.license_check(t.license, resource, t.slug, t.kind, t.proof, self._site(facts))
             if checked.verdict is None or checked.verdict == "unavailable":
                 return self._served_free(facts, t, "unavailable")
             if checked.verdict == "pending":
@@ -216,7 +230,7 @@ class Naulon:
                 return Keep(list(NO_STORE))
             # refused: the licence did not pay for this read, so it is for sale like any other.
 
-        built = self.client.quote(resource, t.slug, t.kind, t.who.verified_agent, self._key(facts))
+        built = self.client.quote(resource, t.slug, t.kind, t.who.verified_agent, self._site(facts))
         if built is None:
             return self._served_free(facts, t, "unavailable")
         if built is FREE:
@@ -242,7 +256,7 @@ class Naulon:
         return self._settle(facts, t, built, ask)
 
     def _settle(self, facts: RequestFacts, t: Toll, built: Built, ask: int) -> Outcome:
-        answer: Answer = self.client.settle(t.payment, built, facts.url, self._agent_block(t.who), self._key(facts))
+        answer: Answer = self.client.settle(t.payment, built, facts.url, self._agent_block(t.who), self._site(facts))
         if answer.verdict == "paid":
             # No report: the gate wrote `paid` from the settle it owns.
             headers = list(NO_STORE)
@@ -312,7 +326,7 @@ class Naulon:
                 obs[k] = v
             if who is not None:
                 obs["agent"] = self._agent_block(who)
-            self.observations.put(obs, self._key(facts))
+            self.observations.put(obs, self._site(facts))
         except Exception as err:
             warn_error("core.report", "naulon: a decision report was dropped", err)
 

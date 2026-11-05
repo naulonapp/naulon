@@ -14,7 +14,7 @@ import {
   siteOriginOf,
 } from "./flow.ts";
 
-const fixtures = JSON.parse(readFileSync(new URL("./connect.fixtures.json", import.meta.url), "utf8")) as {
+const fixtures = JSON.parse(readFileSync(new URL("../../test-fixtures/connect-cases.json", import.meta.url), "utf8")) as {
   pkce: { verifier: string; challenge: string }[];
   siteOrigins: { input: string; origin: string | null }[];
   discovery: { gate: string; body: unknown; ok: boolean; error?: string }[];

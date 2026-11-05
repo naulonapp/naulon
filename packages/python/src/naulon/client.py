@@ -17,9 +17,9 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from naulon._log import warn_once
-from naulon.config import key_digest
 from naulon.settings import Settings
-from naulon.transport import Breaker, Response, Transport
+from naulon.sites import Gates, Site
+from naulon.transport import Response
 
 GateVerdict = Literal["paid", "refused", "pending", "unavailable"]
 # Mirrors GATE_VERDICTS in @naulon/shared; test_verdict_fixtures holds it to verdict-cases.json.
@@ -120,36 +120,34 @@ def _json(res: Response) -> Any:
 
 
 class GateClient:
-    def __init__(
-        self, settings: Settings, transport: Transport, breaker: Breaker, clock: Callable[[], float] = time.monotonic
-    ) -> None:
+    def __init__(self, settings: Settings, gates: Gates, clock: Callable[[], float] = time.monotonic) -> None:
         self._s = settings
-        self._t = transport
-        self._b = breaker
+        self._gates = gates
         self._clock = clock
         self._quotes: dict[tuple[str, str, str], tuple[float, Built | Literal["free"]]] = {}
         self._lock = threading.Lock()
 
     def _call(
-        self, method: str, path: str, site_key: str | None, body: Any = None, timeout: float | None = None
+        self, method: str, path: str, site: Site | None, body: Any = None, timeout: float | None = None
     ) -> Response | None:
-        if self._s.gate is None:
+        route = self._gates.route(site)
+        if route is None:
             return None
         headers = {"accept": "application/json", "user-agent": "naulon-python"}
-        if site_key:
-            headers["authorization"] = f"Bearer {site_key}"
+        if site is not None:
+            headers["authorization"] = f"Bearer {site.credential}"
         data = None
         if body is not None:
             headers["content-type"] = "application/json"
             data = json.dumps(body, separators=(",", ":")).encode()
         # Asked last, after anything that can raise: a probe granted here is always recorded below,
         # or the breaker would stay half-open with nobody holding the probe.
-        if not self._b.allow():
+        if not route.breaker.allow():
             return None
-        res = self._t.request(
-            method, f"{self._s.gate}{path}", headers=headers, body=data, timeout=timeout or self._s.timeout
+        res = route.transport.request(
+            method, f"{route.base}{path}", headers=headers, body=data, timeout=timeout or self._s.timeout
         )
-        self._b.record(res is not None and res.status < 500)
+        route.breaker.record(res is not None and res.status < 500)
         if res is None:
             warn_once(
                 f"gate.{path.split('?')[0]}", "naulon: the gate did not answer %s; serving the page", path.split("?")[0]
@@ -157,7 +155,7 @@ class GateClient:
         return res
 
     def quote(
-        self, resource: str, slug: str, kind: str, verified_agent: str | None = None, site_key: str | None = None
+        self, resource: str, slug: str, kind: str, verified_agent: str | None = None, site: Site | None = None
     ) -> Built | Literal["free"] | None:
         """The built 402 for `resource`, "free" when the gate says it is not tolled (204), or None
         when no answer was usable (which serves the page)."""
@@ -165,7 +163,7 @@ class GateClient:
         key = (
             resource.split("://", 1)[-1].split("/", 1)[0].lower() + "\x00" + slug + "\x00" + (verified_agent or ""),
             kind,
-            key_digest(site_key),
+            site.digest if site is not None else "",
         )
         now = self._clock()
         with self._lock:
@@ -176,7 +174,7 @@ class GateClient:
         if verified_agent:
             params["verifiedAgent"] = verified_agent
         query = urllib.parse.urlencode(params)
-        res = self._call("GET", f"/_naulon/quote?{query}", site_key)
+        res = self._call("GET", f"/_naulon/quote?{query}", site)
         if res is None:
             return None
         if res.status == 204:
@@ -204,7 +202,7 @@ class GateClient:
             self._quotes[key] = (now, value)
 
     def settle(
-        self, payment: str, built: Built, resource: str, agent: Mapping[str, Any], site_key: str | None = None
+        self, payment: str, built: Built, resource: str, agent: Mapping[str, Any], site: Site | None = None
     ) -> Answer:
         body = {
             "payment": payment,
@@ -213,16 +211,16 @@ class GateClient:
             "resource": resource,
             "agent": dict(agent),
         }
-        res = self._call("POST", "/_naulon/verify", site_key, body, timeout=VERIFY_TIMEOUT_S)
+        res = self._call("POST", "/_naulon/verify", site, body, timeout=VERIFY_TIMEOUT_S)
         return self._answer(res)
 
     def license_check(
-        self, token: str, resource: str, slug: str, kind: str, proof: str, site_key: str | None = None
+        self, token: str, resource: str, slug: str, kind: str, proof: str, site: Site | None = None
     ) -> Answer:
         body: dict[str, Any] = {"license": token, "resource": resource, "slug": slug, "kind": kind}
         if proof:
             body["proof"] = proof
-        return self._answer(self._call("POST", "/_naulon/license/check", site_key, body))
+        return self._answer(self._call("POST", "/_naulon/license/check", site, body))
 
     @staticmethod
     def _answer(res: Response | None) -> Answer:
@@ -231,6 +229,6 @@ class GateClient:
         body = _json(res)
         return Answer(gate_answer(res.status, body), body if isinstance(body, dict) else {})
 
-    def observe(self, site_key: str | None, reports: list[dict[str, Any]]) -> bool:
-        res = self._call("POST", "/_naulon/observe", site_key, reports, timeout=max(self._s.timeout, 5.0))
+    def observe(self, site: Site | None, reports: list[dict[str, Any]]) -> bool:
+        res = self._call("POST", "/_naulon/observe", site, reports, timeout=max(self._s.timeout, 5.0))
         return res is not None and res.status < 500

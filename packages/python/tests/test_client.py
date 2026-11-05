@@ -6,13 +6,14 @@ from conftest import LEGS, QUOTE, FakeTransport, gate, json_response
 
 from naulon.client import FREE, Built, GateClient
 from naulon.settings import Settings
+from naulon.sites import Gates, Site
 from naulon.transport import Breaker, Response
 
 S = Settings(gate="http://gate", key="k")
 
 
 def client(t: FakeTransport) -> GateClient:
-    return GateClient(S, t, Breaker())
+    return GateClient(S, Gates(S.gate, t, t))
 
 
 def test_quote_asks_for_the_built_402_and_returns_it_verbatim() -> None:
@@ -86,15 +87,15 @@ def test_the_key_travels_as_a_bearer_token_only_to_the_gate() -> None:
             seen.update(headers)
             return super().request(method, url, headers=headers, body=body, timeout=timeout)
 
-    c = GateClient(S, Spy({"/_naulon/quote": Response(204)}), Breaker())
-    c.quote("http://b.test/x/", "/x/", "read", site_key="k")
+    spy = Spy({"/_naulon/quote": Response(204)})
+    c = GateClient(S, Gates(S.gate, spy, spy))
+    c.quote("http://b.test/x/", "/x/", "read", site=Site("k"))
     assert seen["authorization"] == "Bearer k"
 
 
 def test_an_open_breaker_skips_the_network() -> None:
     t = gate({"/_naulon/quote": None})
-    b = Breaker(threshold=2)
-    c = GateClient(S, t, b)
+    c = GateClient(S, Gates(S.gate, t, t, make_breaker=lambda: Breaker(threshold=2)))
     for i in range(5):
         c.quote(f"http://b.test/x{i}/", f"/x{i}/", "read")
     assert len(t.calls) == 2

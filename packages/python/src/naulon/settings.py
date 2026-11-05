@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from naulon._log import warn_once
+from naulon.connect import DEFAULT_GATE, origin_of
 
 DEFAULT_TIMEOUT = 2.0
 DEFAULT_REFRESH_S = 300.0
@@ -15,7 +16,8 @@ DEFAULT_REFRESH_S = 300.0
 
 @dataclass(frozen=True)
 class Settings:
-    """`gate` is the gate's base URL. Without one, nothing runs."""
+    """`gate` is the gate's origin: the hosted naulon gate unless set. A gate that is not https (or
+    loopback, for a local walk) is refused, since a credential would cross the network in clear."""
 
     gate: str | None
     key: str | None
@@ -40,9 +42,12 @@ class Settings:
         def pick(from_env: str | None, from_mapping: Any) -> Any:
             return from_env if from_env is not None else from_mapping
 
-        gate = _text(pick(env.get("NAULON_GATE"), m.get("GATE")))
+        raw = _text(pick(env.get("NAULON_GATE"), m.get("GATE"))) or DEFAULT_GATE
+        gate = origin_of(raw)
+        if gate is None:
+            warn_once("settings.gate", "naulon: NAULON_GATE must be an https URL; nothing is tolled")
         return cls(
-            gate=gate.rstrip("/") if gate else None,
+            gate=gate,
             key=_text(pick(env.get("NAULON_KEY"), m.get("KEY"))),
             enabled=_flag(pick(env.get("NAULON_ENABLED"), m.get("ENABLED"))),
             timeout=_seconds(pick(env.get("NAULON_TIMEOUT"), m.get("TIMEOUT"))),

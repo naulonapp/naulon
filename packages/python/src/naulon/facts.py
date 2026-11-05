@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
+from naulon.sites import Site
+
 
 @dataclass(frozen=True)
 class RequestFacts:
@@ -15,9 +17,9 @@ class RequestFacts:
     query: str = ""
     headers: Mapping[str, str] = field(default_factory=dict)
     client_ip: str | None = None
-    # The key naulon tolls this request's site with. One per site on a multi-site platform, the
-    # single `NAULON_KEY` otherwise. A secret, so never part of the repr.
-    site_key: str | None = field(default=None, repr=False)
+    # What naulon tolls this request's site with: its credential and gate. One per site on a
+    # multi-site platform, the single `NAULON_KEY` otherwise. Holds a secret, so never in the repr.
+    site: Site | None = field(default=None, repr=False)
 
     @property
     def url(self) -> str:

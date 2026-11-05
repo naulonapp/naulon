@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import http.client
+import socket
+import ssl
 import threading
 import time
 import urllib.error
@@ -10,6 +13,8 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import IO, Any, Protocol
+
+from naulon import ip
 
 # A gate answer larger than this is not one the protocol produces. Reading it would hold a worker.
 MAX_BODY_BYTES = 1_048_576
@@ -105,3 +110,94 @@ class Breaker:
             self._failures += 1
             if self._failures >= self._threshold:
                 self._opened_at = self._clock()
+
+
+def _connect_any(addresses: list[str], port: int, timeout: float | None) -> socket.socket:
+    """The first of the approved addresses that accepts, in resolver order. A name with an IPv6
+    address that does not route still connects over IPv4, as an unguarded client would."""
+    last: OSError | None = None
+    for address in addresses:
+        try:
+            return socket.create_connection((address, port), timeout)
+        except OSError as err:
+            last = err
+    raise last or OSError("no address to connect to")
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """Connects only to addresses chosen in advance, while TLS still checks the certificate against
+    the hostname. The addresses are the ones the guard approved, so nothing can resolve the name
+    again to somewhere private between the check and the connect."""
+
+    def __init__(self, host: str, port: int, addresses: list[str], timeout: float, context: ssl.SSLContext) -> None:
+        super().__init__(host, port, timeout=timeout, context=context)
+        self._addresses = addresses
+        self._ctx = context
+
+    def connect(self) -> None:
+        sock = _connect_any(self._addresses, self.port, self.timeout)
+        self.sock = self._ctx.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, port: int, addresses: list[str], timeout: float) -> None:
+        super().__init__(host, port, timeout=timeout)
+        self._addresses = addresses
+
+    def connect(self) -> None:
+        self.sock = _connect_any(self._addresses, self.port, self.timeout)
+
+
+class GuardedTransport:
+    """For a URL somebody else chose: a gate a writer typed into a platform. https only (plain http
+    to loopback when `allow_private`), every address the name resolves to must be public, the socket
+    connects to the address that was checked, no redirect is followed, and the body is capped."""
+
+    def __init__(self, allow_private: bool = False) -> None:
+        self._allow_private = allow_private
+        self._context = ssl.create_default_context()
+
+    def _addresses(self, host: str, port: int) -> list[str] | None:
+        """Every address the name resolves to, or None when any of them is not public: one private
+        answer is enough to refuse, since the resolver chooses which one a client would use."""
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            return None
+        addresses = list(dict.fromkeys(str(info[4][0]) for info in infos))
+        if not addresses:
+            return None
+        if not self._allow_private:
+            for a in addresses:
+                parsed = ip.parse(a.split("%", 1)[0])
+                if parsed is None or ip.is_reserved(parsed):
+                    return None
+        return addresses
+
+    def request(
+        self, method: str, url: str, *, headers: Mapping[str, str], body: bytes | None, timeout: float
+    ) -> Response | None:
+        u = urllib.parse.urlsplit(url)
+        host = u.hostname
+        if not host or u.username or u.password:
+            return None
+        if u.scheme != "https" and not (u.scheme == "http" and self._allow_private):
+            return None
+        port = u.port or (443 if u.scheme == "https" else 80)
+        addresses = self._addresses(host, port)
+        if addresses is None:
+            return None
+        conn: http.client.HTTPConnection
+        if u.scheme == "https":
+            conn = _PinnedHTTPSConnection(host, port, addresses, timeout, self._context)
+        else:
+            conn = _PinnedHTTPConnection(host, port, addresses, timeout)
+        path = (u.path or "/") + (f"?{u.query}" if u.query else "")
+        try:
+            conn.request(method, path, body=body, headers=dict(headers))
+            res = conn.getresponse()
+            return Response(res.status, _headers(res.headers), res.read(MAX_BODY_BYTES))
+        except Exception:
+            return None
+        finally:
+            conn.close()

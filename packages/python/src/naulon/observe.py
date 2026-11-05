@@ -17,6 +17,7 @@ from collections.abc import Callable
 from typing import Any
 
 from naulon._log import warn_error, warn_once
+from naulon.sites import Site
 
 BATCH = 50
 FLUSH_S = 5.0
@@ -26,12 +27,12 @@ MAX_QUEUED = 500
 class ObservationQueue:
     def __init__(
         self,
-        send: Callable[[str | None, list[dict[str, Any]]], bool],
+        send: Callable[[Site | None, list[dict[str, Any]]], bool],
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._send = send
         self._clock = clock
-        self._items: deque[tuple[str | None, dict[str, Any]]] = deque()
+        self._items: deque[tuple[Site | None, dict[str, Any]]] = deque()
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._worker: threading.Thread | None = None
@@ -46,12 +47,12 @@ class ObservationQueue:
         self._worker = None
         self._pid = os.getpid()
 
-    def put(self, obs: dict[str, Any], site_key: str | None = None) -> None:
+    def put(self, obs: dict[str, Any], site: Site | None = None) -> None:
         with self._lock:
             if len(self._items) >= MAX_QUEUED:
                 self._items.popleft()
                 self.dropped += 1
-            self._items.append((site_key, obs))
+            self._items.append((site, obs))
             full = len(self._items) >= BATCH
         self._ensure_worker()
         if full:
@@ -70,12 +71,13 @@ class ObservationQueue:
                 batch = [self._items.popleft() for _ in range(min(BATCH, len(self._items)))]
             if not batch:
                 return sent
-            groups: dict[str | None, list[dict[str, Any]]] = {}
-            for site_key, obs in batch:
-                groups.setdefault(site_key, []).append(obs)
-            for site_key, reports in groups.items():
+            # One batch per site: a report is sent under the credential of the site it is about.
+            groups: dict[Site | None, list[dict[str, Any]]] = {}
+            for site, obs in batch:
+                groups.setdefault(site, []).append(obs)
+            for site, reports in groups.items():
                 try:
-                    ok = self._send(site_key, reports)
+                    ok = self._send(site, reports)
                 except Exception:
                     ok = False
                 if not ok:

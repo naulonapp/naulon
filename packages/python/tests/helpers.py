@@ -7,6 +7,7 @@ from conftest import AGENT_UA, BROWSER_UA, FakeTransport
 from naulon.core import Naulon
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
+from naulon.sites import Site
 
 HOST = "blog.test"
 
@@ -14,9 +15,9 @@ HOST = "blog.test"
 def naulon(t: FakeTransport) -> Naulon:
     n = Naulon(Settings(gate="http://gate", key="k"), transport=t)
     n.observations._ensure_worker = lambda: None  # type: ignore[method-assign]
-    n.config.refresh_now(HOST, "k")
+    n.config.refresh_now(HOST, Site("k"))
     # Warm the ranges too, so a later count of network calls sees only the request path.
-    n.config._refresh_ranges()
+    n.config._refresh_ranges(n.gates.home or "")
     t.calls.clear()
     return n
 

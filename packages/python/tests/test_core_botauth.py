@@ -9,6 +9,7 @@ from conftest import config_doc, fixture, gate, json_response
 from naulon.core import Naulon, Replace
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
+from naulon.sites import Site
 from naulon.transport import Response
 
 DOC = fixture("botauth-vectors.json")
@@ -31,8 +32,8 @@ def setup(c: dict[str, Any]) -> tuple[Naulon, Any, RequestFacts]:
         directory_fetch=lambda url: t.request("GET", url, headers={}, body=None, timeout=3),
     )
     n.observations._ensure_worker = lambda: None  # type: ignore[method-assign]
-    n.config.refresh_now("gate.example", "k")
-    n.config._refresh_ranges()
+    n.config.refresh_now("gate.example", Site("k"))
+    n.config._refresh_ranges(n.gates.home or "")
     t.calls.clear()
     r = c["request"]
     # The signature covers @authority (and @path), not the user agent: a crawler's UA rides along.
@@ -99,7 +100,7 @@ def test_a_blocked_crawler_is_refused_before_the_view_even_while_its_signature_w
 
     n, t, f = setup(case("a signed request verifies"))
     t.routes["/_naulon/enforce-config"] = json_response(200, config_doc(block=["gptbot"]))
-    n.config.refresh_now("gate.example", "k")
+    n.config.refresh_now("gate.example", Site("k"))
     t.calls.clear()
     d = n.handle(f)
     assert isinstance(d, Respond) and d.status == 403
@@ -123,7 +124,7 @@ def test_a_refusal_the_deferred_check_reaches_applies_to_a_non_article_too() -> 
         f.client_ip,
     )
     t.routes["/_naulon/enforce-config"] = json_response(200, config_doc(refuse={"crawlers": [], "agents": True}))
-    n.config.refresh_now("gate.example", "k")
+    n.config.refresh_now("gate.example", Site("k"))
     d = n.handle(f)
     assert isinstance(d, Continue) and isinstance(d.pending, Recheck)
     out = n.finish(f, d, 404, False)

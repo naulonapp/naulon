@@ -8,7 +8,7 @@
  *
  * This file is the one owner of the shape. The gate builds it with `buildDiscovery`; every client
  * reads it with `parseDiscovery`. The Python and PHP runtimes are held to the same answers by
- * `connect.fixtures.json`.
+ * `test-fixtures/connect-cases.json`.
  */
 import { z } from "zod";
 import { isLoopbackHostname } from "@naulon/sdk/net";
