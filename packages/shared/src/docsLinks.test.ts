@@ -105,7 +105,10 @@ function knownNames(): Set<string> {
         if (!["node_modules", "dist", ".venv", "__pycache__"].includes(e.name)) walk(p);
       } else if (e.name.endsWith(".py")) {
         // The Python package reads its settings as `env.get("NAULON_GATE")` and `m.get("GATE")`.
-        for (const m of readFileSync(p, "utf8").matchAll(/\.get\(\s*"([A-Z][A-Z_0-9]{3,})"/g)) out.add(m[1]!);
+        const body = readFileSync(p, "utf8");
+        for (const m of body.matchAll(/\.get\(\s*"([A-Z][A-Z_0-9]{3,})"/g)) out.add(m[1]!);
+        // ...and Django imports its dotted-path hooks as `_imported(conf, "CREDENTIAL_FOR", ...)`.
+        for (const m of body.matchAll(/_imported\(\s*\w+,\s*"([A-Z][A-Z_0-9]{3,})"/g)) out.add(m[1]!);
       } else if (e.name.endsWith(".ts")) {
         const body = readFileSync(p, "utf8");
         // read from env, or exported as a constant/type a doc may legitimately name

@@ -43,11 +43,11 @@ def tollable(request, response):
     return getattr(request, "naulon_post", None) is not None and response.status_code == 200
 ```
 
-Then point it at a gate:
+With no further settings it uses the hosted gate at `https://gate.naulon.app`. What it still needs is
+your site's credential, which you get by connecting the site (below) and then set as:
 
 ```
-NAULON_GATE=https://gate.your-site.com
-NAULON_KEY=<your enforce key>
+NAULON_KEY=nln_site_...
 ```
 
 ## WSGI and ASGI
@@ -60,49 +60,94 @@ from naulon.adapters.asgi import NaulonASGI
 app = NaulonASGI(app)
 ```
 
+## Connect your site
+
+Nobody copies a key out of a dashboard. Your site asks its gate for a credential, you approve it on
+the gate, and the gate hands it back:
+
+```python
+from naulon.connect import Connect
+
+connect = Connect(client_name="My blog")
+
+# Behind a button in your site's settings:
+started = connect.start("https://blog.example.com")
+# redirect the owner to started.url
+
+# At https://blog.example.com/naulon/connect/return, where the gate sends them back:
+done = connect.finish(request.GET)
+# done.credential is the site's credential; store it as a secret (NAULON_KEY for one site)
+```
+
+Before it shows Approve, the gate fetches two paths on your site: who is asking
+(`/.well-known/naulon-client`) and a challenge only the process that started this connect can
+answer. Pass the same `Connect` to the middleware so those paths are answered, whether or not
+anything is tolled yet: `NaulonWSGI(app, connect=connect)`, or `NAULON["CONNECT"]` as a dotted path
+in Django.
+
+A pending connect lives 15 minutes in memory by default. A site served by several processes passes
+a `ConnectStore` backed by its database, because the process the gate asks may not be the one that
+started it. The credential acts only for the site it was approved for, and its owner can revoke it
+on the gate's Sites page at any time; your readers then read free until you connect again.
+
 ## Settings
 
 | Variable | Default | |
 |---|---|---|
-| `NAULON_GATE` | unset | The gate's URL. Unset, the middleware does nothing |
-| `NAULON_KEY` | unset | The enforce key the gate gave you |
+| `NAULON_GATE` | `https://gate.naulon.app` | The gate's URL. Change it to toll through a gate you run |
+| `NAULON_KEY` | unset | The credential connect returned. Unset, nothing is tolled |
 | `NAULON_ENABLED` | `1` | `0` turns the middleware into a no-op |
 | `NAULON_TIMEOUT` | `2.0` | Seconds to wait for the gate on an agent request |
 
-Django may set the same keys in `settings.NAULON` (`GATE`, `KEY`, `ENABLED`, `TIMEOUT`, `KEY_FOR`); the
-environment wins. The middleware prices the URL Django sees, so behind a proxy that terminates TLS set
-`USE_X_FORWARDED_HOST = True` and `SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")`,
-and only when the proxy overwrites both headers on every request. Behind a proxy that writes the caller's address into a single-value header, name
-it in `NAULON["TRUST_PROXY_HEADERS"]` (for example `"X-Real-IP"`). `X-Forwarded-For` is refused:
-the caller writes its first entry.
+Django may set the same keys in `settings.NAULON` (`GATE`, `KEY`, `ENABLED`, `TIMEOUT`,
+`CREDENTIAL_FOR`, `CONNECT`); the environment wins. The middleware prices the URL Django sees, so
+behind a proxy that terminates TLS set `USE_X_FORWARDED_HOST = True` and
+`SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")`, and only when the proxy overwrites
+both headers on every request. Behind a proxy that writes the caller's address into a single-value
+header, name it in `NAULON["TRUST_PROXY_HEADERS"]` (for example `"X-Real-IP"`). `X-Forwarded-For` is
+refused: the caller writes its first entry.
 
 ## Platforms with many sites
 
 If you host sites for other people, install the middleware once and let each site's owner turn it
-on. Each owner gets a key from their own naulon account and pastes it into a field you add to their
-site settings. Tell the middleware how to find it:
+on by connecting their own site. Render `connect.start(site_url)` as a button in their settings,
+store the credential `connect.finish(...)` returns against that site, and tell the middleware how to
+find it:
 
 ```python
 # settings.py
-NAULON = {"GATE": "https://gate.naulon.app", "KEY_FOR": "sites.naulon.key_for"}
+NAULON = {"CREDENTIAL_FOR": "sites.naulon.credential_for", "CONNECT": "sites.naulon.connect"}
 
 # sites/naulon.py
-def key_for(host: str) -> str | None:
-    site = Site.objects.filter(domain=host).only("naulon_key").first()
-    return site.naulon_key if site else None
+from naulon.connect import Connect
+from naulon.sites import Site
+
+# store: your ConnectStore (put, get, delete) over a table, shared by every worker
+connect = Connect(client_name="Acme Sites", store=site_connect_store)
+
+def credential_for(host: str) -> Site | None:
+    row = SiteRow.objects.filter(domain=host).only("naulon_credential", "naulon_gate").first()
+    if row is None or not row.naulon_credential:
+        return None
+    return Site(credential=row.naulon_credential, gate=row.naulon_gate)
 ```
 
-WSGI and ASGI take it as an argument: `NaulonWSGI(app, key_for=key_for)`. A site whose `key_for`
-returns `None` is never touched. There is no fallback to `NAULON_KEY`, so nobody is tolled who did
-not opt in. The answer is cached per host for 30 seconds; under ASGI a lookup runs on a worker
-thread, never on the event loop. Every policy, quote and report is kept per key, so one site's
-answer never reaches another. Store the key as a secret. The owner sets price, wallet and mode in
-their naulon dashboard; you store nothing else.
+`credential_for` may return a plain string, or a `Site` naming the gate the owner connected to: a
+writer who runs their own gate connects to it, and their site is tolled there. Requests to a gate
+other than the configured one go through a guarded transport (https only, no private addresses, no
+redirects). WSGI and ASGI take both as arguments: `NaulonWSGI(app, credential_for=..., connect=...)`.
+
+A site whose `credential_for` returns `None` is never touched. There is no fallback to
+`NAULON_KEY`, so nobody is tolled who did not opt in. The answer is cached per host for 30 seconds;
+under ASGI a lookup runs on a worker thread, never on the event loop. Every policy, quote and report
+is kept per credential, so one site's answer never reaches another. The owner sets price, wallet
+and mode with their gate; you store the credential and nothing else.
 
 ## Hosted or self-hosted
 
-The gate is open source. Run it yourself with `NAULON_ENFORCE_KEY` set, or use the hosted one at
-`https://gate.naulon.app` with the key from your dashboard. The middleware is the same either way.
+The gate is open source. Run it yourself and set `NAULON_GATE` to its URL, or use the hosted one.
+The middleware and the connect flow are the same either way. A gate set up before connect still
+accepts its `NAULON_ENFORCE_KEY` as `NAULON_KEY`.
 
 ## What it promises your site
 

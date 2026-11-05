@@ -49,9 +49,17 @@ The decision kernel and the framework-agnostic middleware core:
   answers 5xx, or answers 2xx without one, or the gate's keys were never fetched), the page is
   served, logged with `console.error`, and marked `X-Naulon-Verdict: served free (<step>
   unavailable)`. A 4xx is an answer, so it never serves the page.
-- `naulonSites({ gate, keyFor })`: the same middleware for a platform that hosts many
-  sites. `keyFor(host)` returns the key that site's owner saved, or `null`; see
+- `naulonSite()`: the middleware for one site, configured like the Python package. It reads
+  `NAULON_KEY` (the credential connect returned) and `NAULON_GATE` (default
+  `https://gate.naulon.app`), and asks the gate for everything else. See
+  [Connect your site](#connect-your-site).
+- `naulonSites({ credentialFor })`: the same middleware for a platform that hosts many
+  sites. `credentialFor(host)` returns what that site's owner connected, or `null`; see
   [Platforms with many sites](#platforms-with-many-sites).
+- `naulonConnect({ clientName })`: the runtime's half of connect: `start` sends the owner to
+  their gate, `finish` exchanges the code for the site's credential, and `wellKnown` answers
+  the two paths the gate checks on the site first.
+- `naulonNode(toll)` serves Express, Connect and `node:http` with any of the above.
 - `withNaulon(handler, opts)` wraps a generic `fetch` handler. It and the Next adapter take
   either options or a built middleware (`naulonMiddleware(...)` or `naulonSites(...)`).
 - `localQuoteSource(fn)` / `httpQuoteSource(url, key)`: pluggable price and payees.
@@ -121,28 +129,79 @@ managed control plane, or your own self-hosted `POST /_naulon/verify` +
 `GET /_naulon/quote`. The middleware never holds funds: it forwards the buyer's
 signed payment to `verifyUrl`, which settles buyer → author directly.
 
-## Platforms with many sites
+## Connect your site
 
-If you host sites for other people, install this once and let each site's owner turn it on with a
-key from their own naulon account, pasted into a field you add to their settings:
+Nobody copies a key out of a dashboard. Your site asks its gate for a credential, you approve it on
+the gate, and the gate hands it back:
 
 ```ts
-import { naulonSites, withNaulon } from "@naulon/enforce";
+import express from "express";
+import { naulonConnect, naulonNode, naulonSite } from "@naulon/enforce";
 
+const connect = naulonConnect({ clientName: "My blog" });
+const app = express();
+
+// Answers the connect paths, then tolls once NAULON_KEY is set.
+app.use(naulonNode(naulonSite({ connect })));
+
+// Behind a button in your settings:
+app.post("/admin/naulon/connect", async (_req, res) => {
+  const r = await connect.start({ site: "https://blog.example.com" });
+  r.ok ? res.redirect(303, r.url) : res.status(400).send(r.error);
+});
+
+// Where the gate sends you back:
+app.get("/naulon/connect/return", async (req, res) => {
+  const r = await connect.finish(new URL(req.url, "https://blog.example.com").searchParams);
+  // r.credential is this site's credential: store it as a secret, as NAULON_KEY.
+  res.send(r.ok ? "Connected." : r.message);
+});
+```
+
+Before it shows Approve, the gate fetches `/.well-known/naulon-client` (who is asking) and a
+challenge only the process that started this connect can answer, so the connect paths are answered
+whether or not anything is tolled yet. A pending connect lives 15 minutes in memory; a site served
+by several processes passes a `ConnectStore` backed by its database. The credential acts only for
+the site it was approved for. Its owner can revoke it on the gate's Sites page at any time, and your
+readers then read free until you connect again.
+
+To toll through a gate you run, set `NAULON_GATE` to its URL. A gate set up before connect still
+accepts its `NAULON_ENFORCE_KEY` as `NAULON_KEY`.
+
+## Platforms with many sites
+
+If you host sites for other people, install this once and let each site's owner turn it on by
+connecting their own site. Render `connect.start({ site })` as a button in their settings, store
+the credential `connect.finish(...)` returns against that site, and tell the middleware how to find
+it:
+
+```ts
+import { naulonConnect, naulonSites, withNaulon } from "@naulon/enforce";
+
+const connect = naulonConnect({ clientName: "Acme Sites", store: siteConnectStore });
 const toll = naulonSites({
-  gate: "https://gate.naulon.app",
-  keyFor: async (host) => (await db.site.findUnique({ where: { host } }))?.naulonKey ?? null,
+  connect,
+  credentialFor: async (host) => {
+    const site = await db.site.findUnique({ where: { host } });
+    return site?.naulonCredential ? { credential: site.naulonCredential, gate: site.naulonGate ?? undefined } : null;
+  },
 });
 
 export default { fetch: withNaulon(app.fetch, toll) };
 ```
 
-A site whose `keyFor` answers `null` is never touched, and there is no platform-wide key to fall
-back to. Each site gets its own policy, quotes and reports under its own key; the gate's keys and
-crawler ranges are fetched once for all of them. `keyFor` is asked about once per host every 30
-seconds (`keyTtlMs`), and engines are kept for the 1,000 most recently active sites (`maxSites`).
-A `keyFor` that throws serves the page. The owner sets price, wallet and mode with the gate; you
-store only the key, as a secret.
+`credentialFor` may return a plain string, or `{ credential, gate }` naming the gate the owner
+connected to: a writer who runs their own gate connects to it, and their site is tolled there.
+Requests to a gate other than yours go through a guarded fetch (https only, no private addresses,
+no redirects followed).
+
+A site whose `credentialFor` answers `null` is never touched, and there is no platform-wide
+credential to fall back to. Each site gets its own policy, quotes and reports under its own
+credential; a gate's keys and crawler ranges are fetched once for all the sites on it.
+`credentialFor` is asked about once per host every 30 seconds (`credentialTtlMs`), and engines are
+kept for the 1,000 most recently active sites (`maxSites`). A `credentialFor` that throws serves
+the page. The owner sets price, wallet and mode with their gate; you store only the credential, as
+a secret.
 
 ## Observe mode
 
