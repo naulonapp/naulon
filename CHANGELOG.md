@@ -14,7 +14,12 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
-## Unreleased
+## v0.17.0
+
+Ships `@naulon/shared` **0.8.0**, `@naulon/sdk` **0.7.1**, `@naulon/enforce` **0.12.0**,
+`@naulon/wayfarer` **0.8.0** and `@naulon/wayfarer-mcp` **0.7.7**. The Docker image serves Connect.
+The WordPress plugin is 0.9.0. The Python lines below are on `main` and reach PyPI with the next
+`python-v` tag; `naulon` 0.1.0 does not have them.
 
 Connect: a site gets its credential from its gate by asking for it, and its owner approves it on
 the gate. Nobody copies a key out of a dashboard. Older keys keep working.
@@ -51,6 +56,12 @@ the gate. Nobody copies a key out of a dashboard. Older keys keep working.
   connect another account's site.
 - `@naulon/sdk/net`: one guarded request (https only, no private addresses, no redirects, a body
   cap and a deadline) used for every URL that came from outside the process.
+
+- `@naulon/wayfarer`: when a read is served with no receipt, `Fetched` and the MCP pay event carry
+  each payment leg's network, nonce, payee, amount and `validBefore`, so a host can ask the
+  settlement rail whether that charge settled or never happened.
+- WordPress 0.9.0: Connect from the Setup screen, Approve on People opens naulon.app with the
+  author filled in, and the screens use the naulon dashboard's buttons and fields.
 
 ### Changed
 - `@naulon/enforce` and `naulon` default to `https://gate.naulon.app` when no gate is set.
