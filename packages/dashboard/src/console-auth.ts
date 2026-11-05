@@ -207,7 +207,9 @@ export function consoleAuth(deps: ConsoleAuthDeps): MiddlewareHandler {
       // Legacy: DASHBOARD_AUTH is set and no accounts exist yet, so Basic is still the
       // whole login — including for browsers. Prompt, exactly as it always did.
       if (needsSetup && deps.machine) return unauthorized(c, deps);
-      if (isNavigation(c)) return c.redirect(`/login?next=${encodeURIComponent(path)}`, 302);
+      // The query rides along: a page reached with parameters (an approval request) must come back
+      // with them after sign-in, or the person signs in and lands on a page that forgot why they came.
+      if (isNavigation(c)) return c.redirect(`/login?next=${encodeURIComponent(path + new URL(c.req.url).search)}`, 302);
       return unauthorized(c, deps);
     }
 
@@ -306,10 +308,10 @@ export function requireRole(role: ConsoleRole): MiddlewareHandler {
 // `script-src 'self'`, and weakening a CSP so a login page can be one file is a bad
 // trade. Hence /auth.css, and forms that work with JavaScript switched off entirely.
 
-const escapeHtml = (s: string): string =>
+export const escapeHtml = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-interface PageOptions {
+export interface PageOptions {
   title: string;
   body: string;
   /** Rendered in the red note above the form. Always escaped. */
@@ -317,7 +319,7 @@ interface PageOptions {
   notice?: string;
 }
 
-function page({ title, body, error, notice }: PageOptions): string {
+export function page({ title, body, error, notice }: PageOptions): string {
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
@@ -370,6 +372,12 @@ input:focus,select:focus{outline:2px solid var(--primary);outline-offset:1px}
 button{margin-top:20px;width:100%;padding:11px;border:0;border-radius:8px;background:var(--primary);
 color:var(--primary-ink);font:inherit;font-weight:650;cursor:pointer}
 button.secondary{background:transparent;color:var(--muted-fg);border:1px solid var(--line);margin-top:10px}
+button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+dl{margin:0 0 16px;font-size:.88rem;line-height:1.45}
+dt{color:var(--muted-fg);font-size:.78rem;margin-top:12px}
+dd{margin:2px 0 0;overflow-wrap:anywhere}
+.ok{color:var(--primary)}
+ul.can{margin:0 0 16px;padding-left:18px;color:var(--muted-fg);font-size:.86rem;line-height:1.5}
 table{width:100%;border-collapse:collapse;font-size:.86rem;margin-top:6px}
 th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line)}
 th{color:var(--muted-fg);font-weight:500}

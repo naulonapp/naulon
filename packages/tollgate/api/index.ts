@@ -12,7 +12,11 @@
  * live — the offline (Node) path is the tested one.
  */
 import { handle } from "hono/vercel";
-import { app } from "../src/app.ts";
+import { bootGateState } from "../src/state/boot.ts";
+
+// Serverless has no disk to keep state on, so set NAULON_STATE_BACKEND=supabase here.
+await bootGateState();
+const { app } = await import("../src/app.ts");
 
 export const config = { runtime: "nodejs" };
 

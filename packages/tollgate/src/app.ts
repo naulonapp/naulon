@@ -89,6 +89,8 @@ import { stampGateCacheHeaders } from "./cacheHeaders.ts";
 import { throughContentExit } from "./contentExit.ts";
 import { prefersMarkdown } from "@naulon/extract";
 import { defaultPublisherResolver, platformTenancy } from "./publisher.ts";
+import { mountGateConnect } from "./connect/routes.ts";
+import { gateState } from "./state/boot.ts";
 
 // The origin-mirror seams (`drainSettlements`/`DrainScope` and the whole
 // `settlementDelivery` delivery-state surface) were exported here until WH-1 P3. They are gone:
@@ -157,7 +159,8 @@ import {
   headerSafe,
   type BuyerLinks,
 } from "@naulon/enforce";
-import type { FreeReason } from "@naulon/shared";
+import type { FreeReason, GateStateStore } from "@naulon/shared";
+import { memoryStateStore } from "@naulon/shared";
 
 // Global license POLICY (online check) + settlement network coordinates are
 // gate-operator settings, read where they're used (here for /licenses + the
@@ -479,6 +482,9 @@ function handleUnknownHost(c: Context, _host: string): Response {
  * from one gate (onboarding, isolation, per-publisher drains) is out of scope here.
  */
 export interface CreateAppOptions {
+  /** The gate's own state (site credentials, codes). Defaults to the store first boot opened; a
+   *  process that never booted gets no connect routes. */
+  state?: GateStateStore;
   /**
    * Optional telemetry seam: fired after every upstream proxy fetch with the
    * resolved publisher id + `UpstreamOutcome`. The gate does nothing with this
@@ -957,11 +963,24 @@ export function createApp(
   });
 
   // Everything else flows through the gate.
-  // The in-app enforce API, ahead of the proxy so its routes are answered here rather than
-  // forwarded to the origin. Off unless the operator set a key.
-  if (cfg.NAULON_ENFORCE_KEY) {
+  // Connect and the in-app enforce API, ahead of the proxy so their routes are answered here rather
+  // than forwarded to the origin. Both need the state store first boot opened; a gate embedded
+  // without one (a hosted control plane brings its own) serves the enforce API on the operator key
+  // alone, and only when one is set.
+  const state = opts?.state ?? gateState();
+  if (state) {
+    mountGateConnect(app, {
+      state,
+      ...(cfg.NAULON_PUBLIC_URL ? { publicUrl: cfg.NAULON_PUBLIC_URL } : {}),
+      authorizeUrl: `${cfg.NAULON_CONSOLE_URL.replace(/\/+$/, "")}/connect/authorize`,
+      trustProxy: cfg.TRUST_PROXY,
+      proxyHops: cfg.TRUST_PROXY_HOPS,
+    });
+  }
+  if (state || cfg.NAULON_ENFORCE_KEY) {
     app.route("/", enforceApiForGate({
-      key: cfg.NAULON_ENFORCE_KEY,
+      ...(cfg.NAULON_ENFORCE_KEY ? { key: cfg.NAULON_ENFORCE_KEY } : {}),
+      state: state ?? memoryStateStore(),
       resolver,
       arming,
       ...(licensing ? { licenseKeys: licensing.publishedJwks } : {}),

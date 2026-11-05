@@ -140,6 +140,10 @@ multi-instance deploy possible.
 | `SUPABASE_PENDING_LEGS_TABLE` | `naulon_pending_legs` | Table override. |
 | `SUPABASE_REVOCATIONS_TABLE` | `naulon_revocations` | Table override, used by the online license check. |
 | `SUPABASE_OBSERVATIONS_TABLE` | `naulon_observations` | Table override. |
+| `NAULON_STATE_BACKEND` | `file`, or `supabase` when `EVENTS_BACKEND` is | Where the gate keeps the secrets it generates on first boot, its owner, its settings and the site credentials it issues. `file` keeps one private file per key under `NAULON_DATA_DIR`; `supabase` uses the `naulon_gate_state` table, for several instances; `memory` keeps nothing across a restart. |
+| `NAULON_DATA_DIR` | `data/state` | The `file` state directory. Put it on a persistent volume: losing it loses the licence key and every connected site. |
+| `NAULON_PUBLIC_URL` | the request's origin | The gate's public origin, published as the issuer in `/.well-known/naulon`. Set it when the gate sits behind a proxy that rewrites `Host`. |
+| `NAULON_CONSOLE_URL` | `http://127.0.0.1:8403` | Where the owner signs in to approve a site connecting: the console's address as the owner's browser reaches it. Published in `/.well-known/naulon`. |
 | `EVENTS_PATH` | `data/events.jsonl` | Shared event ledger for the `jsonl` backend. The gate appends; the dashboard and attribution read. |
 | `OBSERVATIONS_PATH` | `data/observations.jsonl` | Observation ledger for the `jsonl` backend. |
 | `OBSERVATIONS_MAX_MB` | `100` | Size cap for the `jsonl` observation log. Past it the file moves to `<path>.1`, replacing the previous one, and a new file starts, so at most twice the cap is on disk. The console reads both. `0` never rotates. |

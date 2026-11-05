@@ -57,7 +57,14 @@ export class SupabaseRestError extends Error {
 }
 
 export async function supabaseRest(path: string, init: RequestInit = {}): Promise<unknown> {
-  const { url, key } = creds();
+  return supabaseRestWith(creds(), path, init);
+}
+
+/** The same request with the credentials passed in, for a caller that runs before the config can be
+ *  parsed (the gate's first boot reads its state store before it has the secrets the config needs). */
+export async function supabaseRestWith(creds: { url: string; key: string }, path: string, init: RequestInit = {}): Promise<unknown> {
+  const url = creds.url.replace(/\/$/, "");
+  const key = creds.key;
   const res = await fetch(`${url}${path}`, {
     ...init,
     headers: {

@@ -1,21 +1,25 @@
 /**
- * The enforce API as a self-hosted gate serves it: one shared key, the gate's own resolver, its
- * observation log and its arming store. Also serves the OpenAPI document at `/_naulon/openapi.json`,
+ * The enforce API as a self-hosted gate serves it: site credentials issued by connect (and, for a gate
+ * set up before connect, the operator key), the gate's own resolver, its observation log and its
+ * arming store. Also serves the OpenAPI document at `/_naulon/openapi.json`,
  * generated from the same schemas the routes validate with, so a client in any language can be
  * generated from a running gate and cannot drift from it.
  */
 import { OpenAPIHono } from "@hono/zod-openapi";
 import type { ArmingStore } from "@naulon/enforce";
-import { CRAWLER_PROOF, type JwkSet, type PublisherResolver } from "@naulon/shared";
+import { CRAWLER_PROOF, type GateStateStore, type JwkSet, type PublisherResolver } from "@naulon/shared";
+import { siteCredentialAuth } from "../connect/auth.ts";
 import { observe } from "../observationLog.ts";
 import { fleetAgentHost } from "./config.ts";
 import { mountEnforceApi } from "./index.ts";
 import { toObservationEvent } from "./observation.ts";
 import { ENFORCE_API_VERSION, OPENAPI_PATH } from "./schemas.ts";
-import { sharedKeyAuth } from "./sharedKeyAuth.ts";
 
 export interface GateEnforceOptions {
-  key: string;
+  /** The operator key (`NAULON_ENFORCE_KEY`), for runtimes connected before connect existed. */
+  key?: string;
+  /** Where site credentials live. */
+  state: GateStateStore;
   resolver: PublisherResolver;
   arming: ArmingStore;
   licenseKeys?: JwkSet;
@@ -52,7 +56,7 @@ export function enforceApiForGate(o: GateEnforceOptions): OpenAPIHono {
   const fleetAgent = fleetAgentHost(o.signingKey, o.signatureAgent);
   mountEnforceApi(api, {
     resolver: o.resolver,
-    auth: sharedKeyAuth(o.key, o.resolver),
+    auth: siteCredentialAuth({ state: o.state, resolver: o.resolver, ...(o.key ? { legacyKey: o.key } : {}) }),
     observe: (obs) => observe(toObservationEvent(obs)),
     ...(o.licenseKeys ? { licenseKeys: o.licenseKeys } : {}),
     ...(fleetAgent ? { fleetAgent } : {}),

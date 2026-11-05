@@ -27,6 +27,7 @@ services:
       WEBHOOK_DELIVERIES_PATH: /data/webhook-deliveries.jsonl
       PAYOUTS_PATH: /data/payouts.jsonl
       CONSOLE_STATE_PATH: /data/console.json
+      NAULON_DATA_DIR: /data/state
       CREDITS_FIXTURES: /config/credits.json
       # The console's traffic pages are built from this log. Set it to off in .env to
       # record nothing.

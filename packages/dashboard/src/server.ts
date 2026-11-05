@@ -19,7 +19,8 @@ import { readFile } from "node:fs/promises";
 import { CONSOLE_FONTS } from "./fonts.ts";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { getConfig, getSink } from "@naulon/shared";
+import { clientResolver, getConfig, getSink, stateLocationOf, stateStoreFor } from "@naulon/shared";
+import { mountConnectApprove } from "./connect-approve.ts";
 import { aggregate, type Ledger } from "./aggregate.ts";
 import { watchLedger } from "./watch.ts";
 import { summarizeOps, windowMsFromKey } from "./ops.ts";
@@ -250,6 +251,15 @@ if (ACCESS.refuse) {
     app.use("*", authThrottle());
     app.use("*", consoleAuth(AUTH_DEPS));
     mountConsoleAuth(app, AUTH_DEPS);
+    // The owner's half of connect: approving a site. It writes into the gate's own state store,
+    // the one the gate's token endpoint reads, so the two processes never call each other.
+    mountConnectApprove(app, {
+      state: stateStoreFor(stateLocationOf(process.env).backend, stateLocationOf(process.env).dir),
+      clients: clientResolver({ allowLoopback: AUTH_DEPS.loopbackOnly }),
+      auditor: AUDITOR,
+      allowLoopback: AUTH_DEPS.loopbackOnly,
+      gateLabel: cfg.NAULON_PUBLIC_URL ? new URL(cfg.NAULON_PUBLIC_URL).host : "your naulon gate",
+    });
   }
 
   for (const [path, asset] of Object.entries(ASSETS)) {

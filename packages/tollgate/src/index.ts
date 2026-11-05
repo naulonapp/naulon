@@ -6,8 +6,13 @@
  */
 import { serve } from "@hono/node-server";
 import { getConfig } from "@naulon/shared";
-import { app } from "./app.ts";
-import { startWebhookSweep } from "./webhookSink.ts";
+import { bootGateState } from "./state/boot.ts";
+
+// First boot fills in the secrets the environment left unset, so it runs before anything reads the
+// config. The app is imported after it for the same reason: app.ts reads the config as it loads.
+await bootGateState();
+const { app } = await import("./app.ts");
+const { startWebhookSweep } = await import("./webhookSink.ts");
 
 const cfg = getConfig();
 serve({ fetch: app.fetch, port: cfg.TOLLGATE_PORT });
