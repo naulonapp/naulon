@@ -71,6 +71,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -92,6 +93,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -113,6 +115,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": true
         },
@@ -135,6 +138,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -157,6 +161,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -179,6 +184,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -200,6 +206,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -222,6 +229,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -244,6 +252,7 @@
           "plain"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -266,6 +275,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -288,6 +298,7 @@
           "S256"
         ],
         "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
         "network": {
           "member": false
         }
@@ -299,6 +310,28 @@
       "body": "<html>",
       "ok": false,
       "error": "not a naulon discovery document"
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://gate.example.com/_naulon",
+        "authorization_endpoint": "https://gate.example.com/connect/authorize",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": false,
+      "error": "authorization_response_iss_parameter_supported"
     }
   ]
 }

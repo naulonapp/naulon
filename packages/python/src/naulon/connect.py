@@ -140,6 +140,8 @@ def parse_discovery(body: object, gate: str) -> Discovery | str:
         return "not a naulon discovery document: code_challenge_methods_supported"
     if d.get("client_id_metadata_document_supported") is not True:
         return "not a naulon discovery document: client_id_metadata_document_supported"
+    if d.get("authorization_response_iss_parameter_supported") is not True:
+        return "not a naulon discovery document: authorization_response_iss_parameter_supported"
     network = d.get("network")
     if not isinstance(network, dict) or not isinstance(network.get("member"), bool):
         return "not a naulon discovery document: network"
@@ -167,16 +169,21 @@ class PendingConnect:
     challenge: str
     redirect_uri: str
     expires_at: float
+    binding: str | None = None
 
 
 class ConnectStore(Protocol):
     """Where a started connect waits for its owner to come back. A site served by several processes,
     or a platform, passes one backed by its own database: the process that answers the gate's
-    challenge may not be the one that started the connect."""
+    challenge may not be the one that started the connect.
+
+    `take` must be atomic: of two callers taking one state, exactly one gets it (`DELETE ... RETURNING`
+    in a database). It keeps a refreshed return page, or two workers, from exchanging one code twice,
+    which the gate answers by revoking the credential the first exchange got."""
 
     def put(self, state: str, pending: PendingConnect) -> None: ...
     def get(self, state: str) -> PendingConnect | None: ...
-    def delete(self, state: str) -> None: ...
+    def take(self, state: str) -> PendingConnect | None: ...
 
 
 class MemoryConnectStore:
@@ -202,9 +209,10 @@ class MemoryConnectStore:
                 return None
             return p
 
-    def delete(self, state: str) -> None:
+    def take(self, state: str) -> PendingConnect | None:
         with self._lock:
-            self._rows.pop(state, None)
+            p = self._rows.pop(state, None)
+            return p if p is not None and p.expires_at > self._clock() else None
 
 
 @dataclass(frozen=True)
@@ -221,7 +229,7 @@ class Connected:
 
 @dataclass(frozen=True)
 class Failed:
-    error: str  # "denied" | "expired" | "refused" | "invalid"
+    error: str  # "denied" | "expired" | "refused" | "invalid" | "not_yours"
     message: str
 
 
@@ -296,7 +304,13 @@ class Connect:
                 self._discovered[origin] = (self._clock(), d)
         return d
 
-    def start(self, site: str, gate: str | None = None, return_to: str | None = None) -> Started | Failed:
+    def start(
+        self, site: str, gate: str | None = None, return_to: str | None = None, binding: str | None = None
+    ) -> Started | Failed:
+        """`binding` ties the connect to whoever started it: a platform passes the signed-in account's
+        id, and `finish` with any other binding is refused. Without it, someone who started a connect
+        could send its return link to another account holder, and a platform saving the result under
+        the current account would save the sender's site there."""
         origin = site_origin(site)
         if origin is None:
             return Failed("invalid", f"{site} is not a site origin, e.g. https://example.com")
@@ -314,7 +328,8 @@ class Connect:
         state = secrets.token_urlsafe(24)
         challenge = code_challenge(verifier)
         self._store.put(
-            state, PendingConnect(origin, gate_origin, verifier, challenge, back, self._clock() + PENDING_TTL_S)
+            state,
+            PendingConnect(origin, gate_origin, verifier, challenge, back, self._clock() + PENDING_TTL_S, binding),
         )
         query = urllib.parse.urlencode(
             [
@@ -331,22 +346,43 @@ class Connect:
         sep = "&" if urllib.parse.urlsplit(d.authorization_endpoint).query else "?"
         return Started(f"{d.authorization_endpoint}{sep}{query}")
 
-    def finish(self, query: Mapping[str, str]) -> Connected | Failed:
+    def finish(self, query: Mapping[str, str], binding: str | None = None) -> Connected | Failed:
+        """`binding` must be what `start` was given, when it was given one."""
         state = query.get("state", "")
         if not is_state(state):
             return Failed("invalid", "this return carries no connect to finish")
-        pending = self._store.get(state)
-        if pending is None:
+        peek = self._store.get(state)
+        if peek is None:
             return Failed("expired", "this connect has expired or was already finished. Start it again.")
-        self._store.delete(state)
+        # Checked before anything is taken, so a return that is not this one's can neither finish the
+        # connect nor cancel it.
+        if peek.binding is not None and peek.binding != binding:
+            return Failed(
+                "not_yours", "this connect was started by someone else. Start it again from your own settings."
+            )
+        # RFC 9207: a response naming another gate is a mix-up, so nothing is exchanged.
+        if query.get("iss") != peek.gate:
+            return Failed("refused", "the response did not come from the gate this connect started with")
         if query.get("error") == "access_denied":
+            self._store.take(state)
             return Failed("denied", "the gate's owner did not approve this site")
         code = query.get("code")
         if not code:
             return Failed("invalid", f"the gate returned {query.get('error') or 'no code'}")
+        # One exchange per code: whoever takes the pending connect exchanges it.
+        pending = self._store.take(state)
+        if pending is None:
+            return Failed("expired", "this connect is already being finished.")
+        result, transient = self._exchange(pending, code)
+        # A gate that could not be reached decided nothing: the owner may try the link again.
+        if transient:
+            self._store.put(state, pending)
+        return result
+
+    def _exchange(self, pending: PendingConnect, code: str) -> tuple[Connected | Failed, bool]:
         d = self.discover(pending.gate)
         if isinstance(d, str):
-            return Failed("refused", d)
+            return Failed("refused", d), True
         form = urllib.parse.urlencode(
             {
                 "grant_type": "authorization_code",
@@ -364,21 +400,23 @@ class Connect:
             timeout=10.0,
         )
         if res is None:
-            return Failed("refused", "the gate could not be reached")
+            return Failed("refused", "the gate could not be reached"), True
+        if res.status >= 500:
+            return Failed("refused", f"the gate answered {res.status}"), True
         try:
             body = json.loads(res.body)
         except ValueError:
-            return Failed("refused", f"the gate answered {res.status} with no JSON")
+            return Failed("refused", f"the gate answered {res.status} with no JSON"), False
         if not isinstance(body, dict):
-            return Failed("refused", f"the gate answered {res.status}")
+            return Failed("refused", f"the gate answered {res.status}"), False
         if res.status != 200:
-            return Failed("refused", str(body.get("error_description") or f"the gate answered {res.status}"))
+            return Failed("refused", str(body.get("error_description") or f"the gate answered {res.status}")), False
         token = body.get("access_token")
         if not isinstance(token, str) or not is_site_credential(token):
-            return Failed("refused", "the gate returned no site credential")
+            return Failed("refused", "the gate returned no site credential"), False
         if body.get("scope") != SITE_SCOPE or body.get("site") != pending.site:
-            return Failed("refused", "the gate returned a credential for something else")
-        return Connected(pending.site, pending.gate, token)
+            return Failed("refused", "the gate returned a credential for something else"), False
+        return Connected(pending.site, pending.gate, token), False
 
     def well_known(self, scheme: str, host: str, path: str, method: str = "GET") -> WellKnown | None:
         """The answer to one of the two connect paths on this site, or None for any other request."""

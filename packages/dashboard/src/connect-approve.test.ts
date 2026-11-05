@@ -14,8 +14,9 @@ import {
 } from "@naulon/shared";
 import { AUTHORIZE_PATH, mountConnectApprove } from "./connect-approve.ts";
 
-async function site(answers: Map<string, string>): Promise<{ url: string; close: () => Promise<void> }> {
+async function site(answers: Map<string, string>, onRequest?: (path: string) => void): Promise<{ url: string; close: () => Promise<void> }> {
   const server: Server = createServer((req, res) => {
+    onRequest?.(req.url ?? "");
     const state = req.url?.replace("/.well-known/naulon-challenge/", "") ?? "";
     const value = answers.get(state);
     if (value) return res.end(value);
@@ -43,7 +44,7 @@ function consoleApp(siteUrl: string, signedIn: { role: "admin" | "viewer" } | nu
     if (signedIn) c.set("naulonPrincipal" as never, { kind: "session", username: "ops", userId: "u1", role: signedIn.role, mustChangePassword: false } as never);
     await next();
   });
-  mountConnectApprove(app, { state, clients: clientsFor(siteUrl), allowPrivate: true, gateLabel: "gate.example.com" });
+  mountConnectApprove(app, { state, clients: clientsFor(siteUrl), allowPrivate: true, gateLabel: "gate.example.com", issuer: "https://gate.example.com" });
   return { app, state };
 }
 
@@ -61,6 +62,9 @@ function request(siteUrl: string) {
   return { verifier, state, params, url };
 }
 
+/** A GET as the owner's browser sends it after pressing Continue: same-origin. */
+const clicked = { headers: { "sec-fetch-site": "same-origin" } };
+
 const post = (fields: URLSearchParams, extra: Record<string, string> = {}) => ({
   method: "POST",
   headers: { "content-type": "application/x-www-form-urlencoded", "sec-fetch-site": "same-origin", ...extra },
@@ -74,7 +78,7 @@ test("the owner sees the site, the proof it answered, and what the connection ca
     const r = request(s.url);
     answers.set(r.state, r.params.codeChallenge);
     const { app } = consoleApp(s.url, { role: "admin" });
-    const res = await app.request(r.url.pathname + r.url.search);
+    const res = await app.request(r.url.pathname + r.url.search, clicked);
     assert.equal(res.status, 200);
     const html = await res.text();
     const host = new URL(s.url).host;
@@ -104,6 +108,7 @@ test("Approve sends back a code the gate redeems, and only for this request's ve
     const back = new URL(res.headers.get("location")!);
     assert.equal(back.origin + back.pathname, `${s.url}/wp-admin/admin.php`);
     assert.equal(back.searchParams.get("state"), r.state);
+    assert.equal(back.searchParams.get("iss"), "https://gate.example.com", "RFC 9207: the response names its gate");
     const code = back.searchParams.get("code")!;
     const redeemed = await redeemCode(state, { code, codeVerifier: r.verifier, redirectUri: r.params.redirectUri, clientId: r.params.clientId });
     assert.equal(redeemed.ok, true);
@@ -120,7 +125,7 @@ test("a site that does not answer this connect is never approved", async () => {
     const r = request(s.url);
     answers.set(r.state, codeChallengeOf(newVerifier())); // answers, but for a different connect
     const { app, state } = consoleApp(s.url, { role: "admin" });
-    const shown = await app.request(r.url.pathname + r.url.search);
+    const shown = await app.request(r.url.pathname + r.url.search, clicked);
     assert.equal(shown.status, 409);
     assert.match(await shown.text(), /did not answer this connect/);
     const fields = new URLSearchParams(r.url.searchParams);
@@ -144,6 +149,7 @@ test("Deny goes back with access_denied, even when the site has stopped answerin
     const back = new URL(res.headers.get("location")!);
     assert.equal(back.searchParams.get("error"), "access_denied");
     assert.equal(back.searchParams.get("state"), r.state);
+    assert.equal(back.searchParams.get("iss"), "https://gate.example.com");
     assert.deepEqual(await state.list("connect.code:"), []);
   } finally {
     await s.close();
@@ -156,14 +162,14 @@ test("a request this console cannot trust to redirect gets a page here and is ne
     const { app } = consoleApp(s.url, { role: "admin" });
     const evil = request(s.url);
     evil.url.searchParams.set("redirect_uri", "https://evil.example.net/steal");
-    const res = await app.request(evil.url.pathname + evil.url.search);
+    const res = await app.request(evil.url.pathname + evil.url.search, clicked);
     assert.equal(res.status, 400);
     assert.equal(res.headers.get("location"), null);
     assert.match(await res.text(), /not from the app it names/);
 
     const unknown = request(s.url);
     unknown.url.searchParams.set("client_id", "https://nobody.example.com/.well-known/naulon-client");
-    assert.equal((await app.request(unknown.url.pathname + unknown.url.search)).status, 400);
+    assert.equal((await app.request(unknown.url.pathname + unknown.url.search, clicked)).status, 400);
 
     const fields = new URLSearchParams(evil.url.searchParams);
     fields.set("decision", "deny");
@@ -181,7 +187,7 @@ test("a viewer cannot approve, and a cross-site form post is refused", async () 
     const r = request(s.url);
     answers.set(r.state, r.params.codeChallenge);
     const viewer = consoleApp(s.url, { role: "viewer" });
-    assert.equal((await viewer.app.request(r.url.pathname + r.url.search)).status, 403);
+    assert.equal((await viewer.app.request(r.url.pathname + r.url.search, clicked)).status, 403);
 
     const admin = consoleApp(s.url, { role: "admin" });
     const fields = new URLSearchParams(r.url.searchParams);
@@ -199,7 +205,31 @@ test("signed out, nobody approves", async () => {
   try {
     const r = request(s.url);
     const { app } = consoleApp(s.url, null);
-    assert.equal((await app.request(r.url.pathname + r.url.search)).status, 401);
+    assert.equal((await app.request(r.url.pathname + r.url.search, clicked)).status, 401);
+  } finally {
+    await s.close();
+  }
+});
+
+test("on a local console, a link from another site fetches nothing until the owner continues", async () => {
+  const answers = new Map<string, string>();
+  const asked: string[] = [];
+  const s = await site(answers, (path) => void asked.push(path));
+  try {
+    const r = request(s.url);
+    answers.set(r.state, r.params.codeChallenge);
+    const { app } = consoleApp(s.url, { role: "admin" });
+    for (const arrival of [{ "sec-fetch-site": "cross-site" }, { "sec-fetch-site": "same-site" }, {}]) {
+      const landed = await app.request(r.url.pathname + r.url.search, { headers: arrival });
+      assert.equal(landed.status, 200);
+      const html = await landed.text();
+      assert.match(html, /<button type="submit">Continue<\/button>/);
+      assert.doesNotMatch(html, /Approve/);
+    }
+    assert.deepEqual(asked, [], "the site was not contacted");
+    const continued = await app.request(r.url.pathname + r.url.search, clicked);
+    assert.match(await continued.text(), /answered this request just now/);
+    assert.ok(asked.length > 0, "and was contacted once the owner continued");
   } finally {
     await s.close();
   }

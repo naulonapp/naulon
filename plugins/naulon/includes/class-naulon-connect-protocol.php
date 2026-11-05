@@ -135,6 +135,10 @@ class Naulon_Connect_Protocol {
 		if ( ! isset( $body['client_id_metadata_document_supported'] ) || true !== $body['client_id_metadata_document_supported'] ) {
 			return 'not a naulon discovery document: client_id_metadata_document_supported';
 		}
+		// RFC 9207: every authorization response names its gate, and a response naming another is refused.
+		if ( ! isset( $body['authorization_response_iss_parameter_supported'] ) || true !== $body['authorization_response_iss_parameter_supported'] ) {
+			return 'not a naulon discovery document: authorization_response_iss_parameter_supported';
+		}
 		if ( ! isset( $body['network'] ) || ! is_array( $body['network'] ) || ! isset( $body['network']['member'] ) || ! is_bool( $body['network']['member'] ) ) {
 			return 'not a naulon discovery document: network';
 		}

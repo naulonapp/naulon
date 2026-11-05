@@ -31,6 +31,9 @@ export interface PendingCode {
   codeChallenge: string;
   /** Who approved it, for the audit line. */
   approvedBy: string;
+  /** An embedder's own facts about the grant, returned on redeem exactly as saved. A gate that
+   *  serves many tenants records which one the owner approved for; this gate stores none. */
+  context?: Record<string, string>;
   expiresAt: number;
 }
 
@@ -46,6 +49,8 @@ export interface SiteCredentialRecord {
 
 const codeKey = (digest: string) => `connect.code:${digest}`;
 const usedKey = (digest: string) => `connect.used:${digest}`;
+/** What a redeemed code was exchanged for, so a second redemption can take it back. */
+const issuedKey = (digest: string) => `connect.issued:${digest}`;
 const credKey = (digest: string) => `credential:${digest}`;
 /** Kept apart from the credential record on purpose: the gate writes it while serving a request,
  *  and a write to the record itself could land after the owner revoked it and bring it back. A
@@ -79,7 +84,17 @@ async function sweepConnectAtMostEvery(store: GateStateStore, now: number): Prom
 }
 
 export type RedeemError = "invalid_grant" | "invalid_client";
-export type Redeemed = { ok: true; code: PendingCode } | { ok: false; error: RedeemError; reason: string };
+/** `codeId` names the code to `recordIssue`. `replayOf` names what the code's first redemption was
+ *  exchanged for: RFC 6749 §4.1.2 asks that it be revoked, because a second redemption means the
+ *  code leaked, and the first one may have been the thief's. */
+export type Redeemed =
+  | { ok: true; code: PendingCode; codeId: string }
+  | { ok: false; error: RedeemError; reason: string; replayOf?: string };
+
+async function replay(store: GateStateStore, digest: string): Promise<Redeemed> {
+  const issued = await store.get(issuedKey(digest));
+  return { ok: false, error: "invalid_grant", reason: "code already used", ...(issued ? { replayOf: issued } : {}) };
+}
 
 export async function redeemCode(
   store: GateStateStore,
@@ -89,13 +104,15 @@ export async function redeemCode(
   if (!presented.code.startsWith(CODE_PREFIX)) return { ok: false, error: "invalid_grant", reason: "not a code" };
   const digest = credentialDigest(presented.code);
   const raw = await store.get(codeKey(digest));
-  if (!raw) return { ok: false, error: "invalid_grant", reason: "unknown or used code" };
+  if (!raw) {
+    // A redeemed code's row is gone and its used-marker stays: that is a replay, not a stranger.
+    if ((await store.get(usedKey(digest))) !== null) return replay(store, digest);
+    return { ok: false, error: "invalid_grant", reason: "unknown or used code" };
+  }
   // Unique per attempt: racers in the same millisecond must not write identical markers, or every
   // one of them would read its own value back and believe it won.
   const marker = `${now}.${randomBase62(16)}`;
-  if ((await store.createIfAbsent(usedKey(digest), marker)) !== marker) {
-    return { ok: false, error: "invalid_grant", reason: "code already used" };
-  }
+  if ((await store.createIfAbsent(usedKey(digest), marker)) !== marker) return replay(store, digest);
   await store.delete(codeKey(digest));
   const code = JSON.parse(raw) as PendingCode;
   if (code.expiresAt <= now) return { ok: false, error: "invalid_grant", reason: "code expired" };
@@ -108,7 +125,13 @@ export async function redeemCode(
     return { ok: false, error: "invalid_grant", reason: "malformed code_verifier" };
   }
   if (challenge !== code.codeChallenge) return { ok: false, error: "invalid_grant", reason: "code_verifier does not match" };
-  return { ok: true, code };
+  return { ok: true, code, codeId: digest };
+}
+
+/** Remember what a code was exchanged for. The issuer's own id for it: a credential's digest here,
+ *  an API key's hash on a gate that mints keys. */
+export async function recordIssue(store: GateStateStore, codeId: string, issueId: string): Promise<void> {
+  await store.put(issuedKey(codeId), issueId);
 }
 
 export async function issueCredential(
@@ -191,6 +214,13 @@ export async function sweepConnect(store: GateStateStore, now = Date.now()): Pro
   }
   for (const { key, value } of await store.list("connect.used:")) {
     if (Number(value.split(".")[0]) + CODE_TTL_MS <= now) {
+      await store.delete(key);
+      removed++;
+    }
+  }
+  // A record of what a code was exchanged for is kept exactly as long as its used-marker.
+  for (const { key } of await store.list("connect.issued:")) {
+    if ((await store.get(usedKey(key.slice("connect.issued:".length)))) === null) {
       await store.delete(key);
       removed++;
     }

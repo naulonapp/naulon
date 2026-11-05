@@ -42,7 +42,16 @@ test("a code redeems once, for its client, redirect and verifier", async () => {
   const code = await saveCode(store, pending, 1000);
   const r = await redeemCode(store, presented(code), 2000);
   assert.equal(r.ok, true);
-  assert.deepEqual(await redeemCode(store, presented(code), 2001), { ok: false, error: "invalid_grant", reason: "unknown or used code" });
+  assert.deepEqual(await redeemCode(store, presented(code), 2001), { ok: false, error: "invalid_grant", reason: "code already used" });
+  assert.deepEqual(await redeemCode(store, presented("nln_code_" + "x".repeat(43)), 2002), { ok: false, error: "invalid_grant", reason: "unknown or used code" });
+});
+
+test("a code carries an embedder's context to its redemption, untouched", async () => {
+  const store = memoryStateStore();
+  const code = await saveCode(store, { ...pending, context: { tenantId: "t_123", userId: "u_9" } });
+  const r = await redeemCode(store, presented(code));
+  assert.equal(r.ok, true);
+  assert.deepEqual((r as { code: { context?: Record<string, string> } }).code.context, { tenantId: "t_123", userId: "u_9" });
 });
 
 test("each defect in a token request is refused, and the refusal burns the code", async () => {

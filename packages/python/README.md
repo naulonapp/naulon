@@ -87,7 +87,7 @@ in Django.
 
 A pending connect lives 15 minutes in memory by default. A site served by several processes passes
 a `ConnectStore` backed by its database, because the process the gate asks may not be the one that
-started it. The credential acts only for the site it was approved for, and its owner can revoke it
+started it. Its `take` must be atomic (`DELETE ... RETURNING`) so two workers never exchange one code. The credential acts only for the site it was approved for, and its owner can revoke it
 on the gate's Sites page at any time; your readers then read free until you connect again.
 
 ## Settings
@@ -110,9 +110,10 @@ refused: the caller writes its first entry.
 ## Platforms with many sites
 
 If you host sites for other people, install the middleware once and let each site's owner turn it
-on by connecting their own site. Render `connect.start(site_url)` as a button in their settings,
-store the credential `connect.finish(...)` returns against that site, and tell the middleware how to
-find it:
+on by connecting their own site. Render `connect.start(site_url, binding=account.id)` as a button
+in their settings, finish with `connect.finish(request.GET, binding=account.id)`, store the
+credential it returns against that site, and tell the middleware how to find it. The binding stops
+someone sending their own connect's return link to another account holder:
 
 ```python
 # settings.py

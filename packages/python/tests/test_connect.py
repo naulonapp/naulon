@@ -63,6 +63,7 @@ def discovery(issuer: str = GATE, authorize: str = "https://console.test/connect
         "challenge_path": CHALLENGE_PATH,
         "code_challenge_methods_supported": ["S256"],
         "client_id_metadata_document_supported": True,
+        "authorization_response_iss_parameter_supported": True,
         "network": {"member": False},
     }
 
@@ -113,11 +114,11 @@ def test_a_connect_runs_start_to_credential_and_the_site_answers_its_own_challen
         "grant_types": ["authorization_code"],
     }
 
-    done = c.finish({"state": q["state"], "code": "nln_code_x"})
+    done = c.finish({"state": q["state"], "code": "nln_code_x", "iss": GATE})
     assert done == Connected(SITE, GATE, CREDENTIAL)
     assert code_challenge(token_route.verifier) == q["code_challenge"]  # type: ignore[attr-defined]
     assert "nln_site_" not in repr(done), "a credential never reaches a log through repr"
-    again = c.finish({"state": q["state"], "code": "nln_code_x"})
+    again = c.finish({"state": q["state"], "code": "nln_code_x", "iss": GATE})
     assert isinstance(again, Failed) and again.error == "expired"
 
 
@@ -128,20 +129,23 @@ def test_each_way_a_connect_can_end_without_a_credential() -> None:
         )
 
     c = gate_with(token_route())
-    assert c.finish({"state": start(c)["state"], "error": "access_denied"}) == Failed(
+    assert c.finish({"state": start(c)["state"], "error": "access_denied", "iss": GATE}) == Failed(
         "denied", "the gate's owner did not approve this site"
     )
-    assert c.finish({"state": "short"}).error == "invalid"  # type: ignore[union-attr]
+    assert c.finish({"state": "short", "iss": GATE}).error == "invalid"  # type: ignore[union-attr]
     c = gate_with(json_response(400, {"error": "invalid_grant", "error_description": "code expired"}))
-    assert c.finish({"state": start(c)["state"], "code": "nln_code_x"}) == Failed("refused", "code expired")
+    assert c.finish({"state": start(c)["state"], "code": "nln_code_x", "iss": GATE}) == Failed(
+        "refused", "code expired"
+    )
     c = gate_with(token_route(site="https://someone-else.test"))
     assert (
-        c.finish({"state": start(c)["state"], "code": "nln_code_x"}).message
+        c.finish({"state": start(c)["state"], "code": "nln_code_x", "iss": GATE}).message
         == "the gate returned a credential for something else"
     )  # type: ignore[union-attr]
     c = gate_with(token_route(credential="nln_live_abc"))
     assert (
-        c.finish({"state": start(c)["state"], "code": "nln_code_x"}).message == "the gate returned no site credential"
+        c.finish({"state": start(c)["state"], "code": "nln_code_x", "iss": GATE}).message
+        == "the gate returned no site credential"
     )  # type: ignore[union-attr]
 
 
@@ -378,3 +382,45 @@ def test_lookups_past_the_cap_are_refused_at_once_not_queued(monkeypatch: pytest
     assert tr._resolve_within(lambda: ["1.1.1.1"], 5.0) is None
     assert time.monotonic() - started < 0.1, "refused, not queued behind the stalled ones"
     release.set()
+
+
+def test_a_return_naming_another_gate_or_none_is_refused_and_cancels_nothing() -> None:
+    t = FakeTransport({"/.well-known/naulon": json_response(200, discovery()), "/_naulon/connect/token": token_route()})
+    c = connect(t)
+    state = start(c)["state"]
+    for iss in ("https://evil.example.com", None):
+        q = {"state": state, "code": "nln_code_x", **({"iss": iss} if iss else {})}
+        r = c.finish(q)
+        assert isinstance(r, Failed) and r.error == "refused", iss
+    assert c.finish({"state": state, "code": "nln_code_x", "iss": GATE}) == Connected(SITE, GATE, CREDENTIAL)
+
+
+def test_a_connect_started_for_one_account_cannot_be_finished_by_another() -> None:
+    t = FakeTransport({"/.well-known/naulon": json_response(200, discovery()), "/_naulon/connect/token": token_route()})
+    c = connect(t)
+    started = c.start(SITE, binding="account-a")
+    assert isinstance(started, Started)
+    state = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(started.url).query))["state"]
+    q = {"state": state, "code": "nln_code_x", "iss": GATE}
+    for who in ("account-b", None):
+        r = c.finish(q, binding=who)
+        assert isinstance(r, Failed) and r.error == "not_yours", who
+    assert c.finish(q, binding="account-a") == Connected(SITE, GATE, CREDENTIAL)
+
+
+def test_one_return_finishes_once_and_an_unreachable_gate_leaves_it_to_retry() -> None:
+    down = {"on": True}
+    good = token_route()
+
+    def token(method: str, url: str, body: bytes | None) -> Response | None:
+        return None if down["on"] else good(method, url, body)
+
+    t = FakeTransport({"/.well-known/naulon": json_response(200, discovery()), "/_naulon/connect/token": token})
+    c = connect(t)
+    q = {"state": start(c)["state"], "code": "nln_code_x", "iss": GATE}
+    first = c.finish(q)
+    assert isinstance(first, Failed) and first.error == "refused"
+    down["on"] = False
+    assert c.finish(q) == Connected(SITE, GATE, CREDENTIAL), "the pending connect was put back"
+    again = c.finish(q)
+    assert isinstance(again, Failed) and again.error == "expired", "and taken for good once it finished"

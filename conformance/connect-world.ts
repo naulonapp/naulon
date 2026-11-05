@@ -43,18 +43,21 @@ const resolver = { resolve: async () => ({ id: "default" }) as PublisherConfig }
 export async function startConnectWorld(o: { state?: GateStateStore } = {}): Promise<ConnectWorld> {
   const state = o.state ?? memoryStateStore();
 
+  // The gate's issuer is its own origin, known only once it listens, so it listens first and its
+  // routes are mounted behind the socket. The console stamps the same issuer on its redirects.
+  const gateApp = new OpenAPIHono();
+  const gateSrv = await listen({ fetch: (req) => gateApp.fetch(req) });
+
   const consoleApp = new Hono();
   consoleApp.use("*", async (c, next) => {
     c.set("naulonPrincipal" as never, { kind: "session", username: "owner", userId: "u1", role: "admin", mustChangePassword: false } as never);
     await next();
   });
-  mountConnectApprove(consoleApp, { state, clients: clientResolver({ allowPrivate: true }), allowPrivate: true, gateLabel: "the test gate" });
+  mountConnectApprove(consoleApp, { state, clients: clientResolver({ allowPrivate: true }), allowPrivate: true, gateLabel: "the test gate", issuer: gateSrv.origin });
   const consoleSrv = await listen(consoleApp);
 
-  const gateApp = new OpenAPIHono();
-  mountGateConnect(gateApp as unknown as Hono, { state, authorizeUrl: `${consoleSrv.origin}/connect/authorize`, trustProxy: false, proxyHops: 1 });
+  mountGateConnect(gateApp as unknown as Hono, { state, issuer: gateSrv.origin, authorizeUrl: `${consoleSrv.origin}/connect/authorize` });
   mountEnforceApi(gateApp, { resolver, auth: siteCredentialAuth({ state, resolver }), observe: () => {} });
-  const gateSrv = await listen(gateApp);
 
   return {
     state,

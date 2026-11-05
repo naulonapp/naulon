@@ -161,7 +161,8 @@ app.get("/naulon/connect/return", async (req, res) => {
 Before it shows Approve, the gate fetches `/.well-known/naulon-client` (who is asking) and a
 challenge only the process that started this connect can answer, so the connect paths are answered
 whether or not anything is tolled yet. A pending connect lives 15 minutes in memory; a site served
-by several processes passes a `ConnectStore` backed by its database. The credential acts only for
+by several processes passes a `ConnectStore` backed by its database, whose `take` must be atomic
+(`DELETE ... RETURNING`) so two workers never exchange one code. The credential acts only for
 the site it was approved for. Its owner can revoke it on the gate's Sites page at any time, and your
 readers then read free until you connect again.
 
@@ -171,9 +172,10 @@ accepts its `NAULON_ENFORCE_KEY` as `NAULON_KEY`.
 ## Platforms with many sites
 
 If you host sites for other people, install this once and let each site's owner turn it on by
-connecting their own site. Render `connect.start({ site })` as a button in their settings, store
-the credential `connect.finish(...)` returns against that site, and tell the middleware how to find
-it:
+connecting their own site. Render `connect.start({ site, binding: account.id })` as a button in
+their settings, finish with `connect.finish(query, { binding: account.id })`, store the credential
+it returns against that site, and tell the middleware how to find it. The binding is what stops
+someone sending their own connect's return link to another account holder:
 
 ```ts
 import { naulonConnect, naulonSites, withNaulon } from "@naulon/enforce";

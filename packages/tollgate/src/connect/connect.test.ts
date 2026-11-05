@@ -19,16 +19,10 @@ const SITE = "https://blog.example.com";
 const CLIENT = `${SITE}/.well-known/naulon-client`;
 const REDIRECT = `${SITE}/wp-admin/admin.php?page=naulon&connect=return`;
 
-function gate(publicUrl?: string) {
+function gate(issuer: string | null = "https://gate.example.com") {
   const state = memoryStateStore();
   const app = new Hono();
-  mountGateConnect(app, {
-    state,
-    ...(publicUrl ? { publicUrl } : {}),
-    authorizeUrl: "https://console.example.com/connect/authorize",
-    trustProxy: true,
-    proxyHops: 1,
-  });
+  mountGateConnect(app, { state, issuer, authorizeUrl: "https://console.example.com/connect/authorize" });
   return { app, state };
 }
 
@@ -55,10 +49,24 @@ test("discovery names this gate, read back by the same parser every runtime uses
   assert.equal(r.ok && r.doc.token_endpoint, `https://gate.example.com${TOKEN_PATH}`);
 });
 
-test("a configured public URL is the issuer whatever Host the request carries", async () => {
+test("the configured issuer is the issuer whatever Host the request carries", async () => {
   const { app } = gate("https://gate.example.com");
-  const res = await app.request("http://10.0.0.5:8402/.well-known/naulon", { headers: { host: "10.0.0.5:8402" } });
+  const res = await app.request("http://10.0.0.5:8402/.well-known/naulon", { headers: { host: "10.0.0.5:8402", "x-forwarded-host": "evil.example" } });
   assert.equal((await res.json() as { issuer: string }).issuer, "https://gate.example.com");
+});
+
+test("a gate with no issuer says how to give it one rather than guessing from the request", async () => {
+  const { app } = gate(null);
+  const res = await app.request("https://gate.example.com/.well-known/naulon");
+  assert.equal(res.status, 503);
+  assert.match(await res.text(), /NAULON_PUBLIC_URL/);
+});
+
+test("the issuer rule is one rule: the public URL, else the gate URL, else none", async () => {
+  const { connectIssuer } = await import("@naulon/shared");
+  assert.equal(connectIssuer({ NAULON_PUBLIC_URL: "https://gate.example.com/x", GATE_URL: "http://127.0.0.1:8402" }), "https://gate.example.com");
+  assert.equal(connectIssuer({ GATE_URL: "http://127.0.0.1:8402" }), "http://127.0.0.1:8402");
+  assert.equal(connectIssuer({ GATE_URL: "http://tollgate:8402" }), null, "an internal http name is no issuer");
 });
 
 test("an approved code becomes a site credential once, with no-store and no refresh token", async () => {
@@ -106,7 +114,7 @@ const resolver: PublisherResolver = { resolve: async () => ({ id: "default" }) a
 
 async function credentialFor(state: ReturnType<typeof memoryStateStore>, site = SITE) {
   const { app } = { app: new Hono() };
-  mountGateConnect(app, { state, authorizeUrl: "https://c.example.com/connect/authorize", trustProxy: false, proxyHops: 1 });
+  mountGateConnect(app, { state, issuer: "https://gate.example.com", authorizeUrl: "https://c.example.com/connect/authorize" });
   const verifier = newVerifier();
   const code = await saveCode(state, { clientId: CLIENT, clientName: "WordPress", redirectUri: REDIRECT, site, codeChallenge: codeChallengeOf(verifier), approvedBy: "owner" });
   return ((await (await app.request(TOKEN_PATH, form({ grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: REDIRECT, client_id: CLIENT }))).json()) as { access_token: string }).access_token;
@@ -147,4 +155,42 @@ test("a revoked credential stops at once, and the legacy operator key keeps work
   assert.equal((await auth(ctx(`Bearer ${legacyKey}`), "blog.example.com")).ok, true);
   await state.delete((await state.list("credential:"))[0]!.key);
   assert.equal((await auth(ctx(`Bearer ${cred}`), "blog.example.com")).ok, false);
+});
+
+test("a site credential cannot report for another site by riding a batch behind its own", async () => {
+  const { OpenAPIHono } = await import("@hono/zod-openapi");
+  const { mountEnforceApi } = await import("../enforce-api/index.ts");
+  const state = memoryStateStore();
+  const cred = await credentialFor(state);
+  const written: { host: string }[] = [];
+  const api = new OpenAPIHono();
+  // The single-tenant resolver: every host is the one publisher, which is where a batch checked
+  // only on its first report would let one site write rows for every other.
+  mountEnforceApi(api, { resolver, auth: siteCredentialAuth({ state, resolver }), observe: (o) => void written.push(o) });
+  const report = (resource: string) => ({ resource, slug: "essays/x", verdict: "denied", classifiedAs: "agent", kind: "read", priceMicro: 1000 });
+  const post = (body: unknown) =>
+    api.request("/_naulon/observe", { method: "POST", headers: { authorization: `Bearer ${cred}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const mixed = await post([report("https://blog.example.com/essays/x"), report("https://other.example.com/essays/y")]);
+  assert.equal(mixed.status, 401);
+  assert.deepEqual(written, [], "nothing from a refused batch is written, its own site's row included");
+
+  const own = await post([report("https://blog.example.com/essays/x"), report("https://blog.example.com/essays/z")]);
+  assert.equal(own.status, 202);
+  assert.equal(written.length, 2);
+});
+
+test("a code redeemed twice revokes the credential its first redemption got", async () => {
+  const state = memoryStateStore();
+  const app = new Hono();
+  mountGateConnect(app, { state, issuer: "https://gate.example.com", authorizeUrl: "https://c.example.com/connect/authorize" });
+  const verifier = newVerifier();
+  const code = await saveCode(state, { clientId: CLIENT, clientName: "WordPress", redirectUri: REDIRECT, site: SITE, codeChallenge: codeChallengeOf(verifier), approvedBy: "owner" });
+  const exchange = () => app.request(TOKEN_PATH, form({ grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: REDIRECT, client_id: CLIENT }));
+  const first = await exchange();
+  const cred = ((await first.json()) as { access_token: string }).access_token;
+  assert.notEqual(await resolveCredential(state, cred), null);
+  const second = await exchange();
+  assert.equal(second.status, 400);
+  assert.equal(await resolveCredential(state, cred), null, "the leaked code's credential is gone");
 });

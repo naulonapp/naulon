@@ -33,6 +33,10 @@ export interface NaulonDiscovery {
   challenge_path: typeof CHALLENGE_PATH;
   code_challenge_methods_supported: ["S256"];
   client_id_metadata_document_supported: true;
+  /** RFC 9207: every authorization response carries `iss`, and a runtime refuses one whose `iss` is
+   *  not the gate it started with. That is what stops a gate that sends owners to another gate's
+   *  approve page from collecting the code (a mix-up). */
+  authorization_response_iss_parameter_supported: true;
   /** Whether this gate is part of the naulon network (listed in the fleet directory). */
   network: { member: boolean };
 }
@@ -59,6 +63,17 @@ export interface DiscoveryInput {
   networkMember?: boolean;
 }
 
+/**
+ * The issuer a self-hosted gate and its console both name: `NAULON_PUBLIC_URL`, else `GATE_URL`.
+ * One rule, read by both processes, because the console stamps it on the authorization response
+ * (`iss`) and the gate publishes it in discovery, and a runtime refuses a response whose two disagree.
+ * Null when neither is a usable origin: connect then says to set `NAULON_PUBLIC_URL`.
+ */
+export function connectIssuer(env: { NAULON_PUBLIC_URL?: string | undefined; GATE_URL?: string | undefined }): string | null {
+  const raw = env.NAULON_PUBLIC_URL ?? env.GATE_URL;
+  return raw ? originOf(raw) : null;
+}
+
 export function buildDiscovery(input: DiscoveryInput): NaulonDiscovery {
   const issuer = originOf(input.issuer);
   if (!issuer) throw new Error(`discovery issuer must be an https origin, got ${JSON.stringify(input.issuer)}`);
@@ -73,6 +88,7 @@ export function buildDiscovery(input: DiscoveryInput): NaulonDiscovery {
     challenge_path: CHALLENGE_PATH,
     code_challenge_methods_supported: ["S256"],
     client_id_metadata_document_supported: true,
+    authorization_response_iss_parameter_supported: true,
     network: { member: input.networkMember ?? false },
   };
 }
@@ -90,6 +106,7 @@ const DOC = z.object({
   challenge_path: z.literal(CHALLENGE_PATH),
   code_challenge_methods_supported: z.array(z.string()).refine((m) => m.includes("S256"), "S256 is required"),
   client_id_metadata_document_supported: z.literal(true),
+  authorization_response_iss_parameter_supported: z.literal(true),
   network: z.object({ member: z.boolean() }),
 });
 
@@ -112,6 +129,6 @@ export function parseDiscovery(body: unknown, gate: string): DiscoveryResult {
   }
   return {
     ok: true,
-    doc: { ...d, protocol: CONNECT_PROTOCOL, challenge_path: CHALLENGE_PATH, code_challenge_methods_supported: ["S256"], client_id_metadata_document_supported: true },
+    doc: { ...d, protocol: CONNECT_PROTOCOL, challenge_path: CHALLENGE_PATH, code_challenge_methods_supported: ["S256"], client_id_metadata_document_supported: true, authorization_response_iss_parameter_supported: true },
   };
 }

@@ -10,7 +10,8 @@ import { Hono } from "hono";
 import type { PublisherConfig } from "@naulon/shared";
 import { siteCredentialAuth } from "../../../tollgate/src/connect/auth.ts";
 import { startConnectWorld } from "../../../../conformance/connect-world.ts";
-import { naulonConnect } from "./connect.ts";
+import { memoryConnectStore, naulonConnect } from "./connect.ts";
+import { guardedRequest } from "@naulon/sdk/net";
 
 async function listen(app: Hono): Promise<{ origin: string; server: ServerType }> {
   return new Promise((resolve) => {
@@ -41,10 +42,12 @@ async function world() {
     return c.text(r.ok ? "connected" : r.message);
   });
   const siteSrv = await listen(siteApp);
-  connect = naulonConnect({ clientName: "Test blog", gate: gateSrv.origin });
+  const store = memoryConnectStore();
+  connect = naulonConnect({ clientName: "Test blog", gate: gateSrv.origin, store });
 
   return {
     state,
+    store,
     connect,
     saved,
     origins: { console: consoleSrv.origin, gate: gateSrv.origin, site: siteSrv.origin },
@@ -54,7 +57,8 @@ async function world() {
 
 /** The owner's browser: open the approve page, press a button, follow the redirect home. */
 async function owner(url: string, decision: "approve" | "deny") {
-  const page = await fetch(url);
+  // The console's own Continue: a local console fetches nothing for a cross-site arrival.
+  const page = await fetch(url, { headers: { "sec-fetch-site": "same-origin" } });
   const html = await page.text();
   const fields = new URLSearchParams();
   for (const m of html.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)) {
@@ -127,7 +131,7 @@ test("a connect started for someone else's site never reaches Approve", async ()
     // connect, so it does not answer the challenge, and the console refuses.
     const intruder = naulonConnect({ clientName: "Not you", gate: w.origins.gate, clientId: () => `${w.origins.site}/.well-known/naulon-client` });
     const started = (await intruder.start({ site: w.origins.site })) as { url: string };
-    const page = await fetch(started.url);
+    const page = await fetch(started.url, { headers: { "sec-fetch-site": "same-origin" } });
     assert.equal(page.status, 409);
     assert.match(await page.text(), /<h1>[^<]+ did not answer<\/h1>/);
     assert.deepEqual(await w.state.list("connect.code:"), []);
@@ -159,6 +163,88 @@ test("a gate named at runtime never reaches a private address, only the configur
     const r = await platform.start({ site: w.origins.site, gate: w.origins.gate });
     assert.equal(r.ok, false);
     assert.match((r as { error: string }).error, /could not be reached: (http: is refused|blocked target)/);
+  } finally {
+    await w.close();
+  }
+});
+
+test("a return without this gate's iss is refused and leaves the connect to finish", async () => {
+  const w = await world();
+  try {
+    const started = (await w.connect.start({ site: w.origins.site })) as { url: string };
+    const o = await owner(started.url, "approve");
+    const home = new URL(o.home!);
+    assert.equal(home.searchParams.get("iss"), w.origins.gate, "the console names its gate");
+
+    // A mix-up: the same code, carried back under another gate's name, or under none.
+    for (const iss of ["https://evil.example.com", null]) {
+      const forged = new URLSearchParams(home.searchParams);
+      if (iss === null) forged.delete("iss");
+      else forged.set("iss", iss);
+      const r = await w.connect.finish(forged);
+      assert.deepEqual(r.ok ? "ok" : r.error, "refused", String(iss));
+    }
+    // Nothing was exchanged or cancelled: the genuine return still works.
+    assert.equal(await (await fetch(o.home!)).text(), "connected");
+  } finally {
+    await w.close();
+  }
+});
+
+test("a connect started for one account cannot be finished by another", async () => {
+  const w = await world();
+  try {
+    const started = (await w.connect.start({ site: w.origins.site, binding: "account-a" })) as { url: string };
+    const o = await owner(started.url, "approve");
+    const query = new URL(o.home!).searchParams;
+    const stranger = await w.connect.finish(query, { binding: "account-b" });
+    assert.equal(stranger.ok ? "ok" : stranger.error, "not_yours");
+    const anonymous = await w.connect.finish(query);
+    assert.equal(anonymous.ok ? "ok" : anonymous.error, "not_yours");
+    const owner_ = await w.connect.finish(query, { binding: "account-a" });
+    assert.equal(owner_.ok, true, "the refusals cancelled nothing");
+  } finally {
+    await w.close();
+  }
+});
+
+test("a return page opened twice at once exchanges its code once, and the credential survives", async () => {
+  const w = await world();
+  try {
+    const started = (await w.connect.start({ site: w.origins.site })) as { url: string };
+    const o = await owner(started.url, "approve");
+    const query = new URL(o.home!).searchParams;
+    const [a, b] = await Promise.all([w.connect.finish(query), w.connect.finish(query)]);
+    const won = [a, b].filter((r) => r.ok);
+    assert.equal(won.length, 1, "exactly one finish exchanges the code");
+    const credential = (won[0] as { credential: string }).credential;
+    // Had both exchanged, the gate would have seen a replay and revoked this credential.
+    assert.equal((await w.state.list("credential:")).length, 1);
+    const status = await fetch(`${w.origins.gate}/_naulon/enforce-status`, { headers: { authorization: `Bearer ${credential}` } });
+    assert.equal(status.status, 200);
+  } finally {
+    await w.close();
+  }
+});
+
+test("a gate that cannot be reached during the exchange leaves the connect to try again", async () => {
+  const w = await world();
+  try {
+    const started = (await w.connect.start({ site: w.origins.site })) as { url: string };
+    const o = await owner(started.url, "approve");
+    const query = new URL(o.home!).searchParams;
+    let down = true;
+    const flaky = naulonConnect({
+      clientName: "Test blog",
+      gate: w.origins.gate,
+      store: w.store,
+      request: async (url, init) => (down && String(url).includes("/connect/token") ? { ok: false, refusal: "unreachable", detail: "connection refused" } : guardedRequest(url, init)),
+    });
+    const first = await flaky.finish(query);
+    assert.equal(first.ok ? "ok" : first.error, "refused");
+    down = false;
+    const second = await flaky.finish(query);
+    assert.equal(second.ok, true, "the pending connect was put back");
   } finally {
     await w.close();
   }

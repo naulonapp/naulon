@@ -94,7 +94,8 @@ credential it asks for. Nobody copies a secret.
 
 **Discovery.** `GET <gate>/.well-known/naulon` returns a JSON document shaped after RFC 8414:
 `issuer`, `protocol` (`naulon/1`), `enforce_api`, `authorization_endpoint`, `token_endpoint`,
-`revocation_endpoint`, `jwks_uri`, `challenge_path`. Refuse the document unless `issuer` is the
+`revocation_endpoint`, `jwks_uri`, `challenge_path`, and
+`authorization_response_iss_parameter_supported: true`. Refuse the document unless `issuer` is the
 origin you were given (RFC 8414 §3.3), and derive every URL from it rather than from the gate's
 origin: the hosted gate's approval page is on another origin. Cache it as its `Cache-Control` says,
 at least five minutes. The default gate is `https://gate.naulon.app`.
@@ -128,10 +129,20 @@ answer anything else with a `404` exactly like a missing page. This is what stop
 for somebody else's site. Serve these two paths before your toll runs, and whether or not the site
 is tolled yet: a site with no credential must still be able to get one.
 
-**3. Exchange the code.** The owner comes back to `redirect_uri` with `code` and `state`, or with
-`error=access_denied` if they refused. Look the pending connect up by `state`, delete it, and post
-form-encoded to `token_endpoint`: `grant_type=authorization_code`, `code`, `code_verifier`,
-`redirect_uri`, `client_id`. The code is single use and lives 10 minutes. The answer:
+**3. Exchange the code.** The owner comes back to `redirect_uri` with `state`, `iss`, and either
+`code` or `error=access_denied`. Check, in this order, before you change anything:
+
+- the pending connect for `state` exists, and when you started it for one account, this is that
+  account;
+- `iss` is exactly the gate the connect started with (RFC 9207). A response naming another gate,
+  or none, is a mix-up: a gate that sent the owner to someone else's approval page is trying to
+  collect the code. Refuse it and keep the pending connect.
+
+Then take the pending connect atomically (exactly one request may get it), and post form-encoded to
+`token_endpoint`: `grant_type=authorization_code`, `code`, `code_verifier`, `redirect_uri`,
+`client_id`. If the gate could not be reached, put the pending connect back so the owner can retry.
+Exchange each code once: the code is single use and lives 10 minutes, and a gate that sees one
+redeemed twice revokes the credential its first redemption got. The answer:
 
 ```json
 { "access_token": "nln_site_…", "token_type": "Bearer", "scope": "site.enforce", "site": "https://blog.example.com" }
@@ -175,9 +186,13 @@ A runtime serving many sites must keep these rules:
 6. **A lookup that fails serves the page.** The fail-open rules above apply to it.
 7. **A gate an owner named is untrusted.** Reach it over https only, never at a private address,
    and follow no redirects.
-8. **Keep pending connects where every worker can read them.** The worker the gate's challenge
-   reaches may not be the one that started the connect.
-9. **Store the credential as a secret.** Encrypt it at rest, never render it back in full (its
+8. **Keep pending connects where every worker can read them, and take them atomically.** The
+   worker the gate's challenge reaches may not be the one that started the connect, and two
+   workers must never both exchange one code (`DELETE ... RETURNING`).
+9. **Tie each connect to the account that started it.** Pass the account's id when you start it
+   and require the same one when the owner comes back. Otherwise someone who started a connect can
+   send its return link to another account holder, and you store their site under that account.
+10. **Store the credential as a secret.** Encrypt it at rest, never render it back in full (its
    last four characters are enough to tell two apart), and never log it.
 
 **Or run the gate for every site yourself.** A gate started with `NAULON_PLATFORM_URL` and

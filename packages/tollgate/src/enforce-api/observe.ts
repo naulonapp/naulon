@@ -129,8 +129,13 @@ export function mountObserve(app: OpenAPIHono, deps: EnforceApiDeps): void {
         return c.json(failed("bad resource"), 400);
       }
       // Every distinct host is checked, not just the first, or one owned host would carry reports
-      // for the rest.
-      if (!resolved.has(host)) resolved.set(host, await ownedPublisher(deps, auth.publisherId, host));
+      // for the rest. Both checks run per host: the credential's own (a site credential acts for one
+      // host only, and only `auth` knows which), then ownership.
+      if (!resolved.has(host)) {
+        const again = host === firstHost ? auth : await deps.auth(c, host);
+        if (!again.ok) return ("response" in again ? again.response : c.json(failed(again.error), again.status)) as never;
+        resolved.set(host, again.publisherId === auth.publisherId ? await ownedPublisher(deps, auth.publisherId, host) : undefined);
+      }
       const publisher = resolved.get(host);
       if (!publisher) return c.json(failed("resource not owned by this key"), 403);
 

@@ -150,8 +150,11 @@ def get(url: str, headers: dict[str, str] | None = None) -> tuple[int, str]:
 
 def owner(authorize_url: str, decision: str) -> tuple[int, str, str | None]:
     """The owner's browser: open the approve page, press a button, read where it sends them."""
-    status, page = get(authorize_url)
-    fields = {m[0]: html.unescape(m[1]) for m in re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', page)}
+    # The console's own Continue: a local console fetches nothing for a cross-site arrival.
+    status, page = get(authorize_url, {"sec-fetch-site": "same-origin"})
+    fields = {
+        m[0]: html.unescape(m[1]) for m in re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', page)
+    }
     fields["decision"] = decision
     post = urllib.request.Request(
         urllib.parse.urljoin(authorize_url, "/connect/authorize"),
@@ -246,7 +249,7 @@ def test_a_connect_started_for_someone_elses_site_never_reaches_approve(world: d
         intruder = Connect("Not you", gate=world["gate"], client_id=lambda s: f"{site}/.well-known/naulon-client")
         started = intruder.start(site)
         assert isinstance(started, Started)
-        status, page = get(started.url)
+        status, page = get(started.url, {"sec-fetch-site": "same-origin"})
         assert status == 409, page
         assert "did not answer" in page
     finally:
@@ -309,7 +312,9 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(name)
 
 
-def test_a_django_wsgi_site_connects_and_its_credential_works_there_alone(world: dict[str, str], django_site: None) -> None:
+def test_a_django_wsgi_site_connects_and_its_credential_works_there_alone(
+    world: dict[str, str], django_site: None
+) -> None:
     from django.core.handlers.wsgi import WSGIHandler
 
     site, stop = serve_wsgi(WSGIHandler())
@@ -319,7 +324,9 @@ def test_a_django_wsgi_site_connects_and_its_credential_works_there_alone(world:
         stop()
 
 
-def test_a_django_asgi_site_connects_and_its_credential_works_there_alone(world: dict[str, str], django_site: None) -> None:
+def test_a_django_asgi_site_connects_and_its_credential_works_there_alone(
+    world: dict[str, str], django_site: None
+) -> None:
     from django.core.handlers.asgi import ASGIHandler
 
     site, stop = serve_asgi(ASGIHandler())

@@ -44,6 +44,9 @@ export interface ConnectApproveDeps {
   allowPrivate: boolean;
   /** The gate as its owner knows it, for the sentence that says what is being connected to. */
   gateLabel: string;
+  /** The gate's issuer (`connectIssuer`), stamped on every response as `iss` (RFC 9207). Null when
+   *  neither NAULON_PUBLIC_URL nor GATE_URL names one: nothing can be approved until it does. */
+  issuer: string | null;
 }
 
 /** Where a request stands. `untrusted` must never redirect; `unanswered` may, because the client
@@ -55,6 +58,9 @@ type Checked =
 
 /** The checks that decide whether this console may send anything back at all. */
 async function trusted(deps: ConnectApproveDeps, params: URLSearchParams): Promise<Checked> {
+  if (!deps.issuer) {
+    return { kind: "untrusted", title: "This gate has no public address yet", message: "Set NAULON_PUBLIC_URL to the address sites reach this gate at, restart it, and start again from your site's settings." };
+  }
   const parsed = parseAuthorizationRequest(params);
   if (!parsed.ok) return { kind: "untrusted", title: "This connect request is malformed", message: `${parsed.error}. Start again from your site's settings.` };
   const resolved = await deps.clients.resolve(parsed.request.clientId);
@@ -124,8 +130,11 @@ function render(c: Context, deps: ConnectApproveDeps, r: Checked): Response | Pr
   return c.html(page({ title: r.title, error: r.message, body: "" }), 400);
 }
 
-function back(redirectUri: string, params: Record<string, string>): string {
+/** The redirect home, always naming this gate (RFC 9207), so a runtime that started with another
+ *  gate can tell the response is not its own. */
+function back(deps: ConnectApproveDeps, redirectUri: string, params: Record<string, string>): string {
   const u = new URL(redirectUri);
+  if (deps.issuer) u.searchParams.set("iss", deps.issuer);
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
   return u.toString();
 }
@@ -136,8 +145,36 @@ function actorOf(c: Context): { kind: "session" | "machine" | "anonymous"; name:
   return { kind: p.kind, name: p.kind === "session" ? p.username : "DASHBOARD_AUTH", ...(p.userId ? { userId: p.userId } : {}) };
 }
 
+/**
+ * A console that may reach private addresses (one bound to this machine) fetches nothing for a
+ * request another site sent the browser here with. Otherwise any page the owner visits could aim
+ * this console at their own network by linking to it. The owner continues with one click, which is
+ * a same-origin request, and the checks run then.
+ */
+function needsContinue(c: Context, deps: ConnectApproveDeps): boolean {
+  if (!deps.allowPrivate) return false;
+  const site = c.req.header("sec-fetch-site");
+  return site !== "same-origin" && site !== "none";
+}
+
+function continuePage(params: URLSearchParams): string {
+  const request = parseAuthorizationRequest(params);
+  const host = request.ok ? hostOf(request.request.site) : "A site";
+  const fields = [...params].map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`).join("");
+  return page({
+    title: `Connect ${host}?`,
+    body:
+      `<p>${escapeHtml(host)} wants to connect to this gate. This console runs on your own machine, so it checks the site only once you continue.</p>` +
+      `<form method="get" action="${AUTHORIZE_PATH}">${fields}<button type="submit">Continue</button></form>`,
+  });
+}
+
 export function mountConnectApprove(app: Hono, deps: ConnectApproveDeps): void {
-  app.get(AUTHORIZE_PATH, requireRole("admin"), async (c) => render(c, deps, await check(deps, new URL(c.req.url).searchParams)));
+  app.get(AUTHORIZE_PATH, requireRole("admin"), async (c) => {
+    const params = new URL(c.req.url).searchParams;
+    if (needsContinue(c, deps)) return c.html(continuePage(params));
+    return render(c, deps, await check(deps, params));
+  });
 
   app.post(AUTHORIZE_PATH, requireRole("admin"), async (c) => {
     const verdict = checkOrigin(c, "strict");
@@ -153,7 +190,7 @@ export function mountConnectApprove(app: Hono, deps: ConnectApproveDeps): void {
       const t = await trusted(deps, params);
       if (t.kind !== "ready") return render(c, deps, t);
       await audit("console.connect_deny", "ok", { site: t.request.site, client: t.client.clientId });
-      return c.redirect(back(t.request.redirectUri, { error: "access_denied", state: t.request.state }), 303);
+      return c.redirect(back(deps, t.request.redirectUri, { error: "access_denied", state: t.request.state }), 303);
     }
 
     const r = await check(deps, params);
@@ -170,6 +207,6 @@ export function mountConnectApprove(app: Hono, deps: ConnectApproveDeps): void {
       approvedBy: actor.name,
     });
     await audit("console.connect_approve", "ok", { site: r.request.site, client: r.client.clientId });
-    return c.redirect(back(r.request.redirectUri, { code, state: r.request.state }), 303);
+    return c.redirect(back(deps, r.request.redirectUri, { code, state: r.request.state }), 303);
   });
 }

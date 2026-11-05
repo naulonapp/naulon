@@ -46,6 +46,11 @@ the gate. Nobody copies a key out of a dashboard. Older keys keep working.
 - `@naulon/enforce` and `naulon` default to `https://gate.naulon.app` when no gate is set.
 
 ### Fixed
+- The outbound fetch guard (`@naulon/sdk/net`, re-exported by `@naulon/shared`) let through a private
+  IPv4 address written inside an IPv6 literal: `https://[::ffff:127.0.0.1]/` reaches the URL parser as
+  `[::ffff:7f00:1]`, and only the dotted form was checked. It now compares addresses rather than
+  spellings, and also refuses NAT64, 6to4, Teredo, IPv4-compatible, documentation, benchmarking and
+  multicast ranges. The Python package's transport is held to the same table by a shared fixture.
 - Migration `0004_settlement_delivery.sql` failed on a fresh database (it compared a uuid column to
   a text one), and `supabase db push` stops at the first failure, so no later migration applied
   either. It now applies, and CI applies every migration to an empty database on each change.

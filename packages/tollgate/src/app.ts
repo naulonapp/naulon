@@ -160,7 +160,7 @@ import {
   type BuyerLinks,
 } from "@naulon/enforce";
 import type { FreeReason, GateStateStore } from "@naulon/shared";
-import { memoryStateStore } from "@naulon/shared";
+import { connectIssuer, memoryStateStore } from "@naulon/shared";
 
 // Global license POLICY (online check) + settlement network coordinates are
 // gate-operator settings, read where they're used (here for /licenses + the
@@ -971,10 +971,8 @@ export function createApp(
   if (state) {
     mountGateConnect(app, {
       state,
-      ...(cfg.NAULON_PUBLIC_URL ? { publicUrl: cfg.NAULON_PUBLIC_URL } : {}),
+      issuer: connectIssuer(cfg),
       authorizeUrl: `${cfg.NAULON_CONSOLE_URL.replace(/\/+$/, "")}/connect/authorize`,
-      trustProxy: cfg.TRUST_PROXY,
-      proxyHops: cfg.TRUST_PROXY_HOPS,
     });
   }
   if (state || cfg.NAULON_ENFORCE_KEY) {

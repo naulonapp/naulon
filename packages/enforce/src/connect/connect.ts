@@ -43,13 +43,21 @@ export interface PendingConnect {
   verifier: string;
   challenge: string;
   redirectUri: string;
+  /** Whose connect this is, when the caller said (see `start`). */
+  binding?: string;
   expiresAt: number;
 }
 
+/**
+ * Where pending connects wait for the owner to come back. `take` must be atomic: of two requests
+ * taking one state, exactly one gets it. That is what keeps a refreshed return page, or two workers,
+ * from exchanging one code twice, which the gate answers by revoking the credential the first
+ * exchange got. A database store does it with `DELETE ... RETURNING`.
+ */
 export interface ConnectStore {
   put(state: string, pending: PendingConnect): Promise<void>;
   get(state: string): Promise<PendingConnect | null>;
-  delete(state: string): Promise<void>;
+  take(state: string): Promise<PendingConnect | null>;
 }
 
 /** The gate's code lives 10 minutes; a pending connect lives as long as the owner might take to read
@@ -74,8 +82,10 @@ export function memoryConnectStore(now: () => number = Date.now): ConnectStore {
       }
       return p;
     },
-    async delete(state) {
+    async take(state) {
+      const p = rows.get(state);
       rows.delete(state);
+      return p && p.expiresAt > now() ? p : null;
     },
   };
 }
@@ -138,12 +148,20 @@ export interface NaulonConnectOptions {
 export type StartResult = { ok: true; url: string } | { ok: false; error: string };
 export type FinishResult =
   | { ok: true; site: string; gate: string; credential: string }
-  | { ok: false; error: "denied" | "expired" | "refused" | "invalid"; message: string };
+  | { ok: false; error: "denied" | "expired" | "refused" | "invalid" | "not_yours"; message: string };
 
 export interface NaulonConnect {
-  /** `returnTo` defaults to the first of `redirectUris(site)` and must be one of them. */
-  start(o: { site: string; gate?: string; returnTo?: string }): Promise<StartResult>;
-  finish(query: URLSearchParams): Promise<FinishResult>;
+  /**
+   * `returnTo` defaults to the first of `redirectUris(site)` and must be one of them.
+   *
+   * `binding` ties the connect to whoever started it: a platform passes the signed-in account's id
+   * (or a session id), and `finish` with any other binding is refused. Without it, someone who
+   * started a connect could send its return link to another account holder, and a platform that
+   * saves the result under the current account would save the sender's site there.
+   */
+  start(o: { site: string; gate?: string; returnTo?: string; binding?: string }): Promise<StartResult>;
+  /** `binding` must be what `start` was given, when it was given one. */
+  finish(query: URLSearchParams, o?: { binding?: string }): Promise<FinishResult>;
   /** Answers the two connect paths on the site itself, or null for every other request. */
   wellKnown(req: Request): Promise<Response | null>;
 }
@@ -162,8 +180,35 @@ export function naulonConnect(opts: NaulonConnectOptions): NaulonConnect {
   const challengeResponse = (body: string, status = 200) =>
     new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
 
+  type Exchanged = { ok: true; site: string; gate: string; credential: string } | { ok: false; error: "refused"; message: string; transient: boolean };
+
+  const exchange = async (pending: PendingConnect, code: string): Promise<Exchanged> => {
+    const refused = (message: string, transient = false): Exchanged => ({ ok: false, error: "refused", message, transient });
+    const d = await discover(pending.gate);
+    if (!d.ok) return refused(d.error, true);
+    const res = await request(d.doc.token_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "authorization_code", code, code_verifier: pending.verifier, redirect_uri: pending.redirectUri, client_id: clientIdFor(pending.site) }).toString(),
+      timeoutMs: 10_000,
+      allowPrivate: mayBePrivate(pending.gate, configured),
+    });
+    if (!res.ok) return refused(`the gate could not be reached: ${res.detail}`, true);
+    if (res.status >= 500) return refused(`the gate answered ${res.status}`, true);
+    let body: { access_token?: unknown; scope?: unknown; site?: unknown; error_description?: unknown };
+    try {
+      body = JSON.parse(res.body) as typeof body;
+    } catch {
+      return refused(`the gate answered ${res.status} with no JSON`);
+    }
+    if (res.status !== 200) return refused(String(body.error_description ?? `the gate answered ${res.status}`));
+    if (typeof body.access_token !== "string" || !isSiteCredential(body.access_token)) return refused("the gate returned no site credential");
+    if (body.scope !== SITE_SCOPE || body.site !== pending.site) return refused("the gate returned a credential for something else");
+    return { ok: true, site: pending.site, gate: pending.gate, credential: body.access_token };
+  };
+
   return {
-    async start({ site: rawSite, returnTo, gate: rawGate }) {
+    async start({ site: rawSite, returnTo, gate: rawGate, binding }) {
       const site = siteOriginOf(rawSite);
       if (!site) return { ok: false, error: `${rawSite} is not a site origin, e.g. https://example.com` };
       const gate = originOf(rawGate ?? opts.gate ?? DEFAULT_GATE);
@@ -176,40 +221,35 @@ export function naulonConnect(opts: NaulonConnectOptions): NaulonConnect {
       const verifier = newVerifier();
       const state = newState();
       const challenge = codeChallengeOf(verifier);
-      await store.put(state, { site, gate, verifier, challenge, redirectUri: back, expiresAt: now() + PENDING_TTL_MS });
+      await store.put(state, { site, gate, verifier, challenge, redirectUri: back, ...(binding !== undefined ? { binding } : {}), expiresAt: now() + PENDING_TTL_MS });
       const url = authorizationUrl(d.doc.authorization_endpoint, { clientId: clientIdFor(site), redirectUri: back, site, state, codeChallenge: challenge });
       return { ok: true, url };
     },
 
-    async finish(query) {
+    async finish(query, o = {}) {
       const state = query.get("state") ?? "";
       if (!isState(state)) return { ok: false, error: "invalid", message: "this return carries no connect to finish" };
-      const pending = await store.get(state);
-      if (!pending) return { ok: false, error: "expired", message: "this connect has expired or was already finished. Start it again." };
-      await store.delete(state);
-      if (query.get("error") === "access_denied") return { ok: false, error: "denied", message: "the gate's owner did not approve this site" };
+      const peek = await store.get(state);
+      if (!peek) return { ok: false, error: "expired", message: "this connect has expired or was already finished. Start it again." };
+      // Checked before anything is taken, so a return that is not this one's can neither finish the
+      // connect nor cancel it.
+      if (peek.binding !== undefined && peek.binding !== o.binding) return { ok: false, error: "not_yours", message: "this connect was started by someone else. Start it again from your own settings." };
+      // RFC 9207: the response names its gate. A different name means a gate other than the one this
+      // connect started with is trying to hand over a code (a mix-up), so nothing is exchanged.
+      if (query.get("iss") !== peek.gate) return { ok: false, error: "refused", message: "the response did not come from the gate this connect started with" };
+      if (query.get("error") === "access_denied") {
+        await store.take(state);
+        return { ok: false, error: "denied", message: "the gate's owner did not approve this site" };
+      }
       const code = query.get("code");
       if (!code) return { ok: false, error: "invalid", message: `the gate returned ${query.get("error") ?? "no code"}` };
-      const d = await discover(pending.gate);
-      if (!d.ok) return { ok: false, error: "refused", message: d.error };
-      const res = await request(d.doc.token_endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ grant_type: "authorization_code", code, code_verifier: pending.verifier, redirect_uri: pending.redirectUri, client_id: clientIdFor(pending.site) }).toString(),
-        timeoutMs: 10_000,
-        allowPrivate: mayBePrivate(pending.gate, configured),
-      });
-      if (!res.ok) return { ok: false, error: "refused", message: `the gate could not be reached: ${res.detail}` };
-      let body: { access_token?: unknown; scope?: unknown; site?: unknown; error_description?: unknown };
-      try {
-        body = JSON.parse(res.body) as typeof body;
-      } catch {
-        return { ok: false, error: "refused", message: `the gate answered ${res.status} with no JSON` };
-      }
-      if (res.status !== 200) return { ok: false, error: "refused", message: String(body.error_description ?? `the gate answered ${res.status}`) };
-      if (typeof body.access_token !== "string" || !isSiteCredential(body.access_token)) return { ok: false, error: "refused", message: "the gate returned no site credential" };
-      if (body.scope !== SITE_SCOPE || body.site !== pending.site) return { ok: false, error: "refused", message: "the gate returned a credential for something else" };
-      return { ok: true, site: pending.site, gate: pending.gate, credential: body.access_token };
+      // One exchange per code: whoever takes the pending connect exchanges it, everyone else stops.
+      const pending = await store.take(state);
+      if (!pending) return { ok: false, error: "expired", message: "this connect is already being finished." };
+      const result = await exchange(pending, code);
+      // A gate that could not be reached decided nothing: the owner may simply try the link again.
+      if (!result.ok && result.transient) await store.put(state, pending);
+      return result.ok ? result : { ok: false, error: result.error, message: result.message };
     },
 
     async wellKnown(req) {

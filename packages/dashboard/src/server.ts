@@ -19,7 +19,7 @@ import { readFile } from "node:fs/promises";
 import { CONSOLE_FONTS } from "./fonts.ts";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { clientResolver, getConfig, getSink, stateLocationOf, stateStoreFor } from "@naulon/shared";
+import { clientResolver, connectIssuer, getConfig, getSink, stateLocationOf, stateStoreFor } from "@naulon/shared";
 import { mountConnectApprove } from "./connect-approve.ts";
 import { buildSitesView, revokeConnection } from "./sites.ts";
 import { aggregate, type Ledger } from "./aggregate.ts";
@@ -266,6 +266,7 @@ if (ACCESS.refuse) {
       auditor: AUDITOR,
       allowPrivate: AUTH_DEPS.loopbackOnly,
       gateLabel: cfg.NAULON_PUBLIC_URL ? new URL(cfg.NAULON_PUBLIC_URL).host : "your naulon gate",
+      issuer: connectIssuer(cfg),
     });
   }
 

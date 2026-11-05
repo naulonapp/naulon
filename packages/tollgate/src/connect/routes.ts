@@ -14,11 +14,13 @@ import { bodyLimit } from "hono/body-limit";
 import {
   buildDiscovery,
   DISCOVERY_PATH,
-  externalSchemeOf,
+  credentialDigest,
   issueCredential,
   originOf,
+  recordIssue,
   redeemCode,
   revokeCredential,
+  revokeCredentialById,
   SITE_SCOPE,
   type GateStateStore,
   type SiteTokenResponse,
@@ -30,22 +32,11 @@ const NO_STORE = { "cache-control": "no-store", pragma: "no-cache" } as const;
 
 export interface GateConnectOptions {
   state: GateStateStore;
-  /** NAULON_PUBLIC_URL, when set. */
-  publicUrl?: string;
+  /** This gate's issuer (`connectIssuer`), or null when it has none: discovery then says how to fix it. */
+  issuer: string | null;
   /** Where the owner approves: the console's `/connect/authorize`. */
   authorizeUrl: string;
-  trustProxy: boolean;
-  proxyHops: number;
   networkMember?: () => boolean;
-}
-
-/** The issuer this request sees: the configured public URL, else the origin the request arrived on. */
-export function issuerOf(c: Context, o: Pick<GateConnectOptions, "publicUrl" | "trustProxy" | "proxyHops">): string | null {
-  if (o.publicUrl) return originOf(o.publicUrl);
-  const host = c.req.header("host");
-  if (!host) return null;
-  const scheme = externalSchemeOf(c.req.raw, { trustProxy: o.trustProxy, hops: o.proxyHops });
-  return originOf(`${scheme}://${host}`);
 }
 
 type TokenError = "invalid_request" | "invalid_grant" | "invalid_client" | "unsupported_grant_type";
@@ -61,7 +52,7 @@ async function formOf(c: Context): Promise<URLSearchParams | null> {
 
 export function mountGateConnect(app: Hono, o: GateConnectOptions): void {
   app.get(DISCOVERY_PATH, (c) => {
-    const issuer = issuerOf(c, o);
+    const issuer = o.issuer;
     if (!issuer) return c.json({ error: "this gate cannot name its own origin; set NAULON_PUBLIC_URL" }, 503);
     const doc = buildDiscovery({ issuer, authorizationEndpoint: o.authorizeUrl, networkMember: o.networkMember?.() ?? false });
     return c.json(doc, 200, { "cache-control": "public, max-age=300", "access-control-allow-origin": "*" });
@@ -77,13 +68,19 @@ export function mountGateConnect(app: Hono, o: GateConnectOptions): void {
     const clientId = form.get("client_id");
     if (!code || !codeVerifier || !redirectUri || !clientId) return tokenError(c, "invalid_request", "code, code_verifier, redirect_uri and client_id are required");
     const r = await redeemCode(o.state, { code, codeVerifier, redirectUri, clientId });
-    if (!r.ok) return tokenError(c, r.error, r.reason, r.error === "invalid_client" ? 401 : 400);
+    if (!r.ok) {
+      // A code redeemed twice leaked somewhere. The first redemption may have been the thief's, so
+      // what it was exchanged for is revoked too, and the site connects again from clean.
+      if (r.replayOf) await revokeCredentialById(o.state, r.replayOf);
+      return tokenError(c, r.error, r.reason, r.error === "invalid_client" ? 401 : 400);
+    }
     const credential = await issueCredential(o.state, {
       site: r.code.site,
       clientId: r.code.clientId,
       clientName: r.code.clientName,
       approvedBy: r.code.approvedBy,
     });
+    await recordIssue(o.state, r.codeId, credentialDigest(credential));
     const body: SiteTokenResponse = { access_token: credential, token_type: "Bearer", scope: SITE_SCOPE, site: r.code.site };
     return c.json(body, 200, NO_STORE);
   });
