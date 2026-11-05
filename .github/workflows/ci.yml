@@ -76,10 +76,49 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      # tests/test_connect_e2e.py drives the real TypeScript gate, so the workspace is installed too.
+      # Without it that file skips, and the two languages are never checked against each other.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        working-directory: .
       - run: pip install -e '.[dev,botauth]'
       - run: pytest -q
       - run: mypy src
       - run: ruff check src tests
+
+  # Every migration, in order, on an empty Supabase Postgres, then all of them again. DEPLOY.md has
+  # people paste them into the SQL editor or run `supabase db push`, and nothing else ever applied
+  # them to a fresh database: 0004 compared a uuid column to a text one and failed there, and since
+  # `db push` stops at the first failure, every migration after it was unreachable.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: supabase/postgres:17.6.1.134
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -h localhost"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply every migration to an empty database, twice
+        run: |
+          for pass in 1 2; do
+            for f in $(ls supabase/migrations/*.sql | sort); do
+              echo "pass $pass: $f"
+              psql -v ON_ERROR_STOP=1 -q -f "$f"
+            done
+          done
 
   # The WordPress plugin is PHP, so the Node job above cannot see it. Until this job
   # existed, plugins/naulon/tests/ ran NOWHERE — including VersionTest, written

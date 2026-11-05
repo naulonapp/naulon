@@ -122,7 +122,9 @@ set search_path = public
 as $$
   select e.data
   from public.naulon_events e
-  left join public.naulon_settlement_delivery d on d.event_id = e.id
+  -- naulon_events.id is text (0001) and event_id is uuid: compared as text, so an id that is not a
+  -- uuid finds no delivery row instead of failing the whole read.
+  left join public.naulon_settlement_delivery d on d.event_id::text = e.id
   where (p_publisher is null or e.publisher = p_publisher)
     and (
       d.event_id is null                      -- never attempted
