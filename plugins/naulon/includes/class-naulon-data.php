@@ -199,6 +199,8 @@ class Naulon_Data {
 		Naulon_File_Route::instance()->remove();
 		Naulon_File_Probe::instance()->cleanup();
 		delete_option( Naulon_Rules::FILE_TYPES_OPTION );
+		// Connects started and never finished: a verifier with nothing left to use it.
+		Naulon_Connect::forget_pending();
 	}
 
 	/**

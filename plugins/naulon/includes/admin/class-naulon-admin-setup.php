@@ -5,7 +5,8 @@
  * It is four steps in a fixed order, and the order is not cosmetic: each one is genuinely
  * required by the one after it.
  *
- *   1. Connect — a key (or a self-hosted gate URL). Nothing can be priced without it.
+ *   1. Connect — approve this site on naulon.app (or on a gate you host), which also proves the
+ *      domain; a pasted key stays available behind it. Nothing can be priced without it.
  *   2. Prove you own this domain. Without a stamped challenge the control plane answers
  *      "resource not owned by this key" when we try to settle, so a 402 issued here could never
  *      be completed. Enforcement stays locked until this passes.
@@ -119,6 +120,41 @@ class Naulon_Admin_Setup {
 			return;
 		}
 
+		if ( $connected ) {
+			// Connected: replacing is a fresh connect, kept out of the way.
+			echo '<details class="naulon-more"><summary>' . esc_html__( 'Connect again, or connect a different gate', 'naulon' ) . '</summary>';
+			self::render_connect_forms( true );
+			echo '</details>';
+		} else {
+			self::render_connect_forms( false );
+		}
+		Naulon_Admin::card_close();
+	}
+
+	/**
+	 * Connect, the way most sites take: one button, approved on naulon.app. A gate you host, and the
+	 * key you paste, are both behind it, in that order, because each is for fewer people.
+	 *
+	 * @param bool $connected Whether this replaces a working connection.
+	 * @return void
+	 */
+	private static function render_connect_forms( $connected ) {
+		Naulon_Admin::form_open( 'connect_start', Naulon_Admin::PAGE_SETUP );
+		echo '<p class="naulon-muted">' . esc_html__( 'You approve this site on naulon.app and come straight back. Approving also proves you own this domain, so step 2 is done with it. Nothing to copy.', 'naulon' ) . '</p>';
+		submit_button( $connected ? __( 'Connect again to naulon', 'naulon' ) : __( 'Connect to naulon', 'naulon' ), 'primary', 'submit', false );
+		Naulon_Admin::form_close();
+
+		echo '<details class="naulon-more"><summary>' . esc_html__( 'Use your own gate', 'naulon' ) . '</summary>';
+		Naulon_Admin::form_open( 'connect_start', Naulon_Admin::PAGE_SETUP );
+		echo '<div class="naulon-field">';
+		echo '<label for="naulon_gate">' . esc_html__( 'Your gate\'s address', 'naulon' ) . '</label>';
+		echo '<input type="url" class="regular-text code" id="naulon_gate" name="naulon_gate" required autocomplete="url" spellcheck="false" placeholder="https://gate.example.com" />';
+		submit_button( __( 'Connect to this gate', 'naulon' ), 'secondary', 'submit', false );
+		echo '</div>';
+		echo '<p class="naulon-muted naulon-hint">' . esc_html__( 'You approve it on your gate the same way.', 'naulon' ) . '</p>';
+		Naulon_Admin::form_close();
+
+		echo '<details class="naulon-more"><summary>' . esc_html__( 'Paste a key instead', 'naulon' ) . '</summary>';
 		Naulon_Admin::form_open( 'save_connection', Naulon_Admin::PAGE_SETUP );
 		echo '<div class="naulon-field">';
 		echo '<label for="naulon_connection">' . esc_html__( 'API key, or the address of your own gate', 'naulon' ) . '</label>';
@@ -126,7 +162,7 @@ class Naulon_Admin_Setup {
 			'<input type="password" class="regular-text code" id="naulon_connection" name="naulon_connection" autocomplete="off" spellcheck="false" placeholder="%s" />',
 			esc_attr( 'nln_live_…' )
 		);
-		submit_button( $connected ? __( 'Replace', 'naulon' ) : __( 'Connect', 'naulon' ), 'primary', 'submit', false );
+		submit_button( $connected ? __( 'Replace', 'naulon' ) : __( 'Save key', 'naulon' ), 'secondary', 'submit', false );
 		echo '</div>';
 		echo '<div class="naulon-field">';
 		echo '<label for="naulon_gate_key">' . esc_html__( 'Your gate\'s key, only when connecting a gate you host', 'naulon' ) . '</label>';
@@ -138,8 +174,69 @@ class Naulon_Admin_Setup {
 		echo '</div>';
 		echo '<p class="naulon-muted naulon-hint">' . esc_html__( 'Checked against the control plane before it is stored, so a typo cannot take a working toll offline. The key never leaves this server: it is not printed into any page, and no browser ever sees it.', 'naulon' ) . '</p>';
 		Naulon_Admin::form_close();
+		echo '</details>';
+		echo '</details>';
+	}
 
-		Naulon_Admin::card_close();
+	/**
+	 * Leave for the gate's approve page. On any problem, stay here with a notice saying which.
+	 *
+	 * @return void
+	 */
+	public static function connect_start() {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- the dispatcher checked it.
+		$raw  = isset( $_POST['naulon_gate'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['naulon_gate'] ) ) ) : '';
+		$gate = '' === $raw ? Naulon_Settings::hosted_base() : untrailingslashit( $raw );
+		$url  = Naulon_Connect::start( $gate, get_current_user_id() );
+		if ( is_wp_error( $url ) ) {
+			Naulon_Admin::notice( 'error', $url->get_error_message() );
+			return;
+		}
+		// The approve page is the gate's, on another origin; discovery named it and it is https.
+		wp_redirect( $url ); // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect
+		exit;
+	}
+
+	/**
+	 * Back from the gate. A credential for the hosted gate is stored where a pasted key is; one for
+	 * a gate you host, with that gate's address. Either way the domain is proven by the connect.
+	 *
+	 * @return void
+	 */
+	public static function connect_return() {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- see Naulon_Admin::admin_init.
+		$query = array_map( 'sanitize_text_field', wp_unslash( $_GET ) );
+		$r     = Naulon_Connect::finish( $query, get_current_user_id() );
+		if ( ! $r['ok'] ) {
+			Naulon_Admin::notice( 'denied' === $r['error'] ? 'warning' : 'error', $r['message'] );
+			return;
+		}
+		$hosted = Naulon_Connect_Protocol::origin_of( Naulon_Settings::hosted_base() ) === $r['gate'];
+		$before = array( Naulon_Settings::api_base(), Naulon_Settings::credential() );
+		Naulon_Settings::update(
+			array(
+				'api_key'           => $hosted ? $r['credential'] : '',
+				'gate_url'          => $hosted ? '' : $r['gate'],
+				'gate_key'          => $hosted ? '' : $r['credential'],
+				'verified_at'       => gmdate( 'c' ),
+				'ownership_lost_at' => '',
+				'challenge_host'    => '',
+				'challenge_token'   => '',
+				'challenge_method'  => '',
+			)
+		);
+		// The credential this one replaced is ended on its gate, so it is not left live and unused.
+		if ( $before[1] !== $r['credential'] ) {
+			Naulon_Connect::revoke( $before[0], $before[1] );
+		}
+		self::ping();
+		Naulon_Cron::instance()->ensure_scheduled();
+		Naulon_Admin::notice(
+			'success',
+			$hosted
+				? __( 'Connected to naulon, and this domain is proven yours. Your naulon dashboard now shows this site as live.', 'naulon' )
+				: __( 'Connected to your gate, and this domain is proven yours.', 'naulon' )
+		);
 	}
 
 	/**
@@ -266,14 +363,25 @@ class Naulon_Admin_Setup {
 	 * @return void
 	 */
 	public static function disconnect() {
-		Naulon_Settings::update(
-			array(
-				'api_key'        => '',
-				'gate_url'       => '',
-				'gate_key'       => '',
-				'enforcement_on' => false,
-			)
+		// A connected credential is ended on its gate too, not just forgotten here.
+		$gate      = Naulon_Settings::api_base();
+		$connected = Naulon_Connect_Protocol::is_site_credential( Naulon_Settings::credential() );
+		$revoked   = Naulon_Connect::revoke( $gate, Naulon_Settings::credential() );
+		if ( ! $revoked ) {
+			Naulon_Admin::notice( 'warning', __( 'The gate could not be reached to end this site\'s credential. Revoke it from your naulon settings, under Connected sites.', 'naulon' ) );
+		}
+		$update = array(
+			'api_key'        => '',
+			'gate_url'       => '',
+			'gate_key'       => '',
+			'enforcement_on' => false,
 		);
+		// A connect's credential was also the domain's proof, so the proof goes with it here, as it
+		// does on the gate. A pasted key's proof is a challenge of its own and stays.
+		if ( $connected ) {
+			$update['verified_at'] = '';
+		}
+		Naulon_Settings::update( $update );
 		Naulon_Cron::instance()->unschedule();
 		Naulon_Admin::notice( 'success', __( 'Disconnected. Nothing is being charged.', 'naulon' ) );
 	}
@@ -341,6 +449,14 @@ class Naulon_Admin_Setup {
 
 		if ( ! $connected ) {
 			echo '<p class="naulon-muted">' . esc_html__( 'Connect first — verification is a conversation with the control plane.', 'naulon' ) . '</p>';
+			Naulon_Admin::card_close();
+			return;
+		}
+
+		if ( Naulon_Connect_Protocol::is_site_credential( Naulon_Settings::credential() ) ) {
+			// Connected: the connect was the proof, and the gate keeps checking it on its own by asking
+			// this site for the credential's proof. There is nothing to start and nothing to check.
+			echo '<p class="naulon-muted">' . esc_html__( 'Proven when this site connected. naulon keeps checking it by asking this site, so there is nothing to do here while the site stays connected.', 'naulon' ) . '</p>';
 			Naulon_Admin::card_close();
 			return;
 		}
@@ -434,8 +550,9 @@ class Naulon_Admin_Setup {
 		);
 		echo '<p>' . esc_html__( 'This plugin publishes who wrote each article and where their money goes. The control plane has to be told to read it — that is a setting on your account, and one this plugin deliberately cannot change for you. Paste this address into the credits field there:', 'naulon' ) . '</p>';
 		printf(
-			'<p><input type="text" class="large-text code naulon-copyable" readonly onfocus="this.select()" value="%s" /></p>',
-			esc_attr( Naulon_Credits::credits_base_url() )
+			'<p><input type="text" class="large-text code naulon-copyable" readonly onfocus="this.select()" value="%s" aria-label="%s" /></p>',
+			esc_attr( Naulon_Credits::credits_base_url() ),
+			esc_attr__( 'Credits address to paste into your naulon account', 'naulon' )
 		);
 		printf(
 			'<p class="naulon-muted naulon-hint">%s <code>%s</code></p>',

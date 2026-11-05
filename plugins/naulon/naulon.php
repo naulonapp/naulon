@@ -62,6 +62,7 @@ require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-license.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-roles.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ip.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-connect-protocol.php';
+require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-connect.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-ranges.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-agent.php';
 require_once NAULON_PLUGIN_DIR . 'includes/class-naulon-identity.php';

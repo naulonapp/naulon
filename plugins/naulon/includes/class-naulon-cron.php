@@ -153,6 +153,12 @@ class Naulon_Cron {
 		if ( Naulon_Settings::is_self_hosted() ) {
 			return false; // the gate's own key is the proof, and a self-hosted gate keeps no challenge list.
 		}
+		if ( Naulon_Connect_Protocol::is_site_credential( Naulon_Settings::credential() ) ) {
+			// Connected: the connect was the proof, and the gate keeps it by asking this site for the
+			// credential's proof. A site credential cannot read the challenge list, and a refusal is
+			// no evidence; when the credential goes, the gate stops answering for it anyway.
+			return false;
+		}
 
 		$response = Naulon_Client::instance()->list_challenges();
 		if ( ! $response['ok'] || ! isset( $response['body']['challenges'] ) || ! is_array( $response['body']['challenges'] ) ) {

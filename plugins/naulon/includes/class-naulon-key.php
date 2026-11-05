@@ -87,6 +87,10 @@ class Naulon_Key {
 			return '';
 		}
 		$value = trim( $key );
+		if ( Naulon_Connect_Protocol::is_site_credential( $value ) ) {
+			// A connected credential: its prefix and the same short preview, never more.
+			return substr( $value, 0, strlen( 'nln_site_' ) + self::PREVIEW_CHARS ) . '…';
+		}
 		if ( ! self::looks_like_key( $value ) ) {
 			// Not a key (a gate URL, or junk) — nothing secret to protect, but never echo an
 			// arbitrary stored string either. Show the scheme+host of a URL, otherwise nothing.

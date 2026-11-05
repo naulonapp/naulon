@@ -28,6 +28,9 @@ class Naulon_Challenge {
 	/** The query var the rewrite maps into. */
 	const QUERY_VAR = 'naulon_challenge';
 
+	/** The query var for connect's client document, /.well-known/naulon-client. */
+	const CLIENT_VAR = 'naulon_client';
+
 	/** The meta tag name — mirrors the Google/Bing site-verification convention. */
 	const META_NAME = 'naulon-site-verification';
 
@@ -70,7 +73,7 @@ class Naulon_Challenge {
 	 * @return string|false
 	 */
 	public function block_canonical_redirect( $redirect_url, $requested_url ) {
-		if ( is_string( $requested_url ) && false !== strpos( $requested_url, '/.well-known/naulon-challenge/' ) ) {
+		if ( is_string( $requested_url ) && ( false !== strpos( $requested_url, '/.well-known/naulon-challenge/' ) || false !== strpos( $requested_url, '/.well-known/naulon-client' ) ) ) {
 			return false;
 		}
 		return $redirect_url;
@@ -88,6 +91,7 @@ class Naulon_Challenge {
 			'index.php?' . self::QUERY_VAR . '=$matches[1]',
 			'top'
 		);
+		add_rewrite_rule( '^\.well-known/naulon-client/?$', 'index.php?' . self::CLIENT_VAR . '=1', 'top' );
 	}
 
 	/**
@@ -98,6 +102,7 @@ class Naulon_Challenge {
 	 */
 	public function add_query_var( $vars ) {
 		$vars[] = self::QUERY_VAR;
+		$vars[] = self::CLIENT_VAR;
 		return $vars;
 	}
 
@@ -118,8 +123,18 @@ class Naulon_Challenge {
 		} else {
 			$requested = get_query_var( self::QUERY_VAR );
 		}
+		$client = is_object( $wp ) && isset( $wp->query_vars[ self::CLIENT_VAR ] ) ? $wp->query_vars[ self::CLIENT_VAR ] : get_query_var( self::CLIENT_VAR );
+		if ( '' !== (string) $client ) {
+			$this->serve_client_document();
+		}
 		if ( ! is_string( $requested ) || '' === $requested ) {
 			return;
+		}
+
+		// A connect this site started: its challenge, for its own state only.
+		$pending = Naulon_Connect::challenge_for( $requested );
+		if ( null !== $pending ) {
+			$this->serve_text( $pending );
 		}
 
 		$settings = Naulon_Settings::all();
@@ -141,8 +156,19 @@ class Naulon_Challenge {
 			exit;
 		}
 
-		// Keep every cache layer off this response: the checker must see the live token, and a
-		// cached stale token outlives a rotation and fails verification mysteriously.
+		$this->serve_text( $token );
+	}
+
+	/**
+	 * Answer with one plain-text value and stop.
+	 *
+	 * Every cache layer is kept off: the checker must see the live value, and a cached stale one
+	 * outlives a rotation and fails verification mysteriously.
+	 *
+	 * @param string $value Token, proof or challenge: a fixed alphabet, never what was asked for.
+	 * @return void
+	 */
+	private function serve_text( $value ) {
 		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
 			// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- a third-party cache constant, recognized by name.
 			define( 'DONOTCACHEPAGE', true );
@@ -151,7 +177,28 @@ class Naulon_Challenge {
 		status_header( 200 );
 		header( 'Content-Type: text/plain; charset=utf-8' );
 		header( 'X-Robots-Tag: noindex' );
-		echo esc_html( $token );
+		echo esc_html( $value );
+		exit;
+	}
+
+	/**
+	 * Connect's client document: who this client is and where it may send the owner back. A site
+	 * whose admin is on another origin has none, and answers 404.
+	 *
+	 * @return void
+	 */
+	private function serve_client_document() {
+		$doc = Naulon_Connect::client_document();
+		if ( null === $doc ) {
+			status_header( 404 );
+			nocache_headers();
+			exit;
+		}
+		status_header( 200 );
+		header( 'Content-Type: application/json' );
+		header( 'Cache-Control: max-age=300' );
+		header( 'X-Robots-Tag: noindex' );
+		echo wp_json_encode( $doc );
 		exit;
 	}
 

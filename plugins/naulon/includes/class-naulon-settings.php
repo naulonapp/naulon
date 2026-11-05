@@ -200,6 +200,18 @@ class Naulon_Settings {
 		if ( is_string( $settings['gate_url'] ) && '' !== trim( $settings['gate_url'] ) ) {
 			return untrailingslashit( trim( $settings['gate_url'] ) );
 		}
+		return self::hosted_base();
+	}
+
+	/**
+	 * The hosted gate this install talks to when no gate of the publisher's own is set: the
+	 * NAULON_API_BASE constant, then the stored override, then gate.naulon.app. Connect's "Connect to
+	 * naulon" goes here, and a credential from here is stored as the hosted one.
+	 *
+	 * @return string
+	 */
+	public static function hosted_base() {
+		$settings = self::all();
 		if ( defined( 'NAULON_API_BASE' ) && is_string( NAULON_API_BASE ) && '' !== trim( NAULON_API_BASE ) ) {
 			return untrailingslashit( trim( NAULON_API_BASE ) );
 		}

@@ -26,7 +26,7 @@ defined( 'ABSPATH' ) || exit;
 class Naulon_Admin {
 
 	/** Top-level menu + Setup screen. */
-	const PAGE_SETUP = 'naulon';
+	const PAGE_SETUP = Naulon_Connect::SETUP_PAGE;
 
 	const PAGE_CONTENT = 'naulon-content';
 
@@ -72,6 +72,15 @@ class Naulon_Admin {
 	 */
 	public function admin_init() {
 		Naulon_Ledger::maybe_install();
+		// The owner coming back from the gate's approve page. A GET from another origin, so it carries
+		// no nonce: what protects it is the state, bound to the user who started it, and PKCE.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( isset( $_GET['page'], $_GET[ Naulon_Connect::RETURN_ARG ] ) && self::PAGE_SETUP === $_GET['page'] && 'return' === $_GET[ Naulon_Connect::RETURN_ARG ] ) {
+			$this->require_cap( Naulon_Roles::MANAGE_SETTINGS );
+			Naulon_Admin_Setup::connect_return();
+			wp_safe_redirect( admin_url( 'admin.php?page=' . self::PAGE_SETUP ) );
+			exit;
+		}
 	}
 
 	/**
@@ -220,6 +229,10 @@ class Naulon_Admin {
 			case 'save_connection':
 				$this->require_cap( Naulon_Roles::MANAGE_SETTINGS );
 				Naulon_Admin_Setup::save_connection();
+				break;
+			case 'connect_start':
+				$this->require_cap( Naulon_Roles::MANAGE_SETTINGS );
+				Naulon_Admin_Setup::connect_start(); // leaves for the gate, or comes back with a notice
 				break;
 			case 'disconnect':
 				$this->require_cap( Naulon_Roles::MANAGE_SETTINGS );
