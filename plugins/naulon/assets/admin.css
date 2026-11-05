@@ -347,6 +347,11 @@ input.naulon-wallet:invalid {
 	margin: 0;
 }
 
+/* In a table cell the row sets the spacing; a margin here drops the buttons below the row's text. */
+.naulon-table .naulon-actions {
+	margin: 0;
+}
+
 .naulon-field {
 	display: flex;
 	flex-wrap: wrap;

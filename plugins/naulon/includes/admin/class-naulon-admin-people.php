@@ -252,6 +252,8 @@ class Naulon_Admin_People {
 			return;
 		}
 
+		// One row, so Approve and Decline sit side by side with a gap, whichever kind Approve is.
+		Naulon_Admin::actions_open();
 		$key = Naulon_Settings::api_key();
 		if ( Naulon_Connect_Protocol::is_site_credential( $key ) ) {
 			// A connect credential cannot send naulon mail, so the invitation is sent on naulon by
@@ -277,6 +279,7 @@ class Naulon_Admin_People {
 		printf( '<input type="hidden" name="naulon_user" value="%d" />', (int) $user->ID );
 		submit_button( __( 'Decline', 'naulon' ), 'small', 'submit', false );
 		Naulon_Admin::form_close();
+		Naulon_Admin::actions_close();
 	}
 
 	/**
