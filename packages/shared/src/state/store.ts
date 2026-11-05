@@ -17,7 +17,7 @@
 import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { supabaseRestWith } from "../supabase.ts";
+import { readAllPaged, supabaseRestWith } from "../supabase.ts";
 
 export interface GateStateStore {
   readonly kind: "memory" | "file" | "supabase";
@@ -146,7 +146,8 @@ export interface SupabaseCreds {
 export function supabaseStateStore(creds: SupabaseCreds): GateStateStore {
   const supabaseRest = (path: string, init?: RequestInit) => supabaseRestWith(creds, path, init);
   const one = async (key: string): Promise<string | null> => {
-    const rows = (await supabaseRest(`${TABLE}?key=eq.${encodeURIComponent(key)}&select=value`)) as { value: string }[];
+    // `key` is the primary key, so one row at most; the limit says so to PostgREST too.
+    const rows = (await supabaseRest(`${TABLE}?key=eq.${encodeURIComponent(key)}&select=value&limit=1`)) as { value: string }[];
     return rows[0]?.value ?? null;
   };
   return {
@@ -181,7 +182,15 @@ export function supabaseStateStore(creds: SupabaseCreds): GateStateStore {
     async list(prefix) {
       // A key's alphabet holds no `%`, but it does hold `_`, which LIKE reads as any one character.
       const pattern = `${prefix.replaceAll("_", "\\_")}*`;
-      return (await supabaseRest(`${TABLE}?key=like.${encodeURIComponent(pattern)}&select=key,value&order=key.asc`)) as { key: string; value: string }[];
+      // Paged: PostgREST clips a read at db-max-rows and still answers 200, and a clipped list of
+      // credentials is a Sites page missing rows and a sweep that never reaches the rest.
+      return readAllPaged({
+        what: "gate state list",
+        maxRows: 1_000_000,
+        because: "a partial list would hide credentials from their owner.",
+        page: async (limit, offset) =>
+          (await supabaseRest(`${TABLE}?key=like.${encodeURIComponent(pattern)}&select=key,value&order=key.asc&limit=${limit}&offset=${offset}`)) as { key: string; value: string }[],
+      });
     },
   };
 }
