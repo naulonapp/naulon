@@ -11,6 +11,7 @@
  * `connect.fixtures.json`.
  */
 import { z } from "zod";
+import { isLoopbackHostname } from "@naulon/sdk/net";
 
 export const DISCOVERY_PATH = "/.well-known/naulon";
 export const CONNECT_PROTOCOL = "naulon/1";
@@ -36,7 +37,8 @@ export interface NaulonDiscovery {
   network: { member: boolean };
 }
 
-/** An origin with no path, no query and no credentials, e.g. `https://gate.example.com`. */
+/** An origin with no path, no query and no credentials, e.g. `https://gate.example.com`. Plain
+ *  http is accepted only on loopback, which is how a local walk runs. */
 export function originOf(raw: string): string | null {
   let u: URL;
   try {
@@ -45,14 +47,8 @@ export function originOf(raw: string): string | null {
     return null;
   }
   if (u.username || u.password) return null;
-  if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopbackHost(u.hostname))) return null;
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopbackHostname(u.hostname))) return null;
   return u.origin;
-}
-
-/** Plain http is accepted only for a gate on this machine, which is how a local walk runs. */
-export function isLoopbackHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  return h === "localhost" || h === "::1" || /^127(\.\d{1,3}){3}$/.test(h);
 }
 
 export interface DiscoveryInput {

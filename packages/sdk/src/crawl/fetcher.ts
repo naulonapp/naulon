@@ -11,9 +11,7 @@
  * A `fetchImpl` is injectable for tests (the stub path skips the node-http machinery — moot for
  * a fake — but STILL enforces origin + https).
  */
-import http from "node:http";
-import https from "node:https";
-import { guardedLookup, isBlockedTarget } from "./net.ts";
+import { guardedRequest } from "./net.ts";
 import type { Fetcher, FetchResult } from "./types.ts";
 
 /** Cap on a fetched body — feeds/sitemaps are text, but a hostile origin must not OOM us. */
@@ -89,8 +87,18 @@ export function makeGuardedFetcher(opts: GuardedFetcherOpts): Fetcher {
       }
     }
 
-    // Real path — node http(s) with the connect-time guarded lookup (no rebind window).
-    const raw = await getViaNode(url, headers, timeoutMs, allowPrivate, u.protocol, method, init?.body);
+    // Real path: the shared guarded request (connect-time lookup, so there is no rebind window).
+    // A body past the cap is cut rather than refused, as a feed or sitemap still parses up to it.
+    const raw = await guardedRequest(url, {
+      method,
+      headers,
+      ...(method === "POST" && init?.body !== undefined ? { body: init.body } : {}),
+      timeoutMs,
+      maxBytes: MAX_BODY,
+      overflow: "truncate",
+      allowPrivate,
+    });
+    if (!raw.ok) throw new Error(`crawl fetcher: ${raw.detail}`);
     return wrapResponse(raw.status, raw.status >= 200 && raw.status < 300, raw.body, raw.headers);
   };
 }
@@ -110,51 +118,4 @@ function wrapResponse(status: number, ok: boolean, body: string, headers: Record
       return JSON.parse(body) as unknown;
     },
   };
-}
-
-interface RawResponse {
-  status: number;
-  body: string;
-  /** Lower-cased, array values joined — node gives `string | string[]` per header. */
-  headers: Record<string, string>;
-}
-
-/** GET via node http(s) with the guarded lookup — the TOCTOU-safe real path. node never
- *  auto-follows redirects, so a 3xx is returned (not chased to an off-origin location). */
-function getViaNode(
-  urlStr: string,
-  headers: Record<string, string>,
-  timeoutMs: number,
-  allowPrivate: boolean,
-  protocol: string,
-  method: "GET" | "POST" = "GET",
-  body?: string,
-): Promise<RawResponse> {
-  return new Promise((resolve, reject) => {
-    const transport = protocol === "http:" ? http : https;
-    const req = transport.request(urlStr, { method, headers, lookup: guardedLookup(allowPrivate) }, (res) => {
-      // A private-IP literal in the URL is caught here too (lookup only runs for DNS names).
-      const ip = res.socket.remoteAddress;
-      if (ip && !allowPrivate && isBlockedTarget(ip)) {
-        res.destroy();
-        return reject(new Error(`crawl fetcher: connected IP is private/loopback (${ip})`));
-      }
-      let data = "";
-      res.setEncoding("utf8");
-      res.on("data", (c: string) => {
-        if (data.length < MAX_BODY) data += c;
-      });
-      res.on("end", () => {
-        const headers: Record<string, string> = {};
-        for (const [k, v] of Object.entries(res.headers)) {
-          if (typeof v === "string") headers[k.toLowerCase()] = v;
-          else if (Array.isArray(v)) headers[k.toLowerCase()] = v.join(", ");
-        }
-        resolve({ status: res.statusCode ?? 0, body: data.slice(0, MAX_BODY), headers });
-      });
-    });
-    req.setTimeout(timeoutMs, () => req.destroy(new Error(`crawl fetcher: timeout after ${timeoutMs}ms`)));
-    req.on("error", reject);
-    req.end(method === "POST" && body !== undefined ? body : undefined);
-  });
 }

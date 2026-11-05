@@ -10,10 +10,8 @@
 // `allowPrivateTargets` knob only ever relaxes raw (local catchers in dev) — never chat.
 
 import { lookup } from "node:dns/promises";
-import http from "node:http";
-import https from "node:https";
 import { signPayload } from "@naulon/sdk";
-import { guardedLookup, isBlockedTarget, isIpLiteral } from "@naulon/sdk/net";
+import { guardedLookup, guardedRequest, isBlockedTarget, isIpLiteral } from "@naulon/sdk/net";
 import { renderWire, type CanonicalEvent } from "./transform.ts";
 import type { WebhookChannelType, WebhookEventType } from "./types.ts";
 
@@ -122,60 +120,12 @@ function parseRetryAfter(value: string | null, nowMs: number): number | undefine
 }
 
 // anti-DNS-rebinding: `guardTarget` resolves-and-checks the host, but a plain fetch then
-// RE-RESOLVES at connect — a malicious customer domain can rebind between the two (a public IP
-// to the check, a private IP to the connect). `guardedLookup` (imported above, owned by
-// `@naulon/sdk/net`) is passed as the request's `lookup`, so the validated IP is the connected
-// IP and the window is closed. allowPrivate (raw-only dev knob) relaxes it; chat passes false.
+// RE-RESOLVES at connect, so a malicious customer domain can rebind between the two (a public IP
+// to the check, a private IP to the connect). The real path below goes through `guardedRequest`
+// (owned by `@naulon/sdk/net`), whose connect-time lookup makes the validated IP the connected IP.
+// allowPrivate (raw-only dev knob) relaxes it; chat passes false.
 
 const MAX_BODY = 2048;
-
-interface RawResponse {
-  status: number;
-  retryAfter: string | null;
-  body: string;
-}
-
-/** POST via node http(s) with the connect-time guarded lookup (the TOCTOU-safe real path). The URL
- *  stays hostname-based so TLS SNI/cert validation is unaffected; only the resolved-and-validated IP
- *  is connected to. node never auto-follows redirects, so a 3xx is returned, not chased. */
-function postViaNode(
-  urlStr: string,
-  headers: Record<string, string>,
-  body: string,
-  timeoutMs: number,
-  allowPrivate: boolean,
-): Promise<RawResponse> {
-  return new Promise((resolve, reject) => {
-    let u: URL;
-    try {
-      u = new URL(urlStr);
-    } catch {
-      return reject(new Error("invalid url"));
-    }
-    const transport = u.protocol === "http:" ? http : https;
-    const req = transport.request(
-      urlStr,
-      { method: "POST", headers, lookup: guardedLookup(allowPrivate) },
-      (res) => {
-        let data = "";
-        res.setEncoding("utf8");
-        res.on("data", (c: string) => {
-          if (data.length < MAX_BODY) data += c;
-        });
-        res.on("end", () =>
-          resolve({
-            status: res.statusCode ?? 0,
-            retryAfter: (res.headers["retry-after"] as string | undefined) ?? null,
-            body: data.slice(0, MAX_BODY),
-          }),
-        );
-      },
-    );
-    req.setTimeout(timeoutMs, () => req.destroy(new Error(`timeout after ${timeoutMs}ms`)));
-    req.on("error", reject);
-    req.end(body);
-  });
-}
 
 /* ── senders ──────────────────────────────────────────────────────────────────── */
 
@@ -259,18 +209,21 @@ export class HttpWebhookSender implements WebhookSender {
       }
     }
 
-    try {
-      const r = await postViaNode(url, headers, body, this.opts.timeoutMs, this.opts.allowPrivateTargets);
-      if (r.status === 429) {
-        return { ok: false, statusCode: 429, body: r.body, error: "rate limited (429)", retryAfterMs: parseRetryAfter(r.retryAfter, nowMs) };
-      }
-      if (r.status >= 200 && r.status < 300) return { ok: true, statusCode: r.status, body: r.body };
-      return { ok: false, statusCode: r.status, body: r.body, error: `non-2xx: ${r.status}` };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // A connect-time guarded-lookup rejection (the rebind race) is a permanent, non-retryable block.
-      const blocked = msg.includes("blocked target (private/loopback)");
-      return blocked ? { ok: false, error: msg, blocked: true } : { ok: false, error: msg };
+    const r = await guardedRequest(url, {
+      method: "POST",
+      headers,
+      body,
+      timeoutMs: this.opts.timeoutMs,
+      maxBytes: MAX_BODY,
+      overflow: "truncate",
+      allowPrivate: this.opts.allowPrivateTargets,
+    });
+    // A connect-time guarded-lookup rejection (the rebind race) is a permanent, non-retryable block.
+    if (!r.ok) return r.refusal === "blocked" ? { ok: false, error: r.detail, blocked: true } : { ok: false, error: r.detail };
+    if (r.status === 429) {
+      return { ok: false, statusCode: 429, body: r.body, error: "rate limited (429)", retryAfterMs: parseRetryAfter(r.headers["retry-after"] ?? null, nowMs) };
     }
+    if (r.status >= 200 && r.status < 300) return { ok: true, statusCode: r.status, body: r.body };
+    return { ok: false, statusCode: r.status, body: r.body, error: `non-2xx: ${r.status}` };
   }
 }

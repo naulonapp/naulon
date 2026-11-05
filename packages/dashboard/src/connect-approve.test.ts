@@ -43,7 +43,7 @@ function consoleApp(siteUrl: string, signedIn: { role: "admin" | "viewer" } | nu
     if (signedIn) c.set("naulonPrincipal" as never, { kind: "session", username: "ops", userId: "u1", role: signedIn.role, mustChangePassword: false } as never);
     await next();
   });
-  mountConnectApprove(app, { state, clients: clientsFor(siteUrl), allowLoopback: true, gateLabel: "gate.example.com" });
+  mountConnectApprove(app, { state, clients: clientsFor(siteUrl), allowPrivate: true, gateLabel: "gate.example.com" });
   return { app, state };
 }
 

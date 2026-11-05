@@ -17,6 +17,8 @@
  * somebody adds to only one of them.
  */
 import { lookup as dnsLookupCb } from "node:dns";
+import http from "node:http";
+import https from "node:https";
 import type { LookupFunction } from "node:net";
 
 /** Parse a dotted-quad IPv4 literal to its 32-bit int, or null if it isn't one. */
@@ -98,4 +100,123 @@ export function guardedLookup(allowPrivate: boolean): LookupFunction {
       callback(null, first.address, first.family);
     });
   };
+}
+
+/** `localhost`, any of 127.0.0.0/8, or `::1`: an address that can only mean this machine. */
+export function isLoopbackHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h === "::1") return true;
+  const v4 = ipToInt(h);
+  return v4 !== null && v4 >>> 24 === 127;
+}
+
+export type GuardedRefusal = "bad_url" | "not_https" | "blocked" | "too_large" | "timeout" | "unreachable";
+
+export type GuardedResponse =
+  | { ok: true; status: number; body: string; headers: Record<string, string> }
+  | { ok: false; refusal: GuardedRefusal; detail: string };
+
+export interface GuardedRequestOptions {
+  method?: "GET" | "POST";
+  headers?: Record<string, string>;
+  body?: string;
+  timeoutMs?: number;
+  maxBytes?: number;
+  /** A body over `maxBytes` is cut there ("truncate") or refused outright ("refuse", the default). */
+  overflow?: "truncate" | "refuse";
+  /** Permit private and loopback targets, and plain http to them. A local walk or a fixture only. */
+  allowPrivate?: boolean;
+}
+
+/**
+ * The one way this project sends a request to a URL somebody else chose: a publisher's origin
+ * being crawled, a webhook endpoint, a client's metadata document, a gate a writer typed in.
+ *
+ *   https only, unless `allowPrivate`;
+ *   an IP literal in a blocked range is refused before connecting, and a name is checked at connect
+ *   time by `guardedLookup`, so it cannot pass as a public address and then connect to a private one;
+ *   a redirect is returned as its status and never followed;
+ *   the body is capped and the exchange has a deadline.
+ *
+ * It never throws. Every refusal is data, so a caller decides what a refusal means for it.
+ */
+export function guardedRequest(rawUrl: string, opts: GuardedRequestOptions = {}): Promise<GuardedResponse> {
+  const maxBytes = opts.maxBytes ?? 64 * 1024;
+  const timeoutMs = opts.timeoutMs ?? 10_000;
+  const allowPrivate = opts.allowPrivate === true;
+  let u: URL;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return Promise.resolve({ ok: false, refusal: "bad_url", detail: "not a URL" });
+  }
+  if (u.username || u.password) return Promise.resolve({ ok: false, refusal: "bad_url", detail: "credentials in a URL are refused" });
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && allowPrivate)) {
+    return Promise.resolve({ ok: false, refusal: "not_https", detail: `${u.protocol} is refused, https only` });
+  }
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  if (!allowPrivate && isIpLiteral(host) && isBlockedTarget(host)) {
+    return Promise.resolve({ ok: false, refusal: "blocked", detail: `blocked target (private/loopback): ${host}` });
+  }
+  const transport = u.protocol === "http:" ? http : https;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (r: GuardedResponse) => {
+      if (!settled) {
+        settled = true;
+        resolve(r);
+      }
+    };
+    const req = transport.request(u, { method: opts.method ?? "GET", headers: opts.headers ?? {}, lookup: guardedLookup(allowPrivate) }, (res) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on("data", (chunk: Buffer) => {
+        if (size >= maxBytes) return;
+        size += chunk.length;
+        if (size > maxBytes && opts.overflow !== "truncate") {
+          req.destroy();
+          return done({ ok: false, refusal: "too_large", detail: `more than ${maxBytes} bytes` });
+        }
+        chunks.push(chunk);
+      });
+      res.on("end", () => {
+        const headers: Record<string, string> = {};
+        for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) headers[k.toLowerCase()] = Array.isArray(v) ? v.join(", ") : String(v);
+        done({ ok: true, status: res.statusCode ?? 0, body: Buffer.concat(chunks).subarray(0, maxBytes).toString("utf8"), headers });
+      });
+      res.on("error", (err) => done({ ok: false, refusal: "unreachable", detail: err.message }));
+    });
+    req.setTimeout(timeoutMs, () => {
+      done({ ok: false, refusal: "timeout", detail: `timeout after ${timeoutMs}ms` });
+      req.destroy();
+    });
+    req.on("error", (err) => done({ ok: false, refusal: err.message.startsWith("blocked target") ? "blocked" : "unreachable", detail: err.message }));
+    req.end(opts.body);
+  });
+}
+
+/**
+ * `guardedRequest` behind the `fetch` signature, for code that already speaks fetch. A refusal
+ * throws, as a network failure does, so a caller's existing failure path handles it unchanged.
+ */
+export function guardedFetch(defaults: Pick<GuardedRequestOptions, "timeoutMs" | "maxBytes" | "allowPrivate"> = {}): typeof fetch {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const req = input instanceof Request ? input : new Request(input, init);
+    const method = req.method.toUpperCase();
+    if (method !== "GET" && method !== "POST") throw new TypeError(`guardedFetch sends GET and POST only, not ${method}`);
+    const headers: Record<string, string> = {};
+    req.headers.forEach((v, k) => (headers[k] = v));
+    const r = await guardedRequest(req.url, {
+      method,
+      headers,
+      ...(method === "POST" ? { body: await req.text() } : {}),
+      timeoutMs: defaults.timeoutMs ?? 10_000,
+      maxBytes: defaults.maxBytes ?? 1024 * 1024,
+      ...(defaults.allowPrivate ? { allowPrivate: true } : {}),
+    });
+    if (!r.ok) throw new TypeError(`request to ${new URL(req.url).origin} refused (${r.refusal}): ${r.detail}`);
+    const out = new Headers();
+    for (const [k, v] of Object.entries(r.headers)) if (k !== "set-cookie") out.set(k, v);
+    return new Response(r.status === 204 || r.status === 304 ? null : r.body, { status: r.status, headers: out });
+  }) as typeof fetch;
 }

@@ -251,13 +251,15 @@ if (ACCESS.refuse) {
     app.use("*", authThrottle());
     app.use("*", consoleAuth(AUTH_DEPS));
     mountConsoleAuth(app, AUTH_DEPS);
+    const STATE_AT = stateLocationOf(process.env);
+    const GATE_STATE = stateStoreFor(STATE_AT.backend, STATE_AT.dir);
     // The owner's half of connect: approving a site. It writes into the gate's own state store,
     // the one the gate's token endpoint reads, so the two processes never call each other.
     mountConnectApprove(app, {
-      state: stateStoreFor(stateLocationOf(process.env).backend, stateLocationOf(process.env).dir),
-      clients: clientResolver({ allowLoopback: AUTH_DEPS.loopbackOnly }),
+      state: GATE_STATE,
+      clients: clientResolver({ allowPrivate: AUTH_DEPS.loopbackOnly }),
       auditor: AUDITOR,
-      allowLoopback: AUTH_DEPS.loopbackOnly,
+      allowPrivate: AUTH_DEPS.loopbackOnly,
       gateLabel: cfg.NAULON_PUBLIC_URL ? new URL(cfg.NAULON_PUBLIC_URL).host : "your naulon gate",
     });
   }

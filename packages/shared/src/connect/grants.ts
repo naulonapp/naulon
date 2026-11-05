@@ -11,8 +11,7 @@
  * win, and the loser is told the code was used, which is what RFC 6749 §4.1.2 asks for.
  */
 import type { GateStateStore } from "../state/store.ts";
-import { credentialDigest, codeChallengeOf, isSiteCredential, mintSiteCredential, randomBase62 } from "./flow.ts";
-import { isLoopbackHost } from "./discovery.ts";
+import { codeChallengeOf, credentialDigest, isSiteCredential, mintSiteCredential, randomBase62, redirectMatches } from "./flow.ts";
 
 export const CODE_TTL_MS = 10 * 60_000;
 const CODE_PREFIX = "nln_code_";
@@ -53,19 +52,6 @@ export async function saveCode(store: GateStateStore, pending: Omit<PendingCode,
 export type RedeemError = "invalid_grant" | "invalid_client";
 export type Redeemed = { ok: true; code: PendingCode } | { ok: false; error: RedeemError; reason: string };
 
-/** The redirect a code was issued to must be the one presented, except a loopback port (RFC 8252 §7.3). */
-export function sameRedirect(issued: string, presented: string): boolean {
-  if (issued === presented) return true;
-  try {
-    const a = new URL(issued);
-    const b = new URL(presented);
-    if (a.protocol !== "http:" || b.protocol !== "http:" || !isLoopbackHost(a.hostname)) return false;
-    return a.hostname === b.hostname && a.pathname === b.pathname && a.search === b.search;
-  } catch {
-    return false;
-  }
-}
-
 export async function redeemCode(
   store: GateStateStore,
   presented: { code: string; codeVerifier: string; redirectUri: string; clientId: string },
@@ -85,7 +71,7 @@ export async function redeemCode(
   const code = JSON.parse(raw) as PendingCode;
   if (code.expiresAt <= now) return { ok: false, error: "invalid_grant", reason: "code expired" };
   if (code.clientId !== presented.clientId) return { ok: false, error: "invalid_client", reason: "code was issued to another client" };
-  if (!sameRedirect(code.redirectUri, presented.redirectUri)) return { ok: false, error: "invalid_grant", reason: "redirect_uri does not match" };
+  if (!redirectMatches(code.redirectUri, presented.redirectUri)) return { ok: false, error: "invalid_grant", reason: "redirect_uri does not match" };
   let challenge: string;
   try {
     challenge = codeChallengeOf(presented.codeVerifier);

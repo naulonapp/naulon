@@ -40,4 +40,3 @@ export * from "./connect/flow.ts";
 export * from "./state/store.ts";
 export * from "./connect/grants.ts";
 export * from "./connect/client.ts";
-export * from "./net/guarded-get.ts";

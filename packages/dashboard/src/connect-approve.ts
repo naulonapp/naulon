@@ -20,6 +20,7 @@
  */
 import type { Context, Hono } from "hono";
 import {
+  authorizationParams,
   checkChallenge,
   parseAuthorizationRequest,
   redirectAllowed,
@@ -39,63 +40,60 @@ export interface ConnectApproveDeps {
   state: GateStateStore;
   clients: ClientResolver;
   auditor?: ConsoleAuditor;
-  /** Lets the challenge reach a site on this machine. True only when the console itself is local. */
-  allowLoopback: boolean;
-  /** The gate's host as owners know it, for the sentence that says which gate is being connected. */
+  /** Lets the challenge reach a site on a private address. True only when the console itself is local. */
+  allowPrivate: boolean;
+  /** The gate as its owner knows it, for the sentence that says what is being connected to. */
   gateLabel: string;
 }
 
+/** Where a request stands. `untrusted` must never redirect; `unanswered` may, because the client
+ *  and its return address were checked before the site was asked. */
 type Checked =
-  | { ok: true; request: AuthorizationRequest; client: ConnectClient }
-  | { ok: false; status: 400; title: string; message: string }
-  | { ok: false; status: 409; request: AuthorizationRequest; client: ConnectClient; reason: string };
+  | { kind: "ready"; request: AuthorizationRequest; client: ConnectClient }
+  | { kind: "untrusted"; title: string; message: string }
+  | { kind: "unanswered"; request: AuthorizationRequest; client: ConnectClient; reason: string };
 
-async function check(deps: ConnectApproveDeps, params: URLSearchParams): Promise<Checked> {
+/** The checks that decide whether this console may send anything back at all. */
+async function trusted(deps: ConnectApproveDeps, params: URLSearchParams): Promise<Checked> {
   const parsed = parseAuthorizationRequest(params);
-  if (!parsed.ok) return { ok: false, status: 400, title: "This connect request is malformed", message: `${parsed.error}. Start again from your site's settings.` };
-  const { request } = parsed;
-  const resolved = await deps.clients.resolve(request.clientId);
-  if (!resolved.ok) return { ok: false, status: 400, title: "The app asking could not be identified", message: `${resolved.error}.` };
-  if (!redirectAllowed(resolved.client, request.redirectUri)) {
-    return { ok: false, status: 400, title: "This connect request is not from the app it names", message: "Its return address is not one the app declares, so nothing will be sent back. Start again from your site's settings." };
+  if (!parsed.ok) return { kind: "untrusted", title: "This connect request is malformed", message: `${parsed.error}. Start again from your site's settings.` };
+  const resolved = await deps.clients.resolve(parsed.request.clientId);
+  if (!resolved.ok) return { kind: "untrusted", title: "The app asking could not be identified", message: `${resolved.error}.` };
+  if (!redirectAllowed(resolved.client, parsed.request.redirectUri)) {
+    return { kind: "untrusted", title: "This connect request is not from the app it names", message: "Its return address is not one the app declares, so nothing will be sent back. Start again from your site's settings." };
   }
-  const challenge = await checkChallenge(request.site, request.state, request.codeChallenge, { allowLoopback: deps.allowLoopback });
-  if (!challenge.ok) return { ok: false, status: 409, request, client: resolved.client, reason: challenge.reason };
-  return { ok: true, request, client: resolved.client };
+  return { kind: "ready", request: parsed.request, client: resolved.client };
+}
+
+/** Everything `trusted` checks, then whether the site answers this connect right now. */
+async function check(deps: ConnectApproveDeps, params: URLSearchParams): Promise<Checked> {
+  const t = await trusted(deps, params);
+  if (t.kind !== "ready") return t;
+  const answer = await checkChallenge(t.request.site, t.request.state, t.request.codeChallenge, { allowPrivate: deps.allowPrivate });
+  return answer.ok ? t : { kind: "unanswered", request: t.request, client: t.client, reason: answer.reason };
 }
 
 const hostOf = (url: string): string => new URL(url).host;
 
-function hidden(request: AuthorizationRequest): string {
-  const fields: [string, string][] = [
-    ["response_type", "code"],
-    ["client_id", request.clientId],
-    ["redirect_uri", request.redirectUri],
-    ["scope", "site.enforce"],
-    ["site", request.site],
-    ["state", request.state],
-    ["code_challenge", request.codeChallenge],
-    ["code_challenge_method", "S256"],
-  ];
-  return fields.map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(v)}">`).join("");
-}
+const hidden = (request: AuthorizationRequest): string =>
+  authorizationParams(request)
+    .map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(v)}">`)
+    .join("");
 
 function approvePage(deps: ConnectApproveDeps, request: AuthorizationRequest, client: ConnectClient): string {
-  const site = hostOf(request.site);
-  const sameOrigin = client.origin === request.site;
+  const site = escapeHtml(hostOf(request.site));
   return page({
-    title: `Connect ${site}`,
+    title: `Connect ${hostOf(request.site)}`,
     body:
-      `<p>${escapeHtml(site)} is asking to toll its pages through ${escapeHtml(deps.gateLabel)}.</p>` +
+      `<p>${site} is asking to toll its pages through ${escapeHtml(deps.gateLabel)}.</p>` +
       `<dl>` +
       `<dt>Site</dt><dd>${escapeHtml(request.site)} <span class="ok">answered this request just now</span></dd>` +
       `<dt>Asking</dt><dd>${escapeHtml(client.name)} <span>(its own description)</span>` +
-      (sameOrigin ? "" : `, from ${escapeHtml(client.origin)}`) +
-      `</dd>` +
-      `</dl>` +
+      (client.origin === request.site ? "" : `, from ${escapeHtml(client.origin)}`) +
+      `</dd></dl>` +
       `<h2>This connection can</h2>` +
-      `<ul class="can"><li>ask this gate whether a reader of ${escapeHtml(site)} pays, and what</li>` +
-      `<li>take payments for ${escapeHtml(site)}, which go to the wallet set in this console</li>` +
+      `<ul class="can"><li>ask this gate whether a reader of ${site} pays, and what</li>` +
+      `<li>take payments for ${site}, which go to the wallet set in this console</li>` +
       `<li>report which agents read what</li></ul>` +
       `<h2>It cannot</h2>` +
       `<ul class="can"><li>see your earnings, change your wallet or price, or act for any other site</li></ul>` +
@@ -106,16 +104,24 @@ function approvePage(deps: ConnectApproveDeps, request: AuthorizationRequest, cl
   });
 }
 
-function challengePage(deps: ConnectApproveDeps, request: AuthorizationRequest, reason: string): string {
+function unansweredPage(deps: ConnectApproveDeps, request: AuthorizationRequest, reason: string): string {
+  const site = escapeHtml(hostOf(request.site));
   return page({
     title: `${hostOf(request.site)} did not answer`,
     error: reason,
     body:
       `<p>Before anything is approved, this console asks the site to prove it is running the app that started this request. ` +
-      `It did not answer. Check that naulon is installed and switched on there, and that ${escapeHtml(hostOf(request.site))} is reachable from ${escapeHtml(deps.gateLabel)}.</p>` +
+      `It did not answer. Check that naulon is installed and switched on there, and that ${site} is reachable from ${escapeHtml(deps.gateLabel)}.</p>` +
       `<form method="get" action="${AUTHORIZE_PATH}">${hidden(request)}<button type="submit">Try again</button></form>` +
       `<form method="post" action="${AUTHORIZE_PATH}">${hidden(request)}<button type="submit" name="decision" value="deny" class="secondary">Cancel and go back</button></form>`,
   });
+}
+
+/** One rendering of every state that is not a redirect. */
+function render(c: Context, deps: ConnectApproveDeps, r: Checked): Response | Promise<Response> {
+  if (r.kind === "ready") return c.html(approvePage(deps, r.request, r.client));
+  if (r.kind === "unanswered") return c.html(unansweredPage(deps, r.request, r.reason), 409);
+  return c.html(page({ title: r.title, error: r.message, body: "" }), 400);
 }
 
 function back(redirectUri: string, params: Record<string, string>): string {
@@ -124,47 +130,36 @@ function back(redirectUri: string, params: Record<string, string>): string {
   return u.toString();
 }
 
-function actorName(c: Context): string {
+function actorOf(c: Context): { kind: "session" | "machine" | "anonymous"; name: string; userId?: string } {
   const p = getPrincipal(c);
-  return p?.kind === "session" ? p.username : p?.kind === "machine" ? "DASHBOARD_AUTH" : "local";
+  if (!p) return { kind: "anonymous", name: "local" };
+  return { kind: p.kind, name: p.kind === "session" ? p.username : "DASHBOARD_AUTH", ...(p.userId ? { userId: p.userId } : {}) };
 }
 
 export function mountConnectApprove(app: Hono, deps: ConnectApproveDeps): void {
-  app.get(AUTHORIZE_PATH, requireRole("admin"), async (c) => {
-    const r = await check(deps, new URL(c.req.url).searchParams);
-    if (r.ok) return c.html(approvePage(deps, r.request, r.client));
-    if (r.status === 409) return c.html(challengePage(deps, r.request, r.reason), 409);
-    return c.html(page({ title: r.title, error: r.message, body: "" }), 400);
-  });
+  app.get(AUTHORIZE_PATH, requireRole("admin"), async (c) => render(c, deps, await check(deps, new URL(c.req.url).searchParams)));
 
   app.post(AUTHORIZE_PATH, requireRole("admin"), async (c) => {
     const verdict = checkOrigin(c, "strict");
     if (!verdict.ok) return c.text(verdict.refusal ?? "refused", 403);
-    const body = await c.req.parseBody();
     const params = new URLSearchParams();
-    for (const [k, v] of Object.entries(body)) if (typeof v === "string") params.set(k, v);
-    const decision = params.get("decision");
+    for (const [k, v] of Object.entries(await c.req.parseBody())) if (typeof v === "string") params.set(k, v);
+    const actor = actorOf(c);
+    const audit = (action: string, outcome: "ok" | "refused", detail: Record<string, string>) => deps.auditor?.record({ action, outcome, actor, detail });
 
-    // Deny needs only a trustworthy redirect; it must work even when the site stopped answering.
-    const parsed = parseAuthorizationRequest(params);
-    if (!parsed.ok) return c.html(page({ title: "This connect request is malformed", error: parsed.error, body: "" }), 400);
-    const resolved = await deps.clients.resolve(parsed.request.clientId);
-    if (!resolved.ok || !redirectAllowed(resolved.client, parsed.request.redirectUri)) {
-      return c.html(page({ title: "The app asking could not be identified", error: resolved.ok ? "Its return address is not one it declares." : resolved.error, body: "" }), 400);
-    }
-    const audit = (outcome: "ok" | "refused", action: string, detail: Record<string, string>) =>
-      deps.auditor?.record({ action, outcome, actor: { kind: getPrincipal(c)?.kind ?? "anonymous", name: actorName(c), ...(getPrincipal(c)?.userId ? { userId: getPrincipal(c)!.userId! } : {}) }, detail });
-
-    if (decision !== "approve") {
-      await audit("ok", "console.connect_deny", { site: parsed.request.site, client: parsed.request.clientId });
-      return c.redirect(back(parsed.request.redirectUri, { error: "access_denied", state: parsed.request.state }), 303);
+    // Deny needs only a return address this console trusts. It must work after the site stopped
+    // answering, because that is exactly when an owner wants out.
+    if (params.get("decision") !== "approve") {
+      const t = await trusted(deps, params);
+      if (t.kind !== "ready") return render(c, deps, t);
+      await audit("console.connect_deny", "ok", { site: t.request.site, client: t.client.clientId });
+      return c.redirect(back(t.request.redirectUri, { error: "access_denied", state: t.request.state }), 303);
     }
 
     const r = await check(deps, params);
-    if (!r.ok) {
-      await audit("refused", "console.connect_approve", { site: parsed.request.site, client: parsed.request.clientId, reason: r.status === 409 ? r.reason : r.message });
-      if (r.status === 409) return c.html(challengePage(deps, r.request, r.reason), 409);
-      return c.html(page({ title: r.title, error: r.message, body: "" }), 400);
+    if (r.kind !== "ready") {
+      if (r.kind === "unanswered") await audit("console.connect_approve", "refused", { site: r.request.site, client: r.client.clientId, reason: r.reason });
+      return render(c, deps, r);
     }
     const code = await saveCode(deps.state, {
       clientId: r.client.clientId,
@@ -172,9 +167,9 @@ export function mountConnectApprove(app: Hono, deps: ConnectApproveDeps): void {
       redirectUri: r.request.redirectUri,
       site: r.request.site,
       codeChallenge: r.request.codeChallenge,
-      approvedBy: actorName(c),
+      approvedBy: actor.name,
     });
-    await audit("ok", "console.connect_approve", { site: r.request.site, client: r.client.clientId });
+    await audit("console.connect_approve", "ok", { site: r.request.site, client: r.client.clientId });
     return c.redirect(back(r.request.redirectUri, { code, state: r.request.state }), 303);
   });
 }

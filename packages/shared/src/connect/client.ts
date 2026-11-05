@@ -16,9 +16,9 @@
  * never alone, and nothing else it declares (logos, links) is shown at all.
  */
 import { z } from "zod";
-import { guardedGet } from "../net/guarded-get.ts";
-import { isLoopbackHost, originOf } from "./discovery.ts";
-import { challengeUrl } from "./flow.ts";
+import { guardedRequest, isLoopbackHostname } from "@naulon/sdk/net";
+import { originOf } from "./discovery.ts";
+import { challengeUrl, redirectMatches } from "./flow.ts";
 
 export const CLIENT_METADATA_PATH = "/.well-known/naulon-client";
 export const CLI_CLIENT_ID = "https://naulon.app/clients/cli.json";
@@ -57,7 +57,7 @@ function allowedRedirect(clientOrigin: string, uri: string): boolean {
     return false;
   }
   if (u.hash || u.username || u.password) return false;
-  if (u.protocol === "http:" && isLoopbackHost(u.hostname)) return true;
+  if (u.protocol === "http:" && isLoopbackHostname(u.hostname)) return true;
   return u.protocol === "https:" && u.origin === clientOrigin;
 }
 
@@ -81,18 +81,9 @@ const CLI_CLIENT = (() => {
   return r;
 })();
 
-/** Whether `presented` is one of the client's redirects. A loopback redirect matches on any port. */
+/** Whether `presented` is one of the client's redirects. */
 export function redirectAllowed(client: ConnectClient, presented: string): boolean {
-  return client.redirectUris.some((r) => {
-    if (r === presented) return true;
-    try {
-      const a = new URL(r);
-      const b = new URL(presented);
-      return a.protocol === "http:" && b.protocol === "http:" && isLoopbackHost(a.hostname) && a.hostname === b.hostname && a.pathname === b.pathname;
-    } catch {
-      return false;
-    }
-  });
+  return client.redirectUris.some((r) => redirectMatches(r, presented));
 }
 
 export interface ClientResolver {
@@ -100,8 +91,8 @@ export interface ClientResolver {
 }
 
 /** Fetches each document through the guard and keeps it for its max-age, 5 minutes to 1 day. */
-export function clientResolver(opts: { allowLoopback?: boolean; now?: () => number; fetch?: typeof guardedGet } = {}): ClientResolver {
-  const get = opts.fetch ?? guardedGet;
+export function clientResolver(opts: { allowPrivate?: boolean; now?: () => number; fetch?: typeof guardedRequest } = {}): ClientResolver {
+  const get = opts.fetch ?? guardedRequest;
   const now = opts.now ?? Date.now;
   const cache = new Map<string, { at: number; ttl: number; result: ClientResult & { ok: true } }>();
   return {
@@ -109,7 +100,7 @@ export function clientResolver(opts: { allowLoopback?: boolean; now?: () => numb
       if (clientId === CLI_CLIENT_ID) return CLI_CLIENT;
       const hit = cache.get(clientId);
       if (hit && now() - hit.at < hit.ttl) return hit.result;
-      const res = await get(clientId, { maxBytes: 16 * 1024, timeoutMs: 5_000, ...(opts.allowLoopback ? { allowLoopback: true } : {}) });
+      const res = await get(clientId, { maxBytes: 16 * 1024, timeoutMs: 5_000, headers: { accept: "application/json" }, ...(opts.allowPrivate ? { allowPrivate: true } : {}) });
       if (!res.ok) return { ok: false, error: `the client's metadata could not be fetched: ${res.detail}` };
       if (res.status !== 200) return { ok: false, error: `the client's metadata answered ${res.status}` };
       let body: unknown;
@@ -120,7 +111,7 @@ export function clientResolver(opts: { allowLoopback?: boolean; now?: () => numb
       }
       const result = parseClientMetadata(body, clientId);
       if (result.ok) {
-        const age = Number(/max-age=(\d+)/.exec(res.cacheControl ?? "")?.[1] ?? 0);
+        const age = Number(/max-age=(\d+)/.exec(res.headers["cache-control"] ?? "")?.[1] ?? 0);
         cache.set(clientId, { at: now(), ttl: Math.min(Math.max(age, 300), 86_400) * 1000, result });
         if (cache.size > 1000) cache.delete(cache.keys().next().value as string);
       }
@@ -140,10 +131,10 @@ export async function checkChallenge(
   site: string,
   state: string,
   codeChallenge: string,
-  opts: { allowLoopback?: boolean; fetch?: typeof guardedGet } = {},
+  opts: { allowPrivate?: boolean; fetch?: typeof guardedRequest } = {},
 ): Promise<ChallengeResult> {
-  const get = opts.fetch ?? guardedGet;
-  const res = await get(challengeUrl(site, state), { maxBytes: 256, timeoutMs: 5_000, accept: "text/plain", ...(opts.allowLoopback ? { allowLoopback: true } : {}) });
+  const get = opts.fetch ?? guardedRequest;
+  const res = await get(challengeUrl(site, state), { maxBytes: 256, timeoutMs: 5_000, headers: { accept: "text/plain" }, ...(opts.allowPrivate ? { allowPrivate: true } : {}) });
   if (!res.ok) return { ok: false, reason: `${site} could not be reached: ${res.detail}` };
   if (res.status !== 200) return { ok: false, reason: `${site} answered ${res.status}: is naulon installed and switched on there?` };
   if (res.body.trim() !== codeChallenge) return { ok: false, reason: `${site} did not answer this connect. Start it again from the site.` };

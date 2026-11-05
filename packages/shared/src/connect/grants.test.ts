@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { memoryStateStore } from "../state/store.ts";
-import { guardedGet } from "../net/guarded-get.ts";
-import { codeChallengeOf, newVerifier } from "./flow.ts";
+import { codeChallengeOf, newVerifier, redirectMatches } from "./flow.ts";
 import {
   CODE_TTL_MS,
   issueCredential,
@@ -13,7 +12,6 @@ import {
   resolveCredential,
   revokeCredential,
   revokeCredentialById,
-  sameRedirect,
   saveCode,
   sweepConnect,
 } from "./grants.ts";
@@ -73,10 +71,12 @@ test("twenty racing redemptions of one code: exactly one wins", async () => {
 });
 
 test("a loopback redirect matches on any port, nothing else does", () => {
-  assert.equal(sameRedirect("http://127.0.0.1/callback", "http://127.0.0.1:53111/callback"), true);
-  assert.equal(sameRedirect("http://127.0.0.1/callback", "http://127.0.0.1:53111/other"), false);
-  assert.equal(sameRedirect("https://a.example.com/cb", "https://a.example.com:8443/cb"), false);
-  assert.equal(sameRedirect("http://127.0.0.1/callback", "http://localhost:5000/callback"), false);
+  assert.equal(redirectMatches("http://127.0.0.1/callback", "http://127.0.0.1:53111/callback"), true);
+  assert.equal(redirectMatches("http://127.0.0.1/callback", "http://127.0.0.1:53111/other"), false);
+  assert.equal(redirectMatches("http://127.0.0.1/callback?a=1", "http://127.0.0.1:53111/callback?a=2"), false);
+  assert.equal(redirectMatches("https://a.example.com/cb", "https://a.example.com:8443/cb"), false);
+  assert.equal(redirectMatches("http://127.0.0.1/callback", "http://localhost:5000/callback"), false);
+  assert.equal(redirectMatches("http://a.example.com/cb", "http://a.example.com:81/cb"), false);
 });
 
 test("a credential resolves until revoked, by value or by id, and only a digest is stored", async () => {
@@ -141,7 +141,7 @@ test("a client document is cached for its max-age, within 5 minutes and a day", 
   let t = 0;
   const resolver = clientResolver({
     now: () => t,
-    fetch: async () => (fetched++, { ok: true, status: 200, body: JSON.stringify(doc()), contentType: "application/json", cacheControl: "max-age=10" }),
+    fetch: async () => (fetched++, { ok: true, status: 200, body: JSON.stringify(doc()), contentType: "application/json", cacheControl: "max-age=10", headers: {} }),
   });
   const id = `${site}/.well-known/naulon-client`;
   await resolver.resolve(id);
@@ -160,27 +160,6 @@ async function serve(handler: Parameters<typeof createServer>[1]): Promise<{ url
   return { url: `http://127.0.0.1:${port}`, close: () => new Promise((r) => server.close(() => r())) };
 }
 
-test("guarded GET: loopback only when asked, no redirects, a size cap and a deadline", async () => {
-  const s = await serve((req, res) => {
-    if (req.url === "/redirect") return res.writeHead(302, { location: "http://169.254.169.254/" }).end();
-    if (req.url === "/big") return res.end("x".repeat(70_000));
-    if (req.url === "/slow") return setTimeout(() => res.end("late"), 500);
-    res.writeHead(200, { "content-type": "application/json", "cache-control": "max-age=60" }).end('{"a":1}');
-  });
-  try {
-    assert.deepEqual(await guardedGet(`${s.url}/`, { allowLoopback: true }), { ok: true, status: 200, body: '{"a":1}', contentType: "application/json", cacheControl: "max-age=60" });
-    assert.equal(((await guardedGet(`${s.url}/`)) as { refusal: string }).refusal, "not_https");
-    assert.equal(((await guardedGet(`${s.url}/redirect`, { allowLoopback: true })) as { refusal: string }).refusal, "redirect");
-    assert.equal(((await guardedGet(`${s.url}/big`, { allowLoopback: true })) as { refusal: string }).refusal, "too_large");
-    assert.equal(((await guardedGet(`${s.url}/slow`, { allowLoopback: true, timeoutMs: 100 })) as { refusal: string }).refusal, "timeout");
-    assert.equal(((await guardedGet("https://127.0.0.1/")) as { refusal: string }).refusal, "blocked");
-    assert.equal(((await guardedGet("https://10.0.0.1/")) as { refusal: string }).refusal, "blocked");
-    assert.equal(((await guardedGet("https://u:p@example.com/")) as { refusal: string }).refusal, "bad_url");
-  } finally {
-    await s.close();
-  }
-});
-
 test("the challenge passes only when the site answers this connect's challenge", async () => {
   const challenge = codeChallengeOf(verifier);
   const state = "s".repeat(32);
@@ -189,9 +168,9 @@ test("the challenge passes only when the site answers this connect's challenge",
     res.writeHead(404).end();
   });
   try {
-    assert.deepEqual(await checkChallenge(s.url, state, challenge, { allowLoopback: true }), { ok: true });
-    assert.match(((await checkChallenge(s.url, "t".repeat(32), challenge, { allowLoopback: true })) as { reason: string }).reason, /answered 404/);
-    assert.match(((await checkChallenge(s.url, state, codeChallengeOf(newVerifier()), { allowLoopback: true })) as { reason: string }).reason, /did not answer this connect/);
+    assert.deepEqual(await checkChallenge(s.url, state, challenge, { allowPrivate: true }), { ok: true });
+    assert.match(((await checkChallenge(s.url, "t".repeat(32), challenge, { allowPrivate: true })) as { reason: string }).reason, /answered 404/);
+    assert.match(((await checkChallenge(s.url, state, codeChallengeOf(newVerifier()), { allowPrivate: true })) as { reason: string }).reason, /did not answer this connect/);
     assert.match(((await checkChallenge(s.url, state, challenge)) as { reason: string }).reason, /could not be reached/);
   } finally {
     await s.close();

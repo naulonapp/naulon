@@ -13,6 +13,7 @@
  * raced across workers is how such an integration stops working without anyone noticing.
  */
 import { createHash, randomBytes } from "node:crypto";
+import { isLoopbackHostname } from "@naulon/sdk/net";
 import { CHALLENGE_PATH, originOf } from "./discovery.ts";
 
 export const SITE_CREDENTIAL_PREFIX = "nln_site_";
@@ -85,17 +86,50 @@ export interface AuthorizationRequest {
   codeChallenge: string;
 }
 
+/** The request as parameters, in one order. The URL and any form that carries the request forward
+ *  are both built from this, so the two can never disagree about what a request contains. */
+export function authorizationParams(r: AuthorizationRequest): [string, string][] {
+  return [
+    ["response_type", "code"],
+    ["client_id", r.clientId],
+    ["redirect_uri", r.redirectUri],
+    ["scope", SITE_SCOPE],
+    ["site", r.site],
+    ["state", r.state],
+    ["code_challenge", r.codeChallenge],
+    ["code_challenge_method", "S256"],
+  ];
+}
+
 export function authorizationUrl(endpoint: string, r: AuthorizationRequest): string {
   const u = new URL(endpoint);
-  u.searchParams.set("response_type", "code");
-  u.searchParams.set("client_id", r.clientId);
-  u.searchParams.set("redirect_uri", r.redirectUri);
-  u.searchParams.set("scope", SITE_SCOPE);
-  u.searchParams.set("site", r.site);
-  u.searchParams.set("state", r.state);
-  u.searchParams.set("code_challenge", r.codeChallenge);
-  u.searchParams.set("code_challenge_method", "S256");
+  for (const [k, v] of authorizationParams(r)) u.searchParams.set(k, v);
   return u.toString();
+}
+
+/**
+ * Whether a presented redirect is the registered one. Exact, except a loopback http redirect, whose
+ * port a command-line client picks when it starts listening (RFC 8252 §7.3): host, path and query
+ * must still match.
+ */
+export function redirectMatches(registered: string, presented: string): boolean {
+  if (registered === presented) return true;
+  let a: URL;
+  let b: URL;
+  try {
+    a = new URL(registered);
+    b = new URL(presented);
+  } catch {
+    return false;
+  }
+  return (
+    a.protocol === "http:" &&
+    b.protocol === "http:" &&
+    isLoopbackHostname(a.hostname) &&
+    a.hostname === b.hostname &&
+    a.pathname === b.pathname &&
+    a.search === b.search
+  );
 }
 
 export type ParsedAuthorization = { ok: true; request: AuthorizationRequest } | { ok: false; error: string };
