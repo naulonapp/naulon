@@ -126,7 +126,7 @@ class Naulon_Cache {
 			return array(
 				'ok'      => false,
 				/* translators: %s: directory path. */
-				'message' => sprintf( __( 'Could not create %s. Create it yourself, or install the file by hand — the contents are shown below.', 'naulon' ), $dir ),
+				'message' => sprintf( __( 'Could not create %s. Create it yourself, or install the file by hand using the contents below.', 'naulon' ), $dir ),
 			);
 		}
 
@@ -135,7 +135,7 @@ class Naulon_Cache {
 			return array(
 				'ok'      => false,
 				/* translators: %s: file path. */
-				'message' => sprintf( __( 'Could not write %s. The web server does not have permission — install the file by hand instead.', 'naulon' ), self::dropin_path() ),
+				'message' => sprintf( __( 'Could not write %s: the web server lacks permission. Install the file by hand instead.', 'naulon' ), self::dropin_path() ),
 			);
 		}
 
@@ -251,7 +251,7 @@ class Naulon_Cache {
 			$found[] = array(
 				'id'           => 'object-cache',
 				'name'         => __( 'A persistent object cache', 'naulon' ),
-				'note'         => __( 'Harmless for the toll on its own — it caches queries, not whole responses.', 'naulon' ),
+				'note'         => __( 'Harmless for the toll on its own: it caches queries, not whole responses.', 'naulon' ),
 				'controllable' => true,
 			);
 		}
@@ -410,13 +410,13 @@ class Naulon_Cache {
 		$quote = Naulon_Client::instance()->quote( $url, $slug, 'read', false );
 
 		if ( $quote['ok'] && 204 === (int) $quote['status'] ) {
-			return __( 'A crawler was served this article free because your naulon account says it is free. That is what a missing or wrong credits endpoint looks like from here: the control plane asks your site who wrote the article and where the money goes, gets nothing back, and treats it as a free read. Open your site in the naulon dashboard, check the credits endpoint under Tollable content, and test again. If the endpoint is right, this article may simply have no author wallet — which is a deliberate free read.', 'naulon' );
+			return __( 'A crawler read this article free because your naulon account priced it free. Usually the credits endpoint is missing or wrong: open your site in the naulon dashboard, check the credits endpoint under Tollable content, and test again. If it is right, nobody credited on this article has a wallet, so it reads free.', 'naulon' );
 		}
 
 		if ( ! $quote['ok'] || $quote['status'] >= 400 ) {
 			return sprintf(
 				/* translators: %d: HTTP status the control plane answered with. */
-				__( 'A crawler was served this article free because the control plane could not price it (HTTP %d). The toll always fails open — a pricing outage never blocks a reader. Check the API key above, then test again.', 'naulon' ),
+				__( 'A crawler read this article free because naulon could not price it (HTTP %d). The toll fails open, so a pricing outage never blocks a reader. Check the API key above, then test again.', 'naulon' ),
 				(int) $quote['status']
 			);
 		}
@@ -425,7 +425,7 @@ class Naulon_Cache {
 		// are the right ones, because everything upstream of WordPress is the only thing left.
 		// Naming the layer is not enough on its own: the layer the publisher most often has is the
 		// one this plugin cannot reach from inside WordPress, so the remedy has to come with it.
-		return __( 'A crawler was served this article free even though your naulon account priced it. Something is answering before the toll runs — a page cache, a CDN rule, or a security plugin. The response headers below name the layer.', 'naulon' )
+		return __( 'A crawler read this article free even though naulon priced it. Something answers before the toll runs: a page cache, a CDN rule or a security plugin. The response headers below name it.', 'naulon' )
 			. self::edge_remedy( $headers );
 	}
 
@@ -453,17 +453,17 @@ class Naulon_Cache {
 		$served = array( 'HIT', 'STALE', 'UPDATING', 'REVALIDATED' );
 
 		if ( '' !== $cf && in_array( $cf, $served, true ) ) {
-			return ' ' . __( 'Cloudflare served this from its own cache — cf-cache-status below says so — which means it answered without WordPress running at all. No setting in this plugin can reach that, so the fix is at Cloudflare: either stop caching article HTML (Cache Everything and APO are the settings that start it), or add a cache rule that bypasses the cache when the user agent is one of the crawlers you toll. Purge the cache afterwards, or the copies stored before the change keep being served.', 'naulon' );
+			return ' ' . __( 'Cloudflare served this from its cache (see cf-cache-status below), so WordPress never ran. Fix it at Cloudflare: stop caching article HTML (Cache Everything and APO turn it on), or add a cache rule that bypasses the cache for the crawlers you toll. Purge the cache afterwards.', 'naulon' );
 		}
 
 		if ( '' !== $xcache && false !== strpos( $xcache, 'HIT' ) ) {
-			return ' ' . __( 'A CDN in front of this site answered from its cache — the x-cache header below says HIT — so WordPress never ran for that request. The fix belongs at that CDN: exclude article URLs from full-page caching, or bypass the cache for the crawler user agents you toll, then purge what it already stored.', 'naulon' );
+			return ' ' . __( 'A CDN in front of this site answered from its cache (x-cache: HIT below), so WordPress never ran. Exclude article URLs from full-page caching at that CDN, or bypass it for the crawlers you toll. Purge it afterwards.', 'naulon' );
 		}
 
 		if ( '' !== $cf ) {
 			// Cloudflare is in front but did not serve this one (DYNAMIC/MISS/BYPASS). Say so, so
 			// nobody spends an afternoon on cache rules that were never the problem.
-			return ' ' . __( 'Cloudflare is in front of this site but did not answer this request from cache (cf-cache-status below), so the layer is inside WordPress — a page cache plugin, or a security plugin short-circuiting the request.', 'naulon' );
+			return ' ' . __( 'Cloudflare did not answer this from its cache (cf-cache-status below), so the layer is inside WordPress: a page cache plugin, or a security plugin cutting the request short.', 'naulon' );
 		}
 
 		return '';

@@ -91,6 +91,12 @@ class Naulon_Connect {
 			return sprintf( __( '%1$s could not be reached: %2$s', 'naulon' ), $origin, $res->get_error_message() );
 		}
 		$status = (int) wp_remote_retrieve_response_code( $res );
+		// A 404 says only that nothing answers Connect at this address. It is also what a gate
+		// with Connect switched off returns, so it must not be reported as "not a gate".
+		if ( 404 === $status ) {
+			/* translators: %s: gate origin. */
+			return sprintf( __( '%s does not offer Connect. Check the address, or paste a key instead.', 'naulon' ), $origin );
+		}
 		if ( 200 !== $status ) {
 			/* translators: 1: gate origin, 2: HTTP status. */
 			return sprintf( __( '%1$s is not a naulon gate (it answered %2$d).', 'naulon' ), $origin, $status );
@@ -101,6 +107,44 @@ class Naulon_Connect {
 			return sprintf( __( '%1$s is not a naulon gate: %2$s', 'naulon' ), $origin, $doc );
 		}
 		return $doc;
+	}
+
+	/**
+	 * Where the person who connected this site sends an author's invitation, filled in.
+	 *
+	 * A connect credential carries site.enforce and nothing else, so this site cannot send naulon
+	 * mail itself; the invitation is sent by a person signed in to naulon. The page is on the same
+	 * origin as the gate's approve page, which the gate names in its discovery document, so no
+	 * address is written into this plugin. Cached for a day: the People screen renders this per
+	 * request row and must not ask the gate each time.
+	 *
+	 * @param string $gate      The gate the site is connected to.
+	 * @param string $email     The author's address.
+	 * @param string $author_id The payee id this site emits for them.
+	 * @return string|null Null when the gate does not answer discovery.
+	 */
+	public static function invite_url( $gate, $email, $author_id ) {
+		$key    = 'naulon_portal_' . md5( (string) $gate );
+		$portal = get_transient( $key );
+		if ( ! is_string( $portal ) || '' === $portal ) {
+			$doc = self::discover( $gate );
+			if ( ! is_array( $doc ) ) {
+				return null;
+			}
+			$portal = Naulon_Connect_Protocol::origin_of( $doc['authorization_endpoint'] );
+			if ( null === $portal ) {
+				return null;
+			}
+			set_transient( $key, $portal, DAY_IN_SECONDS );
+		}
+		return add_query_arg(
+			array(
+				'inviteHost'   => rawurlencode( strtolower( (string) wp_parse_url( home_url( '/' ), PHP_URL_HOST ) ) ),
+				'inviteEmail'  => rawurlencode( (string) $email ),
+				'inviteAuthor' => rawurlencode( (string) $author_id ),
+			),
+			$portal . '/dashboard/settings'
+		) . '#team';
 	}
 
 	/**

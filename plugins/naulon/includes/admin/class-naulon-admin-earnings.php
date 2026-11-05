@@ -76,7 +76,7 @@ class Naulon_Admin_Earnings {
 			'<p class="naulon-muted">%s</p>',
 			sprintf(
 				/* translators: %s: a link to naulon's withdrawal page. */
-				esc_html__( 'Each payment settles to the paid author\'s own Circle Gateway balance, for the address they are paid at. This site never holds it, and neither does naulon. Authors withdraw it at %s by connecting that wallet.', 'naulon' ),
+				esc_html__( 'Each payment settles to the author\'s own Circle Gateway balance for the address they are paid at. Neither this site nor naulon holds it. Authors withdraw it at %s by connecting that wallet.', 'naulon' ),
 				sprintf(
 					'<a href="%s" target="_blank" rel="noopener noreferrer">naulon.app/earnings</a>',
 					esc_url( Naulon_Admin::PAYEE_EARNINGS_URL )
@@ -94,7 +94,7 @@ class Naulon_Admin_Earnings {
 				esc_html(
 					sprintf(
 						/* translators: %s: an amount of USDC, e.g. 0.003000. */
-						__( 'Agents also paid naulon %s USDC in fees on these reads. That is charged to the buyer on top of the price, never taken out of an author\'s share, so it is not counted above.', 'naulon' ),
+						__( 'Agents also paid naulon %s USDC in fees on these reads. Fees are charged to the buyer on top of the price, never taken from an author\'s share, so they are not counted above.', 'naulon' ),
 						Naulon_Ledger::format_usdc( $fee )
 					)
 				)
@@ -116,7 +116,8 @@ class Naulon_Admin_Earnings {
 			return;
 		}
 
-		echo '<table class="widefat striped naulon-table"><thead><tr>';
+		Naulon_Admin::table_open( __( 'By author', 'naulon' ) );
+		echo '<thead><tr>';
 		printf( '<th>%s</th>', esc_html__( 'Author', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Wallet', 'naulon' ) );
 		printf( '<th class="naulon-num">%s</th>', esc_html__( 'Settled', 'naulon' ) );
@@ -140,7 +141,8 @@ class Naulon_Admin_Earnings {
 			printf( '<td class="naulon-num">%s</td>', esc_html( Naulon_Ledger::format_usdc( isset( $row['pending'] ) ? $row['pending'] : 0 ) ) );
 			echo '</tr>';
 		}
-		echo '</tbody></table>';
+		echo '</tbody>';
+		Naulon_Admin::table_close();
 		Naulon_Admin::card_close();
 	}
 
@@ -165,7 +167,7 @@ class Naulon_Admin_Earnings {
 			printf(
 				'<p>%s</p><p class="naulon-muted">%s</p><p><a href="%s">%s</a></p>',
 				esc_html__( 'This site has no wallet for you, so it cannot pay you directly and has nothing to show here.', 'naulon' ),
-				esc_html__( 'Your posts are not necessarily free. You are still credited on them, and if your naulon account holds a payout address for you, your share is paid there — this site never sees that address, so those payments cannot appear on this screen. Sign in to naulon to see them.', 'naulon' ),
+				esc_html__( 'Your posts may still earn. You are credited on them, and if your naulon account holds a payout address for you, your share is paid there. This site never sees that address, so sign in to naulon to see those payments.', 'naulon' ),
 				esc_url( admin_url( 'profile.php#naulon-payouts' ) ),
 				esc_html__( 'Set a wallet on your profile to be paid through this site instead.', 'naulon' )
 			);
@@ -213,7 +215,8 @@ class Naulon_Admin_Earnings {
 			return;
 		}
 
-		echo '<table class="widefat striped naulon-table"><thead><tr>';
+		Naulon_Admin::table_open( __( 'Recent payments', 'naulon' ) );
+		echo '<thead><tr>';
 		printf( '<th>%s</th>', esc_html__( 'When', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Article', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Kind', 'naulon' ) );
@@ -266,7 +269,8 @@ class Naulon_Admin_Earnings {
 			);
 			echo '</tr>';
 		}
-		echo '</tbody></table>';
+		echo '</tbody>';
+		Naulon_Admin::table_close();
 		Naulon_Admin::card_close();
 	}
 

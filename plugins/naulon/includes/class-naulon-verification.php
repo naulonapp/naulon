@@ -148,7 +148,7 @@ class Naulon_Verification {
 			if ( $routing_verified ) {
 				return array(
 					'ok'      => false,
-					'message' => __( 'This domain is routed through the naulon fleet, which is already collecting the toll for it. Turning on in-app enforcement as well would charge an agent twice for the same read, so it stays off. To run the toll from WordPress instead, remove the naulon CNAME record for this domain at your DNS provider, wait for it to stop resolving, then run this step again.', 'naulon' ),
+					'message' => __( 'This domain is routed through naulon, which already tolls it. Enforcing here too would charge an agent twice for one read, so this stays off. To toll from WordPress instead, remove the naulon CNAME at your DNS provider, wait for it to stop resolving, then run this step again.', 'naulon' ),
 					'token'   => '',
 				);
 			}
@@ -263,18 +263,18 @@ class Naulon_Verification {
 		if ( 0 === $probe['status'] ) {
 			$findings[] = sprintf(
 				/* translators: %s: transport error message. */
-				__( 'This site could not fetch its own challenge URL (%s). That is usually a firewall or a loopback restriction on the host, not a naulon problem — but the control plane may hit the same wall.', 'naulon' ),
+				__( 'This site could not fetch its own challenge URL (%s). That is usually a firewall or loopback restriction on the host, and naulon may hit the same wall.', 'naulon' ),
 				$probe['error']
 			);
 		} elseif ( $probe['status'] >= 300 && $probe['status'] < 400 ) {
 			$findings[] = sprintf(
 				/* translators: 1: HTTP status, 2: redirect target. */
-				__( 'The challenge URL answers %1$d and redirects to %2$s. Redirects are never followed by the checker, so verification must run against the host that actually serves the page — usually the www or non-www variant you were not expecting.', 'naulon' ),
+				__( 'The challenge URL answers %1$d and redirects to %2$s. The checker never follows redirects, so verify on the host that serves the page, usually the www or non-www variant.', 'naulon' ),
 				$probe['status'],
 				'' !== $probe['location'] ? $probe['location'] : __( 'another address', 'naulon' )
 			);
 		} elseif ( 404 === $probe['status'] ) {
-			$findings[] = __( 'The challenge URL returns 404. Something is intercepting /.well-known/ — commonly a security plugin, a static-file handler, or stale permalinks. Re-saving Settings → Permalinks fixes the stale case; the meta-tag method sidesteps the interception entirely.', 'naulon' );
+			$findings[] = __( 'The challenge URL returns 404, so something intercepts /.well-known/: often a security plugin, a static-file handler or stale permalinks. Re-saving Settings → Permalinks fixes stale permalinks; the meta-tag method avoids the interception.', 'naulon' );
 		} elseif ( 200 !== $probe['status'] ) {
 			$findings[] = sprintf(
 				/* translators: %d: HTTP status code. */
@@ -297,8 +297,8 @@ class Naulon_Verification {
 			// or WAF rule at the edge challenges the checker (a server-to-server GET, no browser,
 			// a datacenter address — the exact profile those rules exist to stop) while this
 			// same-machine fetch never meets it.
-			$findings[] = __( 'This site is serving the challenge correctly from here, so WordPress is doing its part. If the check still fails, something between the checker and this server is answering instead.', 'naulon' );
-			$findings[] = __( 'If a CDN or firewall sits in front of this site — Cloudflare, a security service, your host\'s WAF — allow the path /.well-known/naulon-challenge/ through it. The checker is a plain server-to-server request with no browser behind it, which bot protection is built to challenge, and a challenge page is not the token.', 'naulon' );
+			$findings[] = __( 'This site serves the challenge correctly from here. If the check still fails, something between naulon and this server answers instead.', 'naulon' );
+			$findings[] = __( 'If a CDN or firewall sits in front of this site (Cloudflare, a security service, your host\'s WAF), allow /.well-known/naulon-challenge/ through it. The checker is a server-to-server request, which bot protection tends to challenge, and a challenge page is not the token.', 'naulon' );
 			$findings[] = __( 'Otherwise the checker is reaching a different machine than this one: a staging copy, or DNS pointing somewhere else.', 'naulon' );
 		}
 
@@ -352,7 +352,7 @@ class Naulon_Verification {
 			case 'host_taken':
 				return __( 'Another account already verified this domain. If that was you, connect this site with that account\'s key instead.', 'naulon' );
 			default:
-				return __( 'The control plane could not see the proof yet.', 'naulon' );
+				return __( 'naulon could not see the proof yet.', 'naulon' );
 		}
 	}
 
@@ -365,7 +365,7 @@ class Naulon_Verification {
 	 */
 	private static function connection_error( array $response ) {
 		if ( 401 === $response['status'] ) {
-			return __( 'The control plane rejected this API key (401). It may have been revoked or mistyped. Nothing is being tolled until this is fixed.', 'naulon' );
+			return __( 'naulon rejected this API key (401). It may have been revoked or mistyped. Nothing is tolled until it is fixed.', 'naulon' );
 		}
 		if ( 403 === $response['status'] ) {
 			// A setup key is deliberately single-use for this one job. The control plane drops
@@ -377,20 +377,20 @@ class Naulon_Verification {
 			// that does not exist. Name the preset in both cases — it is the only thing that mints
 			// this scope.
 			if ( Naulon_Settings::is_verified() ) {
-				return __( 'This site is already verified, so the setup key has handed its domain permission back — it only ever needed it once. To claim a domain from here again, open your naulon dashboard, go to Settings → API & webhooks → Create key, choose "Connect WordPress", and paste the new key on this page.', 'naulon' );
+				return __( 'This site is already verified, so the setup key has given up its domain permission. To claim a domain again, create a key in your naulon dashboard under Settings → API & webhooks → Create key → Connect WordPress, and paste it here.', 'naulon' );
 			}
-			return __( 'This key cannot claim domains (403). In your naulon dashboard go to Settings → API & webhooks → Create key and choose "Connect WordPress" — that preset is the only one that mints the permission this step needs. A key built from the permission list is read-only and can never prove this domain.', 'naulon' );
+			return __( 'This key cannot claim domains (403). In your naulon dashboard, go to Settings → API & webhooks → Create key and choose Connect WordPress. Only that preset can prove this domain; a key built from the permission list is read-only.', 'naulon' );
 		}
 		if ( 0 === $response['status'] ) {
 			return sprintf(
 				/* translators: %s: transport error. */
-				__( 'Could not reach the control plane: %s', 'naulon' ),
+				__( 'Could not reach naulon: %s', 'naulon' ),
 				$response['error']
 			);
 		}
 		return sprintf(
 			/* translators: %d: HTTP status code. */
-			__( 'The control plane answered %d.', 'naulon' ),
+			__( 'naulon answered %d.', 'naulon' ),
 			$response['status']
 		);
 	}

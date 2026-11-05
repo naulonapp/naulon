@@ -660,4 +660,26 @@ class Naulon_Admin {
 	public static function actions_close() {
 		echo '</div>';
 	}
+
+	/**
+	 * A data table inside a region that scrolls on its own when the screen is narrower than the
+	 * table, so the page never scrolls sideways. The region takes focus so a keyboard can scroll
+	 * it too, and is named so a screen reader says what it is when focus lands there.
+	 *
+	 * @param string $label What the table lists, usually its card's title.
+	 * @return void
+	 */
+	public static function table_open( $label ) {
+		printf(
+			'<div class="naulon-table-wrap" role="region" tabindex="0" aria-label="%s"><table class="widefat striped naulon-table">',
+			esc_attr( $label )
+		);
+	}
+
+	/**
+	 * @return void
+	 */
+	public static function table_close() {
+		echo '</table></div>';
+	}
 }

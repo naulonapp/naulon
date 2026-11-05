@@ -38,12 +38,12 @@ class Naulon_Admin_Setup {
 
 		echo '<div class="wrap naulon-wrap">';
 		Naulon_Admin::header( __( 'Setup', 'naulon' ) );
-		echo '<p class="naulon-lede">' . esc_html__( 'Charge AI agents for reading your articles. Humans always read free, and your authors are paid directly — nothing is ever held on your behalf.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-lede">' . esc_html__( 'Charge AI agents for reading your articles. People always read free, and your authors are paid directly. Nothing is held on your behalf.', 'naulon' ) . '</p>';
 
 		if ( ! Naulon_Verification::permalinks_ok() ) {
 			printf(
 				'<div class="notice notice-error"><p>%s <a href="%s">%s</a></p></div>',
-				esc_html__( 'Permalinks are set to Plain, and nothing below will work until that changes. With plain permalinks your articles have no path in their URL, so there is nothing to identify them by — every article would read free, and the file that proves you own this domain cannot be served at all.', 'naulon' ),
+				esc_html__( 'Permalinks are set to Plain, so nothing below works until you change them. Plain permalinks give articles no path to identify them by: every article would read free, and the domain proof cannot be served.', 'naulon' ),
 				esc_url( admin_url( 'options-permalink.php' ) ),
 				esc_html__( 'Change it in Settings → Permalinks.', 'naulon' )
 			);
@@ -115,7 +115,7 @@ class Naulon_Admin_Setup {
 		echo '</div>';
 
 		if ( 'constant' === $source ) {
-			echo '<p class="naulon-muted">' . esc_html__( 'The key comes from wp-config.php, which is the better place for it — it stays out of database exports and backups. Change it there.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-muted">' . esc_html__( 'The key comes from wp-config.php, which keeps it out of database exports and backups. Change it there.', 'naulon' ) . '</p>';
 			Naulon_Admin::card_close();
 			return;
 		}
@@ -140,7 +140,7 @@ class Naulon_Admin_Setup {
 	 */
 	private static function render_connect_forms( $connected ) {
 		Naulon_Admin::form_open( 'connect_start', Naulon_Admin::PAGE_SETUP );
-		echo '<p class="naulon-muted">' . esc_html__( 'You approve this site on naulon.app and come straight back. Approving also proves you own this domain, so step 2 is done with it. Nothing to copy.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-muted">' . esc_html__( 'Approve this site on naulon.app and come straight back. Approving also proves you own this domain, so step 2 is done too. Nothing to copy.', 'naulon' ) . '</p>';
 		submit_button( $connected ? __( 'Connect again to naulon', 'naulon' ) : __( 'Connect to naulon', 'naulon' ), 'primary', 'submit', false );
 		Naulon_Admin::form_close();
 
@@ -172,7 +172,7 @@ class Naulon_Admin_Setup {
 			echo '<input type="password" class="regular-text code" id="naulon_gate_key" name="naulon_gate_key" autocomplete="off" spellcheck="false" placeholder="NAULON_ENFORCE_KEY" />';
 		}
 		echo '</div>';
-		echo '<p class="naulon-muted naulon-hint">' . esc_html__( 'Checked against the control plane before it is stored, so a typo cannot take a working toll offline. The key never leaves this server: it is not printed into any page, and no browser ever sees it.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-muted naulon-hint">' . esc_html__( 'naulon checks the key before it is stored, so a typo cannot take a working toll offline. The key never leaves this server and no page shows it.', 'naulon' ) . '</p>';
 		Naulon_Admin::form_close();
 		echo '</details>';
 		echo '</details>';
@@ -339,7 +339,7 @@ class Naulon_Admin_Setup {
 			return true;
 		}
 		if ( 401 === $check['status'] ) {
-			Naulon_Admin::notice( 'error', __( 'The control plane rejected that key (401). Nothing has been changed — the toll is still running on the key it had.', 'naulon' ) );
+			Naulon_Admin::notice( 'error', __( 'naulon rejected that key (401). Nothing changed: the toll still runs on the previous key.', 'naulon' ) );
 			return false;
 		}
 		if ( 403 === $check['status'] ) {
@@ -348,11 +348,11 @@ class Naulon_Admin_Setup {
 		}
 		if ( 0 === $check['status'] ) {
 			/* translators: %s: transport error. */
-			Naulon_Admin::notice( 'error', sprintf( __( 'Could not reach the control plane to check that key: %s. Nothing has been changed.', 'naulon' ), $check['error'] ) );
+			Naulon_Admin::notice( 'error', sprintf( __( 'Could not reach naulon to check that key: %s. Nothing changed.', 'naulon' ), $check['error'] ) );
 			return false;
 		}
 		/* translators: %d: HTTP status. */
-		Naulon_Admin::notice( 'error', sprintf( __( 'The control plane answered %d while checking that key. Nothing has been changed.', 'naulon' ), $check['status'] ) );
+		Naulon_Admin::notice( 'error', sprintf( __( 'naulon answered %d while checking that key. Nothing changed.', 'naulon' ), $check['status'] ) );
 		return false;
 	}
 
@@ -368,7 +368,7 @@ class Naulon_Admin_Setup {
 		$connected = Naulon_Connect_Protocol::is_site_credential( Naulon_Settings::credential() );
 		$revoked   = Naulon_Connect::revoke( $gate, Naulon_Settings::credential() );
 		if ( ! $revoked ) {
-			Naulon_Admin::notice( 'warning', __( 'The gate could not be reached to end this site\'s credential. Revoke it from your naulon settings, under Connected sites.', 'naulon' ) );
+			Naulon_Admin::notice( 'warning', __( 'The gate could not be reached to end this site\'s credential. Revoke it in your naulon settings under API & webhooks.', 'naulon' ) );
 		}
 		$update = array(
 			'api_key'        => '',
@@ -425,7 +425,7 @@ class Naulon_Admin_Setup {
 		// Only while it can still matter: a verified site already answered the https check, often
 		// behind a proxy whose WordPress address still says http.
 		if ( ! $https && ! $verified ) {
-			echo '<p class="naulon-bad">' . esc_html__( 'This site is served over http. The ownership check is https-only, so it cannot pass until the site has a certificate. Everything else on this page will work; verification will not.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-bad">' . esc_html__( 'This site is served over http. The ownership check needs https, so it cannot pass until the site has a certificate. Everything else here works.', 'naulon' ) . '</p>';
 		}
 
 		// Lost is not the same as never had. The heartbeat clears the local proof when the control
@@ -435,20 +435,20 @@ class Naulon_Admin_Setup {
 		// what it costs, rather than showing a first-time setup screen to someone who is not new.
 		$lost = '' !== trim( (string) $settings['ownership_lost_at'] );
 		if ( ! $verified && $lost ) {
-			echo '<p class="naulon-bad">' . esc_html__( 'This site was verified and is not any more — the control plane no longer holds a proof for this host. Nothing is being charged until it is verified again: agents read free. The usual cause is that /.well-known/ stopped being reachable long enough for the check to give up, so look for a security or caching plugin intercepting it, then run the steps below.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-bad">' . esc_html__( 'This site was verified and no longer is: naulon holds no proof for this host now, so agents read free. Usually /.well-known/ stopped being reachable, often because a security or caching plugin intercepts it. Fix that, then run the steps below.', 'naulon' ) . '</p>';
 			printf(
 				'<p class="naulon-muted naulon-hint">%s %s</p>',
 				esc_html__( 'Noticed', 'naulon' ),
 				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- when() escapes.
 				Naulon_Admin::when( (string) $settings['ownership_lost_at'] )
 			);
-			echo '<p class="naulon-muted">' . esc_html__( 'Your setup key almost certainly cannot do this on its own. It hands its domain permission back once a site verifies, so claiming the domain again needs a fresh one: in your naulon dashboard, Settings → API & webhooks → Create key → Connect WordPress.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-muted">' . esc_html__( 'Your setup key gave up its domain permission once the site verified, so claiming the domain again needs a new one: in your naulon dashboard, Settings → API & webhooks → Create key → Connect WordPress.', 'naulon' ) . '</p>';
 		} elseif ( ! $verified ) {
-			echo '<p>' . esc_html__( 'This plugin serves the proof itself — both as a file under /.well-known/ and as a tag in the page head — so there is no DNS to edit. Start it, then ask the control plane to look.', 'naulon' ) . '</p>';
+			echo '<p>' . esc_html__( 'This plugin serves the proof itself, as a file under /.well-known/ and as a tag in the page head, so there is no DNS to edit. Start it, then ask naulon to check.', 'naulon' ) . '</p>';
 		}
 
 		if ( ! $connected ) {
-			echo '<p class="naulon-muted">' . esc_html__( 'Connect first — verification is a conversation with the control plane.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-muted">' . esc_html__( 'Connect first.', 'naulon' ) . '</p>';
 			Naulon_Admin::card_close();
 			return;
 		}
@@ -456,7 +456,7 @@ class Naulon_Admin_Setup {
 		if ( Naulon_Connect_Protocol::is_site_credential( Naulon_Settings::credential() ) ) {
 			// Connected: the connect was the proof, and the gate keeps checking it on its own by asking
 			// this site for the credential's proof. There is nothing to start and nothing to check.
-			echo '<p class="naulon-muted">' . esc_html__( 'Proven when this site connected. naulon keeps checking it by asking this site, so there is nothing to do here while the site stays connected.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-muted">' . esc_html__( 'Proven when this site connected. naulon keeps checking it, so there is nothing to do here.', 'naulon' ) . '</p>';
 			Naulon_Admin::card_close();
 			return;
 		}
@@ -548,7 +548,7 @@ class Naulon_Admin_Setup {
 				'state' => $proven ? 'done' : ( Naulon_Settings::is_verified() ? 'current' : 'todo' ),
 			)
 		);
-		echo '<p>' . esc_html__( 'This plugin publishes who wrote each article and where their money goes. The control plane has to be told to read it — that is a setting on your account, and one this plugin deliberately cannot change for you. Paste this address into the credits field there:', 'naulon' ) . '</p>';
+		echo '<p>' . esc_html__( 'This plugin publishes who wrote each article and where their money goes. Tell your naulon account to read it by pasting this address into its credits field:', 'naulon' ) . '</p>';
 		printf(
 			'<p><input type="text" class="large-text code naulon-copyable" readonly onfocus="this.select()" value="%s" aria-label="%s" /></p>',
 			esc_attr( Naulon_Credits::credits_base_url() ),
@@ -556,10 +556,10 @@ class Naulon_Admin_Setup {
 		);
 		printf(
 			'<p class="naulon-muted naulon-hint">%s <code>%s</code></p>',
-			esc_html__( 'That is the base, without a trailing slash and without /credits — the control plane appends the article itself, so what it fetches is:', 'naulon' ),
+			esc_html__( 'That is the base, with no trailing slash and no /credits. naulon appends the article, so it fetches:', 'naulon' ),
 			esc_html( Naulon_Credits::credits_base_url() . '/credits/your-article' )
 		);
-		echo '<p class="naulon-muted">' . esc_html__( 'An article that is not tollable — a draft, one you marked free, one that credits nobody — answers 404 here, which is the agreed signal for "read this one free". That is why nothing else needs a list of what is paid. An author credited with no wallet on this site is still listed: your account may hold a payout address for them, and only it can decide.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-muted">' . esc_html__( 'An article that is not tollable (a draft, one marked free, one that credits nobody) answers 404 here, which means "read this one free". An author with no wallet on this site is still listed, because your naulon account may hold one for them.', 'naulon' ) . '</p>';
 
 		if ( $proven ) {
 			printf(
@@ -571,7 +571,7 @@ class Naulon_Admin_Setup {
 		}
 
 		if ( '' !== trim( (string) $settings['credits_token'] ) ) {
-			echo '<p class="naulon-muted">' . esc_html__( 'A shared token is set, so the control plane must send it. Remove it on the Content screen if the two ever disagree.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-muted">' . esc_html__( 'A shared token is set, so naulon must send it. Remove it on the Content screen if the two disagree.', 'naulon' ) . '</p>';
 		}
 		Naulon_Admin::card_close();
 	}
@@ -613,13 +613,13 @@ class Naulon_Admin_Setup {
 		echo '</div>';
 
 		if ( $conflict ) {
-			echo '<p class="naulon-bad">' . esc_html__( 'Your DNS still points this domain at the hosted gate, and the gate is already charging for it. Enforcing here as well would charge the same read twice, so this plugin has stood down. Remove the CNAME, or leave enforcement off and let the gate do it.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-bad">' . esc_html__( 'Your DNS still points this domain at the hosted gate, which already tolls it. Enforcing here too would charge each read twice, so this plugin has stood down. Remove the CNAME, or leave enforcement off and let the gate toll.', 'naulon' ) . '</p>';
 		}
 
 		if ( ! $ready ) {
 			echo '<p class="naulon-muted">';
 			echo $connected
-				? esc_html__( 'Verification has to pass first. Until it does, the control plane will not settle a payment for this domain — so a price shown here could never actually be paid.', 'naulon' )
+				? esc_html__( 'Verification has to pass first. Until then naulon cannot settle a payment for this domain, so a price here could never be paid.', 'naulon' )
 				: esc_html__( 'Connect first.', 'naulon' );
 			echo '</p>';
 		}
@@ -653,7 +653,7 @@ class Naulon_Admin_Setup {
 		$wanted = isset( $_POST['naulon_enforcement'] ) && '1' === sanitize_text_field( wp_unslash( $_POST['naulon_enforcement'] ) );
 
 		if ( $wanted && ! ( Naulon_Settings::is_connected() && Naulon_Settings::is_verified() ) ) {
-			Naulon_Admin::notice( 'error', __( 'Not yet. Connect and verify first — a toll that cannot be settled is worse than no toll.', 'naulon' ) );
+			Naulon_Admin::notice( 'error', __( 'Not yet. Connect and verify first: a toll that cannot be settled is worse than none.', 'naulon' ) );
 			return;
 		}
 
@@ -676,7 +676,7 @@ class Naulon_Admin_Setup {
 	 */
 	private static function render_test( array $settings ) {
 		Naulon_Admin::card_open( __( 'Test the toll', 'naulon' ) );
-		echo '<p>' . esc_html__( 'This asks your own site for one of your articles while pretending to be a crawler, over real HTTP, and shows exactly what came back.', 'naulon' ) . '</p>';
+		echo '<p>' . esc_html__( 'This requests one of your articles as a crawler would, over real HTTP, and shows what came back.', 'naulon' ) . '</p>';
 
 		Naulon_Admin::actions_open();
 		Naulon_Admin::form_open( 'test_toll', Naulon_Admin::PAGE_SETUP );
@@ -859,7 +859,7 @@ class Naulon_Admin_Setup {
 			return;
 		}
 		if ( 'under_tolling' === $result['verdict'] ) {
-			Naulon_Admin::notice( 'warning', __( 'A crawler read that article free — see the detail below.', 'naulon' ) );
+			Naulon_Admin::notice( 'warning', __( 'A crawler read that article free. The detail is below.', 'naulon' ) );
 			return;
 		}
 		Naulon_Admin::notice( 'warning', (string) $result['message'] );
@@ -880,9 +880,9 @@ class Naulon_Admin_Setup {
 			'success',
 			'' === $status['mode']
 				/* translators: the control plane has no verdict for this host yet. */
-				? __( 'The control plane has not classified this domain yet.', 'naulon' )
+				? __( 'naulon has not classified this domain yet.', 'naulon' )
 				/* translators: %s: enforcement mode. */
-				: sprintf( __( 'The control plane sees this domain as: %s', 'naulon' ), $status['mode'] )
+				: sprintf( __( 'naulon sees this domain as: %s', 'naulon' ), $status['mode'] )
 		);
 	}
 
@@ -906,6 +906,6 @@ class Naulon_Admin_Setup {
 			return sprintf( __( 'Checked %s: this domain is not classified yet.', 'naulon' ), $checked );
 		}
 		/* translators: 1: timestamp, 2: enforcement mode. */
-		return sprintf( __( 'Checked %1$s: the control plane sees this domain as %2$s.', 'naulon' ), $checked, $mode );
+		return sprintf( __( 'Checked %1$s: naulon sees this domain as %2$s.', 'naulon' ), $checked, $mode );
 	}
 }

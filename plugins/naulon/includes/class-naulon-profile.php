@@ -78,10 +78,10 @@ class Naulon_Profile {
 				esc_attr__( 'A wallet address is 0x followed by 40 hex digits.', 'naulon' )
 			);
 			echo '<p class="description">';
-			echo esc_html__( 'Where agents pay you when they read your articles. Payments settle to this address\'s own Circle Gateway balance rather than straight into the wallet, and only this wallet can withdraw them. Neither this site nor naulon can move that money.', 'naulon' );
+			echo esc_html__( 'Where agents pay you for reading your articles. Payments settle to this address\'s own Circle Gateway balance, and only this wallet can withdraw them. Neither this site nor naulon can move that money.', 'naulon' );
 			echo '</p>';
 			if ( ! $valid ) {
-				echo '<p class="description naulon-warn">' . esc_html__( 'You have no wallet set here. Your posts still credit you, so if the service this site connects to holds a payout wallet for you, your share goes there. If it does not, your articles read free — nothing is charged for them and nothing is owed to you.', 'naulon' ) . '</p>';
+				echo '<p class="description naulon-warn">' . esc_html__( 'No wallet set. Your posts still credit you: if your naulon account holds a payout wallet, your share goes there. Otherwise your articles read free.', 'naulon' ) . '</p>';
 			}
 		} else {
 			printf( '<code>%s</code>', esc_html( $wallet ) );
@@ -152,7 +152,7 @@ class Naulon_Profile {
 		echo '<p class="description">' . esc_html__( 'How naulon identifies you in this site\'s credits. An account there pays your share to your own wallet, on any site that credits you.', 'naulon' ) . '</p>';
 
 		if ( Naulon_Access::STATE_INVITED === $state ) {
-			echo '<p class="description">' . esc_html__( 'Requested and sent — check your email for the invitation from naulon.', 'naulon' ) . '</p>';
+			echo '<p class="description">' . esc_html__( 'Requested. Check your email for the invitation from naulon.', 'naulon' ) . '</p>';
 		} elseif ( Naulon_Access::STATE_REQUESTED === $state ) {
 			echo '<p class="description">' . esc_html__( 'Requested. An administrator of this site approves it, and naulon emails you.', 'naulon' ) . '</p>';
 		} elseif ( $editable && get_current_user_id() === (int) $user->ID ) {

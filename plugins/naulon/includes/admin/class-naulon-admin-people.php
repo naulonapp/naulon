@@ -122,7 +122,8 @@ class Naulon_Admin_People {
 	 */
 	private static function render_table( array $users ) {
 		Naulon_Admin::card_open( __( 'Wallets', 'naulon' ) );
-		echo '<table class="widefat striped naulon-table"><thead><tr>';
+		Naulon_Admin::table_open( __( 'Wallets', 'naulon' ) );
+		echo '<thead><tr>';
 		printf( '<th>%s</th>', esc_html__( 'Author', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Role', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Wallet', 'naulon' ) );
@@ -148,9 +149,11 @@ class Naulon_Admin_People {
 				Naulon_Admin::form_open( 'save_wallet', Naulon_Admin::PAGE_PEOPLE );
 				printf( '<input type="hidden" name="naulon_user" value="%d" />', (int) $user->ID );
 				printf(
-					'<input type="text" class="code naulon-wallet-input naulon-wallet" name="naulon_wallet" value="%1$s" placeholder="0x…" spellcheck="false" pattern="\s*0[xX][0-9a-fA-F]{40}\s*" title="%2$s" />',
+					'<input type="text" class="code naulon-wallet-input naulon-wallet" name="naulon_wallet" value="%1$s" placeholder="0x…" spellcheck="false" pattern="\s*0[xX][0-9a-fA-F]{40}\s*" title="%2$s" aria-label="%3$s" />',
 					esc_attr( $wallet ),
-					esc_attr__( 'A wallet address is 0x followed by 40 hex digits.', 'naulon' )
+					esc_attr__( 'A wallet address is 0x followed by 40 hex digits.', 'naulon' ),
+					/* translators: %s: the author's display name. */
+					esc_attr( sprintf( __( 'Wallet for %s', 'naulon' ), $user->display_name ) )
 				);
 				submit_button( __( 'Save', 'naulon' ), 'small', 'submit', false );
 				Naulon_Admin::form_close();
@@ -176,7 +179,8 @@ class Naulon_Admin_People {
 			echo '</tr>';
 		}
 
-		echo '</tbody></table>';
+		echo '</tbody>';
+		Naulon_Admin::table_close();
 		echo '<p class="naulon-muted">' . esc_html__( 'Authors can set their own wallet on their profile page. Nobody can see anyone else’s earnings unless their role allows it.', 'naulon' ) . '</p>';
 		Naulon_Admin::card_close();
 	}
@@ -189,7 +193,8 @@ class Naulon_Admin_People {
 	 */
 	private static function render_capabilities() {
 		Naulon_Admin::card_open( __( 'Who may do what', 'naulon' ) );
-		echo '<table class="widefat striped naulon-table"><thead><tr>';
+		Naulon_Admin::table_open( __( 'Who may do what', 'naulon' ) );
+		echo '<thead><tr>';
 		printf( '<th>%s</th>', esc_html__( 'Role', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Granted', 'naulon' ) );
 		echo '</tr></thead><tbody>';
@@ -206,7 +211,8 @@ class Naulon_Admin_People {
 			}
 			echo '</div></td></tr>';
 		}
-		echo '</tbody></table>';
+		echo '</tbody>';
+		Naulon_Admin::table_close();
 		Naulon_Admin::card_close();
 	}
 
@@ -246,14 +252,34 @@ class Naulon_Admin_People {
 			return;
 		}
 
-		Naulon_Admin::form_open( 'approve_access', Naulon_Admin::PAGE_PEOPLE );
-		printf( '<input type="hidden" name="naulon_user" value="%d" />', (int) $user->ID );
-		submit_button( __( 'Approve', 'naulon' ), 'small primary', 'submit', false );
-		Naulon_Admin::form_close();
+		// One row, so Approve and Decline sit side by side with a gap, whichever kind Approve is.
+		Naulon_Admin::actions_open();
+		$key = Naulon_Settings::api_key();
+		if ( Naulon_Connect_Protocol::is_site_credential( $key ) ) {
+			// A connect credential cannot send naulon mail, so the invitation is sent on naulon by
+			// someone signed in there, with this author already filled in.
+			$url = Naulon_Connect::invite_url( Naulon_Settings::api_base(), $user->user_email, Naulon_Access::author_id( $user->ID ) );
+			if ( null === $url ) {
+				echo '<span class="naulon-muted">' . esc_html__( 'naulon cannot be reached right now. Try again shortly.', 'naulon' ) . '</span> ';
+			} else {
+				printf(
+					'<a class="button button-primary button-small" href="%s" target="_blank" rel="noopener">%s<span class="screen-reader-text"> %s</span></a>',
+					esc_url( $url ),
+					esc_html__( 'Approve on naulon', 'naulon' ),
+					esc_html__( '(opens in a new tab)', 'naulon' )
+				);
+			}
+		} else {
+			Naulon_Admin::form_open( 'approve_access', Naulon_Admin::PAGE_PEOPLE );
+			printf( '<input type="hidden" name="naulon_user" value="%d" />', (int) $user->ID );
+			submit_button( __( 'Approve', 'naulon' ), 'small primary', 'submit', false );
+			Naulon_Admin::form_close();
+		}
 		Naulon_Admin::form_open( 'decline_access', Naulon_Admin::PAGE_PEOPLE );
 		printf( '<input type="hidden" name="naulon_user" value="%d" />', (int) $user->ID );
 		submit_button( __( 'Decline', 'naulon' ), 'small', 'submit', false );
 		Naulon_Admin::form_close();
+		Naulon_Admin::actions_close();
 	}
 
 	/**

@@ -52,7 +52,7 @@ class Naulon_Admin_Content {
 			esc_html__( 'Post types in scope:', 'naulon' ),
 			esc_html( implode( ', ', $credits->tollable_post_types() ) )
 		);
-		echo '<p class="naulon-muted">' . esc_html__( 'Pages are out of scope by default — an About page is not the article an agent is citing. A theme or a small snippet can change this through the naulon_tollable_post_types filter.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-muted">' . esc_html__( 'Pages are left out by default: an About page is not an article an agent cites. The naulon_tollable_post_types filter changes this.', 'naulon' ) . '</p>';
 
 		echo '<table class="naulon-kv"><tbody>';
 		printf(
@@ -170,7 +170,7 @@ class Naulon_Admin_Content {
 	private static function render_policy( array $settings ) {
 		Naulon_Admin::card_open( __( 'Which machines are charged', 'naulon' ) );
 
-		echo '<p>' . esc_html__( 'Out of the box, obvious training crawlers and assistant fetchers are charged, search indexers are not, and anything ambiguous reads free. A human is never charged under any setting.', 'naulon' ) . '</p>';
+		echo '<p>' . esc_html__( 'By default, training crawlers and assistant fetchers are charged, search indexers are not, and anything unclear reads free. A human is never charged.', 'naulon' ) . '</p>';
 
 		Naulon_Admin::form_open( 'save_content', Naulon_Admin::PAGE_CONTENT );
 
@@ -221,9 +221,9 @@ class Naulon_Admin_Content {
 		printf(
 			'<p><code>%s</code> <span class="naulon-muted">%s</span></p>',
 			esc_html( Naulon_Credits::credits_base_url() . '/credits/<article>' ),
-			esc_html__( 'give your account the base, without /credits — it appends the article itself', 'naulon' )
+			esc_html__( 'give your account the base, without /credits: it appends the article itself', 'naulon' )
 		);
-		echo '<p class="naulon-muted">' . esc_html__( 'This route describes published articles and their payees, and nothing else — a draft or a private post answers 404 exactly like a post that does not exist. It is open by default because the control plane calls it from another host. A shared token is available if you would rather it were not open; set the same value on your account.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-muted">' . esc_html__( 'This route lists published articles and their payees, nothing else. A draft or private post answers 404, like a post that does not exist. It is open by default because naulon calls it from another host. To close it, set a shared token here and the same value on your account.', 'naulon' ) . '</p>';
 
 		Naulon_Admin::form_open( 'save_content', Naulon_Admin::PAGE_CONTENT );
 		echo '<div class="naulon-field">';
