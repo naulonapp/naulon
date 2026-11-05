@@ -92,8 +92,8 @@ function approvePage(deps: ConnectApproveDeps, request: AuthorizationRequest, cl
       (client.origin === request.site ? "" : `, from ${escapeHtml(client.origin)}`) +
       `</dd></dl>` +
       `<h2>This connection can</h2>` +
-      `<ul class="can"><li>ask this gate whether a reader of ${site} pays, and what</li>` +
-      `<li>take payments for ${site}, which go to the wallet set in this console</li>` +
+      `<ul class="can"><li>ask this gate whether a reader of this site pays, and what</li>` +
+      `<li>take payments for this site, which go to the wallet set in this console</li>` +
       `<li>report which agents read what</li></ul>` +
       `<h2>It cannot</h2>` +
       `<ul class="can"><li>see your earnings, change your wallet or price, or act for any other site</li></ul>` +
@@ -110,8 +110,8 @@ function unansweredPage(deps: ConnectApproveDeps, request: AuthorizationRequest,
     title: `${hostOf(request.site)} did not answer`,
     error: reason,
     body:
-      `<p>Before anything is approved, this console asks the site to prove it is running the app that started this request. ` +
-      `It did not answer. Check that naulon is installed and switched on there, and that ${site} is reachable from ${escapeHtml(deps.gateLabel)}.</p>` +
+      `<p>Before anything is approved, this console asks the site to prove it runs the app that started this request. ` +
+      `If naulon is on there, check that ${site} is reachable from ${escapeHtml(deps.gateLabel)}, then try again.</p>` +
       `<form method="get" action="${AUTHORIZE_PATH}">${hidden(request)}<button type="submit">Try again</button></form>` +
       `<form method="post" action="${AUTHORIZE_PATH}">${hidden(request)}<button type="submit" name="decision" value="deny" class="secondary">Cancel and go back</button></form>`,
   });
