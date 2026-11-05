@@ -20,9 +20,29 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+// Variables that tell git which repository to use. A git hook exports them, and they outrank
+// `cwd`: run from a pre-push hook, every call here would otherwise act on the repository being
+// pushed instead of the one `cwd` names.
+const REPOSITORY_LOCATORS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_COMMON_DIR",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+];
+
+/** The environment with every repository locator removed, so `cwd` alone picks the repository. */
+export function gitEnv(env = process.env) {
+  const clean = { ...env };
+  for (const key of REPOSITORY_LOCATORS) delete clean[key];
+  return clean;
+}
+
 function git(cwd, args, { allowFail = false } = {}) {
   try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    return execFileSync("git", args, { cwd, env: gitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   } catch (error) {
     if (allowFail) return null;
     throw error;
@@ -31,7 +51,7 @@ function git(cwd, args, { allowFail = false } = {}) {
 
 /** Whether `pathspec` differs between two refs. Exit 1 means "differs"; anything else is an error. */
 function differs(cwd, from, to, pathspec) {
-  const run = spawnSync("git", ["diff", "--quiet", from, to, "--", ...pathspec], { cwd, encoding: "utf8" });
+  const run = spawnSync("git", ["diff", "--quiet", from, to, "--", ...pathspec], { cwd, env: gitEnv(), encoding: "utf8" });
   if (run.status === 0) return false;
   if (run.status === 1) return true;
   throw new Error(`git diff ${from} ${to} failed: ${run.stderr.trim()}`);

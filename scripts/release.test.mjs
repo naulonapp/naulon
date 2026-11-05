@@ -5,14 +5,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 
-import { check, seriesForTag, status } from "./release.mjs";
+import { check, gitEnv, seriesForTag, status } from "./release.mjs";
 
 // Each test builds a small repository with the same layout as this one: one published npm
 // package, the plugin and the Python package, tagged in both series.
+//
+// Every git call here runs with gitEnv(). This suite runs inside the pre-push hook, where git
+// exports GIT_DIR for the repository being pushed; without the scrub, `git init`, `commit` and
+// `tag` below would write into that repository instead of the throwaway one.
 
 function repo() {
   const dir = mkdtempSync(join(tmpdir(), "naulon-release-"));
-  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+  const git = (...args) => execFileSync("git", args, { cwd: dir, env: gitEnv(), encoding: "utf8" }).trim();
   const write = (path, text) => {
     mkdirSync(dirname(join(dir, path)), { recursive: true });
     writeFileSync(join(dir, path), text);
@@ -151,6 +155,29 @@ test("status names the series that owe a release and stays quiet for the current
   assert.deepEqual(bySeries.npm.behind, []);
   assert.equal(bySeries.python.prev, "python-v0.1.0");
   assert.deepEqual(bySeries.python.behind.map((d) => [d.unit, d.state]), [["naulon (PyPI)", "stale"]]);
+});
+
+test("a GIT_DIR exported by a hook cannot point the guard at another repository", () => {
+  const pushed = repo();
+  pushed.write("packages/shared/src/index.ts", "export const a = 2;\n");
+  pushed.changelog("v0.1.0", "v0.1.1");
+  pushed.commit("forgot to bump shared");
+  pushed.tag("v0.1.1");
+
+  const other = repo();
+  const saved = process.env.GIT_DIR;
+  process.env.GIT_DIR = join(other.dir, ".git");
+  try {
+    // Read through `other`, v0.1.1 does not exist and the shared change is invisible.
+    const problems = check(pushed.dir, "v0.1.1").problems;
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /@naulon\/shared changed since v0\.1\.0/);
+  } finally {
+    if (saved === undefined) delete process.env.GIT_DIR;
+    else process.env.GIT_DIR = saved;
+  }
+  assert.equal(gitEnv({ GIT_DIR: "/x", GIT_WORK_TREE: "/y", GIT_INDEX_FILE: "/z", PATH: "/bin" }).PATH, "/bin");
+  assert.deepEqual(Object.keys(gitEnv({ GIT_DIR: "/x", GIT_WORK_TREE: "/y", GIT_INDEX_FILE: "/z" })), []);
 });
 
 test("a tag outside both series is refused rather than guessed", () => {
