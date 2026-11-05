@@ -456,8 +456,13 @@ class Connect:
         if known is not None or self._on_finish is None or method != "GET" or path != self.return_path:
             return known
         q = dict(urllib.parse.parse_qsl(query, keep_blank_values=True))
+        # Reported only for a connect this site started: anyone can request the return path with any
+        # state, and a report per request would let them fill the disk the report is kept on.
+        state = q.get("state", "")
+        ours = is_state(state) and self._store.get(state) is not None
         result = self.finish(q)
-        self._on_finish(q.get("state", ""), result)
+        if ours:
+            self._on_finish(state, result)
         return _return_page(result)
 
     def well_known(self, scheme: str, host: str, path: str, method: str = "GET") -> WellKnown | None:

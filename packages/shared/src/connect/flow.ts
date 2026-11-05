@@ -107,29 +107,9 @@ export function authorizationUrl(endpoint: string, r: AuthorizationRequest): str
   return u.toString();
 }
 
-/**
- * Whether a presented redirect is the registered one. Exact, except a loopback http redirect, whose
- * port a command-line client picks when it starts listening (RFC 8252 §7.3): host, path and query
- * must still match.
- */
+/** Whether a presented redirect is the registered one: exactly. */
 export function redirectMatches(registered: string, presented: string): boolean {
-  if (registered === presented) return true;
-  let a: URL;
-  let b: URL;
-  try {
-    a = new URL(registered);
-    b = new URL(presented);
-  } catch {
-    return false;
-  }
-  return (
-    a.protocol === "http:" &&
-    b.protocol === "http:" &&
-    isLoopbackHostname(a.hostname) &&
-    a.hostname === b.hostname &&
-    a.pathname === b.pathname &&
-    a.search === b.search
-  );
+  return registered === presented;
 }
 
 export type ParsedAuthorization = { ok: true; request: AuthorizationRequest } | { ok: false; error: string };

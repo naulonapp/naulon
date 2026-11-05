@@ -47,3 +47,15 @@ test("a credential file holding anything but a site credential is ignored", asyn
   store.writeCredential("not-a-credential");
   assert.equal(store.readCredential(), null);
 });
+
+test("a return for a connect this site never started leaves nothing on disk", async () => {
+  const { naulonSite } = await import("../enforce/sites.ts");
+  const dir = mkdtempSync(join(tmpdir(), "naulon-local-"));
+  const toll = naulonSite({ connect: { clientName: "My blog", dir }, env: { NAULON_DIR: dir } });
+  for (let i = 0; i < 25; i++) {
+    const state = `${"x".repeat(30)}${String(i).padStart(2, "0")}`;
+    const r = await toll(new Request(`https://blog.example.com/naulon/connect/return?state=${state}&code=nln_code_x&iss=https://gate.naulon.app`));
+    assert.equal(r.response?.status, 400);
+  }
+  assert.deepEqual(readdirSync(join(dir, "connect")), [], "no result file for a stranger's request");
+});

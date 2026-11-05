@@ -70,3 +70,16 @@ def test_python_dash_m_naulon_says_how_to_use_it() -> None:
         [sys.executable, "-m", "naulon", "connect"], capture_output=True, text=True, timeout=30, check=False
     )
     assert r.returncode == 2 and "--site is required" in r.stderr
+
+
+def test_a_return_for_a_connect_this_site_never_started_leaves_nothing_on_disk(tmp_path: Path) -> None:
+    from naulon.local import LocalConnect
+
+    local = LocalConnect("My blog", directory=tmp_path, environ={})
+    for i in range(25):
+        state = "x" * 30 + f"{i:02d}"
+        answer = local.connect.answer(
+            "https", "blog.example.com", "/naulon/connect/return", "GET", f"state={state}&code=nln_code_x"
+        )
+        assert answer is not None and answer.status == 400
+    assert list((tmp_path / "connect").iterdir()) == []

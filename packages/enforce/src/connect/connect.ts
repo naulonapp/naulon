@@ -303,8 +303,12 @@ export function naulonConnect(opts: NaulonConnectOptions): NaulonConnect {
       if (answered || !opts.onFinish) return answered;
       const url = new URL(req.url);
       if (req.method !== "GET" || url.pathname !== returnPath) return null;
+      // Reported only for a connect this site started: anyone can request the return path with any
+      // state, and a report per request would let them fill the disk the report is kept on.
+      const state = url.searchParams.get("state") ?? "";
+      const ours = isState(state) && (await store.get(state)) !== null;
       const result = await self.finish(url.searchParams);
-      await opts.onFinish(url.searchParams.get("state") ?? "", result);
+      if (ours) await opts.onFinish(state, result);
       return returnPage(result);
     },
   };

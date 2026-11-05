@@ -18,7 +18,7 @@ import {
   sweepConnect,
   SWEEP_EVERY_MS,
 } from "./grants.ts";
-import { checkChallenge, CLI_CLIENT_ID, clientResolver, parseClientMetadata, redirectAllowed } from "./client.ts";
+import { checkChallenge, clientResolver, parseClientMetadata } from "./client.ts";
 
 const verifier = newVerifier();
 const pending = {
@@ -80,15 +80,6 @@ test("twenty racing redemptions of one code: exactly one wins", async () => {
   const code = await saveCode(store, pending);
   const results = await Promise.all(Array.from({ length: 20 }, () => redeemCode(store, presented(code))));
   assert.equal(results.filter((r) => r.ok).length, 1);
-});
-
-test("a loopback redirect matches on any port, nothing else does", () => {
-  assert.equal(redirectMatches("http://127.0.0.1/callback", "http://127.0.0.1:53111/callback"), true);
-  assert.equal(redirectMatches("http://127.0.0.1/callback", "http://127.0.0.1:53111/other"), false);
-  assert.equal(redirectMatches("http://127.0.0.1/callback?a=1", "http://127.0.0.1:53111/callback?a=2"), false);
-  assert.equal(redirectMatches("https://a.example.com/cb", "https://a.example.com:8443/cb"), false);
-  assert.equal(redirectMatches("http://127.0.0.1/callback", "http://localhost:5000/callback"), false);
-  assert.equal(redirectMatches("http://a.example.com/cb", "http://a.example.com:81/cb"), false);
 });
 
 test("a credential resolves until revoked, by value or by id, and only a digest is stored", async () => {
@@ -217,16 +208,17 @@ test("a client document is accepted only when it names itself and redirects home
   assert.match((parseClientMetadata(doc({ redirect_uris: [`${site}/cb#frag`] }), id) as { error: string }).error, /not on/);
   assert.match((parseClientMetadata(doc({ client_name: "" }), id) as { error: string }).error, /client_name/);
   assert.match((parseClientMetadata(doc({ grant_types: ["client_credentials"] }), id) as { error: string }).error, /authorization_code/);
-  assert.equal(parseClientMetadata(doc({ redirect_uris: ["http://127.0.0.1/callback"] }), id).ok, true);
 });
 
-test("the command-line client resolves without a single network call", async () => {
-  let fetched = 0;
-  const r = await clientResolver({ fetch: async () => (fetched++, { ok: false, refusal: "unreachable", detail: "offline" }) }).resolve(CLI_CLIENT_ID);
-  assert.equal(r.ok, true);
-  assert.equal(fetched, 0);
-  assert.equal(r.ok && redirectAllowed(r.client, "http://127.0.0.1:61234/callback"), true);
-  assert.equal(r.ok && redirectAllowed(r.client, "https://evil.example.net/callback"), false);
+test("a client may only send the owner back to its own origin, exactly", () => {
+  const id = `${site}/.well-known/naulon-client`;
+  for (const r of ["http://127.0.0.1/callback", "http://localhost:8080/callback", "https://evil.example.net/cb", "http://blog.example.com/cb"]) {
+    assert.equal(parseClientMetadata(doc({ redirect_uris: [r] }), id).ok, false, r);
+  }
+  const local = "http://127.0.0.1:8080";
+  assert.equal(parseClientMetadata({ ...doc(), client_id: `${local}/.well-known/naulon-client`, redirect_uris: [`${local}/cb`] }, `${local}/.well-known/naulon-client`).ok, true, "a local walk on this machine");
+  assert.equal(redirectMatches(`${site}/cb`, `${site}/cb`), true);
+  assert.equal(redirectMatches("http://127.0.0.1:1/cb", "http://127.0.0.1:2/cb"), false, "no port leeway");
 });
 
 test("a client document is cached for its max-age, within 5 minutes and a day", async () => {
