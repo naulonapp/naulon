@@ -177,3 +177,61 @@ export function naulonSites(opts: NaulonSitesOptions): (req: Request) => Promise
     return engineFor(site)(req);
   };
 }
+
+/** The environment a single site reads, by the same names the Python package reads. */
+export interface SiteEnv {
+  NAULON_GATE?: string;
+  NAULON_KEY?: string;
+  NAULON_ENABLED?: string;
+}
+
+export interface NaulonSiteOptions extends Omit<NaulonSitesOptions, "credentialFor" | "gate"> {
+  /** The gate this site connected to. Default `NAULON_GATE`, then the hosted naulon gate. */
+  gate?: string;
+  /** The credential connect returned. Default `NAULON_KEY`. None means nothing is tolled. */
+  credential?: string | null;
+  /** Default `NAULON_ENABLED`; unset is on, and `0`, `false`, `no`, `off` turn it off. */
+  enabled?: boolean;
+  /** Where the defaults above are read. Default `process.env` where there is one. */
+  env?: SiteEnv;
+}
+
+const offWords = new Set(["0", "false", "no", "off", ""]);
+
+/**
+ * `naulonSite`: the toll for one site, configured like the Python package: by `NAULON_KEY` (the
+ * credential connect returned) and, for a self-hosted gate, `NAULON_GATE`. Everything else comes
+ * from the gate, so a price or scope change needs no deploy.
+ *
+ *   app.use(naulonNode(naulonSite()));
+ *
+ * It is `naulonSites` with one credential for every host the process serves. The gate answers only
+ * for the host that credential was approved for: a request on any other hostname (a preview URL,
+ * `www.`) gets no quote, so its reader reads free, and the refusal is reported once.
+ */
+export function naulonSite(opts: NaulonSiteOptions = {}): (req: Request) => Promise<MiddlewareResult> {
+  const env: SiteEnv = opts.env ?? ((globalThis as { process?: { env?: SiteEnv } }).process?.env ?? {});
+  const { credential: given, enabled: givenEnabled, env: _env, gate: givenGate, ...rest } = opts;
+  const enabled = givenEnabled ?? !offWords.has((env.NAULON_ENABLED ?? "on").trim().toLowerCase());
+  const credential = (given === undefined ? env.NAULON_KEY : given)?.trim() || null;
+  const fromEnv = givenGate === undefined && !!env.NAULON_GATE?.trim();
+  const gate = givenGate ?? (env.NAULON_GATE?.trim() || DEFAULT_GATE);
+  // Connect is how a site gets its credential, so its paths are answered whether or not the toll is
+  // on: a site with no key yet must still prove itself to its gate.
+  const connectOnly = async (req: Request): Promise<MiddlewareResult> => {
+    const answered = rest.connect ? await rest.connect.wellKnown(req) : null;
+    return answered ? { response: answered } : PASS;
+  };
+  if (!enabled) return connectOnly;
+  // A value typed into a deploy's environment must not take the site down at boot. A gate passed
+  // in code is the developer's own, and is refused loudly by `naulonSites` like any other option.
+  if (fromEnv && !originOf(gate)) {
+    console.error("[naulon] NAULON_GATE must be an https URL, so nothing is tolled.");
+    return connectOnly;
+  }
+  if (!credential) {
+    console.error("[naulon] NAULON_KEY is not set, so nothing is tolled. Connect this site (naulonConnect) and set the credential it returns.");
+    return connectOnly;
+  }
+  return naulonSites({ ...rest, gate, credentialFor: () => credential });
+}

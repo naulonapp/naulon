@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { naulonSites } from "./sites.ts";
+import { naulonSite, naulonSites } from "./sites.ts";
+import { naulonConnect } from "../connect/connect.ts";
 
 const KEYS: Record<string, string> = { "alice.blog.test": "nln_alice", "bob.blog.test": "nln_bob" };
 
@@ -242,4 +243,86 @@ test("the connect paths are answered before the toll, on any site", async () => 
 
 test("a platform gate that is not https is refused at construction", () => {
   assert.throws(() => naulonSites({ gate: "http://gate.example.com", credentialFor: () => null }), /gate must be an https URL/);
+});
+
+/** Captures console.error for one call, so a test can say what a misconfigured site was told. */
+async function errorsDuring(fn: () => Promise<void>): Promise<string[]> {
+  const seen: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => void seen.push(args.map(String).join(" "));
+  try {
+    await fn();
+  } finally {
+    console.error = original;
+  }
+  return seen;
+}
+
+test("one site reads NAULON_KEY and defaults to the hosted gate, like the Python package", async () => {
+  const { calls, fetchImpl } = fakeGate();
+  const toll = naulonSite({ env: { NAULON_KEY: "nln_site_alice" }, fetchImpl });
+  await toll(agent("alice.blog.test"));
+  await settle();
+  const out = await toll(agent("alice.blog.test"));
+  assert.equal(out.response?.status, 402);
+  const config = calls.find((c) => c.path === "/_naulon/enforce-config");
+  assert.equal(config?.key, "nln_site_alice");
+  assert.ok(calls.length > 0);
+});
+
+test("NAULON_GATE moves one site to a self-hosted gate, and a code option beats the environment", async () => {
+  const seenUrls: string[] = [];
+  const { fetchImpl } = fakeGate();
+  const spy = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    seenUrls.push(new URL(String(input instanceof Request ? input.url : input)).origin);
+    return fetchImpl(input, init);
+  }) as typeof fetch;
+  await naulonSite({ env: { NAULON_KEY: "k", NAULON_GATE: "https://gate.self.test" }, fetchImpl: spy })(agent("alice.blog.test"));
+  await naulonSite({ env: { NAULON_KEY: "k", NAULON_GATE: "https://gate.self.test" }, gate: "https://gate.code.test", fetchImpl: spy })(agent("alice.blog.test"));
+  await settle();
+  assert.ok(seenUrls.includes("https://gate.self.test"));
+  assert.ok(seenUrls.includes("https://gate.code.test"));
+  assert.equal(seenUrls.some((u) => u === "https://gate.naulon.app"), false);
+});
+
+test("no key, a bad env gate, or NAULON_ENABLED=off: nothing is tolled and nothing is asked", async () => {
+  for (const env of [{}, { NAULON_KEY: "k", NAULON_GATE: "http://gate.test" }, { NAULON_KEY: "k", NAULON_ENABLED: "off" }, { NAULON_KEY: "k", NAULON_ENABLED: "0" }]) {
+    const { calls, fetchImpl } = fakeGate();
+    const errors = await errorsDuring(async () => {
+      const out = await naulonSite({ env, fetchImpl })(agent("alice.blog.test"));
+      assert.equal(out.response, null, JSON.stringify(env));
+    });
+    assert.deepEqual(calls, [], JSON.stringify(env));
+    assert.equal(errors.length, "NAULON_ENABLED" in env ? 0 : 1, `${JSON.stringify(env)} is said once, unless the owner turned it off`);
+  }
+  assert.throws(() => naulonSite({ env: { NAULON_KEY: "k" }, gate: "http://gate.test" }), /https/, "a gate passed in code is refused loudly");
+});
+
+test("on a hostname its credential was not approved for, one site's readers read free", async () => {
+  const { fetchImpl } = fakeGate();
+  const refusing = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = new URL(String(input instanceof Request ? input.url : input));
+    const resource = url.searchParams.get("resource");
+    if (resource && new URL(resource).host !== "alice.blog.test") return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    return fetchImpl(input, init);
+  }) as typeof fetch;
+  const toll = naulonSite({ env: { NAULON_KEY: "nln_site_alice" }, fetchImpl: refusing });
+  await errorsDuring(async () => {
+    await toll(agent("www.alice.blog.test"));
+    await settle();
+    const out = await toll(agent("www.alice.blog.test"));
+    assert.notEqual(out.response?.status, 402);
+  });
+});
+
+test("a site with no key yet still answers its connect paths, or it could never get one", async () => {
+  const connect = naulonConnect({ clientName: "My blog" });
+  for (const env of [{}, { NAULON_KEY: "k", NAULON_ENABLED: "off" }]) {
+    await errorsDuring(async () => {
+      const out = await naulonSite({ env, connect })(new Request("https://alice.blog.test/.well-known/naulon-client"));
+      assert.equal(out.response?.status, 200, JSON.stringify(env));
+      const page = await naulonSite({ env, connect })(agent("alice.blog.test"));
+      assert.equal(page.response, null);
+    });
+  }
 });
