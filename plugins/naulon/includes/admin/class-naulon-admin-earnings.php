@@ -116,7 +116,8 @@ class Naulon_Admin_Earnings {
 			return;
 		}
 
-		echo '<table class="widefat striped naulon-table"><thead><tr>';
+		Naulon_Admin::table_open( __( 'By author', 'naulon' ) );
+		echo '<thead><tr>';
 		printf( '<th>%s</th>', esc_html__( 'Author', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Wallet', 'naulon' ) );
 		printf( '<th class="naulon-num">%s</th>', esc_html__( 'Settled', 'naulon' ) );
@@ -140,7 +141,8 @@ class Naulon_Admin_Earnings {
 			printf( '<td class="naulon-num">%s</td>', esc_html( Naulon_Ledger::format_usdc( isset( $row['pending'] ) ? $row['pending'] : 0 ) ) );
 			echo '</tr>';
 		}
-		echo '</tbody></table>';
+		echo '</tbody>';
+		Naulon_Admin::table_close();
 		Naulon_Admin::card_close();
 	}
 
@@ -213,7 +215,8 @@ class Naulon_Admin_Earnings {
 			return;
 		}
 
-		echo '<table class="widefat striped naulon-table"><thead><tr>';
+		Naulon_Admin::table_open( __( 'Recent payments', 'naulon' ) );
+		echo '<thead><tr>';
 		printf( '<th>%s</th>', esc_html__( 'When', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Article', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Kind', 'naulon' ) );
@@ -266,7 +269,8 @@ class Naulon_Admin_Earnings {
 			);
 			echo '</tr>';
 		}
-		echo '</tbody></table>';
+		echo '</tbody>';
+		Naulon_Admin::table_close();
 		Naulon_Admin::card_close();
 	}
 

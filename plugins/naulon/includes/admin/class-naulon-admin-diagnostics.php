@@ -319,7 +319,8 @@ class Naulon_Admin_Diagnostics {
 			return;
 		}
 
-		echo '<table class="widefat striped naulon-table"><thead><tr>';
+		Naulon_Admin::table_open( __( 'Recent decisions', 'naulon' ) );
+		echo '<thead><tr>';
 		printf( '<th>%s</th>', esc_html__( 'When', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Outcome', 'naulon' ) );
 		printf( '<th>%s</th>', esc_html__( 'Article', 'naulon' ) );
@@ -344,7 +345,8 @@ class Naulon_Admin_Diagnostics {
 			printf( '<td class="naulon-muted">%s</td>', esc_html( (string) $entry['ua'] ) );
 			echo '</tr>';
 		}
-		echo '</tbody></table>';
+		echo '</tbody>';
+		Naulon_Admin::table_close();
 
 		Naulon_Admin::form_open( 'clear_log', Naulon_Admin::PAGE_DIAGNOSTICS );
 		submit_button( __( 'Clear', 'naulon' ), 'link', 'submit', false );

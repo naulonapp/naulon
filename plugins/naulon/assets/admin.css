@@ -1,11 +1,11 @@
 /**
  * naulon admin styles.
  *
- * The line this walks: these screens live inside wp-admin, so they must feel like WordPress —
- * same rhythm, same controls, same greys — while still being recognizably naulon. So the brand
- * appears exactly twice, in the header band and in the menu icon, and everything below is
- * WordPress with better spacing. A plugin that repaints wp-admin in its own colours makes a
- * publisher work out where they are before they can work out what the screen says.
+ * The line this walks: these screens live inside wp-admin, so the page around them stays
+ * WordPress (menu, notices, type, greys), while the controls on naulon's own screens are the
+ * naulon dashboard's, because a publisher moves between the two in one Connect round trip.
+ * Nothing here reaches outside .naulon-wrap except the colour tokens, and the menu, the admin
+ * bar and every core screen are left as WordPress drew them.
  *
  * The owned colour is the verdigris sign green (#1f6b58, deep enough to carry text on white). It
  * marks completion and the way through, and nothing else. Rust marks something that needs you.
@@ -219,8 +219,11 @@ input.naulon-wallet:invalid {
 	box-shadow: 0 0 0 3px var(--naulon-green-soft);
 }
 
+/* A step that is not reachable yet recedes by its surface, never by opacity: opacity dims the
+ * text with the card and took its help lines under 4.5:1. */
 .naulon-card--todo {
-	opacity: 0.82;
+	background: var(--naulon-inset);
+	box-shadow: none;
 }
 
 /* ── State line, pills, tokens ─────────────────────────────────────────────────────────────── */
@@ -373,6 +376,162 @@ input.naulon-wallet:invalid {
 	font-size: 12px;
 }
 
+/* ── Controls ──────────────────────────────────────────────────────────────────────────────── */
+
+/* The same buttons and fields as the naulon dashboard, because Connect sends a publisher from
+ * here to the dashboard's approve page and back: two kinds of button across one round trip read
+ * as two products. Scoped to .naulon-wrap, so the profile screen's payouts card, which sits
+ * inside a core form, keeps core's controls.
+ *
+ * Colour goes through core's own variables, not over its selectors: every button, the checkbox
+ * fill and the field focus already read --wp-admin-theme-color, so one block recolours all of
+ * them and a later core release keeps working. Only shape is overridden below. */
+.naulon-wrap {
+	--wp-admin-theme-color: #1f6b58;
+	--wp-admin-theme-color--rgb: 31, 107, 88;
+	--wp-admin-theme-color-darker-10: #1a5c4b;
+	--wp-admin-theme-color-darker-20: #154b3d;
+	--naulon-radius: 7px;
+	--naulon-line-strong: #bfc4bd;
+	--naulon-field-line: #8a918b; /* 3.23:1 on white: a field's edge is how it is found */
+	--naulon-disabled: #e2e5e0;
+	--naulon-disabled-ink: #575d58; /* 5.31:1 on --naulon-disabled: "not yet" is still read */
+	/* A ring offset from the control, not core's 1.5px hairline on its edge, so focus is told
+	 * apart from hover. Solid, never faded in: a fading ring leaves focus unmarked meanwhile. */
+	--naulon-ring: 0 0 0 2px var(--naulon-surface), 0 0 0 4px var(--naulon-green);
+}
+
+.naulon-wrap .button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	min-height: 36px;
+	padding: 0 16px;
+	border-radius: var(--naulon-radius);
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1.2;
+	transition: color 120ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms cubic-bezier(0.2, 0, 0, 1),
+		border-color 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Secondary is the dashboard's outline button: ink on a neutral edge, green only on hover. A
+ * page of green-outlined buttons gives every action the weight of the one that matters. */
+.naulon-wrap .button:not(.button-primary):not(.button-link) {
+	color: var(--naulon-ink);
+	border-color: var(--naulon-line-strong);
+	background: var(--naulon-surface);
+}
+
+.naulon-wrap .button:not(.button-primary):not(.button-link):hover {
+	color: var(--naulon-ink);
+	border-color: var(--naulon-green);
+	background: var(--naulon-inset);
+}
+
+.naulon-wrap .button-primary:hover {
+	background: var(--wp-admin-theme-color-darker-10);
+	border-color: var(--wp-admin-theme-color-darker-10);
+}
+
+/* Core forces a disabled primary to #8a8a8a on #e2e2e2 with !important, 2.96:1. A control that
+ * says "not yet" still has to be readable, and the line beside it says why. */
+.naulon-wrap .button-primary:disabled,
+.naulon-wrap .button-primary[disabled],
+.naulon-wrap .button:disabled {
+	color: var(--naulon-disabled-ink) !important;
+	background: var(--naulon-disabled) !important;
+	border-color: var(--naulon-line) !important;
+	cursor: not-allowed;
+}
+
+.naulon-wrap .button:focus,
+.naulon-wrap input[type="text"]:focus,
+.naulon-wrap input[type="url"]:focus,
+.naulon-wrap input[type="password"]:focus,
+.naulon-wrap textarea:focus,
+.naulon-wrap input[type="checkbox"]:focus {
+	box-shadow: none;
+	outline: 2px solid transparent; /* forced-colors mode draws this */
+}
+
+.naulon-wrap .button:focus-visible,
+.naulon-wrap input[type="checkbox"]:focus-visible {
+	box-shadow: var(--naulon-ring);
+}
+
+.naulon-wrap input[type="text"],
+.naulon-wrap input[type="url"],
+.naulon-wrap input[type="password"],
+.naulon-wrap textarea {
+	min-height: 40px;
+	padding: 0 12px;
+	border: 1px solid var(--naulon-field-line);
+	border-radius: var(--naulon-radius);
+	background: var(--naulon-surface);
+	color: var(--naulon-ink);
+	font-size: 14px;
+	transition: border-color 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.naulon-wrap textarea {
+	padding: 10px 12px;
+}
+
+/* A field shows focus by its edge and the ring together, on keyboard and pointer alike: typing
+ * into it is the point, so there is no pointer focus to hide. */
+.naulon-wrap input[type="text"]:focus,
+.naulon-wrap input[type="url"]:focus,
+.naulon-wrap input[type="password"]:focus,
+.naulon-wrap textarea:focus {
+	border-color: var(--naulon-green);
+	box-shadow: var(--naulon-ring);
+}
+
+/* Inside a table row the dashboard's dense size: control and field both 32px, so a row's field
+ * and its Save share one edge instead of a 40px field beside a 24px button. */
+.naulon-wrap .button.button-small {
+	min-height: 32px;
+	padding: 0 12px;
+	font-size: 13px;
+}
+
+.naulon-wrap .naulon-table input[type="text"] {
+	min-height: 32px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+.naulon-wrap input[readonly].naulon-copyable {
+	background: var(--naulon-inset);
+	border-color: var(--naulon-line-strong);
+}
+
+.naulon-wrap input[type="checkbox"] {
+	width: 18px;
+	height: 18px;
+	border-color: var(--naulon-field-line);
+	border-radius: 4px;
+}
+
+/* A field and its button share a row; core tops its buttons and baselines its labels, which put
+ * the checkbox, its label and Save at three heights. */
+.naulon-actions form {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.naulon-wrap .button,
+	.naulon-wrap input,
+	.naulon-wrap textarea {
+		transition: none;
+	}
+}
+
 /* ── Results ───────────────────────────────────────────────────────────────────────────────── */
 
 .naulon-result {
@@ -521,6 +680,18 @@ input.naulon-wallet:invalid {
 	max-width: 100%;
 	font-family: var(--naulon-mono);
 	font-size: 12px;
+}
+
+/* A table wider than the screen scrolls inside its card; the page itself never scrolls sideways. */
+.naulon-table-wrap {
+	max-width: 100%;
+	overflow-x: auto;
+	border-radius: var(--naulon-radius, 7px);
+}
+
+.naulon-table-wrap:focus-visible {
+	outline: 2px solid var(--naulon-green);
+	outline-offset: 2px;
 }
 
 /* Money and counts line up on the decimal, so a column of them can be scanned. */
