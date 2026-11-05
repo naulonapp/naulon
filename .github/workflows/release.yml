@@ -44,168 +44,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Runs BEFORE the npm publish on purpose: that publish is irreversible, and a
-      # guard that fires after it has already let the bad release out.
+      # Runs BEFORE the npm publish on purpose: that publish is irreversible, and a guard that
+      # fires after it has already let the bad release out.
       #
-      # Scope note: whether the plugin's THREE internal version sites agree (the
-      # `Version:` header, NAULON_VERSION, readme.txt's `Stable tag:`) and whether the
-      # changelog documents the shipping version is owned by
-      # plugins/naulon/tests/unit/VersionTest.php — one owner, asserted in CI. Do not
-      # restate it here; two copies of a rule means one is already wrong.
+      # scripts/release.mjs owns every rule a tag must pass, for both series, and its tests are
+      # scripts/release.test.mjs: each unit that changed since the previous tag OF THIS SERIES
+      # moved its version (npm packages minus test files, the plugin minus .distignore), and
+      # CHANGELOG.md has a section for the tag. The idempotent publish below skips an unchanged
+      # version and reports success, so without this a tag can ship nothing and look green.
       #
-      # This step asks the one question no unit test can, because it needs git history:
-      # did the version MOVE relative to what was last released? v0.2.2 is the only tag
-      # that has ever carried the plugin and it shipped labelled 0.1.0, so WordPress
-      # offered no installed site the update. Coupling the plugin version to the TAG is
-      # deliberately not the rule — only "it moved" is.
-      #
-      # This block used to end by saying the npm packages version themselves, and used
-      # that as the reason not to check them. They did not. Between 2026-07-10 and
-      # 2026-08-05, four packages took 8 months of changes — including two security
-      # fixes — while their versions stood still, so three tags published nothing and
-      # `npm install` served none of it. The idempotent publish below is what made it
-      # silent: an unchanged version is skipped, which is indistinguishable from a
-      # successful release in the log. The step after this one is that missing check.
-      - name: Plugin version moved with the plugin
-        run: |
-          set -euo pipefail
-          read_version() { sed -n 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*//p' | head -1 | tr -d '[:space:]'; }
-          hdr=$(read_version < plugins/naulon/naulon.php)
-          test -n "$hdr" || { echo "::error::no Version: header in plugins/naulon/naulon.php"; exit 1; }
-          echo "plugin version: $hdr"
-
-          # Only a tag build has a previous release to compare against.
-          case "${GITHUB_REF:-}" in
-            refs/tags/*) ;;
-            *) echo "not a tag build — drift check does not apply"; exit 0 ;;
-          esac
-
-          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
-          if [ -z "$prev" ]; then
-            echo "no previous tag — first release, nothing to compare"
-            exit 0
-          fi
-          echo "previous tag: $prev"
-
-          # Compare only what a SITE receives. `.distignore` is the same list the release
-          # zip is built from a few steps below, so the guard and the artifact cannot
-          # disagree about what "the plugin" is — one owner, the way the npm half already
-          # excludes test files it does not ship. Without this, touching
-          # plugins/naulon/bin/install-wp-tests.sh (a CI harness, excluded from the zip)
-          # demanded a version bump, which would offer every installed site an update
-          # containing nothing. A guard that asks for a meaningless bump stops being read.
-          excl=()
-          while IFS= read -r line; do
-            line="${line%%#*}"
-            line="$(printf '%s' "$line" | tr -d '[:space:]')"
-            [ -n "$line" ] || continue
-            excl+=( ":(exclude)plugins/naulon/${line#/}" )
-          done < plugins/naulon/.distignore
-
-          if git diff --quiet "$prev" "${GITHUB_REF_NAME}" -- plugins/naulon/ "${excl[@]}"; then
-            echo "nothing that ships changed since $prev — the version may legitimately stand still"
-            exit 0
-          fi
-
-          # The plugin is younger than the tag series — it did not exist at v0.2.1.
-          # A tag from before it landed has nothing to compare, and must not be read
-          # as drift (git show would simply die there).
-          if ! git cat-file -e "$prev:plugins/naulon/naulon.php" 2>/dev/null; then
-            echo "the plugin did not exist at $prev — first release to carry it"
-            exit 0
-          fi
-
-          prev_hdr=$(git show "$prev:plugins/naulon/naulon.php" | read_version)
-          if [ "$hdr" = "$prev_hdr" ]; then
-            echo "::error::plugins/naulon/ changed since $prev but Version: is still $hdr — WordPress offers no update, so no installed site gets the fix. Bump naulon.php Version: and readme.txt Stable tag: together."
-            exit 1
-          fi
-          echo "plugin changed since $prev and the version moved: $prev_hdr → $hdr"
-
-      # The same question, asked of each published package: did it change since the last
-      # release without its version moving? If so the idempotent publish below will skip
-      # it and say "already published" — a green run that ships nothing.
-      #
-      # Test files are excluded from the comparison because they are excluded from the
-      # build (`exclude: ["src/**/*.test.ts"]` in each package tsconfig) and the tarball
-      # ships `dist` only. A test-only change genuinely alters nothing a consumer can
-      # install, and a guard that demands a bump for it teaches people to bump for
-      # nothing — which is how a guard stops being read.
-      #
-      # Whether the internal `@naulon/*` ranges still resolve after a bump is NOT asked
-      # here: packages/shared/src/releaseRanges.test.ts owns that and runs on every PR,
-      # which is earlier and cheaper than tag time. One owner per rule.
-      - name: npm package versions moved with their packages
-        run: |
-          set -euo pipefail
-
-          case "${GITHUB_REF:-}" in
-            refs/tags/*) ;;
-            *) echo "not a tag build — drift check does not apply"; exit 0 ;;
-          esac
-
-          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
-          if [ -z "$prev" ]; then
-            echo "no previous tag — first release, nothing to compare"
-            exit 0
-          fi
-          echo "previous tag: $prev"
-
-          version_at() { git show "$1:packages/$2/package.json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version"; }
-          failed=0
-
-          for pkg in $PUBLISHED_PACKAGES; do
-            now=$(node -p "require('./packages/${pkg}/package.json').version")
-
-            # A package that did not exist at the previous tag has nothing to compare.
-            if ! git cat-file -e "$prev:packages/${pkg}/package.json" 2>/dev/null; then
-              echo "→ ${pkg}: new since $prev (${now})"
-              continue
-            fi
-
-            if git diff --quiet "$prev" "${GITHUB_REF_NAME}" -- "packages/${pkg}" ":(exclude)packages/${pkg}/**/*.test.ts"; then
-              echo "→ ${pkg}: unchanged since $prev (${now})"
-              continue
-            fi
-
-            was=$(version_at "$prev" "$pkg")
-            if [ "$now" = "$was" ]; then
-              echo "::error::packages/${pkg} changed since ${prev} but @naulon/${pkg} is still ${now} — the publish below will skip it as already published, so nobody can install the change. Bump packages/${pkg}/package.json (and any internal range pointing at it)."
-              failed=1
-            else
-              echo "→ ${pkg}: changed and the version moved: ${was} → ${now}"
-            fi
-          done
-
-          exit "$failed"
-
-      # The third version of the same question, asked of the file a human reads instead of the
-      # registry: does this tag appear in CHANGELOG.md?
-      #
-      # CHANGELOG.md opens by promising a section per release tag. v0.7.1 and v0.7.2 had none —
-      # both were WordPress-plugin-only releases where every @naulon/* version legitimately stood
-      # still — so a reader who saw those tags on GitHub could not tell "nothing shipped to npm"
-      # from "nobody wrote it down". Silence and absence looked identical, which is the same
-      # failure the two guards above exist to prevent, one plane over.
-      #
-      # A plugin-only release satisfies this with a two-line stub saying so; that is the point.
-      # Writing "nothing moved here" is cheap, and it is the sentence the reader needs.
-      - name: The tag has a CHANGELOG section
-        run: |
-          set -euo pipefail
-
-          case "${GITHUB_REF:-}" in
-            refs/tags/*) ;;
-            *) echo "not a tag build — the changelog check does not apply"; exit 0 ;;
-          esac
-
-          tag="${GITHUB_REF_NAME}"
-          if grep -qE "^## +${tag}([[:space:]]|$)" CHANGELOG.md; then
-            echo "CHANGELOG.md documents ${tag}"
-            exit 0
-          fi
-          echo "::error::CHANGELOG.md has no '## ${tag}' section. Add one before tagging — a plugin-only or metadata-only release still needs a stub that says so, or the next reader cannot tell an empty release from an undocumented one."
-          exit 1
+      # Whether the plugin's three internal version sites agree is owned by
+      # plugins/naulon/tests/unit/VersionTest.php, not here.
+      - name: Every changed unit moved its version, and the tag has a CHANGELOG section
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node scripts/release.mjs check "${GITHUB_REF_NAME}" --github
 
       # The update manifest this once validated was retired with the self-updater: a plugin hosted
       # on wordpress.org may not serve its own updates, so scripts/wp-update-manifest.mjs is gone
@@ -377,24 +229,20 @@ jobs:
       run:
         working-directory: packages/python
     steps:
+      # Full history: the guard compares this tag with the previous python-v* tag.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
+      # Same owner as the v* guard: the tag matches pyproject.toml and naulon.__version__, the
+      # package moved since the previous python-v* tag, and CHANGELOG.md has the tag's section.
       - name: The tag names the version being built, and CHANGELOG.md has its section
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          want="${tag#python-v}"
-          have=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          init=$(python -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('src/naulon/__init__.py').read()).group(1))")
-          if [ "$want" != "$have" ] || [ "$want" != "$init" ]; then
-            echo "::error::${tag} does not match pyproject.toml (${have}) and naulon.__version__ (${init})."
-            exit 1
-          fi
-          grep -qE "^## +${tag}([[:space:]]|$)" ../../CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## ${tag}' section."; exit 1; }
+        working-directory: ${{ github.workspace }}
+        run: node scripts/release.mjs check "${GITHUB_REF_NAME}" --github
 
       - name: Test before publishing
         run: |

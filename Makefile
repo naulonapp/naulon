@@ -86,6 +86,9 @@ deps-check: ## Is node_modules what the lockfile says?
 test: build-sdk ## Run unit tests
 	npm test
 
+release-status: ## Which release series (v* npm + plugin, python-v* PyPI) have changes no registry serves
+	@node scripts/release.mjs status
+
 test-python: ## Python package: tests, mypy --strict and ruff (creates packages/python/.venv)
 	@cd packages/python && { [ -x .venv/bin/pytest ] || { python3 -m venv .venv && .venv/bin/pip install -q -e '.[dev,botauth]'; }; } \
 		&& .venv/bin/pytest -q && .venv/bin/mypy src && .venv/bin/ruff check src tests

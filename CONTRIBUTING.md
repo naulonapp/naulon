@@ -79,6 +79,20 @@ which `.github/workflows/wordpress-org.yml` publishes to over SVN:
 `npx @wordpress/env start` still works if you want a browsable site, but its teardown
 has twice emptied the bind-mounted plugin directory, so commit before you run it.
 
+## Releasing
+
+Two tag series publish from this repository, each to its own registry:
+
+- `v<semver>` ships the npm packages and the WordPress plugin.
+- `python-v<semver>` ships `naulon` to PyPI, and nothing else.
+
+`make release-status` lists every unit that changed since its series' last tag. When both series
+are behind, release both: bump each changed unit (an npm package's `package.json` and the internal
+ranges that point at it, the plugin's three version sites, or `pyproject.toml` with
+`naulon.__version__`), add a `## <tag>` section to `CHANGELOG.md` for each tag, merge, then push
+both tags. `scripts/release.mjs check <tag>` is the guard the release job runs before publishing;
+run it locally on a tag before you push it.
+
 ## Conventions
 
 - **Money is integer micro-USDC** in any split or settlement math, never a float
