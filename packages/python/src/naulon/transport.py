@@ -215,7 +215,7 @@ class GuardedTransport:
         if not self._allow_private:
             for a in addresses:
                 parsed = ip.parse(a.split("%", 1)[0])
-                if parsed is None or ip.is_reserved(parsed):
+                if parsed is None or ip.is_blocked_target(parsed):
                     return None
         return addresses
 

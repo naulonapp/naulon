@@ -19,55 +19,51 @@
 import { lookup as dnsLookupCb } from "node:dns";
 import http from "node:http";
 import https from "node:https";
-import type { LookupFunction } from "node:net";
+import { BlockList, isIP, isIPv4, isIPv6, type LookupFunction } from "node:net";
 
-/** Parse a dotted-quad IPv4 literal to its 32-bit int, or null if it isn't one. */
-function ipToInt(ip: string): number | null {
-  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return null;
-  const octets = m.slice(1).map(Number);
-  if (octets.some((o) => o > 255)) return null;
-  return ((octets[0]! << 24) | (octets[1]! << 16) | (octets[2]! << 8) | octets[3]!) >>> 0;
-}
-
-// [networkInt, maskBits] — the private/loopback/link-local v4 ranges.
-const PRIVATE_V4: ReadonlyArray<[number, number]> = [
-  [ipToInt("127.0.0.0")!, 8], // loopback
-  [ipToInt("10.0.0.0")!, 8], // private
-  [ipToInt("172.16.0.0")!, 12], // private
-  [ipToInt("192.168.0.0")!, 16], // private
-  [ipToInt("169.254.0.0")!, 16], // link-local (incl. 169.254.169.254 cloud metadata)
-  [ipToInt("0.0.0.0")!, 8], // "this" network
-  [ipToInt("100.64.0.0")!, 10], // CGNAT
+/**
+ * Every range no public host has, in one table: private, loopback, link-local, carrier NAT,
+ * documentation, benchmarking, multicast, reserved, and the IPv6 forms that carry an IPv4 address
+ * inside them (IPv4-compatible `::/96`, NAT64 `64:ff9b::/96` and `64:ff9b:1::/48`, 6to4
+ * `2002::/16`, Teredo `2001::/32`). Python's `naulon.ip.BLOCKED` is the same table, and
+ * `test-fixtures/blocked-target-cases.json` holds both runtimes to the same answer for each address.
+ */
+export const BLOCKED_RANGES: readonly string[] = [
+  "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+  "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
+  "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+  "::/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32", "2001:db8::/32", "2002::/16",
+  "fc00::/7", "fe80::/10", "ff00::/8",
 ];
 
-function isPrivateV4(ipInt: number): boolean {
-  return PRIVATE_V4.some(([net, bits]) => {
-    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
-    return (ipInt & mask) === (net & mask);
-  });
-}
-
-function isBlockedV6(ip: string): boolean {
-  const h = ip.toLowerCase();
-  if (h === "::1" || h === "::") return true; // loopback / unspecified
-  if (h.startsWith("fe80")) return true; // link-local
-  if (h.startsWith("fc") || h.startsWith("fd")) return true; // unique-local fc00::/7
-  // IPv4-mapped (::ffff:a.b.c.d) — unwrap and check as v4.
-  const mapped = h.match(/::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (mapped) {
-    const v4 = ipToInt(mapped[1]!);
-    return v4 !== null && isPrivateV4(v4);
+// `BlockList` compares addresses, not spellings: `[::ffff:127.0.0.1]` reaches a caller as
+// `::ffff:7f00:1` once the URL parser has had it, and an IPv4-mapped address is checked against the
+// IPv4 rules. A regex over the text missed exactly that form.
+const BLOCKED = (() => {
+  const list = new BlockList();
+  for (const range of BLOCKED_RANGES) {
+    const [addr, bits] = range.split("/") as [string, string];
+    list.addSubnet(addr, Number(bits), addr.includes(":") ? "ipv6" : "ipv4");
   }
-  return false;
-}
+  return list;
+})();
+
+const LOOPBACK = (() => {
+  const list = new BlockList();
+  list.addSubnet("127.0.0.0", 8, "ipv4");
+  list.addAddress("::1", "ipv6");
+  return list;
+})();
+
+/** The literal inside a host as a URL spells it: no brackets, no IPv6 zone. */
+const literalOf = (host: string): string => host.replace(/^\[(.*)\]$/, "$1").split("%")[0]!;
 
 /** True if `host` is a literal IP in a blocked range. A DNS name is NOT blocked here —
  *  it has no literal to check; `guardedLookup` validates the resolved IP at connect time. */
 export function isBlockedTarget(host: string): boolean {
-  const v4 = ipToInt(host);
-  if (v4 !== null) return isPrivateV4(v4);
-  if (host.includes(":")) return isBlockedV6(host);
+  const ip = literalOf(host);
+  if (isIPv4(ip)) return BLOCKED.check(ip, "ipv4");
+  if (isIPv6(ip)) return BLOCKED.check(ip, "ipv6");
   return false;
 }
 
@@ -76,7 +72,7 @@ export function isBlockedTarget(host: string): boolean {
  *  answer but not a way to tell the two apart — a caller that must resolve-then-check
  *  needs to know whether there is anything to resolve. */
 export function isIpLiteral(host: string): boolean {
-  return ipToInt(host) !== null || host.includes(":");
+  return isIP(literalOf(host)) !== 0;
 }
 
 /**
@@ -104,10 +100,10 @@ export function guardedLookup(allowPrivate: boolean): LookupFunction {
 
 /** `localhost`, any of 127.0.0.0/8, or `::1`: an address that can only mean this machine. */
 export function isLoopbackHostname(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (h === "localhost" || h === "::1") return true;
-  const v4 = ipToInt(h);
-  return v4 !== null && v4 >>> 24 === 127;
+  const h = literalOf(hostname.toLowerCase());
+  if (h === "localhost") return true;
+  if (isIPv4(h)) return LOOPBACK.check(h, "ipv4");
+  return isIPv6(h) && LOOPBACK.check(h, "ipv6");
 }
 
 export type GuardedRefusal = "bad_url" | "not_https" | "blocked" | "too_large" | "timeout" | "unreachable";

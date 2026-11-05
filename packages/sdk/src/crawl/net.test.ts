@@ -2,7 +2,37 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { guardedFetch, guardedRequest, isBlockedTarget, isLoopbackHostname } from "./net.ts";
+import { readFileSync } from "node:fs";
+import { BLOCKED_RANGES, guardedFetch, guardedRequest, isBlockedTarget, isLoopbackHostname } from "./net.ts";
+
+const blockedCases = JSON.parse(readFileSync(new URL("../../../shared/test-fixtures/blocked-target-cases.json", import.meta.url), "utf8")) as {
+  ranges: string[];
+  cases: { address: string; blocked: boolean }[];
+};
+
+test("the blocked ranges are the fixture's, the table Python is held to as well", () => {
+  assert.deepEqual([...BLOCKED_RANGES], blockedCases.ranges);
+});
+
+test("every address in the fixture gets the fixture's answer, whatever its spelling", () => {
+  const wrong = blockedCases.cases.filter((c) => isBlockedTarget(c.address) !== c.blocked).map((c) => `${c.address} → ${!c.blocked}`);
+  assert.deepEqual(wrong, []);
+});
+
+test("an IPv4-mapped loopback in a URL is refused before a socket opens", async () => {
+  // Node rewrites [::ffff:127.0.0.1] to [::ffff:7f00:1]; a text match on the dotted form let it through.
+  const server = createServer((_q, r) => r.end("internal"));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    for (const host of ["[::ffff:127.0.0.1]", "[::ffff:7f00:1]", "[::7f00:1]", "[64:ff9b::7f00:1]"]) {
+      const r = await guardedRequest(`https://${host}:${port}/`, { timeoutMs: 2_000 });
+      assert.equal(r.ok ? "reached" : r.refusal, "blocked", host);
+    }
+  } finally {
+    server.close();
+  }
+});
 
 test("isBlockedTarget blocks loopback v4", () => {
   assert.equal(isBlockedTarget("127.0.0.1"), true);
@@ -130,4 +160,9 @@ test("guardedFetch speaks fetch, and a refusal throws the way a network failure 
   } finally {
     await s.close();
   }
+});
+
+test("isLoopbackHostname knows loopback in every spelling and nothing else", () => {
+  for (const h of ["localhost", "127.0.0.1", "127.9.9.9", "::1", "[::1]", "0:0:0:0:0:0:0:1", "::ffff:7f00:1"]) assert.equal(isLoopbackHostname(h), true, h);
+  for (const h of ["10.0.0.1", "::2", "example.com", "localhost.example.com", "128.0.0.1"]) assert.equal(isLoopbackHostname(h), false, h);
 });
