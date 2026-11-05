@@ -332,3 +332,49 @@ def test_a_loopback_gate_named_at_runtime_is_never_reached() -> None:
     local = Connect("Local walk", gate="http://127.0.0.1:8402")
     assert local._transport_for("http://127.0.0.1:8402")._allow_private is True  # type: ignore[attr-defined]
     assert local._transport_for("http://127.0.0.1:9999")._allow_private is False  # type: ignore[attr-defined]
+
+
+def test_slow_headers_hit_the_same_deadline_as_a_slow_body() -> None:
+    import socket as s
+    import threading
+    import time
+
+    srv = s.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen()
+
+    def drip_headers() -> None:
+        conn, _ = srv.accept()
+        conn.recv(1024)
+        try:
+            for ch in b"HTTP/1.1 200 OK\r\nX-Slow: " + b"x" * 100:
+                conn.send(bytes([ch]))
+                time.sleep(0.05)
+        except OSError:
+            pass
+        conn.close()
+
+    threading.Thread(target=drip_headers, daemon=True).start()
+    started = time.monotonic()
+    res = GuardedTransport(allow_private=True).request(
+        "GET", f"http://127.0.0.1:{srv.getsockname()[1]}/", headers={}, body=None, timeout=0.4
+    )
+    assert res is None and time.monotonic() - started < 1.0
+    srv.close()
+
+
+def test_lookups_past_the_cap_are_refused_at_once_not_queued(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import time
+
+    import naulon.transport as tr
+
+    monkeypatch.setattr(tr, "_lookups", threading.BoundedSemaphore(2))
+    release = threading.Event()
+    for _ in range(2):
+        threading.Thread(target=tr._resolve_within, args=(lambda: (release.wait(), None)[1], 5.0), daemon=True).start()
+    time.sleep(0.05)
+    started = time.monotonic()
+    assert tr._resolve_within(lambda: ["1.1.1.1"], 5.0) is None
+    assert time.monotonic() - started < 0.1, "refused, not queued behind the stalled ones"
+    release.set()

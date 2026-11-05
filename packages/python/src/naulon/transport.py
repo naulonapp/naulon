@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import concurrent.futures
 import http.client
 import socket
 import ssl
@@ -113,44 +112,80 @@ class Breaker:
                 self._opened_at = self._clock()
 
 
-def _connect_any(addresses: list[str], port: int, timeout: float | None) -> socket.socket:
-    """The first of the approved addresses that accepts, in resolver order. A name with an IPv6
-    address that does not route still connects over IPv4, as an unguarded client would."""
+def _connect_any(addresses: list[str], port: int, deadline: float) -> socket.socket:
+    """The first of the approved addresses that accepts, in resolver order, all of them sharing one
+    budget. A name with an IPv6 address that does not route still connects over IPv4, as an
+    unguarded client would."""
     last: OSError | None = None
     for address in addresses:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
         try:
-            return socket.create_connection((address, port), timeout)
+            return socket.create_connection((address, port), left)
         except OSError as err:
             last = err
-    raise last or OSError("no address to connect to")
+    raise last or OSError("no address to connect to before the deadline")
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    # The TCP socket, kept apart from `sock`: http.client clears `sock` when a response with no
+    # length takes the connection over, and the watchdog must still be able to stop it.
+    raw: socket.socket | None = None
+
     """Connects only to addresses chosen in advance, while TLS still checks the certificate against
     the hostname. The addresses are the ones the guard approved, so nothing can resolve the name
     again to somewhere private between the check and the connect."""
 
-    def __init__(self, host: str, port: int, addresses: list[str], timeout: float, context: ssl.SSLContext) -> None:
-        super().__init__(host, port, timeout=timeout, context=context)
+    def __init__(self, host: str, port: int, addresses: list[str], deadline: float, context: ssl.SSLContext) -> None:
+        super().__init__(host, port, timeout=max(deadline - time.monotonic(), 0.001), context=context)
         self._addresses = addresses
+        self._deadline = deadline
         self._ctx = context
 
     def connect(self) -> None:
-        sock = _connect_any(self._addresses, self.port, self.timeout)
+        sock = _connect_any(self._addresses, self.port, self._deadline)
+        self.raw = sock
         self.sock = self._ctx.wrap_socket(sock, server_hostname=self.host)
 
 
 class _PinnedHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, host: str, port: int, addresses: list[str], timeout: float) -> None:
-        super().__init__(host, port, timeout=timeout)
+    raw: socket.socket | None = None
+
+    def __init__(self, host: str, port: int, addresses: list[str], deadline: float) -> None:
+        super().__init__(host, port, timeout=max(deadline - time.monotonic(), 0.001))
         self._addresses = addresses
+        self._deadline = deadline
 
     def connect(self) -> None:
-        self.sock = _connect_any(self._addresses, self.port, self.timeout)
+        self.sock = self.raw = _connect_any(self._addresses, self.port, self._deadline)
 
 
-# Name lookups run here so they can be given a deadline: `getaddrinfo` itself cannot be.
-_RESOLVER = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="naulon-dns")
+# `getaddrinfo` cannot be given a deadline, so each lookup runs on a thread of its own that the caller
+# stops waiting for. Its own thread, not a shared pool: a few stalled names must never queue every
+# other site's lookup behind them. At most this many may be outstanding; past that a lookup is
+# refused at once rather than started, so stalled names cannot pile up threads either.
+MAX_LOOKUPS = 32
+_lookups = threading.BoundedSemaphore(MAX_LOOKUPS)
+
+
+def _resolve_within(resolve: Callable[[], list[str] | None], timeout: float) -> list[str] | None:
+    if not _lookups.acquire(blocking=False):
+        return None
+    result: list[list[str] | None] = [None]
+    done = threading.Event()
+
+    def run() -> None:
+        try:
+            result[0] = resolve()
+        except Exception:
+            result[0] = None
+        finally:
+            done.set()
+            _lookups.release()
+
+    threading.Thread(target=run, name="naulon-dns", daemon=True).start()
+    return result[0] if done.wait(timeout) else None
 
 
 class GuardedTransport:
@@ -158,9 +193,10 @@ class GuardedTransport:
     to loopback when `allow_private`), every address the name resolves to must be public, the socket
     connects to the address that was checked, no redirect is followed, and the body is capped.
 
-    `timeout` is one deadline for the whole exchange, lookup through the last byte. A per-read
-    timeout alone would let a server that drips a byte at a time hold a worker for as long as it
-    likes."""
+    `timeout` is one deadline for the whole exchange, lookup through the last byte. A watchdog
+    closes the connection when it passes, whatever the request is blocked in (connect, TLS, the
+    status line, a header, the body), so a server that drips a byte at a time cannot hold a worker
+    past it."""
 
     def __init__(self, allow_private: bool = False) -> None:
         self._allow_private = allow_private
@@ -194,35 +230,36 @@ class GuardedTransport:
             return None
         deadline = time.monotonic() + timeout
         port = u.port or (443 if u.scheme == "https" else 80)
-        try:
-            addresses = _RESOLVER.submit(self._addresses, host, port).result(timeout=timeout)
-        except Exception:
+        addresses = _resolve_within(lambda: self._addresses(host, port), timeout)
+        if addresses is None or deadline - time.monotonic() <= 0:
             return None
-        left = deadline - time.monotonic()
-        if addresses is None or left <= 0:
-            return None
-        conn: http.client.HTTPConnection
+        conn: _PinnedHTTPSConnection | _PinnedHTTPConnection
         if u.scheme == "https":
-            conn = _PinnedHTTPSConnection(host, port, addresses, left, self._context)
+            conn = _PinnedHTTPSConnection(host, port, addresses, deadline, self._context)
         else:
-            conn = _PinnedHTTPConnection(host, port, addresses, left)
+            conn = _PinnedHTTPConnection(host, port, addresses, deadline)
         path = (u.path or "/") + (f"?{u.query}" if u.query else "")
+        expired = threading.Event()
+
+        def stop() -> None:
+            expired.set()
+            sock = conn.raw
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        watchdog = threading.Timer(max(deadline - time.monotonic(), 0.0), stop)
+        watchdog.daemon = True
+        watchdog.start()
         try:
             conn.request(method, path, body=body, headers=dict(headers))
             res = conn.getresponse()
-            data = bytearray()
-            while len(data) < MAX_BODY_BYTES:
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    return None
-                if conn.sock is not None:
-                    conn.sock.settimeout(left)
-                chunk = res.read1(min(65_536, MAX_BODY_BYTES - len(data)))
-                if not chunk:
-                    break
-                data += chunk
-            return Response(res.status, _headers(res.headers), bytes(data))
+            data = res.read(MAX_BODY_BYTES)
+            return None if expired.is_set() else Response(res.status, _headers(res.headers), data)
         except Exception:
             return None
         finally:
+            watchdog.cancel()
             conn.close()
