@@ -68,7 +68,7 @@ the gate, and the gate hands it back:
 ```python
 from naulon.connect import Connect
 
-connect = Connect(client_name="My blog")
+connect = Connect(client_name="My blog", site="https://blog.example.com")
 
 # Behind a button in your site's settings:
 started = connect.start("https://blog.example.com")
@@ -137,7 +137,11 @@ If you host sites for other people, install the middleware once and let each sit
 on by connecting their own site. Render `connect.start(site_url, binding=account.id)` as a button
 in their settings, finish with `connect.finish(request.GET, binding=account.id)`, store the
 credential it returns against that site, and tell the middleware how to find it. The binding stops
-someone sending their own connect's return link to another account holder:
+someone sending their own connect's return link to another account holder.
+
+`authorize_site` is required, and only you can answer it. Approving a connect proves the domain to
+the gate, and your runtime answers the gate's challenge for every site it serves, so without it one
+account could start a connect for another account's site and own its domain:
 
 ```python
 # settings.py
@@ -148,7 +152,11 @@ from naulon.connect import Connect
 from naulon.sites import Site
 
 # store: your ConnectStore (put, get, delete) over a table, shared by every worker
-connect = Connect(client_name="Acme Sites", store=site_connect_store)
+connect = Connect(
+    client_name="Acme Sites",
+    store=site_connect_store,
+    authorize_site=lambda site, account_id: SiteRow.objects.filter(origin=site, owner_id=account_id).exists(),
+)
 
 def credential_for(host: str) -> Site | None:
     row = SiteRow.objects.filter(domain=host).only("naulon_credential", "naulon_gate").first()

@@ -200,7 +200,12 @@ A runtime serving many sites must keep these rules:
 9. **Tie each connect to the account that started it.** Pass the account's id when you start it
    and require the same one when the owner comes back. Otherwise someone who started a connect can
    send its return link to another account holder, and you store their site under that account.
-10. **Store the credential as a secret.** Encrypt it at rest, never render it back in full (its
+10. **Start a connect only for a site the account owns on your platform.** A gate may treat an
+   approved connect as proof of the domain, and your runtime answers its challenge for every site
+   you serve, so this check is the only thing between one account and another account's domain.
+   Make it from your own records before you send anyone to the gate (`authorizeSite` in
+   `@naulon/enforce`, `authorize_site` in Python, both required on a platform).
+11. **Store the credential as a secret.** Encrypt it at rest, never render it back in full (its
    last four characters are enough to tell two apart), and never log it.
 
 **Or run the gate for every site yourself.** A gate started with `NAULON_PLATFORM_URL` and

@@ -184,7 +184,8 @@ def connect_main(
         return 2
     store = FileConnectStore(args.dir if args.dir else naulon_dir())
     # The owner reads the app's own name, from the document the app serves; this one is never shown.
-    connect = Connect("naulon connect", gate=args.gate or DEFAULT_GATE, store=store)
+    # The operator runs this on the app's own machine, for the app's own address.
+    connect = Connect("naulon connect", gate=args.gate or DEFAULT_GATE, store=store, site=args.site)
     started = connect.start(args.site)
     if not isinstance(started, Started):
         say_err(f"naulon connect: {started.message}")

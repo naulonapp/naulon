@@ -92,7 +92,7 @@ def token_route(site: str = SITE, credential: str = CREDENTIAL, status: int = 20
 
 
 def connect(t: FakeTransport, **kw: Any) -> Connect:
-    return Connect("My blog", gate=GATE, transport=t, **kw)
+    return Connect("My blog", gate=GATE, transport=t, **{"site": SITE, **kw})
 
 
 def start(c: Connect) -> dict[str, str]:
@@ -457,3 +457,25 @@ def test_wsgi_answers_the_proof_with_no_connect_mounted() -> None:
     status, _, body = run(mw, environ(f"{CHALLENGE_PATH}{connect_proof(ALICE)}"))
     assert status == "200 OK" and body.strip().decode() == connect_proof(ALICE)
     assert run(mw, environ(f"{CHALLENGE_PATH}{connect_proof(BOB)}"))[2] == b"<p>page</p>", "not ours: the app's page"
+
+
+def test_approving_proves_the_domain_so_a_start_needs_its_site_or_the_platforms_word() -> None:
+    t = FakeTransport({"/.well-known/naulon": json_response(200, discovery())})
+    loose = Connect("Anything", gate=GATE, transport=t)
+    refused = loose.start(SITE)
+    assert isinstance(refused, Failed) and "site" in refused.message and "authorize_site" in refused.message
+    assert connect(t).start("https://someone-else.test") == Failed("invalid", f"this runtime connects {SITE} only")
+
+    owners = {"https://a.test": "acct-a", "https://b.test": "acct-b"}
+    asked: list[tuple[str, str]] = []
+
+    def authorize(site: str, binding: str) -> bool:
+        asked.append((binding, site))
+        return owners.get(site) == binding
+
+    platform = Connect("Platform", gate=GATE, transport=t, authorize_site=authorize)
+    assert platform.start("https://b.test") == Failed("invalid", "a platform's start must carry the account's binding")
+    assert platform.start("https://b.test", binding="acct-a") == Failed(
+        "not_yours", "this account may not connect https://b.test"
+    )
+    assert asked == [("acct-a", "https://b.test")]

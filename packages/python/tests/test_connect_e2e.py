@@ -173,6 +173,7 @@ def owner(authorize_url: str, decision: str) -> tuple[int, str, str | None]:
 
 def assert_connects(world: dict[str, str], site: str, connect: Connect, saved: dict[str, Any]) -> None:
     """Start to credential, then prove the gate accepts the credential on this site alone."""
+    connect._site = site  # the address the server was given, known only once it is up
     started = connect.start(site)
     assert isinstance(started, Started), started
     assert started.url.startswith(f"{world['console']}/connect/authorize?"), started.url
@@ -229,6 +230,7 @@ def test_an_asgi_site_connects_and_its_credential_works_there_alone(world: dict[
 def test_deny_brings_the_owner_home_with_nothing_issued(world: dict[str, str]) -> None:
     connect, saved, app = asgi_site(world["gate"])
     site, stop = serve_asgi(app)
+    connect._site = site
     try:
         started = connect.start(site)
         assert isinstance(started, Started)
@@ -246,7 +248,9 @@ def test_a_connect_started_for_someone_elses_site_never_reaches_approve(world: d
     try:
         # A second runtime claims the running site's origin. That site never started this connect, so
         # it does not answer the challenge, and the console refuses before Approve exists.
-        intruder = Connect("Not you", gate=world["gate"], client_id=lambda s: f"{site}/.well-known/naulon-client")
+        intruder = Connect(
+            "Not you", gate=world["gate"], site=site, client_id=lambda s: f"{site}/.well-known/naulon-client"
+        )
         started = intruder.start(site)
         assert isinstance(started, Started)
         status, page = get(started.url, {"sec-fetch-site": "same-origin"})

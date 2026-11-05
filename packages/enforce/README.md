@@ -56,7 +56,7 @@ The decision kernel and the framework-agnostic middleware core:
 - `naulonSites({ credentialFor })`: the same middleware for a platform that hosts many
   sites. `credentialFor(host)` returns what that site's owner connected, or `null`; see
   [Platforms with many sites](#platforms-with-many-sites).
-- `naulonConnect({ clientName })`: the runtime's half of connect: `start` sends the owner to
+- `naulonConnect({ clientName, site })` (or `authorizeSite` on a platform): the runtime's half of connect: `start` sends the owner to
   their gate, `finish` exchanges the code for the site's credential, and `wellKnown` answers
   the two paths the gate checks on the site first.
 - `naulonNode(toll)` serves Express, Connect and `node:http` with any of the above.
@@ -138,7 +138,7 @@ the gate, and the gate hands it back:
 import express from "express";
 import { naulonConnect, naulonNode, naulonSite } from "@naulon/enforce";
 
-const connect = naulonConnect({ clientName: "My blog" });
+const connect = naulonConnect({ clientName: "My blog", site: "https://blog.example.com" });
 const app = express();
 
 // Answers the connect paths, then tolls once NAULON_KEY is set.
@@ -195,12 +195,21 @@ If you host sites for other people, install this once and let each site's owner 
 connecting their own site. Render `connect.start({ site, binding: account.id })` as a button in
 their settings, finish with `connect.finish(query, { binding: account.id })`, store the credential
 it returns against that site, and tell the middleware how to find it. The binding is what stops
-someone sending their own connect's return link to another account holder:
+someone sending their own connect's return link to another account holder.
+
+`authorizeSite` is required, and it is the one check only you can make. Approving a connect proves
+the domain to the gate, and your runtime answers the gate's challenge for every site it serves, so
+without it one account could start a connect for another account's site and own its domain. Answer
+it from your own record of who owns which site:
 
 ```ts
 import { naulonConnect, naulonSites, withNaulon } from "@naulon/enforce";
 
-const connect = naulonConnect({ clientName: "Acme Sites", store: siteConnectStore });
+const connect = naulonConnect({
+  clientName: "Acme Sites",
+  store: siteConnectStore,
+  authorizeSite: async (site, accountId) => (await db.site.findUnique({ where: { origin: site } }))?.ownerId === accountId,
+});
 const toll = naulonSites({
   connect,
   credentialFor: async (host) => {

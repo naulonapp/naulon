@@ -45,6 +45,10 @@ the gate. Nobody copies a key out of a dashboard. Older keys keep working.
 - A connected site keeps answering a proof derived from its credential
   (`connectProof` in `@naulon/shared`, `connect_proof` in Python, the WordPress challenge route), so
   a gate that proved the host by connect can check later that the domain still reaches it.
+- A connect starts only for the runtime's own site (`site`) or for a site the platform says the
+  account owns (`authorizeSite` in `@naulon/enforce`, `authorize_site` in Python). A gate may treat
+  an approved connect as proof of the domain, so without that check one account on a platform could
+  connect another account's site.
 - `@naulon/sdk/net`: one guarded request (https only, no private addresses, no redirects, a body
   cap and a deadline) used for every URL that came from outside the process.
 

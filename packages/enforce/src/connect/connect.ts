@@ -2,7 +2,7 @@
  * The runtime's half of connect: send the site's owner to their gate to approve, prove the site is
  * running this code, and keep the credential that comes back.
  *
- *   const connect = naulonConnect({ clientName: "My blog", store });
+ *   const connect = naulonConnect({ clientName: "My blog", site: "https://blog.example.com", store });
  *   // In the site's settings, a button:
  *   const { url } = await connect.start({ site: "https://blog.example.com" });
  *   // At `${site}${returnPath}`, where the gate sends the owner back:
@@ -149,6 +149,19 @@ export interface NaulonConnectOptions {
    * credential and tells the waiting command how the connect ended.
    */
   onFinish?: (state: string, result: FinishResult) => Promise<void>;
+  /**
+   * The one site this runtime connects. `start` for any other is refused. A site's own app, or
+   * `naulon connect` beside it, sets this.
+   */
+  site?: string;
+  /**
+   * A platform serving many sites: may the account `binding` connect `site`? Approving a connect
+   * proves the domain for the account's naulon site, and this runtime answers the gate's challenge
+   * for every site it serves, so this check is what stops one account connecting another's site.
+   * It is the platform's to make, against its own record of who owns which site. With it set, every
+   * `start` must carry a `binding`.
+   */
+  authorizeSite?: (site: string, binding: string) => boolean | Promise<boolean>;
 }
 
 export type StartResult = { ok: true; url: string } | { ok: false; error: string };
@@ -166,6 +179,7 @@ export interface NaulonConnect {
    * saves the result under the current account would save the sender's site there.
    */
   start(o: { site: string; gate?: string; returnTo?: string; binding?: string }): Promise<StartResult>;
+  // `start` refuses unless the options name the one `site`, or an `authorizeSite` check says yes.
   /** `binding` must be what `start` was given, when it was given one. */
   finish(query: URLSearchParams, o?: { binding?: string }): Promise<FinishResult>;
   /** Answers the two connect paths on the site itself, or null for every other request. */
@@ -233,6 +247,15 @@ export function naulonConnect(opts: NaulonConnectOptions): NaulonConnect {
     async start({ site: rawSite, returnTo, gate: rawGate, binding }) {
       const site = siteOriginOf(rawSite);
       if (!site) return { ok: false, error: `${rawSite} is not a site origin, e.g. https://example.com` };
+      // Approving proves the domain, so who may start a connect for which site is decided here.
+      if (opts.site !== undefined) {
+        if (siteOriginOf(opts.site) !== site) return { ok: false, error: `this runtime connects ${opts.site} only` };
+      } else if (opts.authorizeSite) {
+        if (binding === undefined) return { ok: false, error: "a platform's start must carry the account's binding" };
+        if (!(await opts.authorizeSite(site, binding))) return { ok: false, error: `this account may not connect ${site}` };
+      } else {
+        return { ok: false, error: "naulonConnect needs `site` (one site) or `authorizeSite` (a platform) before it can start a connect" };
+      }
       const gate = originOf(rawGate ?? opts.gate ?? DEFAULT_GATE);
       if (!gate) return { ok: false, error: "the gate must be an https URL" };
       const allowed = redirectsFor(site);

@@ -43,7 +43,7 @@ async function world() {
   });
   const siteSrv = await listen(siteApp);
   const store = memoryConnectStore();
-  connect = naulonConnect({ clientName: "Test blog", gate: gateSrv.origin, store });
+  connect = naulonConnect({ clientName: "Test blog", gate: gateSrv.origin, store, site: siteSrv.origin });
 
   return {
     state,
@@ -129,7 +129,7 @@ test("a connect started for someone else's site never reaches Approve", async ()
   try {
     // A second runtime claims the first site's origin. That site's runtime never started this
     // connect, so it does not answer the challenge, and the console refuses.
-    const intruder = naulonConnect({ clientName: "Not you", gate: w.origins.gate, clientId: () => `${w.origins.site}/.well-known/naulon-client` });
+    const intruder = naulonConnect({ clientName: "Not you", gate: w.origins.gate, site: w.origins.site, clientId: () => `${w.origins.site}/.well-known/naulon-client` });
     const started = (await intruder.start({ site: w.origins.site })) as { url: string };
     const page = await fetch(started.url, { headers: { "sec-fetch-site": "same-origin" } });
     assert.equal(page.status, 409);
@@ -143,10 +143,10 @@ test("a connect started for someone else's site never reaches Approve", async ()
 test("a gate that is not a naulon gate is refused before the owner is sent anywhere", async () => {
   const notGate = await listen(new Hono().get("*", (c) => c.text("hello")));
   try {
-    const c = naulonConnect({ clientName: "Test", gate: notGate.origin });
+    const c = naulonConnect({ clientName: "Test", gate: notGate.origin, site: "https://blog.example.com" });
     const r = await c.start({ site: "https://blog.example.com" });
     assert.deepEqual(r, { ok: false, error: `${notGate.origin} is not a naulon gate` });
-    const plain = await naulonConnect({ clientName: "Test", gate: "http://gate.example.com" }).start({ site: "https://blog.example.com" });
+    const plain = await naulonConnect({ clientName: "Test", gate: "http://gate.example.com", site: "https://blog.example.com" }).start({ site: "https://blog.example.com" });
     assert.deepEqual(plain, { ok: false, error: "the gate must be an https URL" });
   } finally {
     await close(notGate.server);
@@ -159,8 +159,8 @@ test("a gate named at runtime never reaches a private address, only the configur
     // The configured gate is on loopback (a local walk): allowed.
     assert.equal((await w.connect.start({ site: w.origins.site })).ok, true);
     // The same loopback gate, but named by whoever called start() on a platform configured elsewhere.
-    const platform = naulonConnect({ clientName: "Platform", gate: "https://gate.naulon.app" });
-    const r = await platform.start({ site: w.origins.site, gate: w.origins.gate });
+    const platform = naulonConnect({ clientName: "Platform", gate: "https://gate.naulon.app", authorizeSite: () => true });
+    const r = await platform.start({ site: w.origins.site, gate: w.origins.gate, binding: "acct-1" });
     assert.equal(r.ok, false);
     assert.match((r as { error: string }).error, /could not be reached: (http: is refused|blocked target)/);
   } finally {
@@ -311,4 +311,26 @@ test("naulon connect says what is missing rather than guessing", async () => {
   assert.match(errs.join("\n"), /--site is required/);
   assert.equal(await connectMain(["--site", "https://blog.example.com", "--gate", "http://gate.example.com", "--dir", "/tmp/naulon-cli-test-x"], io), 1);
   assert.match(errs.join("\n"), /https/);
+});
+
+test("approving proves the domain, so a connect starts only for the runtime's own site or one the platform vouches for", async () => {
+  // Discovery is never reached when the start is refused: these gates do not exist.
+  const loose = naulonConnect({ clientName: "Anything", gate: "https://gate.example.com" });
+  const r0 = await loose.start({ site: "https://blog.example.com" });
+  assert.equal(r0.ok, false);
+  assert.match((r0 as { error: string }).error, /needs `site` .* or `authorizeSite`/);
+
+  const one = naulonConnect({ clientName: "One blog", gate: "https://gate.example.com", site: "https://blog.example.com" });
+  assert.deepEqual(await one.start({ site: "https://someone-else.example.com" }), { ok: false, error: "this runtime connects https://blog.example.com only" });
+
+  const owners = new Map([["https://a.example.com", "acct-a"], ["https://b.example.com", "acct-b"]]);
+  const asked: string[] = [];
+  const platform = naulonConnect({
+    clientName: "Platform",
+    gate: "https://gate.example.com",
+    authorizeSite: async (site, binding) => (asked.push(`${binding}:${site}`), owners.get(site) === binding),
+  });
+  assert.deepEqual(await platform.start({ site: "https://b.example.com" }), { ok: false, error: "a platform's start must carry the account's binding" });
+  assert.deepEqual(await platform.start({ site: "https://b.example.com", binding: "acct-a" }), { ok: false, error: "this account may not connect https://b.example.com" });
+  assert.deepEqual(asked, ["acct-a:https://b.example.com"], "the platform is asked with the account and the site");
 });

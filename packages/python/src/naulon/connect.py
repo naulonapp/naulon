@@ -5,7 +5,7 @@ itself, the client's metadata and the challenge for this connect, and only a run
 the connect answers them. Approving returns the owner to the site with a code, which this module
 exchanges for the site's credential.
 
-    connect = Connect(client_name="My blog")
+    connect = Connect(client_name="My blog", site="https://blog.example.com")
     # A button in the site's settings:
     started = connect.start("https://blog.example.com")
     # At {site}{return_path}, where the gate sends the owner back:
@@ -306,13 +306,22 @@ class Connect:
         transport: Transport | None = None,
         clock: Callable[[], float] = time.time,
         on_finish: Callable[[str, Connected | Failed], None] | None = None,
+        site: str | None = None,
+        authorize_site: Callable[[str, str], bool] | None = None,
     ) -> None:
         """`on_finish`, when set, makes `answer` finish the owner's return at `{site}{return_path}`
-        too, so an app needs no route of its own; `naulon connect` uses it."""
+        too, so an app needs no route of its own; `naulon connect` uses it.
+
+        `start` needs one of `site` (the one site this runtime connects) or `authorize_site` (a
+        platform's check that the account `binding` may connect `site`). Approving a connect proves
+        the domain, and a platform's runtime answers the gate's challenge for every site it serves, so
+        that check is what stops one account connecting another's site."""
         if not return_path.startswith("/"):
             raise ValueError("return_path must start with /")
         self.return_path = return_path
         self._on_finish = on_finish
+        self._site = site
+        self._authorize_site = authorize_site
         self.client_name = client_name
         self.gate = gate
         self._store = store if store is not None else MemoryConnectStore(clock)
@@ -367,6 +376,17 @@ class Connect:
         origin = site_origin(site)
         if origin is None:
             return Failed("invalid", f"{site} is not a site origin, e.g. https://example.com")
+        # Approving proves the domain, so who may start a connect for which site is decided here.
+        if self._site is not None:
+            if site_origin(self._site) != origin:
+                return Failed("invalid", f"this runtime connects {self._site} only")
+        elif self._authorize_site is not None:
+            if binding is None:
+                return Failed("invalid", "a platform's start must carry the account's binding")
+            if not self._authorize_site(origin, binding):
+                return Failed("not_yours", f"this account may not connect {origin}")
+        else:
+            return Failed("invalid", "Connect needs site (one site) or authorize_site (a platform) before it can start")
         gate_origin = origin_of(gate or self.gate)
         if gate_origin is None:
             return Failed("invalid", "the gate must be an https URL")

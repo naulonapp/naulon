@@ -68,7 +68,8 @@ export async function connectMain(args: string[], io: ConnectMainIo = defaultIo)
   const store = fileConnectStore(dir, io.now);
   // The name the owner reads comes from the app's own client document, which the gate fetches from
   // the site; this one is never shown.
-  const connect = naulonConnect({ clientName: "naulon connect", ...(gate ? { gate } : {}), store, now: io.now });
+  // The operator runs this on the app's own machine, for the app's own address.
+  const connect = naulonConnect({ clientName: "naulon connect", site, ...(gate ? { gate } : {}), store, now: io.now });
   const started = await connect.start({ site });
   if (!started.ok) {
     io.err(`naulon connect: ${started.error}`);
