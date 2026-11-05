@@ -17,7 +17,7 @@
  * Engines are kept for the `maxSites` most recently active sites; a site pushed out is rebuilt on
  * its next request, and its policy is fetched again.
  */
-import { DEFAULT_GATE, originOf } from "@naulon/shared";
+import { CHALLENGE_PATH, connectProof, DEFAULT_GATE, isSiteCredential, originOf } from "@naulon/shared";
 import { guardedFetch } from "@naulon/sdk/net";
 import { naulonConnect, type NaulonConnect } from "../connect/connect.ts";
 import { fileConnectStore, naulonDir, type LocalConnectStore } from "../connect/local.ts";
@@ -57,6 +57,9 @@ interface Resolved {
   gate: string;
   credential: string;
 }
+
+const proofResponse = (proof: string) =>
+  new Response(`${proof}\n`, { status: 200, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
 
 export function naulonSites(opts: NaulonSitesOptions): (req: Request) => Promise<MiddlewareResult> {
   const home = originOf(opts.gate ?? DEFAULT_GATE);
@@ -163,15 +166,24 @@ export function naulonSites(opts: NaulonSitesOptions): (req: Request) => Promise
   };
 
   return async (req: Request): Promise<MiddlewareResult> => {
+    let url: URL;
+    try {
+      url = new URL(req.url);
+    } catch {
+      return PASS;
+    }
+    const host = url.host.toLowerCase();
+    // A gate that proved this host by connect keeps asking for the credential's proof. Asked before
+    // connect's own challenge, which answers 404 for any state it never started.
+    if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith(CHALLENGE_PATH)) {
+      const held = await siteOf(host);
+      if (held && isSiteCredential(held.credential) && url.pathname.slice(CHALLENGE_PATH.length) === connectProof(held.credential)) {
+        return { response: proofResponse(connectProof(held.credential)) };
+      }
+    }
     if (connect) {
       const answered = await connect.handle(req);
       if (answered) return { response: answered };
-    }
-    let host: string;
-    try {
-      host = new URL(req.url).host.toLowerCase();
-    } catch {
-      return PASS;
     }
     const site = await siteOf(host);
     if (site === null) return PASS; // this site has not turned naulon on

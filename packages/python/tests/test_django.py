@@ -209,3 +209,21 @@ def test_an_async_stack_tolls_under_the_site_credential(monkeypatch: pytest.Monk
     req = rf.get("/hello/", HTTP_HOST="blog.test", HTTP_USER_AGENT=AGENT_UA)
     res = asyncio.run(adapter.NaulonMiddleware(view)(req))
     assert res.status_code == 402
+
+
+def test_a_connected_site_answers_its_proof_on_both_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    from naulon.connect import CHALLENGE_PATH, connect_proof
+
+    cred = f"nln_site_{'A' * 43}"
+    monkeypatch.setattr(adapter, "_setup", lambda: (None, tollable, None, SiteCredentials(cred)))
+    mw = adapter.NaulonMiddleware(post_view)
+    res = mw(get(AGENT_UA, f"{CHALLENGE_PATH}{connect_proof(cred)}"))
+    assert res.status_code == 200 and res.content.decode().strip() == connect_proof(cred)
+
+    async def view(request: HttpRequest) -> HttpResponse:
+        return post_view(request)
+
+    res = asyncio.run(adapter.NaulonMiddleware(view)(get(AGENT_UA, f"{CHALLENGE_PATH}{connect_proof(cred)}")))
+    assert res.status_code == 200
+    other = mw(get(AGENT_UA, f"{CHALLENGE_PATH}{'0' * 64}"))
+    assert other.content == b"<p>the article</p>", "not ours: the view answers"

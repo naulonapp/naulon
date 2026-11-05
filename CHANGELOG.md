@@ -42,6 +42,9 @@ the gate. Nobody copies a key out of a dashboard. Older keys keep working.
 - `naulon connect` (`npx naulon connect`, `python -m naulon connect`) connects a site from a
   terminal beside the running app: the app answers the gate and finishes the return itself, keeps
   the credential in `.naulon/`, and tolls without a restart.
+- A connected site keeps answering a proof derived from its credential
+  (`connectProof` in `@naulon/shared`, `connect_proof` in Python, the WordPress challenge route), so
+  a gate that proved the host by connect can check later that the domain still reaches it.
 - `@naulon/sdk/net`: one guarded request (https only, no private addresses, no redirects, a body
   cap and a deadline) used for every URL that came from outside the process.
 

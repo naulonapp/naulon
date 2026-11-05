@@ -20,6 +20,8 @@ from naulon.connect import (
     Failed,
     Started,
     code_challenge,
+    connect_proof,
+    connect_proof_of_digest,
     is_connect_path,
     parse_discovery,
     site_origin,
@@ -36,6 +38,12 @@ SITE = "https://blog.test"
 @pytest.mark.parametrize("case", CASES["pkce"])
 def test_pkce_matches_the_typescript_runner(case: dict[str, str]) -> None:
     assert code_challenge(case["verifier"]) == case["challenge"]
+
+
+@pytest.mark.parametrize("case", CASES["proofs"])
+def test_a_connect_proof_matches_the_typescript_runner(case: dict[str, str]) -> None:
+    assert connect_proof(case["credential"]) == case["proof"]
+    assert connect_proof_of_digest(case["digest"]) == case["proof"]
 
 
 @pytest.mark.parametrize("case", CASES["siteOrigins"])
@@ -424,3 +432,28 @@ def test_one_return_finishes_once_and_an_unreachable_gate_leaves_it_to_retry() -
     assert c.finish(q) == Connected(SITE, GATE, CREDENTIAL), "the pending connect was put back"
     again = c.finish(q)
     assert isinstance(again, Failed) and again.error == "expired", "and taken for good once it finished"
+
+
+ALICE = f"nln_site_{'A' * 43}"
+BOB = f"nln_site_{'B' * 43}"
+
+
+def test_wsgi_keeps_answering_the_connected_credentials_proof_and_nothing_else() -> None:
+    creds = {"blog.test": ALICE, "old.test": "nln_live_operator"}
+    c = connect(FakeTransport({"/.well-known/naulon": json_response(200, discovery())}))
+    mw = NaulonWSGI(page, settings=Settings(gate=GATE, key=None), credential_for=creds.get, connect=c)
+    status, headers, body = run(mw, environ(f"{CHALLENGE_PATH}{connect_proof(ALICE)}"))
+    assert status == "200 OK" and body == f"{connect_proof(ALICE)}\n".encode()
+    assert ("Cache-Control", "no-store") in headers
+    assert run(mw, environ(f"{CHALLENGE_PATH}{connect_proof(BOB)}"))[0] == "404 Not Found", "another site's proof"
+    assert run(mw, environ(f"{CHALLENGE_PATH}{connect_proof(ALICE)}", host="carol.test"))[0] == "404 Not Found"
+    assert (
+        run(mw, environ(f"{CHALLENGE_PATH}{connect_proof('nln_live_operator')}", host="old.test"))[0] == "404 Not Found"
+    ), "an operator key proves no host"
+
+
+def test_wsgi_answers_the_proof_with_no_connect_mounted() -> None:
+    mw = NaulonWSGI(page, settings=Settings(gate=GATE, key=ALICE))
+    status, _, body = run(mw, environ(f"{CHALLENGE_PATH}{connect_proof(ALICE)}"))
+    assert status == "200 OK" and body.strip().decode() == connect_proof(ALICE)
+    assert run(mw, environ(f"{CHALLENGE_PATH}{connect_proof(BOB)}"))[2] == b"<p>page</p>", "not ours: the app's page"

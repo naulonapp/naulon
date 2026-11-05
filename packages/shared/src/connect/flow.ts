@@ -49,6 +49,21 @@ export function credentialDigest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+/**
+ * What a connected site keeps answering at `${CHALLENGE_PATH}${proof}`, as plain text, for as long as
+ * it holds its credential. A gate that proved the host by connect fetches it again later, through the
+ * host's own DNS, so ownership lasts while the domain still reaches a server holding this credential
+ * and ends when the domain moves or the credential goes. It is derived from the credential's digest,
+ * so a gate holding only the digest can compute it, and publishing it reveals nothing about either.
+ */
+export function connectProofOfDigest(digest: string): string {
+  return createHash("sha256").update(`naulon-connect-proof:${digest}`, "utf8").digest("hex");
+}
+
+export function connectProof(credential: string): string {
+  return connectProofOfDigest(credentialDigest(credential));
+}
+
 export function newVerifier(): string {
   return randomBytes(32).toString("base64url");
 }

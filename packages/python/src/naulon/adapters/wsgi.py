@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 from naulon._log import warn_error
-from naulon.connect import Connect
+from naulon.connect import CHALLENGE_PATH, Connect
 from naulon.core import Continue, Keep, Naulon, Respond
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
@@ -105,16 +105,18 @@ class NaulonWSGI:
         self.connect = connect
 
     def __call__(self, environ: dict[str, Any], start_response: StartResponse) -> Iterable[bytes]:
-        if self.connect is not None:
+        path = str(environ.get("SCRIPT_NAME", "")) + str(environ.get("PATH_INFO", ""))
+        if path.startswith(CHALLENGE_PATH) or self.connect is not None:
             # Before the toll, and whether or not anything is tolled yet: a site connecting for the
-            # first time has no credential, and that is exactly when the gate asks.
+            # first time has no credential, and that is exactly when the gate asks. A connected
+            # site's proof comes first, because connect answers 404 for a state it never started.
             try:
                 f = facts_of(environ)
-                answer = (
-                    self.connect.answer(f.scheme, f.host, f.path, f.method, str(environ.get("QUERY_STRING", "")))
-                    if self.connect.handles(f.path)
-                    else None
-                )
+                answer = self.sites.proof(f.host, f.path, f.method)
+                if answer is None and self.connect is not None and self.connect.handles(f.path):
+                    answer = self.connect.answer(
+                        f.scheme, f.host, f.path, f.method, str(environ.get("QUERY_STRING", ""))
+                    )
             except Exception as err:
                 warn_error("wsgi.connect", "naulon: a connect path could not be answered", err)
                 answer = None

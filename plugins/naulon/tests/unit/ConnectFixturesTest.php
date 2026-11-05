@@ -23,6 +23,24 @@ class ConnectFixturesTest extends TestCase {
 		}
 	}
 
+	public function test_connect_proofs_match_the_other_runtimes() {
+		$proofs = self::fixture()['proofs'];
+		$this->assertNotEmpty( $proofs );
+		foreach ( $proofs as $c ) {
+			$this->assertTrue( Naulon_Connect_Protocol::is_site_credential( $c['credential'] ) );
+			$this->assertSame( $c['proof'], Naulon_Connect_Protocol::connect_proof( $c['credential'] ) );
+			$this->assertSame( $c['proof'], Naulon_Connect_Protocol::connect_proof_of_digest( $c['digest'] ) );
+		}
+		$this->assertFalse( Naulon_Connect_Protocol::is_site_credential( 'nln_live_' . str_repeat( 'A', 43 ) ) );
+		$this->assertFalse( Naulon_Connect_Protocol::is_site_credential( 'nln_site_' . str_repeat( 'A', 43 ) . "\n" ) );
+	}
+
+	public function test_a_trailing_newline_is_not_part_of_a_valid_value() {
+		$this->assertSame( 0, preg_match( Naulon_Connect_Protocol::STATE_PATTERN, str_repeat( 'a', 22 ) . "\n" ) );
+		$this->expectException( InvalidArgumentException::class );
+		Naulon_Connect_Protocol::code_challenge( str_repeat( 'a', 43 ) . "\n" );
+	}
+
 	public function test_a_short_verifier_is_refused() {
 		$this->expectException( InvalidArgumentException::class );
 		Naulon_Connect_Protocol::code_challenge( 'short' );

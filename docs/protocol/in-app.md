@@ -155,6 +155,14 @@ for its own site and nothing else, and its owner can revoke it on the gate. Send
 `Authorization: Bearer` on every call above. To disconnect, post `token=<credential>` to
 `revocation_endpoint` (RFC 7009); it answers `200` whether or not the credential existed.
 
+**4. Keep answering the proof.** While you hold a credential, answer
+`GET <site>/.well-known/naulon-challenge/<proof>` with `<proof>` as plain text, where `<proof>` is
+the lowercase hex SHA-256 of `naulon-connect-proof:` followed by the lowercase hex SHA-256 of the
+credential. A gate may prove your host by the connect itself, and it fetches the proof again from
+time to time; when the domain stops reaching a site that holds the credential, or the credential is
+revoked, the host stops being yours on that gate. Answer any other proof with a `404`. The value is
+derived, so publishing it reveals nothing about the credential.
+
 **Older keys keep working.** A self-hosted gate's operator key, `NAULON_ENFORCE_KEY`, acts for every
 site that gate serves, so keep it on servers you run. A platform that publishes a site's
 `enforceKeySha256` on its record gives that site a key acting for itself only. A runtime treats
@@ -213,7 +221,7 @@ A port is done when it passes every case in these files, generated from the gate
 | [identity-cases.json](https://github.com/naulonapp/naulon/blob/main/packages/shared/test-fixtures/identity-cases.json) | Crawler identity: a claimed crawler from the wrong network |
 | [content-type-cases.json](https://github.com/naulonapp/naulon/blob/main/packages/shared/test-fixtures/content-type-cases.json) | The Content-Type to serve `/license.xml` with |
 | [verdict-cases.json](https://github.com/naulonapp/naulon/blob/main/packages/shared/test-fixtures/verdict-cases.json) | The verdict and free-reason vocabularies, and the verdict to read from each body |
-| [connect-cases.json](https://github.com/naulonapp/naulon/blob/main/packages/shared/test-fixtures/connect-cases.json) | Connect's wire rules: discovery, PKCE, and what counts as a site origin |
+| [connect-cases.json](https://github.com/naulonapp/naulon/blob/main/packages/shared/test-fixtures/connect-cases.json) | Connect's wire rules: discovery, PKCE, what counts as a site origin, and the proof a connected site answers |
 
 `npm run contract:fixtures` regenerates them, and the gate's own test suite fails when they are
 stale, so a file you read is always what the gate does.

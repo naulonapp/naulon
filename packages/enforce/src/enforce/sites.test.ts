@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { naulonSite, naulonSites } from "./sites.ts";
 import { naulonConnect } from "../connect/connect.ts";
+import { connectProof } from "@naulon/shared";
 
 const KEYS: Record<string, string> = { "alice.blog.test": "nln_alice", "bob.blog.test": "nln_bob" };
 
@@ -239,6 +240,27 @@ test("the connect paths are answered before the toll, on any site", async () => 
   const toll = naulonSites({ gate: "https://gate.test", credentialFor: () => null, fetchImpl, connect });
   assert.equal(await (await toll(agent("new.blog.test", "/.well-known/naulon-challenge/abc"))).response?.text(), "challenge");
   assert.equal((await toll(agent("new.blog.test"))).response, null);
+  assert.deepEqual(calls, []);
+});
+
+test("a connected site keeps answering its credential's proof, and nothing else does", async () => {
+  const alice = `nln_site_${"A".repeat(43)}`;
+  const bob = `nln_site_${"B".repeat(43)}`;
+  const creds: Record<string, string> = { "alice.blog.test": alice, "bob.blog.test": bob, "old.blog.test": "nln_live_operator" };
+  const { calls, fetchImpl } = fakeGate();
+  // Connect is mounted, and answers 404 for every state it never started: the proof must win first.
+  const toll = naulonSites({ gate: "https://gate.test", credentialFor: (h) => creds[h], fetchImpl, connect: naulonConnect({ clientName: "My blog" }) });
+  const ask = (host: string, proof: string) => toll(new Request(`https://${host}/.well-known/naulon-challenge/${proof}`));
+
+  const own = await ask("alice.blog.test", connectProof(alice));
+  assert.equal(own.response?.status, 200);
+  assert.equal(await own.response?.text(), `${connectProof(alice)}\n`);
+  assert.equal(own.response?.headers.get("cache-control"), "no-store");
+  // Another site's proof on this host, or this site's proof on another host: a missing page.
+  assert.equal((await ask("alice.blog.test", connectProof(bob))).response?.status, 404);
+  assert.equal((await ask("carol.blog.test", connectProof(alice))).response?.status, 404);
+  // An operator key is not a connect credential and proves no host.
+  assert.equal((await ask("old.blog.test", connectProof("nln_live_operator"))).response?.status, 404);
   assert.deepEqual(calls, []);
 });
 

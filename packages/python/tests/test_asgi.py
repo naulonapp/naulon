@@ -84,3 +84,23 @@ def test_a_streaming_response_is_kept() -> None:
 def test_a_404_is_kept() -> None:
     sent = run(NaulonASGI(app_for([b"nope"], 404), naulon=naulon(gate())), scope(AGENT_UA))
     assert sent[0]["status"] == 404 and sent[1]["body"] == b"nope"
+
+
+def test_a_connected_site_answers_its_proof_before_the_app() -> None:
+    from naulon.connect import CHALLENGE_PATH, connect_proof
+    from naulon.settings import Settings
+
+    cred = f"nln_site_{'A' * 43}"
+    mw = NaulonASGI(
+        app_for([b"<p>a</p>"]),
+        settings=Settings(gate="https://gate.test", key=None),
+        credential_for={"blog.test": cred}.get,
+    )
+    sc = scope(AGENT_UA)
+    sc["path"] = f"{CHALLENGE_PATH}{connect_proof(cred)}"
+    sc["raw_path"] = sc["path"].encode()
+    sent = run(mw, sc)
+    assert sent[0]["status"] == 200 and sent[1]["body"] == f"{connect_proof(cred)}\n".encode()
+    sc["path"] = f"{CHALLENGE_PATH}{connect_proof(f'nln_site_{chr(66) * 43}')}"
+    sc["raw_path"] = sc["path"].encode()
+    assert run(mw, sc)[1]["body"] == b"<p>a</p>", "another credential's proof is the app's to answer"

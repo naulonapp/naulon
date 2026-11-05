@@ -333,5 +333,17 @@
       "ok": false,
       "error": "authorization_response_iss_parameter_supported"
     }
+  ],
+  "proofs": [
+    {
+      "credential": "nln_site_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "digest": "be868ff247eb4116328ee4c43283af199fea43c6c0aeae2adf8f31df2d0e07f5",
+      "proof": "36237d6cbfb9a8cff7e7bb42dacf86b9b2e29f6f20139816b9411ed0e2129306"
+    },
+    {
+      "credential": "nln_site_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+      "digest": "bc311bd2e41c440b623c94cbf7f9a8e673ba5a9464e47e2011ddc972831a9924",
+      "proof": "557dc93d8d2e95dc90d44f3baebbe5927dc085cc6efac841c6783541aafd42d2"
+    }
   ]
 }

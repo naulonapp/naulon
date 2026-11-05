@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from naulon._log import warn_error, warn_once
-from naulon.connect import origin_of
+from naulon.connect import CHALLENGE_PATH, WellKnown, origin_of, proof_answer
 from naulon.transport import Breaker, Transport
 
 
@@ -136,6 +136,14 @@ class SiteCredentials:
     def site(self, host: str) -> Site | None:
         hit = self.peek(host)
         return self.lookup(host) if isinstance(hit, _Miss) else hit
+
+    def proof(self, host: str, path: str, method: str) -> WellKnown | None:
+        """The connect proof of the credential this host holds, when `path` asks for it. May call
+        `credential_for`, so an async stack runs it off the loop."""
+        if not path.startswith(CHALLENGE_PATH):
+            return None
+        site = self.site(host)
+        return proof_answer(path, method, site.credential if site is not None else None)
 
 
 class Route(NamedTuple):

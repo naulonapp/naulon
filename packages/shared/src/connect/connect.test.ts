@@ -5,6 +5,8 @@ import { buildDiscovery, originOf, parseDiscovery } from "./discovery.ts";
 import {
   authorizationUrl,
   codeChallengeOf,
+  connectProof,
+  connectProofOfDigest,
   credentialDigest,
   isSiteCredential,
   mintSiteCredential,
@@ -18,6 +20,7 @@ const fixtures = JSON.parse(readFileSync(new URL("../../test-fixtures/connect-ca
   pkce: { verifier: string; challenge: string }[];
   siteOrigins: { input: string; origin: string | null }[];
   discovery: { gate: string; body: unknown; ok: boolean; error?: string }[];
+  proofs: { credential: string; digest: string; proof: string }[];
 };
 
 test("a gate's own document reads back for that gate", () => {
@@ -60,6 +63,17 @@ test("S256 matches RFC 7636 appendix B and the shared fixtures", () => {
   assert.equal(codeChallengeOf("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
   for (const f of fixtures.pkce) assert.equal(codeChallengeOf(f.verifier), f.challenge);
   assert.throws(() => codeChallengeOf("short"));
+});
+
+test("a connect proof is the same from the credential and from the digest a gate keeps", () => {
+  assert.ok(fixtures.proofs.length > 0);
+  for (const f of fixtures.proofs) {
+    assert.equal(credentialDigest(f.credential), f.digest);
+    assert.equal(connectProof(f.credential), f.proof);
+    assert.equal(connectProofOfDigest(f.digest), f.proof);
+    // Never the digest itself: that is what a gate looks a credential up by.
+    assert.notEqual(f.proof, f.digest);
+  }
 });
 
 test("a site is an origin and nothing more", () => {

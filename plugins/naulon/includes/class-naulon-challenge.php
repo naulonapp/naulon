@@ -125,6 +125,16 @@ class Naulon_Challenge {
 		$settings = Naulon_Settings::all();
 		$token    = is_string( $settings['challenge_token'] ) ? $settings['challenge_token'] : '';
 
+		// A site connected to the hosted gate keeps answering its credential's proof: that gate
+		// fetches it again to confirm the domain still reaches this site.
+		$key = Naulon_Settings::api_key();
+		if ( Naulon_Connect_Protocol::is_site_credential( $key ) ) {
+			$proof = Naulon_Connect_Protocol::connect_proof( $key );
+			if ( hash_equals( $proof, $requested ) ) {
+				$token = $proof;
+			}
+		}
+
 		if ( '' === $token || ! hash_equals( $token, $requested ) ) {
 			status_header( 404 );
 			nocache_headers();

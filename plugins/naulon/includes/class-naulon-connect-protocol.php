@@ -16,9 +16,10 @@ class Naulon_Connect_Protocol {
 	const CHALLENGE_PATH  = '/.well-known/naulon-challenge/';
 	const CLIENT_PATH     = '/.well-known/naulon-client';
 	const SITE_SCOPE      = 'site.enforce';
-	const STATE_PATTERN   = '/^[A-Za-z0-9\-_]{22,128}$/';
-	const CREDENTIAL      = '/^nln_site_[0-9A-Za-z]{43}$/';
-	const VERIFIER        = '/^[A-Za-z0-9\-._~]{43,128}$/';
+	// `D`: without it `$` also matches before a final newline, so "x\n" would pass.
+	const STATE_PATTERN   = '/^[A-Za-z0-9\-_]{22,128}$/D';
+	const CREDENTIAL      = '/^nln_site_[0-9A-Za-z]{43}$/D';
+	const VERIFIER        = '/^[A-Za-z0-9\-._~]{43,128}$/D';
 
 	/**
 	 * `localhost`, any of 127.0.0.0/8, or `::1`: a name that can only mean this machine.
@@ -84,6 +85,38 @@ class Naulon_Connect_Protocol {
 			throw new InvalidArgumentException( 'code_verifier must be 43 to 128 unreserved characters' );
 		}
 		return rtrim( strtr( base64_encode( hash( 'sha256', $verifier, true ) ), '+/', '-_' ), '=' ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
+	}
+
+	/**
+	 * Whether a value is a connect credential: `nln_site_` and 43 base62 characters.
+	 *
+	 * @param string $value Anything.
+	 * @return bool
+	 */
+	public static function is_site_credential( $value ) {
+		return is_string( $value ) && 1 === preg_match( self::CREDENTIAL, $value );
+	}
+
+	/**
+	 * What a connected site keeps answering at `/.well-known/naulon-challenge/<proof>`, from the
+	 * credential's digest, which is all a gate keeps. The gate that proved the host by connect fetches
+	 * it again later, so ownership lasts while the domain still reaches a site holding this credential.
+	 *
+	 * @param string $digest Lowercase hex SHA-256 of the credential.
+	 * @return string
+	 */
+	public static function connect_proof_of_digest( $digest ) {
+		return hash( 'sha256', 'naulon-connect-proof:' . $digest );
+	}
+
+	/**
+	 * The proof for a credential.
+	 *
+	 * @param string $credential The site credential.
+	 * @return string
+	 */
+	public static function connect_proof( $credential ) {
+		return self::connect_proof_of_digest( hash( 'sha256', $credential ) );
 	}
 
 	/**

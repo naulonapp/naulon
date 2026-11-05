@@ -109,18 +109,19 @@ def _handles(path: str) -> bool:
 
 def _well_known(request: HttpRequest) -> HttpResponse | None:
     """The answer to a connect path, or None. Runs before the toll and whatever it decides."""
-    _setup()
+    *_, sites = _setup()
     connect: Connect | None = _state.get("connect")
-    if connect is None:
-        return None
     try:
-        answer = connect.answer(
-            request.scheme or "http",
-            request.get_host(),
-            request.path,
-            request.method or "GET",
-            str(request.META.get("QUERY_STRING", "")),
-        )
+        # A connected site's proof first: connect answers 404 for a state it never started.
+        answer = sites.proof(request.get_host(), request.path, request.method or "GET")
+        if answer is None and connect is not None:
+            answer = connect.answer(
+                request.scheme or "http",
+                request.get_host(),
+                request.path,
+                request.method or "GET",
+                str(request.META.get("QUERY_STRING", "")),
+            )
     except Exception as err:
         warn_error("django.connect", "naulon: a connect path could not be answered", err)
         return None

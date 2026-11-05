@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import html
 import json
 import re
@@ -267,6 +268,30 @@ def _text(status: int, body: str) -> WellKnown:
     return WellKnown(
         status, (("Content-Type", "text/plain; charset=utf-8"), ("Cache-Control", "no-store")), body.encode()
     )
+
+
+def connect_proof_of_digest(digest: str) -> str:
+    """What a connected site keeps answering at `CHALLENGE_PATH + proof`, from the credential's
+    digest, which is all a gate keeps. The gate that proved the host by connect fetches it again
+    later, so ownership lasts while the domain still reaches a server holding this credential."""
+    return hashlib.sha256(f"naulon-connect-proof:{digest}".encode()).hexdigest()
+
+
+def connect_proof(credential: str) -> str:
+    return connect_proof_of_digest(hashlib.sha256(credential.encode()).hexdigest())
+
+
+def proof_answer(path: str, method: str, credential: str | None) -> WellKnown | None:
+    """The proof for `credential` when `path` asks for exactly it, else None. Only a connect
+    credential proves a host."""
+    if method not in ("GET", "HEAD") or not path.startswith(CHALLENGE_PATH):
+        return None
+    if not credential or not is_site_credential(credential):
+        return None
+    proof = connect_proof(credential)
+    if not hmac.compare_digest(path[len(CHALLENGE_PATH) :], proof):
+        return None
+    return _text(200, f"{proof}\n")
 
 
 class Connect:

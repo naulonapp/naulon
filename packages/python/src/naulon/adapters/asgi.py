@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
 from naulon._log import warn_error
-from naulon.connect import Connect
+from naulon.connect import CHALLENGE_PATH, Connect, WellKnown
 from naulon.core import Continue, Keep, Naulon, Respond
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
@@ -92,18 +92,22 @@ class NaulonASGI:
         self.tollable = tollable or default_tollable
         self.connect = connect
 
+    def _answer(self, scheme: str, host: str, path: str, method: str, query: str) -> WellKnown | None:
+        # The proof first: connect's own challenge answers 404 for any state it never started.
+        proof = self.sites.proof(host, path, method)
+        if proof is not None or self.connect is None:
+            return proof
+        return self.connect.answer(scheme, host, path, method, query)
+
     async def _well_known(self, scope: Scope) -> Respond | None:
-        if self.connect is None:
-            return None
-        if not self.connect.handles(str(scope.get("path", ""))):
+        path = str(scope.get("path", ""))
+        if not (path.startswith(CHALLENGE_PATH) or (self.connect is not None and self.connect.handles(path))):
             return None  # every other request skips the thread hop
         try:
             f = facts_of(scope)
             query = bytes(scope.get("query_string", b"")).decode("latin-1")
             loop = asyncio.get_running_loop()
-            answer = await loop.run_in_executor(
-                _FINISH_POOL, self.connect.answer, f.scheme, f.host, f.path, f.method, query
-            )
+            answer = await loop.run_in_executor(_FINISH_POOL, self._answer, f.scheme, f.host, f.path, f.method, query)
         except Exception as err:
             warn_error("asgi.connect", "naulon: a connect path could not be answered", err)
             return None
