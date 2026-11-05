@@ -7,10 +7,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { serve, type ServerType } from "@hono/node-server";
 import { Hono } from "hono";
-import { clientResolver, memoryStateStore, type PublisherConfig } from "@naulon/shared";
-import { mountGateConnect } from "../../../tollgate/src/connect/routes.ts";
+import type { PublisherConfig } from "@naulon/shared";
 import { siteCredentialAuth } from "../../../tollgate/src/connect/auth.ts";
-import { mountConnectApprove } from "../../../dashboard/src/connect-approve.ts";
+import { startConnectWorld } from "../../../../conformance/connect-world.ts";
 import { naulonConnect } from "./connect.ts";
 
 async function listen(app: Hono): Promise<{ origin: string; server: ServerType }> {
@@ -21,18 +20,10 @@ async function listen(app: Hono): Promise<{ origin: string; server: ServerType }
 const close = (s: ServerType) => new Promise<void>((r) => s.close(() => r()));
 
 async function world() {
-  const state = memoryStateStore();
-  const consoleApp = new Hono();
-  consoleApp.use("*", async (c, next) => {
-    c.set("naulonPrincipal" as never, { kind: "session", username: "owner", userId: "u1", role: "admin", mustChangePassword: false } as never);
-    await next();
-  });
-  mountConnectApprove(consoleApp, { state, clients: clientResolver({ allowPrivate: true }), allowPrivate: true, gateLabel: "the test gate" });
-  const consoleSrv = await listen(consoleApp);
-
-  const gateApp = new Hono();
-  mountGateConnect(gateApp, { state, authorizeUrl: `${consoleSrv.origin}/connect/authorize`, trustProxy: false, proxyHops: 1 });
-  const gateSrv = await listen(gateApp);
+  const gate = await startConnectWorld();
+  const { state } = gate;
+  const consoleSrv = { origin: gate.origins.console };
+  const gateSrv = { origin: gate.origins.gate };
 
   // The site: the connect client in front, a settings button and the return page behind it.
   let connect!: ReturnType<typeof naulonConnect>;
@@ -57,7 +48,7 @@ async function world() {
     connect,
     saved,
     origins: { console: consoleSrv.origin, gate: gateSrv.origin, site: siteSrv.origin },
-    close: async () => Promise.all([close(consoleSrv.server), close(gateSrv.server), close(siteSrv.server)]),
+    close: async () => Promise.all([gate.close(), close(siteSrv.server)]),
   };
 }
 

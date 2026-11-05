@@ -30,5 +30,5 @@
       "@naulon/wayfarer": ["./packages/wayfarer/src/lib.ts"]
     }
   },
-  "include": ["packages/*/src/**/*"]
+  "include": ["packages/*/src/**/*", "conformance/**/*"]
 }
