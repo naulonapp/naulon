@@ -169,6 +169,26 @@ readers then read free until you connect again.
 To toll through a gate you run, set `NAULON_GATE` to its URL. A gate set up before connect still
 accepts its `NAULON_ENFORCE_KEY` as `NAULON_KEY`.
 
+### From a terminal beside the app
+
+A site with no settings page of its own can connect from the server it runs on. Wire the app once:
+
+```ts
+app.use(naulonNode(naulonSite({ connect: { clientName: "My blog" } })));
+```
+
+then, in the app's directory, with the app running:
+
+```
+npx naulon connect --site https://blog.example.com
+```
+
+The command prints an address to approve at; open it on any device, a phone works over SSH. The
+gate checks the running app before it shows Approve, and the app finishes the return itself and
+keeps the credential in `.naulon/credential` (owner-only files; `NAULON_DIR` moves it). It starts
+tolling without a restart, and `NAULON_KEY`, when set, pins a credential instead. Add `.naulon/` to
+your `.gitignore`: it holds a secret.
+
 ## Platforms with many sites
 
 If you host sites for other people, install this once and let each site's owner turn it on by

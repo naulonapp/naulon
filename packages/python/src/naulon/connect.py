@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import json
 import re
 import secrets
@@ -240,6 +241,28 @@ class WellKnown:
     body: bytes
 
 
+def _return_page(r: Connected | Failed) -> WellKnown:
+    """The page the owner lands on after approving: plain, self-contained, never cached."""
+    if isinstance(r, Connected):
+        site = html.escape(urllib.parse.urlsplit(r.site).netloc)
+        gate = html.escape(urllib.parse.urlsplit(r.gate).netloc)
+        title, body, status = "Connected", f"{site} now tolls through {gate}. You can close this tab.", 200
+    else:
+        title = "Not connected" if r.error == "denied" else "Connect did not finish"
+        body, status = html.escape(r.message), 400
+    page = (
+        f'<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        f'<title>{title}</title><body style="font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem">'
+        f'<h1 style="font-size:1.4rem">{title}</h1><p>{body}</p></body></html>'
+    )
+    headers = (
+        ("Content-Type", "text/html; charset=utf-8"),
+        ("Cache-Control", "no-store"),
+        ("Referrer-Policy", "no-referrer"),
+    )
+    return WellKnown(status, headers, page.encode())
+
+
 def _text(status: int, body: str) -> WellKnown:
     return WellKnown(
         status, (("Content-Type", "text/plain; charset=utf-8"), ("Cache-Control", "no-store")), body.encode()
@@ -257,9 +280,14 @@ class Connect:
         redirect_uris: Callable[[str], list[str]] | None = None,
         transport: Transport | None = None,
         clock: Callable[[], float] = time.time,
+        on_finish: Callable[[str, Connected | Failed], None] | None = None,
     ) -> None:
+        """`on_finish`, when set, makes `answer` finish the owner's return at `{site}{return_path}`
+        too, so an app needs no route of its own; `naulon connect` uses it."""
         if not return_path.startswith("/"):
             raise ValueError("return_path must start with /")
+        self.return_path = return_path
+        self._on_finish = on_finish
         self.client_name = client_name
         self.gate = gate
         self._store = store if store is not None else MemoryConnectStore(clock)
@@ -417,6 +445,20 @@ class Connect:
         if body.get("scope") != SITE_SCOPE or body.get("site") != pending.site:
             return Failed("refused", "the gate returned a credential for something else"), False
         return Connected(pending.site, pending.gate, token), False
+
+    def handles(self, path: str) -> bool:
+        """Whether `answer` could answer this path. Cheap, so a framework skips the rest."""
+        return is_connect_path(path) or (self._on_finish is not None and path == self.return_path)
+
+    def answer(self, scheme: str, host: str, path: str, method: str = "GET", query: str = "") -> WellKnown | None:
+        """`well_known`, and with `on_finish` set, the return page too. None for any other request."""
+        known = self.well_known(scheme, host, path, method)
+        if known is not None or self._on_finish is None or method != "GET" or path != self.return_path:
+            return known
+        q = dict(urllib.parse.parse_qsl(query, keep_blank_values=True))
+        result = self.finish(q)
+        self._on_finish(q.get("state", ""), result)
+        return _return_page(result)
 
     def well_known(self, scheme: str, host: str, path: str, method: str = "GET") -> WellKnown | None:
         """The answer to one of the two connect paths on this site, or None for any other request."""

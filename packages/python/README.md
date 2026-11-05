@@ -90,6 +90,30 @@ a `ConnectStore` backed by its database, because the process the gate asks may n
 started it. Its `take` must be atomic (`DELETE ... RETURNING`) so two workers never exchange one code. The credential acts only for the site it was approved for, and its owner can revoke it
 on the gate's Sites page at any time; your readers then read free until you connect again.
 
+### From a terminal beside the app
+
+A site with no settings page of its own can connect from the server it runs on. Wire the app once:
+
+```python
+from naulon.local import LocalConnect
+
+local = LocalConnect(client_name="My blog")
+app = NaulonWSGI(app, connect=local.connect, credential_for=local.credential_for)
+```
+
+In Django, set `NAULON["CONNECT"]` and `NAULON["CREDENTIAL_FOR"]` to dotted paths of those two
+attributes in a module of your own. Then, in the app's directory, with the app running:
+
+```
+python -m naulon connect --site https://blog.example.com
+```
+
+The command prints an address to approve at; open it on any device, a phone works over SSH. The
+gate checks the running app before it shows Approve, and the app finishes the return itself and
+keeps the credential in `.naulon/credential` (owner-only files; `NAULON_DIR` moves it). It starts
+tolling without a restart, and `NAULON_KEY`, when set, pins a credential instead. Add `.naulon/` to
+your `.gitignore`: it holds a secret.
+
 ## Settings
 
 | Variable | Default | |

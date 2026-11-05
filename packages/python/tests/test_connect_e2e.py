@@ -334,3 +334,69 @@ def test_a_django_asgi_site_connects_and_its_credential_works_there_alone(
         assert_connects(world, site, DJANGO_CONNECT["c"], DJANGO_SAVED)
     finally:
         stop()
+
+
+# ── python -m naulon connect, beside a running WSGI app ───────────────────────────────────────────
+
+
+def test_naulon_connect_beside_a_wsgi_app_finishes_in_the_app_and_tolls(world: dict[str, str], tmp_path: Path) -> None:
+    import os
+    import stat
+
+    from naulon.adapters.wsgi import NaulonWSGI
+    from naulon.local import LocalConnect, connect_main
+
+    local = LocalConnect("My blog", gate=world["gate"], directory=tmp_path, environ={})
+
+    def page(environ: dict[str, Any], start_response: Any) -> list[bytes]:
+        start_response("200 OK", [("Content-Type", "text/plain")])
+        return [b"home"]
+
+    app = NaulonWSGI(
+        page,
+        settings=Settings(gate=world["gate"], key=None),
+        connect=local.connect,
+        credential_for=local.credential_for,
+    )
+    site, stop = serve_wsgi(app)
+    try:
+        lines: list[str] = []
+        seen = threading.Event()
+        url: list[str] = []
+
+        def out(line: str) -> None:
+            lines.append(line)
+            m = re.search(r"https?://\S+connect/authorize\S+", line)
+            if m:
+                url.append(m.group(0))
+                seen.set()
+
+        code: list[int] = []
+        runner = threading.Thread(
+            target=lambda: code.append(
+                connect_main(
+                    ["--site", site, "--gate", world["gate"], "--dir", str(tmp_path), "--timeout", "1"],
+                    out=out,
+                    err=lines.append,
+                )
+            ),
+            daemon=True,
+        )
+        runner.start()
+        assert seen.wait(30), lines
+        status, page_html, home = owner(url[0], "approve")
+        assert status == 200 and "My blog" in page_html, "the owner reads the app's own name"
+        assert home is not None
+        status, body = get(home)
+        assert status == 200 and "Connected" in body
+        runner.join(30)
+        assert code == [0], lines
+
+        cred_file = tmp_path / "credential"
+        credential = cred_file.read_text().strip()
+        assert re.fullmatch(r"nln_site_[0-9A-Za-z]{43}", credential)
+        assert stat.S_IMODE(os.stat(cred_file).st_mode) == 0o600
+        assert local.credential_for("anything") == credential, "the app picks it up with no restart"
+        assert get(f"{world['gate']}/_naulon/enforce-status", {"authorization": f"Bearer {credential}"})[0] == 200
+    finally:
+        stop()

@@ -19,7 +19,8 @@
  */
 import { DEFAULT_GATE, originOf } from "@naulon/shared";
 import { guardedFetch } from "@naulon/sdk/net";
-import type { NaulonConnect } from "../connect/connect.ts";
+import { naulonConnect, type NaulonConnect } from "../connect/connect.ts";
+import { fileConnectStore, naulonDir, type LocalConnectStore } from "../connect/local.ts";
 import { naulonMiddleware, type GateCaches, type MiddlewareResult, type NaulonMiddlewareOptionsBase } from "./middleware.ts";
 import { httpPublisherConfigSource } from "./config-source.ts";
 import { httpQuoteSource } from "./quote-source.ts";
@@ -163,7 +164,7 @@ export function naulonSites(opts: NaulonSitesOptions): (req: Request) => Promise
 
   return async (req: Request): Promise<MiddlewareResult> => {
     if (connect) {
-      const answered = await connect.wellKnown(req);
+      const answered = await connect.handle(req);
       if (answered) return { response: answered };
     }
     let host: string;
@@ -183,9 +184,19 @@ export interface SiteEnv {
   NAULON_GATE?: string;
   NAULON_KEY?: string;
   NAULON_ENABLED?: string;
+  NAULON_DIR?: string;
 }
 
-export interface NaulonSiteOptions extends Omit<NaulonSitesOptions, "credentialFor" | "gate"> {
+/** Connect from a terminal beside the app (`naulon connect`): the app answers the gate and finishes
+ *  the return itself, keeping the credential in `dir` (default `NAULON_DIR`, else `.naulon`). */
+export interface LocalConnectOptions {
+  clientName: string;
+  dir?: string;
+}
+
+export interface NaulonSiteOptions extends Omit<NaulonSitesOptions, "credentialFor" | "gate" | "connect"> {
+  /** A connect client you built, or `{ clientName }` for one that `naulon connect` can drive. */
+  connect?: NaulonConnect | LocalConnectOptions;
   /** The gate this site connected to. Default `NAULON_GATE`, then the hosted naulon gate. */
   gate?: string;
   /** The credential connect returned. Default `NAULON_KEY`. None means nothing is tolled. */
@@ -211,15 +222,35 @@ const offWords = new Set(["0", "false", "no", "off", ""]);
  */
 export function naulonSite(opts: NaulonSiteOptions = {}): (req: Request) => Promise<MiddlewareResult> {
   const env: SiteEnv = opts.env ?? ((globalThis as { process?: { env?: SiteEnv } }).process?.env ?? {});
-  const { credential: given, enabled: givenEnabled, env: _env, gate: givenGate, ...rest } = opts;
+  const { credential: given, enabled: givenEnabled, env: _env, gate: givenGate, connect: connectOpt, ...rest } = opts;
   const enabled = givenEnabled ?? !offWords.has((env.NAULON_ENABLED ?? "on").trim().toLowerCase());
-  const credential = (given === undefined ? env.NAULON_KEY : given)?.trim() || null;
+  const pinned = (given === undefined ? env.NAULON_KEY : given)?.trim() || null;
   const fromEnv = givenGate === undefined && !!env.NAULON_GATE?.trim();
   const gate = givenGate ?? (env.NAULON_GATE?.trim() || DEFAULT_GATE);
+
+  // `{ clientName }` builds the connect `naulon connect` drives: pending connects and the credential
+  // live in a directory the command shares, and this app finishes the return itself.
+  let local: LocalConnectStore | null = null;
+  let connect: NaulonConnect | undefined;
+  if (connectOpt && "handle" in connectOpt) connect = connectOpt;
+  else if (connectOpt) {
+    const store = fileConnectStore(connectOpt.dir ?? naulonDir(env));
+    local = store;
+    connect = naulonConnect({
+      clientName: connectOpt.clientName,
+      gate,
+      store,
+      onFinish: async (state, r) => {
+        if (r.ok) store.writeCredential(r.credential);
+        await store.putResult(state, r.ok ? { ok: true, site: r.site, gate: r.gate } : { ok: false, error: r.error, message: r.message });
+      },
+    });
+  }
+
   // Connect is how a site gets its credential, so its paths are answered whether or not the toll is
   // on: a site with no key yet must still prove itself to its gate.
   const connectOnly = async (req: Request): Promise<MiddlewareResult> => {
-    const answered = rest.connect ? await rest.connect.wellKnown(req) : null;
+    const answered = connect ? await connect.handle(req) : null;
     return answered ? { response: answered } : PASS;
   };
   if (!enabled) return connectOnly;
@@ -229,9 +260,11 @@ export function naulonSite(opts: NaulonSiteOptions = {}): (req: Request) => Prom
     console.error("[naulon] NAULON_GATE must be an https URL, so nothing is tolled.");
     return connectOnly;
   }
-  if (!credential) {
+  if (!pinned && !local) {
     console.error("[naulon] NAULON_KEY is not set, so nothing is tolled. Connect this site (naulonConnect) and set the credential it returns.");
     return connectOnly;
   }
-  return naulonSites({ ...rest, gate, credentialFor: () => credential });
+  // NAULON_KEY pins the credential. Otherwise the one `naulon connect` left is read on the usual
+  // per-host interval, so a site connected while running starts tolling without a restart.
+  return naulonSites({ ...rest, gate, ...(connect ? { connect } : {}), credentialFor: () => pinned ?? local?.readCredential() ?? null });
 }

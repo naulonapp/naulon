@@ -39,6 +39,9 @@ the gate. Nobody copies a key out of a dashboard. Older keys keep working.
   `naulonNode` for Express, Connect and `node:http`.
 - `naulon` for Python: `naulon.connect.Connect`, and `credential_for` returning a credential or a
   `Site` that names its own gate.
+- `naulon connect` (`npx naulon connect`, `python -m naulon connect`) connects a site from a
+  terminal beside the running app: the app answers the gate and finishes the return itself, keeps
+  the credential in `.naulon/`, and tolls without a restart.
 - `@naulon/sdk/net`: one guarded request (https only, no private addresses, no redirects, a body
   cap and a deadline) used for every URL that came from outside the process.
 

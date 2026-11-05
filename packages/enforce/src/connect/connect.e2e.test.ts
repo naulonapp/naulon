@@ -249,3 +249,66 @@ test("a gate that cannot be reached during the exchange leaves the connect to tr
     await w.close();
   }
 });
+
+test("naulon connect, run beside the app: the app answers and finishes, and starts tolling", async () => {
+  const { mkdtempSync, readFileSync, statSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { naulonSite } = await import("../enforce/sites.ts");
+  const { connectMain } = await import("./cli.ts");
+
+  const gate = await startConnectWorld();
+  const dir = mkdtempSync(join(tmpdir(), "naulon-connect-"));
+  // The app, as its developer wires it: naulonSite with a local connect, nothing else.
+  let siteOrigin = "";
+  const toll = naulonSite({ connect: { clientName: "My blog", dir }, env: { NAULON_GATE: gate.origins.gate, NAULON_DIR: dir } });
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    const r = await toll(c.req.raw);
+    return r.response ?? next();
+  });
+  app.get("/", (c) => c.text("home"));
+  const siteSrv = await listen(app);
+  siteOrigin = siteSrv.origin;
+  try {
+    const lines: string[] = [];
+    let sawUrl!: (u: string) => void;
+    const urlSeen = new Promise<string>((r) => (sawUrl = r));
+    const running = connectMain(["--site", siteOrigin, "--gate", gate.origins.gate, "--dir", dir, "--timeout", "1"], {
+      out: (l) => {
+        lines.push(l);
+        const m = /https?:\/\/\S+connect\/authorize\S+/.exec(l);
+        if (m) sawUrl(m[0]);
+      },
+      err: (l) => lines.push(`ERR ${l}`),
+      env: {},
+      sleep: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 50))),
+      now: Date.now,
+    });
+
+    const o = await owner(await urlSeen, "approve");
+    assert.equal(o.page.status, 200, o.html);
+    assert.match(o.html, /My blog/, "the owner reads the app's own name, served by the app");
+    const back = await fetch(o.home!);
+    assert.match(await back.text(), /Connected/);
+    assert.equal(await running, 0, lines.join("\n"));
+
+    const credential = readFileSync(join(dir, "credential"), "utf8").trim();
+    assert.match(credential, /^nln_site_[0-9A-Za-z]{43}$/);
+    assert.equal(statSync(join(dir, "credential")).mode & 0o777, 0o600, "the credential file is the owner's alone");
+    const status = await fetch(`${gate.origins.gate}/_naulon/enforce-status`, { headers: { authorization: `Bearer ${credential}` } });
+    assert.equal(status.status, 200);
+  } finally {
+    await Promise.all([gate.close(), close(siteSrv.server)]);
+  }
+});
+
+test("naulon connect says what is missing rather than guessing", async () => {
+  const { connectMain } = await import("./cli.ts");
+  const errs: string[] = [];
+  const io = { out: () => {}, err: (l: string) => void errs.push(l), env: {}, sleep: async () => {}, now: Date.now };
+  assert.equal(await connectMain([], io), 2);
+  assert.match(errs.join("\n"), /--site is required/);
+  assert.equal(await connectMain(["--site", "https://blog.example.com", "--gate", "http://gate.example.com", "--dir", "/tmp/naulon-cli-test-x"], io), 1);
+  assert.match(errs.join("\n"), /https/);
+});

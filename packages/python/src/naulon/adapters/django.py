@@ -98,6 +98,15 @@ def _nothing(host: str) -> str | Site | None:
     return None
 
 
+def _handles(path: str) -> bool:
+    """Cheap: whether the configured connect could answer this path at all."""
+    if is_connect_path(path):
+        return True
+    _setup()
+    connect: Connect | None = _state.get("connect")
+    return connect is not None and connect.handles(path)
+
+
 def _well_known(request: HttpRequest) -> HttpResponse | None:
     """The answer to a connect path, or None. Runs before the toll and whatever it decides."""
     _setup()
@@ -105,7 +114,13 @@ def _well_known(request: HttpRequest) -> HttpResponse | None:
     if connect is None:
         return None
     try:
-        answer = connect.well_known(request.scheme or "http", request.get_host(), request.path, request.method or "GET")
+        answer = connect.answer(
+            request.scheme or "http",
+            request.get_host(),
+            request.path,
+            request.method or "GET",
+            str(request.META.get("QUERY_STRING", "")),
+        )
     except Exception as err:
         warn_error("django.connect", "naulon: a connect path could not be answered", err)
         return None
@@ -256,7 +271,7 @@ class NaulonMiddleware:
     def __call__(self, request: HttpRequest) -> Any:
         if self._async:
             return self.__acall__(request)
-        answered = _well_known(request) if is_connect_path(request.path) else None
+        answered = _well_known(request) if _handles(request.path) else None
         if answered is not None:
             return answered
         started = _start(request)
@@ -274,7 +289,7 @@ class NaulonMiddleware:
         get_response: Callable[[HttpRequest], Awaitable[HttpResponseBase]] = self.get_response
         # A platform's connect store is its database, so the answer is looked up off the loop, and
         # only for the two paths it could be.
-        if is_connect_path(request.path):
+        if _handles(request.path):
             answered = await sync_to_async(_well_known)(request)
             if answered is not None:
                 return answered

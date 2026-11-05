@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
 from naulon._log import warn_error
-from naulon.connect import Connect, is_connect_path
+from naulon.connect import Connect
 from naulon.core import Continue, Keep, Naulon, Respond
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
@@ -95,13 +95,14 @@ class NaulonASGI:
     async def _well_known(self, scope: Scope) -> Respond | None:
         if self.connect is None:
             return None
-        if not is_connect_path(str(scope.get("path", ""))):
+        if not self.connect.handles(str(scope.get("path", ""))):
             return None  # every other request skips the thread hop
         try:
             f = facts_of(scope)
+            query = bytes(scope.get("query_string", b"")).decode("latin-1")
             loop = asyncio.get_running_loop()
             answer = await loop.run_in_executor(
-                _FINISH_POOL, self.connect.well_known, f.scheme, f.host, f.path, f.method
+                _FINISH_POOL, self.connect.answer, f.scheme, f.host, f.path, f.method, query
             )
         except Exception as err:
             warn_error("asgi.connect", "naulon: a connect path could not be answered", err)

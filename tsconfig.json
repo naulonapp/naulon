@@ -26,6 +26,7 @@
       "@naulon/shared/attribution": ["./packages/shared/src/attribution.ts"],
       "@naulon/enforce": ["./packages/enforce/src/index.ts"],
       "@naulon/enforce/next": ["./packages/enforce/src/enforce/next.ts"],
+      "@naulon/enforce/cli": ["./packages/enforce/src/connect/cli.ts"],
       "@naulon/extract": ["./packages/extract/src/index.ts"],
       "@naulon/wayfarer": ["./packages/wayfarer/src/lib.ts"]
     }

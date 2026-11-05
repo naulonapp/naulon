@@ -234,7 +234,8 @@ test("a gate a writer named is reached only through the guard, and a refusal ser
 
 test("the connect paths are answered before the toll, on any site", async () => {
   const { calls, fetchImpl } = fakeGate();
-  const connect = { wellKnown: async (req: Request) => (new URL(req.url).pathname.startsWith("/.well-known/naulon-") ? new Response("challenge") : null) } as never;
+  const wellKnown = async (req: Request) => (new URL(req.url).pathname.startsWith("/.well-known/naulon-") ? new Response("challenge") : null);
+  const connect = { wellKnown, handle: wellKnown } as never;
   const toll = naulonSites({ gate: "https://gate.test", credentialFor: () => null, fetchImpl, connect });
   assert.equal(await (await toll(agent("new.blog.test", "/.well-known/naulon-challenge/abc"))).response?.text(), "challenge");
   assert.equal((await toll(agent("new.blog.test"))).response, null);

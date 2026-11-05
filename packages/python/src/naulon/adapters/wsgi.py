@@ -110,7 +110,11 @@ class NaulonWSGI:
             # first time has no credential, and that is exactly when the gate asks.
             try:
                 f = facts_of(environ)
-                answer = self.connect.well_known(f.scheme, f.host, f.path, f.method)
+                answer = (
+                    self.connect.answer(f.scheme, f.host, f.path, f.method, str(environ.get("QUERY_STRING", "")))
+                    if self.connect.handles(f.path)
+                    else None
+                )
             except Exception as err:
                 warn_error("wsgi.connect", "naulon: a connect path could not be answered", err)
                 answer = None

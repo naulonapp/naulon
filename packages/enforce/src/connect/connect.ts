@@ -143,6 +143,12 @@ export interface NaulonConnectOptions {
   redirectUris?: (site: string) => string[];
   request?: Requester;
   now?: () => number;
+  /**
+   * When set, `handle` also finishes the owner's return at `${site}${returnPath}` and reports it
+   * here, so an app needs no route of its own. `naulon connect` uses it: the app stores the
+   * credential and tells the waiting command how the connect ended.
+   */
+  onFinish?: (state: string, result: FinishResult) => Promise<void>;
 }
 
 export type StartResult = { ok: true; url: string } | { ok: false; error: string };
@@ -164,6 +170,22 @@ export interface NaulonConnect {
   finish(query: URLSearchParams, o?: { binding?: string }): Promise<FinishResult>;
   /** Answers the two connect paths on the site itself, or null for every other request. */
   wellKnown(req: Request): Promise<Response | null>;
+  /** `wellKnown`, and with `onFinish` set, the return page too. Null for every other request. */
+  handle(req: Request): Promise<Response | null>;
+}
+
+const escapeHtml = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** The page the owner lands on after approving: plain, self-contained, never cached. */
+function returnPage(r: FinishResult): Response {
+  const [title, body] = r.ok
+    ? ["Connected", `${escapeHtml(new URL(r.site).host)} now tolls through ${escapeHtml(new URL(r.gate).host)}. You can close this tab.`]
+    : [r.error === "denied" ? "Not connected" : "Connect did not finish", escapeHtml(r.message)];
+  return new Response(
+    `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>` +
+      `<body style="font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem"><h1 style="font-size:1.4rem">${title}</h1><p>${body}</p></body></html>`,
+    { status: r.ok ? 200 : 400, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } },
+  );
 }
 
 export function naulonConnect(opts: NaulonConnectOptions): NaulonConnect {
@@ -207,7 +229,7 @@ export function naulonConnect(opts: NaulonConnectOptions): NaulonConnect {
     return { ok: true, site: pending.site, gate: pending.gate, credential: body.access_token };
   };
 
-  return {
+  const self: NaulonConnect = {
     async start({ site: rawSite, returnTo, gate: rawGate, binding }) {
       const site = siteOriginOf(rawSite);
       if (!site) return { ok: false, error: `${rawSite} is not a site origin, e.g. https://example.com` };
@@ -275,5 +297,16 @@ export function naulonConnect(opts: NaulonConnectOptions): NaulonConnect {
       }
       return null;
     },
+
+    async handle(req) {
+      const answered = await self.wellKnown(req);
+      if (answered || !opts.onFinish) return answered;
+      const url = new URL(req.url);
+      if (req.method !== "GET" || url.pathname !== returnPath) return null;
+      const result = await self.finish(url.searchParams);
+      await opts.onFinish(url.searchParams.get("state") ?? "", result);
+      return returnPage(result);
+    },
   };
+  return self;
 }
