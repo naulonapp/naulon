@@ -48,17 +48,17 @@ async function settle(): Promise<void> {
   await new Promise((r) => setTimeout(r, 5));
 }
 
-test("a site without a key is never touched: not one call to the gate", async () => {
+test("a site without a credential is never touched: not one call to the gate", async () => {
   const { calls, fetchImpl } = fakeGate();
-  const toll = naulonSites({ gate: "http://gate", keyFor: (h) => KEYS[h], fetchImpl });
+  const toll = naulonSites({ gate: "https://gate.test", credentialFor: (h) => KEYS[h], fetchImpl });
   const out = await toll(agent("carol.blog.test"));
   assert.equal(out.response, null);
   assert.deepEqual(calls, []);
 });
 
-test("each site is tolled under its own key", async () => {
+test("each site is tolled under its own credential", async () => {
   const { calls, fetchImpl } = fakeGate();
-  const toll = naulonSites({ gate: "http://gate", keyFor: (h) => KEYS[h], fetchImpl, crawlerRanges: false });
+  const toll = naulonSites({ gate: "https://gate.test", credentialFor: (h) => KEYS[h], fetchImpl, crawlerRanges: false });
   await toll(agent("alice.blog.test"));
   await toll(agent("bob.blog.test"));
   await settle();
@@ -73,12 +73,12 @@ test("each site is tolled under its own key", async () => {
   assert.ok(calls.every((c) => c.path.endsWith("naulon-jwks.json") || c.key !== null), "every site call carries a key");
 });
 
-test("one host's policy under one key never answers another key", async () => {
+test("one host's policy under one credential never answers another", async () => {
   const { fetchImpl } = fakeGate({
     config: (key) => (key === "nln_alice" ? DOC : { enforcement: { ...DOC.enforcement, articlePrefixes: ["nothing-here"] } }),
   });
   let current = "nln_alice";
-  const toll = naulonSites({ gate: "http://gate", keyFor: () => current, fetchImpl, crawlerRanges: false, keyTtlMs: 0 });
+  const toll = naulonSites({ gate: "https://gate.test", credentialFor: () => current, fetchImpl, crawlerRanges: false, credentialTtlMs: 0 });
   await toll(agent("shared.test"));
   await settle();
   assert.equal((await toll(agent("shared.test"))).response?.status, 402, "alice's policy tolls /essays");
@@ -93,8 +93,8 @@ test("the platform's lookup runs once per host per interval", async () => {
   const asked: string[] = [];
   const { fetchImpl } = fakeGate();
   const toll = naulonSites({
-    gate: "http://gate",
-    keyFor: (h) => {
+    gate: "https://gate.test",
+    credentialFor: (h) => {
       asked.push(h);
       return KEYS[h];
     },
@@ -106,7 +106,7 @@ test("the platform's lookup runs once per host per interval", async () => {
   assert.deepEqual(asked, ["alice.blog.test"]);
   now = 31_000;
   await toll(agent("alice.blog.test"));
-  assert.deepEqual(asked, ["alice.blog.test", "alice.blog.test"], "a changed or revoked key lands within the interval");
+  assert.deepEqual(asked, ["alice.blog.test", "alice.blog.test"], "a changed or revoked credential lands within the interval");
 });
 
 test("a lookup that throws, or answers junk, serves the page", async () => {
@@ -114,14 +114,14 @@ test("a lookup that throws, or answers junk, serves the page", async () => {
   const original = console.error;
   console.error = () => {};
   try {
-    for (const keyFor of [
+    for (const credentialFor of [
       () => {
         throw new Error("database down");
       },
       async () => "   ",
       () => 7 as unknown as string,
     ]) {
-      const toll = naulonSites({ gate: "http://gate", keyFor, fetchImpl });
+      const toll = naulonSites({ gate: "https://gate.test", credentialFor, fetchImpl });
       assert.equal((await toll(agent("alice.blog.test"))).response, null);
     }
   } finally {
@@ -132,16 +132,16 @@ test("a lookup that throws, or answers junk, serves the page", async () => {
 
 test("an async lookup works", async () => {
   const { calls, fetchImpl } = fakeGate();
-  const toll = naulonSites({ gate: "http://gate", keyFor: async (h) => KEYS[h] ?? null, fetchImpl, crawlerRanges: false });
+  const toll = naulonSites({ gate: "https://gate.test", credentialFor: async (h) => KEYS[h] ?? null, fetchImpl, crawlerRanges: false });
   await toll(agent("bob.blog.test"));
   await settle();
   assert.equal((await toll(agent("bob.blog.test"))).response?.status, 402);
   assert.ok(calls.some((c) => c.key === "nln_bob"));
 });
 
-test("a person on a keyed site is untouched", async () => {
+test("a person on a connected site is untouched", async () => {
   const { fetchImpl } = fakeGate();
-  const toll = naulonSites({ gate: "http://gate", keyFor: (h) => KEYS[h], fetchImpl, crawlerRanges: false });
+  const toll = naulonSites({ gate: "https://gate.test", credentialFor: (h) => KEYS[h], fetchImpl, crawlerRanges: false });
   const person = new Request("http://alice.blog.test/essays/x", { headers: { "user-agent": "Mozilla/5.0 (real browser)" } });
   await toll(person);
   await settle();
@@ -150,7 +150,7 @@ test("a person on a keyed site is untouched", async () => {
 
 test("the gate's keys are fetched once for every site", async () => {
   const { calls, fetchImpl } = fakeGate();
-  const toll = naulonSites({ gate: "http://gate", keyFor: (h) => KEYS[h], fetchImpl, crawlerRanges: false });
+  const toll = naulonSites({ gate: "https://gate.test", credentialFor: (h) => KEYS[h], fetchImpl, crawlerRanges: false });
   for (const host of Object.keys(KEYS)) {
     await toll(agent(host));
     await settle();
@@ -162,7 +162,7 @@ test("the gate's keys are fetched once for every site", async () => {
 
 test("engines are kept for the most recently active sites only", async () => {
   const { calls, fetchImpl } = fakeGate();
-  const toll = naulonSites({ gate: "http://gate", keyFor: (h) => `nln_${h}`, fetchImpl, crawlerRanges: false, maxSites: 2 });
+  const toll = naulonSites({ gate: "https://gate.test", credentialFor: (h) => `nln_${h}`, fetchImpl, crawlerRanges: false, maxSites: 2 });
   for (const h of ["a.test", "b.test", "c.test"]) await toll(agent(h));
   await settle();
   const configs = () => calls.filter((c) => c.path === "/_naulon/enforce-config").length;
@@ -170,4 +170,76 @@ test("engines are kept for the most recently active sites only", async () => {
   await toll(agent("a.test")); // pushed out by c.test: rebuilt, so its policy is fetched again
   await settle();
   assert.equal(configs(), before + 1);
+});
+
+/** Two gates behind one fetch, told apart by origin. */
+function twoGates() {
+  const a = fakeGate();
+  const b = fakeGate();
+  const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = new URL(String(input instanceof Request ? input.url : input));
+    return url.origin === "https://own-gate.test" ? b.fetchImpl(input, init) : a.fetchImpl(input, init);
+  }) as typeof fetch;
+  return { platform: a.calls, own: b.calls, fetchImpl };
+}
+
+test("a site connected to its own gate is tolled there, and that gate's keys are its own", async () => {
+  const { platform, own, fetchImpl } = twoGates();
+  const toll = naulonSites({
+    gate: "https://gate.test",
+    credentialFor: (h) => (h === "alice.blog.test" ? { credential: "nln_alice", gate: "https://own-gate.test/" } : KEYS[h]),
+    fetchImpl,
+    crawlerRanges: false,
+  });
+  for (const h of ["alice.blog.test", "bob.blog.test"]) {
+    await toll(agent(h));
+    await settle();
+    assert.equal((await toll(agent(h))).response?.status, 402, h);
+  }
+  assert.ok(own.length > 0 && own.every((c) => c.path.endsWith("naulon-jwks.json") || c.key === "nln_alice"), "alice only on her gate");
+  assert.ok(platform.every((c) => c.key !== "nln_alice"), "alice's credential never reaches the platform's gate");
+  assert.equal(own.filter((c) => c.path.endsWith("naulon-jwks.json")).length, 1);
+  assert.equal(platform.filter((c) => c.path.endsWith("naulon-jwks.json")).length, 1);
+});
+
+test("a site whose saved gate is not https is served untouched", async () => {
+  const { calls, fetchImpl } = fakeGate();
+  const original = console.error;
+  const said: string[] = [];
+  console.error = (m: string) => void said.push(m);
+  try {
+    const toll = naulonSites({ gate: "https://gate.test", credentialFor: () => ({ credential: "nln_x", gate: "http://evil.test" }), fetchImpl });
+    assert.equal((await toll(agent("alice.blog.test"))).response, null);
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(calls, []);
+  assert.match(said[0] ?? "", /is not an https URL; that site is served untouched/);
+});
+
+test("a gate a writer named is reached only through the guard, and a refusal serves the page", async () => {
+  const original = console.error;
+  console.error = () => {};
+  try {
+    // No fetchImpl: the real paths. A private address is refused before any socket opens.
+    const toll = naulonSites({ gate: "https://gate.test", credentialFor: () => ({ credential: "nln_x", gate: "https://10.0.0.1" }), crawlerRanges: false });
+    await toll(agent("alice.blog.test"));
+    await settle();
+    assert.equal((await toll(agent("alice.blog.test"))).response, null);
+  } finally {
+    console.error = original;
+  }
+});
+
+test("the connect paths are answered before the toll, on any site", async () => {
+  const { calls, fetchImpl } = fakeGate();
+  const connect = { wellKnown: async (req: Request) => (new URL(req.url).pathname.startsWith("/.well-known/naulon-") ? new Response("challenge") : null) } as never;
+  const toll = naulonSites({ gate: "https://gate.test", credentialFor: () => null, fetchImpl, connect });
+  assert.equal(await (await toll(agent("new.blog.test", "/.well-known/naulon-challenge/abc"))).response?.text(), "challenge");
+  assert.equal((await toll(agent("new.blog.test"))).response, null);
+  assert.deepEqual(calls, []);
+});
+
+test("a platform gate that is not https is refused at construction", () => {
+  assert.throws(() => naulonSites({ gate: "http://gate.example.com", credentialFor: () => null }), /gate must be an https URL/);
 });

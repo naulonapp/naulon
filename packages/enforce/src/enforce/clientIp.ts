@@ -3,8 +3,9 @@
  *
  * Edge runtimes expose no socket, so the address is whatever the platform's edge writes into a
  * header. Each preset names that platform's header; auto-detection picks a preset from the
- * platform's own env. With nothing detected and nothing configured the answer is null, which
- * leaves every claim `unverified` (free reads unchanged), never a guess from X-Forwarded-For.
+ * platform's own env. With nothing detected and nothing configured, the answer is the socket's
+ * address when the Node adapter supplied one (`naulonNode`), else null, which leaves every claim
+ * `unverified` (free reads unchanged), never a guess from X-Forwarded-For.
  *
  * Headers, as the platforms document them:
  *   - Vercel: https://vercel.com/docs/headers/request-headers (`x-vercel-forwarded-for`, `x-real-ip`)
@@ -35,6 +36,10 @@ function detect(req: Request, env: Record<string, string | undefined>): "vercel"
 const processEnv = (): Record<string, string | undefined> =>
   typeof process !== "undefined" && process.env ? process.env : {};
 
+/** Where the Node adapter puts the socket's address on the `Request` it builds. A symbol, so no
+ *  header a caller sends can set it. */
+export const SOCKET_ADDRESS: unique symbol = Symbol.for("naulon.socketAddress") as never;
+
 export function sdkClientIp(
   req: Request,
   opt: ClientIpOption | undefined,
@@ -50,7 +55,10 @@ export function sdkClientIp(
     return first(name);
   }
   const preset = opt ?? detect(req, env);
-  if (!preset) return null;
+  if (!preset) {
+    const socket = (req as { [SOCKET_ADDRESS]?: unknown })[SOCKET_ADDRESS];
+    return typeof socket === "string" && socket ? socket.replace(/^::ffff:/, "") : null;
+  }
   for (const h of PRESETS[preset]) {
     const v = first(h);
     if (v) return v;

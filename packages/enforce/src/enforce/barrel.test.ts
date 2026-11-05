@@ -26,6 +26,8 @@ import * as observationSink from "./observation-sink.ts";
 import * as quoteSource from "./quote-source.ts";
 import * as clientIp from "./clientIp.ts";
 import * as rangesSource from "./rangesSource.ts";
+import * as connect from "../connect/connect.ts";
+import * as node from "./node.ts";
 import * as sites from "./sites.ts";
 import * as jwksCache from "./jwks-cache.ts";
 
@@ -42,6 +44,7 @@ const CORE = {
   "clientIp.ts": clientIp,
   "rangesSource.ts": rangesSource,
   "sites.ts": sites,
+  "node.ts": node,
   "jwks-cache.ts": jwksCache,
 } as const;
 
@@ -65,4 +68,8 @@ test("no enforce/ module is left out of the reachability check", () => {
   // A new sibling module must be added to CORE above (and to the barrel), or it ships
   // unreachable exactly as observation-sink.ts did.
   assert.deepEqual(modules, Object.keys(CORE).sort());
+});
+
+test("@naulon/enforce re-exports the connect client", () => {
+  assert.deepEqual(Object.keys(connect).filter((name) => !(name in root)), []);
 });
