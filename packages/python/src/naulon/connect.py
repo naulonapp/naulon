@@ -263,10 +263,13 @@ class Connect:
         self._discovered: dict[str, tuple[float, Discovery]] = {}
 
     def _transport_for(self, gate: str) -> Transport:
+        """Loopback is allowed only for the gate the developer configured. A gate that arrives at
+        runtime (a writer's, on a platform) never reaches a private address, or a writer could aim
+        the platform's server at its own internals."""
         if self._transport is not None:
             return self._transport
-        host = urllib.parse.urlsplit(gate).hostname or ""
-        return GuardedTransport(allow_private=is_loopback_hostname(host))
+        local = gate == origin_of(self.gate) and is_loopback_hostname(urllib.parse.urlsplit(gate).hostname or "")
+        return GuardedTransport(allow_private=local)
 
     def discover(self, gate: str) -> Discovery | str:
         origin = origin_of(gate)

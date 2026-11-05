@@ -186,10 +186,13 @@ export function guardedRequest(rawUrl: string, opts: GuardedRequestOptions = {})
       });
       res.on("error", (err) => done({ ok: false, refusal: "unreachable", detail: err.message }));
     });
-    req.setTimeout(timeoutMs, () => {
+    // One deadline for the whole exchange, DNS through the last byte. `req.setTimeout` would only
+    // bound idle gaps, so a server dripping a byte a second could hold the request open for hours.
+    const deadline = setTimeout(() => {
       done({ ok: false, refusal: "timeout", detail: `timeout after ${timeoutMs}ms` });
       req.destroy();
-    });
+    }, timeoutMs);
+    req.on("close", () => clearTimeout(deadline));
     req.on("error", (err) => done({ ok: false, refusal: err.message.startsWith("blocked target") ? "blocked" : "unreachable", detail: err.message }));
     req.end(opts.body);
   });

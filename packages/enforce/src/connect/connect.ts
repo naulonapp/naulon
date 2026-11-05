@@ -82,10 +82,15 @@ export function memoryConnectStore(now: () => number = Date.now): ConnectStore {
 
 type Requester = typeof guardedRequest;
 
+const mayBePrivate = (gate: string, localGate: string | null | undefined): boolean =>
+  !!localGate && gate === localGate && isLoopbackHostname(new URL(gate).hostname);
+
 export type DiscoverResult = { ok: true; doc: NaulonDiscovery } | { ok: false; error: string };
 
-/** One discovery per gate, kept for five minutes. */
-export function discoverer(opts: { request?: Requester; now?: () => number } = {}): (gate: string) => Promise<DiscoverResult> {
+/** One discovery per gate, kept for five minutes. `localGate` is the one gate allowed on loopback:
+ *  the one the developer configured. A gate that arrives at runtime (a writer's, on a platform) never
+ *  reaches a private address, or a writer could aim the platform's server at its own internals. */
+export function discoverer(opts: { request?: Requester; now?: () => number; localGate?: string | null } = {}): (gate: string) => Promise<DiscoverResult> {
   const request = opts.request ?? guardedRequest;
   const now = opts.now ?? Date.now;
   const cache = new Map<string, { at: number; doc: NaulonDiscovery }>();
@@ -94,7 +99,7 @@ export function discoverer(opts: { request?: Requester; now?: () => number } = {
     if (!origin) return { ok: false, error: `${gate} is not an https URL` };
     const hit = cache.get(origin);
     if (hit && now() - hit.at < 300_000) return { ok: true, doc: hit.doc };
-    const res = await request(`${origin}/.well-known/naulon`, { timeoutMs: 5_000, allowPrivate: isLoopbackHostname(new URL(origin).hostname) });
+    const res = await request(`${origin}/.well-known/naulon`, { timeoutMs: 5_000, allowPrivate: mayBePrivate(origin, opts.localGate) });
     if (!res.ok) return { ok: false, error: `${origin} could not be reached: ${res.detail}` };
     if (res.status !== 200) return { ok: false, error: `${origin} is not a naulon gate (it answered ${res.status})` };
     let body: unknown;
@@ -147,7 +152,8 @@ export function naulonConnect(opts: NaulonConnectOptions): NaulonConnect {
   const store = opts.store ?? memoryConnectStore(opts.now);
   const now = opts.now ?? Date.now;
   const request = opts.request ?? guardedRequest;
-  const discover = discoverer({ request, now });
+  const configured = originOf(opts.gate ?? DEFAULT_GATE);
+  const discover = discoverer({ request, now, localGate: configured });
   const clientIdFor = opts.clientId ?? ((site: string) => `${site}${CLIENT_METADATA_PATH}`);
   const returnPath = opts.returnPath ?? "/naulon/connect/return";
   if (!returnPath.startsWith("/")) throw new Error("returnPath must start with /");
@@ -191,7 +197,7 @@ export function naulonConnect(opts: NaulonConnectOptions): NaulonConnect {
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ grant_type: "authorization_code", code, code_verifier: pending.verifier, redirect_uri: pending.redirectUri, client_id: clientIdFor(pending.site) }).toString(),
         timeoutMs: 10_000,
-        allowPrivate: isLoopbackHostname(new URL(pending.gate).hostname),
+        allowPrivate: mayBePrivate(pending.gate, configured),
       });
       if (!res.ok) return { ok: false, error: "refused", message: `the gate could not be reached: ${res.detail}` };
       let body: { access_token?: unknown; scope?: unknown; site?: unknown; error_description?: unknown };

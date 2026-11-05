@@ -294,3 +294,41 @@ def test_the_guarded_transport_reaches_an_allowed_target_and_never_follows_a_red
         assert GuardedTransport().request("GET", f"{base}/", headers={}, body=None, timeout=2.0) is None
     finally:
         server.shutdown()
+
+
+def test_the_guarded_transport_holds_one_deadline_for_the_whole_exchange() -> None:
+    import http.server
+    import threading
+    import time
+
+    class Drip(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.end_headers()
+            for _ in range(50):
+                self.wfile.write(b"x")
+                self.wfile.flush()
+                time.sleep(0.1)
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Drip)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        started = time.monotonic()
+        res = GuardedTransport(allow_private=True).request(
+            "GET", f"http://127.0.0.1:{server.server_address[1]}/", headers={}, body=None, timeout=0.35
+        )
+        assert res is None, "a byte at a time never resets the clock"
+        assert time.monotonic() - started < 1.0
+    finally:
+        server.shutdown()
+
+
+def test_a_loopback_gate_named_at_runtime_is_never_reached() -> None:
+    c = Connect("Platform", gate="https://gate.naulon.app")
+    assert c._transport_for("http://127.0.0.1:6379")._allow_private is False  # type: ignore[attr-defined]
+    local = Connect("Local walk", gate="http://127.0.0.1:8402")
+    assert local._transport_for("http://127.0.0.1:8402")._allow_private is True  # type: ignore[attr-defined]
+    assert local._transport_for("http://127.0.0.1:9999")._allow_private is False  # type: ignore[attr-defined]

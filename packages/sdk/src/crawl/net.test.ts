@@ -68,6 +68,11 @@ async function fixture() {
     if (req.url === "/redirect") return res.writeHead(302, { location: "http://169.254.169.254/" }).end();
     if (req.url === "/big") return res.end("x".repeat(70_000));
     if (req.url === "/slow") return setTimeout(() => res.end("late"), 500);
+    if (req.url === "/drip") {
+      res.writeHead(200);
+      const t = setInterval(() => res.write("x"), 100);
+      return res.on("close", () => clearInterval(t));
+    }
     if (req.url === "/echo") {
       let body = "";
       req.on("data", (c) => (body += c));
@@ -103,6 +108,9 @@ test("guardedRequest: a redirect comes back as its status, a big body is refused
     const cut = await guardedRequest(`${s.url}/big`, { allowPrivate: true, maxBytes: 1000, overflow: "truncate" });
     assert.equal(cut.ok && cut.body.length, 1000);
     assert.equal(refusal(await guardedRequest(`${s.url}/slow`, { allowPrivate: true, timeoutMs: 100 })), "timeout");
+    const started = Date.now();
+    assert.equal(refusal(await guardedRequest(`${s.url}/drip`, { allowPrivate: true, timeoutMs: 350 })), "timeout", "a byte at a time never resets the clock");
+    assert.ok(Date.now() - started < 1_000);
     const posted = await guardedRequest(`${s.url}/echo`, { method: "POST", body: "a=1", allowPrivate: true });
     assert.equal(posted.ok && `${posted.status} ${posted.headers["x-method"]} ${posted.body}`, "201 POST a=1");
   } finally {

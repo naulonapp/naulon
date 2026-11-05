@@ -157,3 +157,18 @@ test("a gate that is not a naulon gate is refused before the owner is sent anywh
     await close(notGate.server);
   }
 });
+
+test("a gate named at runtime never reaches a private address, only the configured one may", async () => {
+  const w = await world();
+  try {
+    // The configured gate is on loopback (a local walk): allowed.
+    assert.equal((await w.connect.start({ site: w.origins.site })).ok, true);
+    // The same loopback gate, but named by whoever called start() on a platform configured elsewhere.
+    const platform = naulonConnect({ clientName: "Platform", gate: "https://gate.naulon.app" });
+    const r = await platform.start({ site: w.origins.site, gate: w.origins.gate });
+    assert.equal(r.ok, false);
+    assert.match((r as { error: string }).error, /could not be reached: (http: is refused|blocked target)/);
+  } finally {
+    await w.close();
+  }
+});

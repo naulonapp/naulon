@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import http.client
 import socket
 import ssl
@@ -148,10 +149,18 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         self.sock = _connect_any(self._addresses, self.port, self.timeout)
 
 
+# Name lookups run here so they can be given a deadline: `getaddrinfo` itself cannot be.
+_RESOLVER = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="naulon-dns")
+
+
 class GuardedTransport:
     """For a URL somebody else chose: a gate a writer typed into a platform. https only (plain http
     to loopback when `allow_private`), every address the name resolves to must be public, the socket
-    connects to the address that was checked, no redirect is followed, and the body is capped."""
+    connects to the address that was checked, no redirect is followed, and the body is capped.
+
+    `timeout` is one deadline for the whole exchange, lookup through the last byte. A per-read
+    timeout alone would let a server that drips a byte at a time hold a worker for as long as it
+    likes."""
 
     def __init__(self, allow_private: bool = False) -> None:
         self._allow_private = allow_private
@@ -183,20 +192,36 @@ class GuardedTransport:
             return None
         if u.scheme != "https" and not (u.scheme == "http" and self._allow_private):
             return None
+        deadline = time.monotonic() + timeout
         port = u.port or (443 if u.scheme == "https" else 80)
-        addresses = self._addresses(host, port)
-        if addresses is None:
+        try:
+            addresses = _RESOLVER.submit(self._addresses, host, port).result(timeout=timeout)
+        except Exception:
+            return None
+        left = deadline - time.monotonic()
+        if addresses is None or left <= 0:
             return None
         conn: http.client.HTTPConnection
         if u.scheme == "https":
-            conn = _PinnedHTTPSConnection(host, port, addresses, timeout, self._context)
+            conn = _PinnedHTTPSConnection(host, port, addresses, left, self._context)
         else:
-            conn = _PinnedHTTPConnection(host, port, addresses, timeout)
+            conn = _PinnedHTTPConnection(host, port, addresses, left)
         path = (u.path or "/") + (f"?{u.query}" if u.query else "")
         try:
             conn.request(method, path, body=body, headers=dict(headers))
             res = conn.getresponse()
-            return Response(res.status, _headers(res.headers), res.read(MAX_BODY_BYTES))
+            data = bytearray()
+            while len(data) < MAX_BODY_BYTES:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return None
+                if conn.sock is not None:
+                    conn.sock.settimeout(left)
+                chunk = res.read1(min(65_536, MAX_BODY_BYTES - len(data)))
+                if not chunk:
+                    break
+                data += chunk
+            return Response(res.status, _headers(res.headers), bytes(data))
         except Exception:
             return None
         finally:
