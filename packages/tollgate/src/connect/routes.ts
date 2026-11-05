@@ -80,7 +80,7 @@ export function mountGateConnect(app: Hono, o: GateConnectOptions): void {
       clientName: r.code.clientName,
       approvedBy: r.code.approvedBy,
     });
-    await recordIssue(o.state, r.codeId, credentialDigest(credential));
+    await recordIssue(o.state, r, credentialDigest(credential));
     const body: SiteTokenResponse = { access_token: credential, token_type: "Bearer", scope: SITE_SCOPE, site: r.code.site };
     return c.json(body, 200, NO_STORE);
   });

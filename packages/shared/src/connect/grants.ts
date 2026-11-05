@@ -91,14 +91,39 @@ export type Redeemed =
   | { ok: true; code: PendingCode; codeId: string }
   | { ok: false; error: RedeemError; reason: string; replayOf?: string };
 
-async function replay(store: GateStateStore, digest: string): Promise<Redeemed> {
-  const issued = await store.get(issuedKey(digest));
-  return { ok: false, error: "invalid_grant", reason: "code already used", ...(issued ? { replayOf: issued } : {}) };
+interface IssueRecord {
+  issueId: string;
+  clientId: string;
+  redirectUri: string;
+  codeChallenge: string;
 }
+
+/**
+ * A second redemption of a spent code. What the first one got is named for revocation only when this
+ * request proves it holds the whole grant: the same client and redirect, and a verifier matching the
+ * code's challenge. A code alone leaks more easily than its verifier (a log, a referrer), and without
+ * this anyone who saw one could revoke a working site's credential by replaying it.
+ */
+async function replay(store: GateStateStore, digest: string, presented: Presented): Promise<Redeemed> {
+  const refused: Redeemed = { ok: false, error: "invalid_grant", reason: "code already used" };
+  const raw = await store.get(issuedKey(digest));
+  if (!raw) return refused;
+  const issued = JSON.parse(raw) as IssueRecord;
+  let challenge: string;
+  try {
+    challenge = codeChallengeOf(presented.codeVerifier);
+  } catch {
+    return refused;
+  }
+  const proven = issued.clientId === presented.clientId && redirectMatches(issued.redirectUri, presented.redirectUri) && challenge === issued.codeChallenge;
+  return proven ? { ...refused, replayOf: issued.issueId } : refused;
+}
+
+type Presented = { code: string; codeVerifier: string; redirectUri: string; clientId: string };
 
 export async function redeemCode(
   store: GateStateStore,
-  presented: { code: string; codeVerifier: string; redirectUri: string; clientId: string },
+  presented: Presented,
   now = Date.now(),
 ): Promise<Redeemed> {
   if (!presented.code.startsWith(CODE_PREFIX)) return { ok: false, error: "invalid_grant", reason: "not a code" };
@@ -106,13 +131,13 @@ export async function redeemCode(
   const raw = await store.get(codeKey(digest));
   if (!raw) {
     // A redeemed code's row is gone and its used-marker stays: that is a replay, not a stranger.
-    if ((await store.get(usedKey(digest))) !== null) return replay(store, digest);
+    if ((await store.get(usedKey(digest))) !== null) return replay(store, digest, presented);
     return { ok: false, error: "invalid_grant", reason: "unknown or used code" };
   }
   // Unique per attempt: racers in the same millisecond must not write identical markers, or every
   // one of them would read its own value back and believe it won.
   const marker = `${now}.${randomBase62(16)}`;
-  if ((await store.createIfAbsent(usedKey(digest), marker)) !== marker) return replay(store, digest);
+  if ((await store.createIfAbsent(usedKey(digest), marker)) !== marker) return replay(store, digest, presented);
   await store.delete(codeKey(digest));
   const code = JSON.parse(raw) as PendingCode;
   if (code.expiresAt <= now) return { ok: false, error: "invalid_grant", reason: "code expired" };
@@ -128,10 +153,11 @@ export async function redeemCode(
   return { ok: true, code, codeId: digest };
 }
 
-/** Remember what a code was exchanged for. The issuer's own id for it: a credential's digest here,
- *  an API key's hash on a gate that mints keys. */
-export async function recordIssue(store: GateStateStore, codeId: string, issueId: string): Promise<void> {
-  await store.put(issuedKey(codeId), issueId);
+/** Remember what a code was exchanged for, with what a replay must present to have it revoked. The
+ *  issuer's own id for it: a credential's digest here, an API key's hash on a gate that mints keys. */
+export async function recordIssue(store: GateStateStore, redeemed: { codeId: string; code: PendingCode }, issueId: string): Promise<void> {
+  const record: IssueRecord = { issueId, clientId: redeemed.code.clientId, redirectUri: redeemed.code.redirectUri, codeChallenge: redeemed.code.codeChallenge };
+  await store.put(issuedKey(redeemed.codeId), JSON.stringify(record));
 }
 
 export async function issueCredential(

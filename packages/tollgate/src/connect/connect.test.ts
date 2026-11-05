@@ -194,3 +194,17 @@ test("a code redeemed twice revokes the credential its first redemption got", as
   assert.equal(second.status, 400);
   assert.equal(await resolveCredential(state, cred), null, "the leaked code's credential is gone");
 });
+
+test("a spent code replayed without its verifier revokes nothing", async () => {
+  const state = memoryStateStore();
+  const app = new Hono();
+  mountGateConnect(app, { state, issuer: "https://gate.example.com", authorizeUrl: "https://c.example.com/connect/authorize" });
+  const verifier = newVerifier();
+  const code = await saveCode(state, { clientId: CLIENT, clientName: "WordPress", redirectUri: REDIRECT, site: SITE, codeChallenge: codeChallengeOf(verifier), approvedBy: "owner" });
+  const exchange = (v: string, client = CLIENT) => app.request(TOKEN_PATH, form({ grant_type: "authorization_code", code, code_verifier: v, redirect_uri: REDIRECT, client_id: client }));
+  const cred = ((await (await exchange(verifier)).json()) as { access_token: string }).access_token;
+  // Someone who saw the code in a log, but never had the verifier or is not the client.
+  assert.equal((await exchange(newVerifier())).status, 400);
+  assert.equal((await exchange(verifier, "https://evil.example.com/.well-known/naulon-client")).status, 400);
+  assert.notEqual(await resolveCredential(state, cred), null, "the working credential stands");
+});
