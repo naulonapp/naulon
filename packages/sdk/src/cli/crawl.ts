@@ -22,6 +22,7 @@ import type { ArticleCredits } from "../contract/credits.ts";
 import { parseEnvFile } from "../doctor/doctor.ts";
 import { runCrawl } from "../crawl/crawl.ts";
 import { makeGuardedFetcher } from "../crawl/fetcher.ts";
+import { isLoopbackHostname } from "../crawl/net.ts";
 import type { CrawlConfig, SourceAdapterId } from "../crawl/types.ts";
 
 const DIM = "\x1b[2m";
@@ -72,8 +73,7 @@ const ADAPTER_IDS: readonly SourceAdapterId[] = ["rss", "sitemap", "wordpress"];
 function isLoopbackOrigin(origin: string): boolean {
   try {
     const u = new URL(origin);
-    const h = u.hostname.replace(/^\[|\]$/g, "");
-    return u.protocol === "http:" && (h === "localhost" || h === "127.0.0.1" || h === "::1");
+    return u.protocol === "http:" && isLoopbackHostname(u.hostname);
   } catch {
     return false;
   }

@@ -26,6 +26,10 @@ import * as observationSink from "./observation-sink.ts";
 import * as quoteSource from "./quote-source.ts";
 import * as clientIp from "./clientIp.ts";
 import * as rangesSource from "./rangesSource.ts";
+import * as connect from "../connect/connect.ts";
+import * as node from "./node.ts";
+import * as sites from "./sites.ts";
+import * as jwksCache from "./jwks-cache.ts";
 
 /** Barrels, and the Next adapter — deliberately NOT in the core barrel, because it imports
  *  `next/server` and would pull the framework into every consumer of the kernel. */
@@ -39,6 +43,9 @@ const CORE = {
   "quote-source.ts": quoteSource,
   "clientIp.ts": clientIp,
   "rangesSource.ts": rangesSource,
+  "sites.ts": sites,
+  "node.ts": node,
+  "jwks-cache.ts": jwksCache,
 } as const;
 
 for (const [file, mod] of Object.entries(CORE)) {
@@ -61,4 +68,8 @@ test("no enforce/ module is left out of the reachability check", () => {
   // A new sibling module must be added to CORE above (and to the barrel), or it ships
   // unreachable exactly as observation-sink.ts did.
   assert.deepEqual(modules, Object.keys(CORE).sort());
+});
+
+test("@naulon/enforce re-exports the connect client", () => {
+  assert.deepEqual(Object.keys(connect).filter((name) => !(name in root)), []);
 });

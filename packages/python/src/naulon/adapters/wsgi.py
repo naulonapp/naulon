@@ -1,4 +1,6 @@
-"""WSGI middleware: `app = NaulonWSGI(app)`.
+"""WSGI middleware: `app = NaulonWSGI(app)`. A platform hosting many sites passes
+`credential_for=lambda host: ...`, returning what that site connected or None (see `naulon.sites`).
+Given `connect=`, it also answers the two connect paths the gate fetches (see `naulon.connect`).
 
 A person's request goes to the app untouched. On an agent's request the status line and headers are
 held until the first body chunk; a response with more than one chunk is streaming and goes out
@@ -7,20 +9,23 @@ untouched, never tolled. The app iterator's `close()` is always called.
 
 from __future__ import annotations
 
+import dataclasses
 import urllib.parse
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 from naulon._log import warn_error
+from naulon.connect import CHALLENGE_PATH, Connect
 from naulon.core import Continue, Keep, Naulon, Respond
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
+from naulon.sites import DEFAULT_TTL_S, CredentialFor, SiteCredentials
 
 StartResponse = Callable[..., Any]
 WSGIApp = Callable[[dict[str, Any], StartResponse], Iterable[bytes]]
 Tollable = Callable[[dict[str, Any], int, list[tuple[str, str]]], bool]
 
-_REASONS = {200: "OK", 402: "Payment Required", 403: "Forbidden", 503: "Service Unavailable"}
+_REASONS = {200: "OK", 402: "Payment Required", 403: "Forbidden", 404: "Not Found", 503: "Service Unavailable"}
 
 
 def default_tollable(environ: dict[str, Any], status: int, headers: list[tuple[str, str]]) -> bool:
@@ -88,18 +93,45 @@ class NaulonWSGI:
         settings: Settings | None = None,
         tollable: Tollable | None = None,
         naulon: Naulon | None = None,
+        credential_for: CredentialFor | None = None,
+        credential_ttl_s: float = DEFAULT_TTL_S,
+        connect: Connect | None = None,
     ) -> None:
         self.app = app
         s = settings or Settings.from_env()
-        self.naulon = naulon or (Naulon(s) if s.active else None)
+        self.sites = SiteCredentials(s.key, credential_for, credential_ttl_s)
+        self.naulon = naulon or (Naulon(s) if s.active and self.sites.any else None)
         self.tollable = tollable or default_tollable
+        self.connect = connect
 
     def __call__(self, environ: dict[str, Any], start_response: StartResponse) -> Iterable[bytes]:
+        path = str(environ.get("SCRIPT_NAME", "")) + str(environ.get("PATH_INFO", ""))
+        if path.startswith(CHALLENGE_PATH) or self.connect is not None:
+            # Before the toll, and whether or not anything is tolled yet: a site connecting for the
+            # first time has no credential, and that is exactly when the gate asks. A connected
+            # site's proof comes first, because connect answers 404 for a state it never started.
+            try:
+                f = facts_of(environ)
+                answer = self.sites.proof(f.host, f.path, f.method)
+                if answer is None and self.connect is not None and self.connect.handles(f.path):
+                    answer = self.connect.answer(
+                        f.scheme, f.host, f.path, f.method, str(environ.get("QUERY_STRING", ""))
+                    )
+            except Exception as err:
+                warn_error("wsgi.connect", "naulon: a connect path could not be answered", err)
+                answer = None
+            if answer is not None:
+                start_response(_status_line(answer.status), list(answer.headers))
+                return [answer.body]
         if self.naulon is None:
             return self.app(environ, start_response)
         naulon = self.naulon
         try:
             facts = facts_of(environ)
+            site = self.sites.site(facts.host)
+            if self.sites.per_site and site is None:
+                return self.app(environ, start_response)  # this site has not turned naulon on
+            facts = dataclasses.replace(facts, site=site)
             decision = naulon.handle(facts)
         except Exception as err:
             warn_error("wsgi.start", "naulon: request passed through after an internal error", err)

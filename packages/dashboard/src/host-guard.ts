@@ -26,10 +26,9 @@
  *               would break every legitimate reverse-proxy deployment.
  *   - public  — wallets are masked and every ops route is unmounted; nothing to steal.
  */
+import { isLoopbackHostname as isLoopbackAddress } from "@naulon/sdk/net";
 import type { AccessMode } from "./access.ts";
 
-/** Loopback authorities, with or without a port. `Host` never carries a scheme. */
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 
 /**
  * Strip the port from a `Host` value, honoring the `[::1]:8403` bracket form.
@@ -53,8 +52,12 @@ function hostnameOf(host: string): string {
  * access policy asks it too, to tell "fronted by a proxy on this box" apart from
  * "reachable by strangers" (see access.ts).
  */
-export const isLoopbackHostname = (host: string): boolean =>
-  LOOPBACK_HOSTNAMES.has(hostnameOf(host));
+export const isLoopbackHostname = (host: string): boolean => {
+  const h = hostnameOf(host);
+  // `0.0.0.0` is a bind address, not a loopback one, but a console bound to it and reached as
+  // `0.0.0.0:8403` was reached from this machine. It counts here and nowhere else.
+  return h === "0.0.0.0" || isLoopbackAddress(h);
+};
 
 /** Parse `DASHBOARD_ALLOWED_HOSTS` — comma-separated, trimmed, lowercased, no blanks. */
 export function parseAllowedHosts(csv: string): string[] {
@@ -79,5 +82,5 @@ export function isAllowedHost(
   if (mode !== "private") return true;
   if (!host) return false; // HTTP/1.1 requires Host; absent means a client we don't serve
   const name = hostnameOf(host);
-  return LOOPBACK_HOSTNAMES.has(name) || allowed.includes(name);
+  return isLoopbackHostname(name) || allowed.includes(name);
 }

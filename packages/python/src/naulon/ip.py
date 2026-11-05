@@ -185,10 +185,34 @@ def in_any(a: Addr, cidrs: Sequence[Cidr]) -> bool:
 
 _RESERVED = compile_prefixes(RESERVED, 0, 0)
 
+# What an outbound fetch refuses: the reserved ranges, plus the IPv6 forms that carry an IPv4 address
+# inside them (IPv4-compatible ::/96, NAT64, 6to4, Teredo). Kept apart from RESERVED because a
+# caller's own address over 6to4 or Teredo is still that caller. The same table as
+# `@naulon/sdk/net` BLOCKED_RANGES; test-fixtures/blocked-target-cases.json holds both to it.
+BLOCKED = (
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+    "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
+    "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+    "::/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32", "2001:db8::/32", "2002::/16",
+    "fc00::/7", "fe80::/10", "ff00::/8",
+)  # fmt: skip
+_BLOCKED = compile_prefixes(BLOCKED, 0, 0)
+
+
+def is_reserved(a: Addr) -> bool:
+    """True for an address no public host has: private, loopback, link-local, documentation, multicast."""
+    return in_any(a, _RESERVED)
+
+
+def is_blocked_target(a: Addr) -> bool:
+    """True for an address an outbound fetch must never reach. `parse` has already unwrapped an
+    IPv4-mapped address, so it is checked as the IPv4 address it is."""
+    return in_any(a, _BLOCKED)
+
 
 def usable(a: Addr, proxy_sets: Iterable[Sequence[Cidr]]) -> bool:
     """True when `a` can be a caller's own public address. A proxy's address is the proxy speaking."""
-    if in_any(a, _RESERVED):
+    if is_reserved(a):
         return False
     return not any(in_any(a, s) for s in proxy_sets)
 

@@ -98,3 +98,8 @@ export * from "./enforce/middleware.ts";
 export * from "./enforce/fetch-handler.ts";
 export * from "./enforce/clientIp.ts";
 export * from "./enforce/rangesSource.ts";
+export * from "./enforce/sites.ts";
+export * from "./enforce/node.ts";
+export * from "./enforce/jwks-cache.ts";
+// Connect: how a site gets its credential from its gate without anyone copying a secret.
+export * from "./connect/connect.ts";

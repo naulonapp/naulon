@@ -15,7 +15,8 @@
  *   export const proxy = createNaulonMiddleware({ …opts }, NextResponse);
  *   export const config = { matcher: ["/essays/:path*"] };
  */
-import { naulonMiddleware, type NaulonMiddlewareOptions } from "./middleware.ts";
+import type { NaulonMiddlewareOptions } from "./middleware.ts";
+import { coreOf, type NaulonCore } from "./fetch-handler.ts";
 
 /** The slice of `NextResponse` this adapter uses (the real class satisfies it). */
 export interface NextResponseLike {
@@ -23,10 +24,10 @@ export interface NextResponseLike {
 }
 
 export function createNaulonMiddleware(
-  opts: NaulonMiddlewareOptions,
+  opts: NaulonMiddlewareOptions | NaulonCore,
   NextResponse: NextResponseLike,
 ): (req: Request) => Promise<Response> {
-  const core = naulonMiddleware(opts);
+  const core = coreOf(opts);
   return async (req: Request): Promise<Response> => {
     const { response, setHeaders } = await core(req);
     if (response) return response; // short-circuit (402 / 403)

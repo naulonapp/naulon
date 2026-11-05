@@ -78,6 +78,7 @@ const DEFAULT_LICENSE_STORE = join(REPO_ROOT, "data/wayfarer-licenses.json");
 const DEFAULT_CREDITS_FIXTURES = join(REPO_ROOT, "examples/meridian/credits.json");
 const DEFAULT_CRAWLER_POLICY = join(REPO_ROOT, "data/crawler-policy.json");
 const DEFAULT_WEBHOOK_DELIVERIES = join(REPO_ROOT, "data/webhook-deliveries.jsonl");
+const DEFAULT_STATE_DIR = join(REPO_ROOT, "data/state");
 
 // Exported so config validation (e.g. the licensing superRefine) is unit-testable
 // without mutating process.env / the getConfig() singleton.
@@ -463,6 +464,21 @@ export const configSchema = z.object({
   // lower-value, and TTL'd, so a deploy may want them in a different place (or off).
   OBSERVATIONS_BACKEND: z.enum(["off", "jsonl", "supabase"]).default("off"),
   SUPABASE_OBSERVATIONS_TABLE: z.string().default("naulon_observations"),
+  // Where the gate keeps its own state: the secrets it generates on first boot, its owner, its
+  // settings and the site credentials it issues. "file" = one private file per key under
+  // NAULON_DATA_DIR (the default; keep that directory on a persistent volume). "supabase" = the
+  // naulon_gate_state table, for several instances. "memory" = nothing survives a restart. Unset
+  // means "supabase" when EVENTS_BACKEND is, else "file". Read before the rest of this config.
+  NAULON_STATE_BACKEND: z.enum(["memory", "file", "supabase"]).optional(),
+  NAULON_DATA_DIR: z.string().default(DEFAULT_STATE_DIR),
+  // The gate's public origin, e.g. https://gate.example.com. It is the issuer in
+  // /.well-known/naulon, so a runtime can tell this gate from any other. Unset, the gate uses
+  // the origin each request arrived on, which is right behind a proxy that sets the Host.
+  NAULON_PUBLIC_URL: z.string().url().optional(),
+  // Where the gate's owner signs in to approve a site connecting: the console's public URL. It is
+  // published as the authorization endpoint in /.well-known/naulon, so it must be reachable from the
+  // owner's browser. The default is the console's own default address, loopback only.
+  NAULON_CONSOLE_URL: z.string().url().default("http://127.0.0.1:8403"),
 
   // ── Citation License Tokens (CLT) ──
   // Signed receipts handed to a paying agent (see docs/citation-license.md).
@@ -630,6 +646,7 @@ export const FILE_PATH_KEYS = [
   "EVENTS_PATH",
   "OBSERVATIONS_PATH",
   "PAYOUTS_PATH",
+  "NAULON_DATA_DIR",
 ] as const satisfies readonly (keyof Config)[];
 
 /**
@@ -661,6 +678,19 @@ export function parseEnv(env: Record<string, string | undefined>, root: string =
     if (typeof value === "string" && !isAbsolute(value)) (cfg as Record<string, unknown>)[key] = resolve(root, value);
   }
   return cfg;
+}
+
+/**
+ * Where the gate's state lives, read straight from an environment. First boot needs it before the
+ * full config can be parsed, because first boot is what supplies the secrets that parse may require.
+ * Resolved exactly as `getConfig` resolves NAULON_DATA_DIR and NAULON_STATE_BACKEND.
+ */
+export function stateLocationOf(env: NodeJS.ProcessEnv): { backend: "memory" | "file" | "supabase"; dir: string } {
+  const raw = env.NAULON_STATE_BACKEND?.trim();
+  const backend = raw === "memory" || raw === "file" || raw === "supabase" ? raw : env.EVENTS_BACKEND?.trim() === "supabase" ? "supabase" : "file";
+  if (raw && raw !== backend) throw new Error(`NAULON_STATE_BACKEND must be memory, file or supabase, got ${JSON.stringify(raw)}`);
+  const dir = env.NAULON_DATA_DIR?.trim() || DEFAULT_STATE_DIR;
+  return { backend, dir: isAbsolute(dir) ? dir : resolve(REPO_ROOT, dir) };
 }
 
 export function getConfig(): Config {

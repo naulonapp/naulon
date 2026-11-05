@@ -14,6 +14,57 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## Unreleased
+
+Connect: a site gets its credential from its gate by asking for it, and its owner approves it on
+the gate. Nobody copies a key out of a dashboard. Older keys keep working.
+
+### Added
+- Every gate serves `/.well-known/naulon`, a discovery document (RFC 8414 shape) naming its
+  enforce API, approval page, token and revocation endpoints. A runtime needs only the gate's URL.
+- Connect, authorization code with PKCE (S256), delivering one `nln_site_` credential that acts
+  for its own site only, never expires and is revoked by its owner. Before the owner sees Approve
+  the gate checks the site serves this connect's challenge, so a connect started for somebody
+  else's site goes nowhere. Wire rules are fixed by `connect-cases.json`, which the TypeScript,
+  Python and PHP runtimes all pass. Protocol: `docs/protocol/in-app.md`.
+- The self-hosted gate generates the secrets it is missing on first boot (`TOLLGATE_SECRET`, the
+  licence key, a testnet relayer key) and keeps them in its state store: files under
+  `NAULON_DATA_DIR`, or the `naulon_gate_state` table with `NAULON_STATE_BACKEND=supabase`
+  (migration `0005_gate_state.sql`). A value in the environment always wins.
+- The console has an approval page and a Sites page: every connected site, the app that asked,
+  who approved it, when it last asked the gate, and a revoke button.
+- `@naulon/enforce`: `naulonConnect` (start, finish, and the two paths the gate checks),
+  `naulonSite()` for one site configured by `NAULON_KEY` and `NAULON_GATE` like the Python package,
+  `naulonSites({ credentialFor })` for a platform, where each site may name its own gate, and
+  `naulonNode` for Express, Connect and `node:http`.
+- `naulon` for Python: `naulon.connect.Connect`, and `credential_for` returning a credential or a
+  `Site` that names its own gate.
+- `naulon connect` (`npx naulon connect`, `python -m naulon connect`) connects a site from a
+  terminal beside the running app: the app answers the gate and finishes the return itself, keeps
+  the credential in `.naulon/`, and tolls without a restart.
+- A connected site keeps answering a proof derived from its credential
+  (`connectProof` in `@naulon/shared`, `connect_proof` in Python, the WordPress challenge route), so
+  a gate that proved the host by connect can check later that the domain still reaches it.
+- A connect starts only for the runtime's own site (`site`) or for a site the platform says the
+  account owns (`authorizeSite` in `@naulon/enforce`, `authorize_site` in Python). A gate may treat
+  an approved connect as proof of the domain, so without that check one account on a platform could
+  connect another account's site.
+- `@naulon/sdk/net`: one guarded request (https only, no private addresses, no redirects, a body
+  cap and a deadline) used for every URL that came from outside the process.
+
+### Changed
+- `@naulon/enforce` and `naulon` default to `https://gate.naulon.app` when no gate is set.
+
+### Fixed
+- The outbound fetch guard (`@naulon/sdk/net`, re-exported by `@naulon/shared`) let through a private
+  IPv4 address written inside an IPv6 literal: `https://[::ffff:127.0.0.1]/` reaches the URL parser as
+  `[::ffff:7f00:1]`, and only the dotted form was checked. It now compares addresses rather than
+  spellings, and also refuses NAT64, 6to4, Teredo, IPv4-compatible, documentation, benchmarking and
+  multicast ranges. The Python package's transport is held to the same table by a shared fixture.
+- Migration `0004_settlement_delivery.sql` failed on a fresh database (it compared a uuid column to
+  a text one), and `supabase db push` stops at the first failure, so no later migration applied
+  either. It now applies, and CI applies every migration to an empty database on each change.
+
 ## python-v0.1.0
 
 The first release of `naulon` on PyPI: tolls AI agents from inside a Python web app, with Django,

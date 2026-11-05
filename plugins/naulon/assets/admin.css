@@ -561,3 +561,52 @@ input.naulon-wallet:invalid {
 		width: 100%;
 	}
 }
+
+/* Connect's secondary paths: a gate you host, and a pasted key. A disclosure, not a second card:
+   most sites never open it. */
+.naulon-more {
+	margin-top: 12px;
+}
+.naulon-more > summary {
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 24px;
+	color: var(--naulon-muted);
+	list-style: none;
+}
+.naulon-more > summary::-webkit-details-marker {
+	display: none;
+}
+.naulon-more > summary::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-right: 1.5px solid currentColor;
+	border-bottom: 1.5px solid currentColor;
+	transform: rotate(-45deg);
+	transition: transform 120ms ease-out;
+}
+.naulon-more[open] > summary::before {
+	transform: rotate(45deg);
+}
+.naulon-more > summary:hover {
+	color: var(--naulon-ink);
+}
+.naulon-more > summary:focus-visible {
+	outline: 2px solid var(--naulon-green);
+	outline-offset: 2px;
+	border-radius: 2px;
+}
+.naulon-more > form,
+.naulon-more > .naulon-more {
+	margin-left: 12px;
+	padding-left: 12px;
+	border-left: 1px solid #dcdcde;
+}
+@media (prefers-reduced-motion: reduce) {
+	.naulon-more > summary::before {
+		transition: none;
+	}
+}

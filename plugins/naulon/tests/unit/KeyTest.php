@@ -48,6 +48,13 @@ class KeyTest extends TestCase {
 		$this->assertStringNotContainsString( 'o5p6', $masked );
 	}
 
+	public function test_a_connected_credential_is_masked_like_a_key() {
+		$cred   = 'nln_site_Abc9' . str_repeat( 'x', 35 ) . 'TAIL';
+		$masked = Naulon_Key::mask( $cred );
+		$this->assertSame( 'nln_site_Abc9…', $masked );
+		$this->assertStringNotContainsString( 'TAIL', $masked );
+	}
+
 	public function test_mask_never_echoes_an_arbitrary_stored_string() {
 		$this->assertSame( 'gate.example.com', Naulon_Key::mask( 'https://gate.example.com/x' ) );
 		$this->assertSame( '', Naulon_Key::mask( 'some-random-junk' ) );

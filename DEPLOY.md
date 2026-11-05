@@ -59,9 +59,11 @@ and `enforce/src/nonce.ts`.
 ## 1. Supabase: create the project and schema
 
 1. Supabase → **New project**. Pick a region near your users. Save the DB password.
-2. Open **SQL Editor**, paste `supabase/migrations/0001_naulon.sql`, run it. You
-   now have `naulon_events`, `naulon_nonces`, and `naulon_revocations` (the last is
-   consulted only when the online license-check tier is on, `LICENSE_ONLINE_CHECK=true`).
+2. Open **SQL Editor** and run every file in `supabase/migrations/`, in order
+   (`0001_naulon.sql` first). Each one is safe to run again. You now have the event log,
+   nonces, revocations (consulted only when `LICENSE_ONLINE_CHECK=true`), settlement
+   delivery state, and `naulon_gate_state`, which holds the gate's own secrets and site
+   credentials when you set `NAULON_STATE_BACKEND=supabase`.
    - Or, with the Supabase CLI from the repo root: `supabase db push`.
 3. **Project Settings → API**, copy two values:
    - **Project URL** → `SUPABASE_URL` (e.g. `https://abcd.supabase.co`)

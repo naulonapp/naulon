@@ -49,7 +49,19 @@ The decision kernel and the framework-agnostic middleware core:
   answers 5xx, or answers 2xx without one, or the gate's keys were never fetched), the page is
   served, logged with `console.error`, and marked `X-Naulon-Verdict: served free (<step>
   unavailable)`. A 4xx is an answer, so it never serves the page.
-- `withNaulon(handler, opts)` wraps a generic `fetch` handler.
+- `naulonSite()`: the middleware for one site, configured like the Python package. It reads
+  `NAULON_KEY` (the credential connect returned) and `NAULON_GATE` (default
+  `https://gate.naulon.app`), and asks the gate for everything else. See
+  [Connect your site](#connect-your-site).
+- `naulonSites({ credentialFor })`: the same middleware for a platform that hosts many
+  sites. `credentialFor(host)` returns what that site's owner connected, or `null`; see
+  [Platforms with many sites](#platforms-with-many-sites).
+- `naulonConnect({ clientName, site })` (or `authorizeSite` on a platform): the runtime's half of connect: `start` sends the owner to
+  their gate, `finish` exchanges the code for the site's credential, and `wellKnown` answers
+  the two paths the gate checks on the site first.
+- `naulonNode(toll)` serves Express, Connect and `node:http` with any of the above.
+- `withNaulon(handler, opts)` wraps a generic `fetch` handler. It and the Next adapter take
+  either options or a built middleware (`naulonMiddleware(...)` or `naulonSites(...)`).
 - `localQuoteSource(fn)` / `httpQuoteSource(url, key)`: pluggable price and payees.
 - `httpPublisherConfigSource(url, key)`: what is tolled and for whom, read from the
   control plane and cached per host. It also carries your `/.well-known/x402` manifest
@@ -116,6 +128,111 @@ and export `middleware`. The adapter itself is identical either way.
 managed control plane, or your own self-hosted `POST /_naulon/verify` +
 `GET /_naulon/quote`. The middleware never holds funds: it forwards the buyer's
 signed payment to `verifyUrl`, which settles buyer → author directly.
+
+## Connect your site
+
+Nobody copies a key out of a dashboard. Your site asks its gate for a credential, you approve it on
+the gate, and the gate hands it back:
+
+```ts
+import express from "express";
+import { naulonConnect, naulonNode, naulonSite } from "@naulon/enforce";
+
+const connect = naulonConnect({ clientName: "My blog", site: "https://blog.example.com" });
+const app = express();
+
+// Answers the connect paths, then tolls once NAULON_KEY is set.
+app.use(naulonNode(naulonSite({ connect })));
+
+// Behind a button in your settings:
+app.post("/admin/naulon/connect", async (_req, res) => {
+  const r = await connect.start({ site: "https://blog.example.com" });
+  r.ok ? res.redirect(303, r.url) : res.status(400).send(r.error);
+});
+
+// Where the gate sends you back:
+app.get("/naulon/connect/return", async (req, res) => {
+  const r = await connect.finish(new URL(req.url, "https://blog.example.com").searchParams);
+  // r.credential is this site's credential: store it as a secret, as NAULON_KEY.
+  res.send(r.ok ? "Connected." : r.message);
+});
+```
+
+Before it shows Approve, the gate fetches `/.well-known/naulon-client` (who is asking) and a
+challenge only the process that started this connect can answer, so the connect paths are answered
+whether or not anything is tolled yet. A pending connect lives 15 minutes in memory; a site served
+by several processes passes a `ConnectStore` backed by its database, whose `take` must be atomic
+(`DELETE ... RETURNING`) so two workers never exchange one code. The credential acts only for
+the site it was approved for. Its owner can revoke it on the gate's Sites page at any time, and your
+readers then read free until you connect again.
+
+To toll through a gate you run, set `NAULON_GATE` to its URL. A gate set up before connect still
+accepts its `NAULON_ENFORCE_KEY` as `NAULON_KEY`.
+
+### From a terminal beside the app
+
+A site with no settings page of its own can connect from the server it runs on. Wire the app once:
+
+```ts
+app.use(naulonNode(naulonSite({ connect: { clientName: "My blog" } })));
+```
+
+then, in the app's directory, with the app running:
+
+```
+npx naulon connect --site https://blog.example.com
+```
+
+The command prints an address to approve at; open it on any device, a phone works over SSH. The
+gate checks the running app before it shows Approve, and the app finishes the return itself and
+keeps the credential in `.naulon/credential` (owner-only files; `NAULON_DIR` moves it). It starts
+tolling without a restart, and `NAULON_KEY`, when set, pins a credential instead. Add `.naulon/` to
+your `.gitignore`: it holds a secret.
+
+## Platforms with many sites
+
+If you host sites for other people, install this once and let each site's owner turn it on by
+connecting their own site. Render `connect.start({ site, binding: account.id })` as a button in
+their settings, finish with `connect.finish(query, { binding: account.id })`, store the credential
+it returns against that site, and tell the middleware how to find it. The binding is what stops
+someone sending their own connect's return link to another account holder.
+
+`authorizeSite` is required, and it is the one check only you can make. Approving a connect proves
+the domain to the gate, and your runtime answers the gate's challenge for every site it serves, so
+without it one account could start a connect for another account's site and own its domain. Answer
+it from your own record of who owns which site:
+
+```ts
+import { naulonConnect, naulonSites, withNaulon } from "@naulon/enforce";
+
+const connect = naulonConnect({
+  clientName: "Acme Sites",
+  store: siteConnectStore,
+  authorizeSite: async (site, accountId) => (await db.site.findUnique({ where: { origin: site } }))?.ownerId === accountId,
+});
+const toll = naulonSites({
+  connect,
+  credentialFor: async (host) => {
+    const site = await db.site.findUnique({ where: { host } });
+    return site?.naulonCredential ? { credential: site.naulonCredential, gate: site.naulonGate ?? undefined } : null;
+  },
+});
+
+export default { fetch: withNaulon(app.fetch, toll) };
+```
+
+`credentialFor` may return a plain string, or `{ credential, gate }` naming the gate the owner
+connected to: a writer who runs their own gate connects to it, and their site is tolled there.
+Requests to a gate other than yours go through a guarded fetch (https only, no private addresses,
+no redirects followed).
+
+A site whose `credentialFor` answers `null` is never touched, and there is no platform-wide
+credential to fall back to. Each site gets its own policy, quotes and reports under its own
+credential; a gate's keys and crawler ranges are fetched once for all the sites on it.
+`credentialFor` is asked about once per host every 30 seconds (`credentialTtlMs`), and engines are
+kept for the 1,000 most recently active sites (`maxSites`). A `credentialFor` that throws serves
+the page. The owner sets price, wallet and mode with their gate; you store only the credential, as
+a secret.
 
 ## Observe mode
 

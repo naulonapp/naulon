@@ -1,0 +1,207 @@
+{
+  "$comment": "Outbound fetch guard: `ranges` is the one table of blocked ranges, and each case is an address with whether a guarded fetch refuses it. @naulon/sdk/net (isBlockedTarget, BLOCKED_RANGES) and naulon.ip (is_blocked_target, BLOCKED) are both held to this file.",
+  "ranges": [
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.168.0.0/16",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+    "::/96",
+    "64:ff9b::/96",
+    "64:ff9b:1::/48",
+    "100::/64",
+    "2001::/32",
+    "2001:db8::/32",
+    "2002::/16",
+    "fc00::/7",
+    "fe80::/10",
+    "ff00::/8"
+  ],
+  "cases": [
+    {
+      "address": "::ffff:7f00:1",
+      "blocked": true
+    },
+    {
+      "address": "::ffff:127.0.0.1",
+      "blocked": true
+    },
+    {
+      "address": "[::ffff:7f00:1]",
+      "blocked": true
+    },
+    {
+      "address": "::ffff:a9fe:a9fe",
+      "blocked": true
+    },
+    {
+      "address": "::7f00:1",
+      "blocked": true
+    },
+    {
+      "address": "64:ff9b::7f00:1",
+      "blocked": true
+    },
+    {
+      "address": "0:0:0:0:0:ffff:a00:5",
+      "blocked": true
+    },
+    {
+      "address": "2002:7f00:1::1",
+      "blocked": true
+    },
+    {
+      "address": "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+      "blocked": true
+    },
+    {
+      "address": "64:ff9b:1::a00:5",
+      "blocked": true
+    },
+    {
+      "address": "127.0.0.1",
+      "blocked": true
+    },
+    {
+      "address": "127.255.255.254",
+      "blocked": true
+    },
+    {
+      "address": "10.0.0.5",
+      "blocked": true
+    },
+    {
+      "address": "172.16.0.1",
+      "blocked": true
+    },
+    {
+      "address": "172.31.255.255",
+      "blocked": true
+    },
+    {
+      "address": "192.168.1.1",
+      "blocked": true
+    },
+    {
+      "address": "169.254.169.254",
+      "blocked": true
+    },
+    {
+      "address": "100.64.0.1",
+      "blocked": true
+    },
+    {
+      "address": "0.0.0.0",
+      "blocked": true
+    },
+    {
+      "address": "192.0.2.10",
+      "blocked": true
+    },
+    {
+      "address": "198.18.0.1",
+      "blocked": true
+    },
+    {
+      "address": "224.0.0.1",
+      "blocked": true
+    },
+    {
+      "address": "255.255.255.255",
+      "blocked": true
+    },
+    {
+      "address": "::1",
+      "blocked": true
+    },
+    {
+      "address": "[::1]",
+      "blocked": true
+    },
+    {
+      "address": "::",
+      "blocked": true
+    },
+    {
+      "address": "fe80::1",
+      "blocked": true
+    },
+    {
+      "address": "fe90::1",
+      "blocked": true
+    },
+    {
+      "address": "febf::1",
+      "blocked": true
+    },
+    {
+      "address": "fc00::1",
+      "blocked": true
+    },
+    {
+      "address": "fd12:3456::1",
+      "blocked": true
+    },
+    {
+      "address": "ff02::1",
+      "blocked": true
+    },
+    {
+      "address": "2001:db8::1",
+      "blocked": true
+    },
+    {
+      "address": "fe80::1%eth0",
+      "blocked": true
+    },
+    {
+      "address": "8.8.8.8",
+      "blocked": false
+    },
+    {
+      "address": "1.1.1.1",
+      "blocked": false
+    },
+    {
+      "address": "172.32.0.1",
+      "blocked": false
+    },
+    {
+      "address": "100.128.0.1",
+      "blocked": false
+    },
+    {
+      "address": "2606:4700:4700::1111",
+      "blocked": false
+    },
+    {
+      "address": "2a00:1450:4001::200e",
+      "blocked": false
+    },
+    {
+      "address": "::ffff:808:808",
+      "blocked": false
+    },
+    {
+      "address": "[2606:4700::1111]",
+      "blocked": false
+    },
+    {
+      "address": "example.com",
+      "blocked": false
+    },
+    {
+      "address": "localhost",
+      "blocked": false
+    }
+  ]
+}

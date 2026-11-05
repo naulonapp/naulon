@@ -1,0 +1,349 @@
+{
+  "pkce": [
+    {
+      "verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      "challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    },
+    {
+      "verifier": "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+      "challenge": "g0tuZ6q412zO9IRkeAUs8HN6MQeXPsGce37J3Rsc8wQ"
+    },
+    {
+      "verifier": "a~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-ea~b.c_d-e",
+      "challenge": "M4_5ksI6MFq356gKse5DycVbMrCq6IZVZ6x5i3ucGgM"
+    }
+  ],
+  "siteOrigins": [
+    {
+      "input": "https://Blog.Example.com",
+      "origin": "https://blog.example.com"
+    },
+    {
+      "input": "https://blog.example.com/",
+      "origin": "https://blog.example.com"
+    },
+    {
+      "input": "https://blog.example.com:8443",
+      "origin": "https://blog.example.com:8443"
+    },
+    {
+      "input": "https://blog.example.com:443",
+      "origin": "https://blog.example.com"
+    },
+    {
+      "input": "http://localhost:8000",
+      "origin": "http://localhost:8000"
+    },
+    {
+      "input": "http://blog.example.com",
+      "origin": null
+    },
+    {
+      "input": "https://blog.example.com/posts",
+      "origin": null
+    },
+    {
+      "input": "https://blog.example.com/?a=1",
+      "origin": null
+    },
+    {
+      "input": "https://user@blog.example.com",
+      "origin": null
+    },
+    {
+      "input": "blog.example.com",
+      "origin": null
+    }
+  ],
+  "discovery": [
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://gate.example.com/_naulon",
+        "authorization_endpoint": "https://gate.example.com/connect/authorize",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": true
+    },
+    {
+      "gate": "https://gate.example.com/",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://gate.example.com/_naulon",
+        "authorization_endpoint": "https://gate.example.com/connect/authorize",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": true
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://gate.example.com/_naulon",
+        "authorization_endpoint": "https://gate.example.com/connect/authorize",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": true
+        },
+        "future_field": 1
+      },
+      "ok": true
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://other.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://other.example.com/_naulon",
+        "authorization_endpoint": "https://other.example.com/connect/authorize",
+        "token_endpoint": "https://other.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://other.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://other.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": false,
+      "error": "does not match"
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://other.example.com/_naulon",
+        "authorization_endpoint": "https://gate.example.com/connect/authorize",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": false,
+      "error": "enforce_api"
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://gate.example.com/_naulon",
+        "authorization_endpoint": "https://portal.example.com/connect",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": true
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://gate.example.com/_naulon",
+        "authorization_endpoint": "http://portal.example.com/connect",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": false,
+      "error": "authorization_endpoint"
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/2",
+        "enforce_api": "https://gate.example.com/_naulon",
+        "authorization_endpoint": "https://gate.example.com/connect/authorize",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": false,
+      "error": "protocol"
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://gate.example.com/_naulon",
+        "authorization_endpoint": "https://gate.example.com/connect/authorize",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "plain"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": false,
+      "error": "code_challenge_methods_supported"
+    },
+    {
+      "gate": "http://gate.example.com",
+      "body": {
+        "issuer": "http://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "http://gate.example.com/_naulon",
+        "authorization_endpoint": "http://gate.example.com/connect/authorize",
+        "token_endpoint": "http://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "http://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "http://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": false,
+      "error": "https"
+    },
+    {
+      "gate": "http://127.0.0.1:8402",
+      "body": {
+        "issuer": "http://127.0.0.1:8402",
+        "protocol": "naulon/1",
+        "enforce_api": "http://127.0.0.1:8402/_naulon",
+        "authorization_endpoint": "http://127.0.0.1:8402/connect/authorize",
+        "token_endpoint": "http://127.0.0.1:8402/_naulon/connect/token",
+        "revocation_endpoint": "http://127.0.0.1:8402/_naulon/connect/revoke",
+        "jwks_uri": "http://127.0.0.1:8402/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": true
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": "<html>",
+      "ok": false,
+      "error": "not a naulon discovery document"
+    },
+    {
+      "gate": "https://gate.example.com",
+      "body": {
+        "issuer": "https://gate.example.com",
+        "protocol": "naulon/1",
+        "enforce_api": "https://gate.example.com/_naulon",
+        "authorization_endpoint": "https://gate.example.com/connect/authorize",
+        "token_endpoint": "https://gate.example.com/_naulon/connect/token",
+        "revocation_endpoint": "https://gate.example.com/_naulon/connect/revoke",
+        "jwks_uri": "https://gate.example.com/.well-known/naulon-jwks.json",
+        "challenge_path": "/.well-known/naulon-challenge/",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "client_id_metadata_document_supported": true,
+        "network": {
+          "member": false
+        }
+      },
+      "ok": false,
+      "error": "authorization_response_iss_parameter_supported"
+    }
+  ],
+  "proofs": [
+    {
+      "credential": "nln_site_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "digest": "be868ff247eb4116328ee4c43283af199fea43c6c0aeae2adf8f31df2d0e07f5",
+      "proof": "36237d6cbfb9a8cff7e7bb42dacf86b9b2e29f6f20139816b9411ed0e2129306"
+    },
+    {
+      "credential": "nln_site_0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+      "digest": "bc311bd2e41c440b623c94cbf7f9a8e673ba5a9464e47e2011ddc972831a9924",
+      "proof": "557dc93d8d2e95dc90d44f3baebbe5927dc085cc6efac841c6783541aafd42d2"
+    }
+  ]
+}

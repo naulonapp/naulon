@@ -33,6 +33,10 @@
     "./next": {
       "types": "./dist/enforce/next.d.ts",
       "import": "./dist/enforce/next.js"
+    },
+    "./cli": {
+      "types": "./dist/connect/cli.d.ts",
+      "import": "./dist/connect/cli.js"
     }
   },
   "files": [

@@ -1,4 +1,8 @@
 """ASGI middleware: `app = NaulonASGI(app)`. HTTP only; `websocket` and `lifespan` pass straight through.
+A platform hosting many sites passes `credential_for=lambda host: ...` (see `naulon.sites`); it may
+block on a database, so a cache miss runs it on a worker thread, never on the event loop. Given
+`connect=`, it also answers the two connect paths the gate fetches, on that same thread pool, because
+a platform's connect store is its database too.
 
 On an agent's request `http.response.start` is held until the first body message. A body sent with
 `more_body: true` is streaming and goes out untouched, never tolled.
@@ -8,13 +12,16 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import dataclasses
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
 from naulon._log import warn_error
+from naulon.connect import CHALLENGE_PATH, Connect, WellKnown
 from naulon.core import Continue, Keep, Naulon, Respond
 from naulon.facts import RequestFacts
 from naulon.settings import Settings
+from naulon.sites import DEFAULT_TTL_S, CredentialFor, SiteCredentials, _Miss
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -74,19 +81,62 @@ class NaulonASGI:
         settings: Settings | None = None,
         tollable: Tollable | None = None,
         naulon: Naulon | None = None,
+        credential_for: CredentialFor | None = None,
+        credential_ttl_s: float = DEFAULT_TTL_S,
+        connect: Connect | None = None,
     ) -> None:
         self.app = app
         s = settings or Settings.from_env()
-        self.naulon = naulon or (Naulon(s) if s.active else None)
+        self.sites = SiteCredentials(s.key, credential_for, credential_ttl_s)
+        self.naulon = naulon or (Naulon(s) if s.active and self.sites.any else None)
         self.tollable = tollable or default_tollable
+        self.connect = connect
+
+    def _answer(self, scheme: str, host: str, path: str, method: str, query: str) -> WellKnown | None:
+        # The proof first: connect's own challenge answers 404 for any state it never started.
+        proof = self.sites.proof(host, path, method)
+        if proof is not None or self.connect is None:
+            return proof
+        return self.connect.answer(scheme, host, path, method, query)
+
+    async def _well_known(self, scope: Scope) -> Respond | None:
+        path = str(scope.get("path", ""))
+        if not (path.startswith(CHALLENGE_PATH) or (self.connect is not None and self.connect.handles(path))):
+            return None  # every other request skips the thread hop
+        try:
+            f = facts_of(scope)
+            query = bytes(scope.get("query_string", b"")).decode("latin-1")
+            loop = asyncio.get_running_loop()
+            answer = await loop.run_in_executor(_FINISH_POOL, self._answer, f.scheme, f.host, f.path, f.method, query)
+        except Exception as err:
+            warn_error("asgi.connect", "naulon: a connect path could not be answered", err)
+            return None
+        return None if answer is None else Respond(answer.status, list(answer.headers), answer.body)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope.get("type") != "http" or self.naulon is None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        # Before the toll, and whether or not anything is tolled yet: a site connecting for the first
+        # time has no credential, and that is exactly when the gate asks.
+        answered = await self._well_known(scope)
+        if answered is not None:
+            await _send_respond(send, answered)
+            return
+        if self.naulon is None:
             await self.app(scope, receive, send)
             return
         naulon = self.naulon
         try:
             facts = facts_of(scope)
+            site = self.sites.peek(facts.host)
+            if isinstance(site, _Miss):
+                loop = asyncio.get_running_loop()
+                site = await loop.run_in_executor(_FINISH_POOL, self.sites.lookup, facts.host)
+            if self.sites.per_site and site is None:
+                await self.app(scope, receive, send)  # this site has not turned naulon on
+                return
+            facts = dataclasses.replace(facts, site=site)
             decision = naulon.handle(facts)
         except Exception as err:
             warn_error("asgi.start", "naulon: request passed through after an internal error", err)

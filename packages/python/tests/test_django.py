@@ -22,6 +22,7 @@ from django.test import RequestFactory  # noqa: E402
 from naulon.adapters import django as adapter  # noqa: E402
 from naulon.core import Naulon  # noqa: E402
 from naulon.settings import Settings  # noqa: E402
+from naulon.sites import Site, SiteCredentials  # noqa: E402
 
 rf = RequestFactory()
 TOLLED: list[tuple[HttpRequest, Any]] = []
@@ -39,11 +40,11 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     t = gate()
     n = Naulon(Settings(gate="http://gate", key="k"), transport=t)
     n.observations._ensure_worker = lambda: None  # type: ignore[method-assign]
-    n.config.refresh_now("blog.test")
-    n.config._refresh_ranges()
+    n.config.refresh_now("blog.test", Site("k"))
+    n.config._refresh_ranges(n.gates.home or "")
     t.calls.clear()
     monkeypatch.setattr(settings, "NAULON", {"TOLLABLE": f"{__name__}.tollable"}, raising=False)
-    monkeypatch.setattr(adapter, "_setup", lambda: (n, tollable, None))
+    monkeypatch.setattr(adapter, "_setup", lambda: (n, tollable, None, SiteCredentials("k")))
     yield t
     adapter.reset()
 
@@ -126,18 +127,18 @@ def test_the_async_path_behaves_like_the_sync_one() -> None:
 
 
 def test_inactive_settings_return_the_view_and_nothing_else(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(adapter, "_setup", lambda: (None, tollable, None))
+    monkeypatch.setattr(adapter, "_setup", lambda: (None, tollable, None, SiteCredentials("k")))
     res = adapter.NaulonMiddleware(post_view)(get(AGENT_UA))
     assert res.status_code == 200 and TOLLED == []
 
 
 def test_a_raising_hook_serves_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
-    n, _, _ = adapter._setup()
+    n, _, _, _ = adapter._setup()
 
     def bad(request: HttpRequest, response: Any) -> bool:
         raise ValueError("hook bug")
 
-    monkeypatch.setattr(adapter, "_setup", lambda: (n, bad, None))
+    monkeypatch.setattr(adapter, "_setup", lambda: (n, bad, None, SiteCredentials("k")))
     assert adapter.NaulonMiddleware(post_view)(get(AGENT_UA)).status_code == 200
 
 
@@ -150,10 +151,10 @@ def test_settings_and_trusted_proxy_header_are_read(monkeypatch: pytest.MonkeyPa
     monkeypatch.undo()
     adapter.reset()
     monkeypatch.setattr(
-        settings, "NAULON", {"GATE": "http://gate", "KEY": "k", "TRUST_PROXY_HEADERS": "X-Real-IP"}, raising=False
+        settings, "NAULON", {"GATE": "https://gate.test", "KEY": "k", "TRUST_PROXY_HEADERS": "X-Real-IP"}, raising=False
     )
-    n, hook, proxy = adapter._setup()
-    assert n is not None and n.settings.gate == "http://gate" and hook is adapter.default_tollable
+    n, hook, proxy, _ = adapter._setup()
+    assert n is not None and n.settings.gate == "https://gate.test" and hook is adapter.default_tollable
     assert proxy == "HTTP_X_REAL_IP"
     req = rf.get("/x/", HTTP_HOST="blog.test", HTTP_X_REAL_IP="198.51.100.7", REMOTE_ADDR="10.0.0.2")
     assert adapter.facts_of(req, proxy).client_ip == "198.51.100.7"
@@ -163,3 +164,66 @@ def test_settings_and_trusted_proxy_header_are_read(monkeypatch: pytest.MonkeyPa
 @pytest.mark.parametrize("header", ["X-Forwarded-For", "x-forwarded-for", "HTTP_X_FORWARDED_FOR", "Forwarded"])
 def test_a_header_the_caller_can_append_to_is_never_trusted(header: str) -> None:
     assert adapter._meta_key(header) is None
+
+
+def credential_for(host: str) -> str | None:
+    """A platform's lookup, as `NAULON['CREDENTIAL_FOR']` names it."""
+    return {"blog.test": "nln_site"}.get(host)
+
+
+def test_credential_for_is_read_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.undo()
+    adapter.reset()
+    monkeypatch.setattr(
+        settings, "NAULON", {"GATE": "https://gate.test", "CREDENTIAL_FOR": f"{__name__}.credential_for"}, raising=False
+    )
+    _, _, _, sites = adapter._setup()
+    assert sites.per_site
+    assert sites.site("blog.test") == Site("nln_site")
+    assert sites.site("other.test") is None
+
+
+def test_a_credential_for_that_will_not_import_tolls_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.undo()
+    adapter.reset()
+    monkeypatch.setattr(
+        settings, "NAULON", {"GATE": "https://gate.test", "KEY": "k", "CREDENTIAL_FOR": "nope.missing"}, raising=False
+    )
+    _, _, _, sites = adapter._setup()
+    assert sites.per_site and sites.site("blog.test") is None, "never the global key as a fallback"
+
+
+def test_an_async_stack_tolls_under_the_site_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    t = gate()
+    n = Naulon(Settings(gate="http://gate", key=None), transport=t)
+    n.observations._ensure_worker = lambda: None  # type: ignore[method-assign]
+    n.config.refresh_now("blog.test", Site("nln_site"))
+    n.config._refresh_ranges(n.gates.home or "")
+    monkeypatch.setattr(
+        adapter, "_setup", lambda: (n, adapter.default_tollable, None, SiteCredentials(None, credential_for))
+    )
+
+    async def view(request: HttpRequest) -> HttpResponse:
+        return post_view(request)
+
+    req = rf.get("/hello/", HTTP_HOST="blog.test", HTTP_USER_AGENT=AGENT_UA)
+    res = asyncio.run(adapter.NaulonMiddleware(view)(req))
+    assert res.status_code == 402
+
+
+def test_a_connected_site_answers_its_proof_on_both_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    from naulon.connect import CHALLENGE_PATH, connect_proof
+
+    cred = f"nln_site_{'A' * 43}"
+    monkeypatch.setattr(adapter, "_setup", lambda: (None, tollable, None, SiteCredentials(cred)))
+    mw = adapter.NaulonMiddleware(post_view)
+    res = mw(get(AGENT_UA, f"{CHALLENGE_PATH}{connect_proof(cred)}"))
+    assert res.status_code == 200 and res.content.decode().strip() == connect_proof(cred)
+
+    async def view(request: HttpRequest) -> HttpResponse:
+        return post_view(request)
+
+    res = asyncio.run(adapter.NaulonMiddleware(view)(get(AGENT_UA, f"{CHALLENGE_PATH}{connect_proof(cred)}")))
+    assert res.status_code == 200
+    other = mw(get(AGENT_UA, f"{CHALLENGE_PATH}{'0' * 64}"))
+    assert other.content == b"<p>the article</p>", "not ours: the view answers"

@@ -15,13 +15,13 @@ import threading
 import time
 import urllib.parse
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from naulon import ranges
 from naulon._log import warn_error, warn_once
 from naulon.settings import Settings
-from naulon.transport import Breaker, Transport
+from naulon.sites import Gates, Site
 
 RANGES_PATH = "/.well-known/naulon/crawler-ranges.json"
 RANGES_REFRESH_S = 21_600.0
@@ -30,7 +30,7 @@ RANGES_REFRESH_S = 21_600.0
 RANGES_RETRY_S = 600.0
 # How soon to ask again after a failure when nothing good is cached yet.
 RETRY_S = 60.0
-_RANGES_KEY = "\x00ranges"
+_RANGES_PREFIX = "\x00ranges\x00"
 # Host headers are the caller's to write. At most this many hosts without a policy are remembered,
 # and at most this many fetches wait in the queue; a host with a good policy is never evicted.
 MAX_UNKNOWN_HOSTS = 10_000
@@ -42,26 +42,38 @@ class _Entry:
     doc: dict[str, Any] | None
     fetched_at: float
     scheme: str
+    host: str
+    site: Site | None = field(default=None, repr=False)
     pending: bool = False
+
+
+@dataclass
+class _Ranges:
+    compiled: ranges.Compiled | None = None
+    at: float | None = None
+    pending: bool = False
+
+
+def _entry_id(host: str, site: Site | None) -> str:
+    # One policy per host AND credential AND gate: on a platform two writers never share an answer,
+    # and a credential the gate refused for one host never decides another.
+    return f"{host.lower()}\x00{site.digest if site else ''}"
 
 
 class ConfigCache:
     def __init__(
         self,
         settings: Settings,
-        transport: Transport,
-        breaker: Breaker,
+        gates: Gates,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._settings = settings
-        self._transport = transport
-        self._breaker = breaker
+        self._gates = gates
         self._clock = clock
         self._lock = threading.Lock()
         self._entries: dict[str, _Entry] = {}
-        self._ranges: ranges.Compiled | None = None
-        self._ranges_at: float | None = None
-        self._ranges_pending = False
+        # Each gate publishes its own crawler ranges; a site is checked against its own gate's copy.
+        self._ranges: dict[str, _Ranges] = {}
         self._wake = threading.Condition(self._lock)
         # Two lanes. Hosts that hold a policy (and the ranges) refresh first, in order. Hosts without
         # one wait newest-first in a bounded lane: a flood of made-up hosts pushes the oldest out, and
@@ -83,18 +95,20 @@ class ConfigCache:
         self._pid = os.getpid()
         for e in self._entries.values():
             e.pending = False
-        self._ranges_pending = False
+        for r in self._ranges.values():
+            r.pending = False
 
-    def get(self, host: str, scheme: str = "https") -> dict[str, Any] | None:
-        """The cached policy for `host`, or None. Never blocks; schedules a refresh when due."""
-        key = host.lower()
+    def get(self, host: str, scheme: str = "https", site: Site | None = None) -> dict[str, Any] | None:
+        """The cached policy for `host` under `site`'s credential, or None. Never blocks; schedules a
+        refresh when due."""
+        key = _entry_id(host, site)
         now = self._clock()
         with self._lock:
             e = self._entries.get(key)
             if e is None:
                 if len(self._entries) >= MAX_UNKNOWN_HOSTS:
                     self._evict_unknown()
-                e = _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme)
+                e = _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme, host=host.lower(), site=site)
                 self._entries[key] = e
             due = not e.pending and now - e.fetched_at >= self._settings.refresh_s
             if due:
@@ -105,7 +119,7 @@ class ConfigCache:
             doc = e.doc
         if due:
             self._ensure_worker()
-        self._ranges_due(now)
+        self._ranges_due(self._gates.gate_of(site), now)
         return doc
 
     def _push(self, key: str, known: bool) -> None:
@@ -142,15 +156,20 @@ class ConfigCache:
         for k in unknown[: max(1, len(unknown) // 2)]:
             del self._entries[k]
 
-    def ranges(self) -> ranges.Compiled | None:
-        return self._ranges
+    def ranges(self, site: Site | None = None) -> ranges.Compiled | None:
+        gate = self._gates.gate_of(site)
+        slot = self._ranges.get(gate) if gate is not None else None
+        return slot.compiled if slot is not None else None
 
-    def _ranges_due(self, now: float) -> None:
+    def _ranges_due(self, gate: str | None, now: float) -> None:
+        if gate is None:
+            return
         with self._lock:
-            due = not self._ranges_pending and (self._ranges_at is None or now - self._ranges_at >= RANGES_REFRESH_S)
+            slot = self._ranges.setdefault(gate, _Ranges())
+            due = not slot.pending and (slot.at is None or now - slot.at >= RANGES_REFRESH_S)
             if due:
-                self._ranges_pending = True
-                self._push(_RANGES_KEY, known=True)
+                slot.pending = True
+                self._push(_RANGES_PREFIX + gate, known=True)
         if due:
             self._ensure_worker()
 
@@ -167,23 +186,34 @@ class ConfigCache:
         while True:
             key = self._pop()
             try:
-                if key == _RANGES_KEY:
-                    self._refresh_ranges()
+                if key.startswith(_RANGES_PREFIX):
+                    self._refresh_ranges(key[len(_RANGES_PREFIX) :])
                 else:
-                    self.refresh_now(key)
+                    self._refresh_entry(key)
             except Exception as err:  # the worker must outlive any one bad answer
                 warn_error("config.worker", "naulon: config refresh failed", err)
 
-    def refresh_now(self, host: str) -> None:
-        """Fetch `host`'s policy now, on this thread. The worker calls it; so may a test."""
-        key = host.lower()
+    def refresh_now(self, host: str, site: Site | None = None) -> None:
+        """Fetch `host`'s policy under `site` now, on this thread. A test may call it."""
+        key = _entry_id(host, site)
         with self._lock:
-            e = self._entries.setdefault(key, _Entry(doc=None, fetched_at=float("-inf"), scheme="https"))
-            scheme = e.scheme
-        outcome = self._fetch(key, scheme)
+            self._entries.setdefault(
+                key, _Entry(doc=None, fetched_at=float("-inf"), scheme="https", host=host.lower(), site=site)
+            )
+        self._refresh_entry(key)
+
+    def _refresh_entry(self, key: str) -> None:
+        with self._lock:
+            e = self._entries.get(key)
+            if e is None:  # evicted while queued
+                return
+            scheme, host, site = e.scheme, e.host, e.site
+        outcome = self._fetch(host, scheme, site)
         now = self._clock()
         with self._lock:
-            e = self._entries.setdefault(key, _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme))
+            e = self._entries.setdefault(
+                key, _Entry(doc=None, fetched_at=float("-inf"), scheme=scheme, host=host, site=site)
+            )
             e.pending = False
             if isinstance(outcome, str):
                 # Keep the last good copy, and ask again in a minute rather than a full interval.
@@ -192,29 +222,29 @@ class ConfigCache:
             e.doc = outcome
             e.fetched_at = now
 
-    def _fetch(self, host: str, scheme: str) -> dict[str, Any] | None | str:
+    def _fetch(self, host: str, scheme: str, site: Site | None) -> dict[str, Any] | None | str:
         """The document, None for "no publisher here", or "failed" for no usable answer."""
-        gate = self._settings.gate
-        if gate is None or not self._breaker.allow():
+        route = self._gates.route(site)
+        if route is None or not route.breaker.allow():
             return "failed"
         resource = urllib.parse.quote(f"{scheme}://{host}/", safe="")
-        res = self._transport.request(
+        res = route.transport.request(
             "GET",
-            f"{gate}/_naulon/enforce-config?resource={resource}",
-            headers=_auth(self._settings),
+            f"{route.base}/_naulon/enforce-config?resource={resource}",
+            headers=_auth(site),
             body=None,
             timeout=max(self._settings.timeout, 5.0),
         )
         if res is None or res.status >= 500:
-            self._breaker.record(False)
+            route.breaker.record(False)
             warn_once("config.unreachable", "naulon: the gate did not answer enforce-config; serving every request")
             return "failed"
-        self._breaker.record(True)
+        route.breaker.record(True)
         if res.status in (401, 403, 404):
             # 403 and 404 mean the gate tolls no site at this host, which is normal for a host that has
             # not turned naulon on. Only 401 says the key itself is wrong.
             if res.status == 401:
-                warn_once("config.401", "naulon: the gate refused NAULON_KEY (HTTP 401); nothing is tolled")
+                warn_once("config.401", "naulon: the gate refused a site key (HTTP 401); that site is not tolled")
             return None
         if res.status != 200:
             return "failed"
@@ -226,32 +256,32 @@ class ConfigCache:
             return "failed"
         return doc
 
-    def _refresh_ranges(self) -> None:
-        gate = self._settings.gate
+    def _refresh_ranges(self, gate: str) -> None:
         compiled = None
-        if gate is not None:
-            # Off the breaker on purpose: the ranges are optional, and their 503 says nothing about
-            # whether the gate can price or settle. Counted, it held the breaker open for good.
-            res = self._transport.request("GET", f"{gate}{RANGES_PATH}", headers={}, body=None, timeout=10.0)
-            if res is not None and res.status == 200:
-                try:
-                    valid = ranges.validate(json.loads(res.body))
-                    compiled = ranges.compile_doc(valid) if valid is not None else None
-                except ValueError:
-                    compiled = None
+        route = self._gates.for_gate(gate)
+        # Off the breaker on purpose: the ranges are optional, and their 503 says nothing about
+        # whether the gate can price or settle. Counted, it held the breaker open for good.
+        res = route.transport.request("GET", f"{route.base}{RANGES_PATH}", headers={}, body=None, timeout=10.0)
+        if res is not None and res.status == 200:
+            try:
+                valid = ranges.validate(json.loads(res.body))
+                compiled = ranges.compile_doc(valid) if valid is not None else None
+            except ValueError:
+                compiled = None
         with self._lock:
-            self._ranges_pending = False
+            slot = self._ranges.setdefault(gate, _Ranges())
+            slot.pending = False
             now = self._clock()
             if compiled is not None:
-                self._ranges = compiled
-                self._ranges_at = now
+                slot.compiled = compiled
+                slot.at = now
             else:
                 # Keep the last good copy, and ask again in ten minutes rather than six hours.
-                self._ranges_at = now - RANGES_REFRESH_S + RANGES_RETRY_S
+                slot.at = now - RANGES_REFRESH_S + RANGES_RETRY_S
 
 
-def _auth(s: Settings) -> dict[str, str]:
+def _auth(site: Site | None) -> dict[str, str]:
     h = {"accept": "application/json", "user-agent": "naulon-python"}
-    if s.key:
-        h["authorization"] = f"Bearer {s.key}"
+    if site is not None:
+        h["authorization"] = f"Bearer {site.credential}"
     return h

@@ -35,3 +35,8 @@ export * from "./externalScheme.ts";
 export * from "./rateLimitCore.ts";
 export * from "./untrusted.ts";
 export * from "./licence-authority.ts";
+export * from "./connect/discovery.ts";
+export * from "./connect/flow.ts";
+export * from "./state/store.ts";
+export * from "./connect/grants.ts";
+export * from "./connect/client.ts";

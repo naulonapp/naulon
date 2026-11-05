@@ -112,6 +112,14 @@ test("with accounts, an anonymous browser is sent to the login page and an API c
   assert.equal(api.status, 401, "a script gets a status, not a redirect to HTML");
 });
 
+test("the page a signed-out owner was sent to comes back after sign-in with its query intact", async () => {
+  const h = harness({ users: [user("u1", "alice", "admin")] });
+  const res = await h.app.request("/connect/authorize?site=https%3A%2F%2Fblog.example.com&state=abc", { headers: nav });
+  assert.equal(res.status, 302);
+  const next = new URL(res.headers.get("location")!, "http://x").searchParams.get("next");
+  assert.equal(next, "/connect/authorize?site=https%3A%2F%2Fblog.example.com&state=abc");
+});
+
 test("signing in issues a session that then works", async () => {
   const h = harness({ users: [user("u1", "alice", "admin")] });
   const cookie = await signIn(h);
