@@ -330,6 +330,8 @@ body {
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn.sm { padding: 5px 11px; font-size: 12px; }
 .btn.ghost { background: transparent; }
+.btn.danger { color: var(--down); border-color: color-mix(in oklab, var(--down) 55%, transparent); }
+.btn.danger:hover { background: color-mix(in oklab, var(--down) 12%, transparent); }
 .btn-primary { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); font-weight: 600; }
 .btn-primary:hover { background: color-mix(in oklab, var(--primary) 88%, white); }
 .btn:focus-visible, .nav-link:focus-visible, a:focus-visible, .seg-btn:focus-visible, .in:focus-visible {
@@ -624,7 +626,11 @@ body {
   .rail { margin: 0; border-top: 0; padding-top: 0; display: flex; align-items: center; gap: 12px; min-width: 0; }
   .rail a.rail-link[target="_blank"], .rail .theme-btn, .brand-role { display: none; }
   .rail-link { margin-top: 0; white-space: nowrap; }
-  .gate-state { white-space: nowrap; }
+  /* Brand, gate state and the account link share 375px with no room to spare, so the gate state is
+     the one that gives: it shrinks to an ellipsis (its full text stays for a screen reader) rather
+     than pushing the bar 14px past the screen edge on every page. */
+  .gate-state { white-space: nowrap; min-width: 0; }
+  #gateState { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .main { padding: 24px var(--main-pad-x) 48px; }
   .page-head { flex-direction: column; gap: 16px; }
   .earned { min-width: 0; }
@@ -1065,3 +1071,25 @@ body {
 }
 @keyframes sheet-up { from { transform: translateY(16px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sheet[open] { animation: none; } }
+
+/* Sites: one block per connected site, one row per connection it holds. The host is the heading
+   because it is the thing the owner recognises; everything under it is about one credential. */
+.site { padding: 16px 0 6px; border-bottom: 1px solid var(--line); }
+.site-host { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
+.site-note { margin: 6px 0 0; font-size: 12px; color: var(--muted-fg); max-width: 70ch; }
+.site-conns { list-style: none; margin: 4px 0 0; padding: 0; }
+.site-conn {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 24px;
+  align-items: center; padding: 10px 0;
+}
+.site-conn + .site-conn { border-top: 1px dashed var(--line); }
+.site-conn > * { min-width: 0; }
+.site-app { font-size: 13px; color: var(--fg); overflow-wrap: anywhere; }
+.site-desc { font-size: 11.5px; color: var(--muted-fg); }
+.site-conn-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin-top: 6px; font-size: 11.5px; color: var(--muted-fg); }
+.site-conn-act { text-align: right; }
+.site-conn-act .confirm { justify-content: flex-end; font-size: 12.5px; color: var(--muted-fg); max-width: 46ch; }
+@media (max-width: 720px) {
+  .site-conn { grid-template-columns: minmax(0, 1fr); }
+  .site-conn-act, .site-conn-act .confirm { text-align: left; justify-content: flex-start; max-width: none; }
+}

@@ -261,9 +261,15 @@ function unauthorized(c: Context, deps: ConsoleAuthDeps): Response {
  * The outcome is read from the response status AFTER the handler, so a refusal is recorded
  * as a refusal rather than as an action that happened.
  */
+const AUDIT_DETAIL = "auditDetail" as never;
+
+/** A route behind `audited` names what it acted on, and the entry carries it beside the status. */
+export const setAuditDetail = (c: Context, detail: Record<string, string>): void => c.set(AUDIT_DETAIL, detail as never);
+
 export function audited(action: string, auditor: ConsoleAuditor): MiddlewareHandler {
   return async (c, next) => {
     await next();
+    const extra = (c.get(AUDIT_DETAIL) as Record<string, string> | undefined) ?? {};
     const principal = getPrincipal(c);
     const status = c.res.status;
     await auditor.record({
@@ -278,7 +284,7 @@ export function audited(action: string, auditor: ConsoleAuditor): MiddlewareHand
           }
         : anonymousActor(),
       ...(clientIp(c) ? { ip: clientIp(c) as string } : {}),
-      detail: { status },
+      detail: { ...extra, status },
     });
   };
 }

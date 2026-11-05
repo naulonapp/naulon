@@ -100,7 +100,7 @@ function approvePage(deps: ConnectApproveDeps, request: AuthorizationRequest, cl
       `<form method="post" action="${AUTHORIZE_PATH}">${hidden(request)}` +
       `<button type="submit" name="decision" value="approve">Approve</button>` +
       `<button type="submit" name="decision" value="deny" class="secondary">Deny</button></form>` +
-      `<p class="foot">Either way you go back to ${escapeHtml(hostOf(request.redirectUri))}. You can revoke this connection later under Sites.</p>`,
+      `<p class="foot">Either way you go back to ${escapeHtml(hostOf(request.redirectUri))}. You can revoke this connection later under <a href="/sites">Sites</a>.</p>`,
   });
 }
 

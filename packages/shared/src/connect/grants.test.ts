@@ -13,7 +13,10 @@ import {
   revokeCredential,
   revokeCredentialById,
   saveCode,
+  seenRecorder,
+  SEEN_EVERY_MS,
   sweepConnect,
+  SWEEP_EVERY_MS,
 } from "./grants.ts";
 import { checkChallenge, CLI_CLIENT_ID, clientResolver, parseClientMetadata, redirectAllowed } from "./client.ts";
 
@@ -92,8 +95,9 @@ test("a credential resolves until revoked, by value or by id, and only a digest 
 
   const second = await issueCredential(store, { site: pending.site, clientId: pending.clientId, clientName: "WordPress", approvedBy: "owner" });
   const id = (await listCredentials(store))[0]!.id;
-  assert.equal(await revokeCredentialById(store, "../x"), false);
-  assert.equal(await revokeCredentialById(store, id), true);
+  assert.equal(await revokeCredentialById(store, "../x"), null);
+  assert.equal((await revokeCredentialById(store, id))?.site, pending.site);
+  assert.equal(await revokeCredentialById(store, id), null, "a second revoke finds nothing");
   assert.equal(await resolveCredential(store, second), null);
   await revokeCredential(store, "nln_site_unknown"); // RFC 7009: never an error
 });
@@ -106,6 +110,86 @@ test("the sweep drops expired codes and old markers, and keeps live ones", async
   assert.equal(await sweepConnect(store, CODE_TTL_MS + 2), 1);
   assert.equal((await store.list("connect.code:")).length, 1);
   assert.equal((await redeemCode(store, presented(live), 1_000_001)).ok, true);
+});
+
+test("saving a code sweeps dead ones, at most once per window", async () => {
+  const store = memoryStateStore();
+  const dead = await saveCode(store, pending, 0); // first save sweeps an empty store at t=0
+  await redeemCode(store, presented(dead), 1);
+  const within = SWEEP_EVERY_MS - 1;
+  await saveCode(store, pending, within);
+  assert.equal((await store.list("connect.used:")).length, 1, "inside the window nothing is swept");
+  await saveCode(store, pending, SWEEP_EVERY_MS + CODE_TTL_MS);
+  assert.equal((await store.list("connect.used:")).length, 0, "past it, the stale marker is gone");
+  assert.equal((await store.list("connect.code:")).length, 1, "the code saved inside the window expired too; only the newest is left");
+});
+
+test("a sweep that fails does not fail the approval", async () => {
+  const store = memoryStateStore();
+  const broken = { ...store, kind: store.kind, list: async () => Promise.reject(new Error("store down")) };
+  const warned: unknown[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => void warned.push(args);
+  try {
+    assert.match(await saveCode(broken, pending, 0), /^nln_code_/);
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(warned.length, 1);
+});
+
+test("last use is recorded beside the credential, throttled, and goes with it on revoke", async () => {
+  const store = memoryStateStore();
+  const cred = await issueCredential(store, { site: pending.site, clientId: pending.clientId, clientName: "WordPress", approvedBy: "owner" });
+  assert.equal((await listCredentials(store))[0]!.lastSeenAt, null, "never used reads as never");
+
+  let t = 5_000;
+  const seen = seenRecorder(store, { now: () => t });
+  seen(cred);
+  await new Promise((r) => setImmediate(r));
+  assert.equal((await listCredentials(store))[0]!.lastSeenAt, 5_000);
+  t += SEEN_EVERY_MS - 1;
+  seen(cred);
+  await new Promise((r) => setImmediate(r));
+  assert.equal((await listCredentials(store))[0]!.lastSeenAt, 5_000, "inside the window the store is not written");
+  t += 1;
+  seen(cred);
+  await new Promise((r) => setImmediate(r));
+  assert.equal((await listCredentials(store))[0]!.lastSeenAt, 5_000 + SEEN_EVERY_MS);
+
+  const id = (await listCredentials(store))[0]!.id;
+  assert.notEqual(await revokeCredentialById(store, id), null);
+  assert.deepEqual(await store.list("connect.seen:"), []);
+});
+
+test("a use recorded after a revoke cannot bring the credential back", async () => {
+  const store = memoryStateStore();
+  const cred = await issueCredential(store, { site: pending.site, clientId: pending.clientId, clientName: "WordPress", approvedBy: "owner" });
+  await revokeCredential(store, cred);
+  seenRecorder(store)(cred); // the request that resolved it just before the revoke, finishing late
+  await new Promise((r) => setImmediate(r));
+  assert.equal(await resolveCredential(store, cred), null);
+  assert.deepEqual(await listCredentials(store), []);
+  assert.equal(await sweepConnect(store), 1, "the stray last-seen is swept");
+  assert.deepEqual(await store.list("connect.seen:"), []);
+});
+
+test("a failed last-seen write is retried on the next use and warned once", async () => {
+  const store = memoryStateStore();
+  let fail = true;
+  const flaky = { ...store, kind: store.kind, put: async (k: string, v: string) => (fail ? Promise.reject(new Error("down")) : store.put(k, v)) };
+  const cred = await issueCredential(store, { site: pending.site, clientId: pending.clientId, clientName: "WordPress", approvedBy: "owner" });
+  const warnings: string[] = [];
+  const seen = seenRecorder(flaky, { now: () => 1, warn: (m) => void warnings.push(m) });
+  seen(cred);
+  await new Promise((r) => setImmediate(r));
+  seen(cred);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(warnings.length, 1);
+  fail = false;
+  seen(cred);
+  await new Promise((r) => setImmediate(r));
+  assert.equal((await listCredentials(store))[0]!.lastSeenAt, 1);
 });
 
 const site = "https://blog.example.com";

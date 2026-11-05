@@ -21,6 +21,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { clientResolver, getConfig, getSink, stateLocationOf, stateStoreFor } from "@naulon/shared";
 import { mountConnectApprove } from "./connect-approve.ts";
+import { buildSitesView, revokeConnection } from "./sites.ts";
 import { aggregate, type Ledger } from "./aggregate.ts";
 import { watchLedger } from "./watch.ts";
 import { summarizeOps, windowMsFromKey } from "./ops.ts";
@@ -44,7 +45,7 @@ import { decideAccess } from "./access.ts";
 import { CSP, shouldNotStore } from "./security-headers.ts";
 import { createCredentialVerifier, parseDashboardAuth } from "./credential.ts";
 import { auditPathFor, createAuditor } from "./console-audit.ts";
-import { audited, consoleAuth, mountConsoleAuth, getPrincipal, requireRole, type ConsoleAuthDeps } from "./console-auth.ts";
+import { audited, setAuditDetail, consoleAuth, mountConsoleAuth, getPrincipal, requireRole, type ConsoleAuthDeps } from "./console-auth.ts";
 import { createFileStore, defaultStatePath } from "./console-store.ts";
 import { createUser, hasAnyUser } from "./console-users.ts";
 import { checkOrigin } from "./same-origin.ts";
@@ -125,6 +126,7 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
       "/ledger": { file: "ledger.html", type: "text/html; charset=utf-8" },
       "/content": { file: "content.html", type: "text/html; charset=utf-8" },
       "/crawlers": { file: "crawlers.html", type: "text/html; charset=utf-8" },
+      "/sites": { file: "sites.html", type: "text/html; charset=utf-8" },
       "/webhooks": { file: "webhooks.html", type: "text/html; charset=utf-8" },
       "/doctor": { file: "doctor.html", type: "text/html; charset=utf-8" },
       "/app.css": { file: "app.css", type: "text/css; charset=utf-8" },
@@ -136,6 +138,7 @@ const ASSETS: Record<string, { file: string; type: string }> = isPublic
       "/ledger.js": { file: "ledger.js", type: "text/javascript; charset=utf-8" },
       "/content.js": { file: "content.js", type: "text/javascript; charset=utf-8" },
       "/crawlers.js": { file: "crawlers.js", type: "text/javascript; charset=utf-8" },
+      "/sites.js": { file: "sites.js", type: "text/javascript; charset=utf-8" },
       "/webhooks.js": { file: "webhooks.js", type: "text/javascript; charset=utf-8" },
       "/doctor.js": { file: "doctor.js", type: "text/javascript; charset=utf-8" },
     };
@@ -227,6 +230,10 @@ if (ACCESS.refuse) {
   // one. It says only that this process is serving. Without it the compose healthcheck got a
   // 401 (or a 404 on a private console) and marked every running console unhealthy.
   app.get("/healthz", (c) => c.json({ ok: true, service: "dashboard" }));
+  // The gate's own state store, the one its token endpoint and enforce API read. The console writes
+  // approvals into it and revokes from it, so the two processes never call each other.
+  const STATE_AT = stateLocationOf(process.env);
+  const GATE_STATE = stateStoreFor(STATE_AT.backend, STATE_AT.dir);
   if (STORE) {
     // Order is load-bearing, twice over. hono composes middleware in REGISTRATION order,
     // so the failed-sign-in budget has to be mounted before the gate whose 401s it charges,
@@ -251,8 +258,6 @@ if (ACCESS.refuse) {
     app.use("*", authThrottle());
     app.use("*", consoleAuth(AUTH_DEPS));
     mountConsoleAuth(app, AUTH_DEPS);
-    const STATE_AT = stateLocationOf(process.env);
-    const GATE_STATE = stateStoreFor(STATE_AT.backend, STATE_AT.dir);
     // The owner's half of connect: approving a site. It writes into the gate's own state store,
     // the one the gate's token endpoint reads, so the two processes never call each other.
     mountConnectApprove(app, {
@@ -535,6 +540,17 @@ if (ACCESS.refuse) {
     // so there is nothing here to create or delete. Secrets are masked before they leave the
     // process, in every mode (this whole block is already non-public, but a whsec_ does not get to
     // depend on that).
+    // Sites: what connect has issued, and the revoke the approve page promises. The page gets ids
+    // and hints, never a credential.
+    app.get("/api/sites", async (c) => c.json(await buildSitesView(GATE_STATE, { legacyKey: Boolean(cfg.NAULON_ENFORCE_KEY) })));
+
+    app.post("/api/sites/revoke", auditWrite("console.site_revoke"), sameOrigin, adminOnly, async (c) => {
+      const body = await c.req.json<{ id?: unknown }>().catch(() => ({}) as { id?: unknown });
+      const result = await revokeConnection(GATE_STATE, body.id);
+      if (result.ok) setAuditDetail(c, { site: result.site, client: result.clientName });
+      return c.json(result, result.ok ? 200 : 404);
+    });
+
     app.get("/api/webhooks", async (c) => {
       const view = await buildWebhooksView();
       const health = await gateHealth();

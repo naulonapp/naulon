@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Hono } from "hono";
 import {
+  listCredentials,
   codeChallengeOf,
   memoryStateStore,
   newVerifier,
@@ -124,6 +125,18 @@ test("a site credential acts for its own host and nowhere else", async () => {
   assert.deepEqual(await auth(ctx(`Bearer ${cred}`), "blog.example.com:8443"), { ok: false, status: 401, error: "unauthorized" });
   assert.deepEqual(await auth(ctx(`Bearer ${cred}x`), "blog.example.com"), { ok: false, status: 401, error: "unauthorized" });
   assert.deepEqual(await auth(ctx(), "blog.example.com"), { ok: false, status: 401, error: "unauthorized" });
+});
+
+test("only a request the credential may make counts as its last use", async () => {
+  const state = memoryStateStore();
+  const cred = await credentialFor(state);
+  const auth = siteCredentialAuth({ state, resolver });
+  await auth(ctx(`Bearer ${cred}`), "other.example.com");
+  await new Promise((r) => setImmediate(r));
+  assert.equal((await listCredentials(state))[0]!.lastSeenAt, null, "a refused host is not a use");
+  await auth(ctx(`Bearer ${cred}`), "blog.example.com");
+  await new Promise((r) => setImmediate(r));
+  assert.equal(typeof (await listCredentials(state))[0]!.lastSeenAt, "number");
 });
 
 test("a revoked credential stops at once, and the legacy operator key keeps working beside it", async () => {

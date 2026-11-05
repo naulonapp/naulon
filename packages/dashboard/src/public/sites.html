@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark light" />
+<title>Sites · naulon</title>
+<meta name="description" content="The sites connected to this gate, what each connection was approved for, when it last asked the gate, and how to revoke one." />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<script src="/theme.js"></script>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="shell-wrap">
+    <aside class="shell" id="shell"></aside>
+    <main class="main">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Config</p>
+          <h1 class="page-title">Sites</h1>
+          <p class="page-sub">Each site here connected from its own settings and was approved in this console. Revoke one and its readers read free from the next request, until the site connects again.</p>
+        </div>
+      </div>
+
+      <div id="notice" aria-live="polite" tabindex="-1"></div>
+      <div id="legacy"></div>
+
+      <div class="section-head"><span class="rule"></span><h2>Connected</h2><span class="n" id="siteCount"></span></div>
+      <div id="sites" aria-busy="true"><p class="dim">Reading this gate's connections…</p></div>
+    </main>
+  </div>
+
+  <script type="module" src="/sites.js"></script>
+</body>
+</html>
