@@ -3,7 +3,7 @@
  * Plugin Name:       naulon - Get paid when AI reads your work
  * Plugin URI:        https://naulon.app
  * Description:       Charge AI agents for reading your articles. Humans always read free. Pays your authors directly — no custody, no middleman wallet.
- * Version:           0.8.0
+ * Version:           0.9.0
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            naulon
@@ -36,7 +36,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NAULON_VERSION', '0.8.0' );
+define( 'NAULON_VERSION', '0.9.0' );
 define( 'NAULON_PLUGIN_FILE', __FILE__ );
 define( 'NAULON_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 
