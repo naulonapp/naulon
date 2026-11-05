@@ -252,10 +252,27 @@ class Naulon_Admin_People {
 			return;
 		}
 
-		Naulon_Admin::form_open( 'approve_access', Naulon_Admin::PAGE_PEOPLE );
-		printf( '<input type="hidden" name="naulon_user" value="%d" />', (int) $user->ID );
-		submit_button( __( 'Approve', 'naulon' ), 'small primary', 'submit', false );
-		Naulon_Admin::form_close();
+		$key = Naulon_Settings::api_key();
+		if ( Naulon_Connect_Protocol::is_site_credential( $key ) ) {
+			// A connect credential cannot send naulon mail, so the invitation is sent on naulon by
+			// someone signed in there, with this author already filled in.
+			$url = Naulon_Connect::invite_url( Naulon_Settings::api_base(), $user->user_email, Naulon_Access::author_id( $user->ID ) );
+			if ( null === $url ) {
+				echo '<span class="naulon-muted">' . esc_html__( 'naulon cannot be reached right now. Try again shortly.', 'naulon' ) . '</span> ';
+			} else {
+				printf(
+					'<a class="button button-primary button-small" href="%s" target="_blank" rel="noopener">%s<span class="screen-reader-text"> %s</span></a>',
+					esc_url( $url ),
+					esc_html__( 'Approve on naulon', 'naulon' ),
+					esc_html__( '(opens in a new tab)', 'naulon' )
+				);
+			}
+		} else {
+			Naulon_Admin::form_open( 'approve_access', Naulon_Admin::PAGE_PEOPLE );
+			printf( '<input type="hidden" name="naulon_user" value="%d" />', (int) $user->ID );
+			submit_button( __( 'Approve', 'naulon' ), 'small primary', 'submit', false );
+			Naulon_Admin::form_close();
+		}
 		Naulon_Admin::form_open( 'decline_access', Naulon_Admin::PAGE_PEOPLE );
 		printf( '<input type="hidden" name="naulon_user" value="%d" />', (int) $user->ID );
 		submit_button( __( 'Decline', 'naulon' ), 'small', 'submit', false );

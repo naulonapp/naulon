@@ -291,7 +291,7 @@ class Naulon_Cron {
 		} elseif ( 204 === (int) $response['status'] ) {
 			$note = sprintf(
 				/* translators: %s: article title. */
-				__( 'Your account priced “%s” free, so nothing is being tolled on it. That is the right answer when the article is marked free, or when nobody credited on it has a payout wallet — including on your naulon account. Check Content, and ask those authors to connect a wallet.', 'naulon' ),
+				__( 'Your account priced “%s” free, so nothing is tolled on it. That is right when the article is marked free or nobody credited on it has a payout wallet. Check Content, and ask those authors to connect a wallet.', 'naulon' ),
 				wp_strip_all_tags( get_the_title( $post ) )
 			);
 		} else {
@@ -342,13 +342,13 @@ class Naulon_Cron {
 	 */
 	private function status_error( array $response ) {
 		if ( 401 === $response['status'] ) {
-			return __( 'The control plane rejected this API key (401). Nothing is being tolled until it is replaced.', 'naulon' );
+			return __( 'naulon rejected this API key (401). Nothing is tolled until it is replaced.', 'naulon' );
 		}
 		if ( 0 === $response['status'] ) {
 			/* translators: %s: transport error. */
-			return sprintf( __( 'Could not reach the control plane: %s', 'naulon' ), $response['error'] );
+			return sprintf( __( 'Could not reach naulon: %s', 'naulon' ), $response['error'] );
 		}
 		/* translators: %d: HTTP status code. */
-		return sprintf( __( 'The control plane answered %d.', 'naulon' ), $response['status'] );
+		return sprintf( __( 'naulon answered %d.', 'naulon' ), $response['status'] );
 	}
 }

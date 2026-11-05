@@ -69,7 +69,7 @@ class Naulon_Wallet {
 	 */
 	public static function rejection_reason( $address ) {
 		if ( ! is_string( $address ) || '' === trim( $address ) ) {
-			return __( 'Enter a wallet address, or leave this empty — your posts will simply read free.', 'naulon' );
+			return __( 'Enter a wallet address, or leave this empty and your posts read free.', 'naulon' );
 		}
 		$value = trim( $address );
 		if ( 0 !== strpos( $value, '0x' ) ) {
@@ -82,7 +82,7 @@ class Naulon_Wallet {
 			return __( 'That address contains characters that are not hex digits.', 'naulon' );
 		}
 		if ( self::is_zero( $value ) ) {
-			return __( 'That is the burn address — anything sent there is destroyed. Use the wallet you actually control.', 'naulon' );
+			return __( 'That is the burn address: anything sent there is destroyed. Use a wallet you control.', 'naulon' );
 		}
 		return null;
 	}

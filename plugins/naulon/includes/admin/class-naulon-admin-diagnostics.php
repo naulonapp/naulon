@@ -46,8 +46,8 @@ class Naulon_Admin_Diagnostics {
 	 * @return void
 	 */
 	private static function render_probe() {
-		Naulon_Admin::card_open( __( 'Is the toll actually reaching agents?', 'naulon' ) );
-		echo '<p>' . esc_html__( 'This asks your site for one of its own articles with a crawler’s user agent and no cache-busting tricks — exactly what a real crawler sends. If anything between the internet and WordPress is answering from a cache, this is where it shows up.', 'naulon' ) . '</p>';
+		Naulon_Admin::card_open( __( 'Is the toll reaching agents?', 'naulon' ) );
+		echo '<p>' . esc_html__( 'This asks your site for one of its articles with a crawler’s user agent, as a real crawler would. If a cache between the internet and WordPress answers, it shows up here.', 'naulon' ) . '</p>';
 
 		Naulon_Admin::form_open( 'run_probe', Naulon_Admin::PAGE_DIAGNOSTICS );
 		submit_button( __( 'Run the check', 'naulon' ), 'primary', 'submit', false );
@@ -233,8 +233,8 @@ class Naulon_Admin_Diagnostics {
 		}
 		echo '</p>';
 
-		echo '<p>' . esc_html__( 'The guard is a small must-use plugin that loads before any caching plugin and marks machine requests uncacheable. It stops a paid response, or a 402, from ever being stored — which is what keeps a cached paywall from being shown to a reader.', 'naulon' ) . '</p>';
-		echo '<p class="naulon-muted">' . esc_html__( 'What it cannot do, plainly: WordPress hands a request to the full-page cache before any plugin loads, so a page already in the cache is served without this plugin ever running. Stopping that needs your cache’s own user-agent exclusion list, below. The check at the top of this page is how you find out which situation you are in.', 'naulon' ) . '</p>';
+		echo '<p>' . esc_html__( 'The guard is a small must-use plugin that loads before any caching plugin and marks machine requests uncacheable, so a paid response or a 402 is never stored and shown to a reader.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-muted">' . esc_html__( 'It cannot stop a page that is already cached: WordPress serves those before any plugin loads. For that, add the user agents below to your cache’s exclusion list. The check at the top of this page shows which case you are in.', 'naulon' ) . '</p>';
 
 		Naulon_Admin::actions_open();
 		if ( $state['installed'] ) {
@@ -256,7 +256,7 @@ class Naulon_Admin_Diagnostics {
 
 		echo '<h3>' . esc_html__( 'What is caching this site', 'naulon' ) . '</h3>';
 		if ( empty( $layers ) ) {
-			echo '<p class="naulon-muted">' . esc_html__( 'No caching layer is visible from inside WordPress. A CDN in front of the site would not be — the check at the top of this page is what tests for that.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-muted">' . esc_html__( 'No caching layer is visible from inside WordPress. A CDN would not be; the check at the top of this page tests for that.', 'naulon' ) . '</p>';
 		} else {
 			echo '<ul class="naulon-list">';
 			foreach ( $layers as $layer ) {
@@ -268,7 +268,7 @@ class Naulon_Admin_Diagnostics {
 			}
 			echo '</ul>';
 			echo '<h3>' . esc_html__( 'User agents to exclude from your cache', 'naulon' ) . '</h3>';
-			echo '<p class="naulon-muted">' . esc_html__( 'Paste these into whichever "never cache these user agents" list your caching plugin offers. They are the exact fragments this plugin charges for, so the two cannot disagree.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-muted">' . esc_html__( 'Paste these into your caching plugin’s "never cache these user agents" list. They are the fragments this plugin charges for.', 'naulon' ) . '</p>';
 			$armed = Naulon_Rules::instance()->armed();
 			if ( ! empty( $armed ) ) {
 				echo '<p class="naulon-muted">' . esc_html__( 'The last entries are not charged: they are crawlers this site checks against their published addresses. Your cache answers before this plugin runs, so a crawler it serves is never checked. Update your cache\'s list when these entries change.', 'naulon' ) . '</p>';
@@ -294,7 +294,7 @@ class Naulon_Admin_Diagnostics {
 		$counts  = Naulon_Log::counts();
 
 		Naulon_Admin::card_open( __( 'Recent decisions', 'naulon' ) );
-		echo '<p class="naulon-muted">' . esc_html__( 'Only machine requests are recorded. A reader’s visit is never logged here — not their address, not their browser, not the fact that they came at all.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-muted">' . esc_html__( 'Only machine requests are recorded. A reader’s visit is never logged here: not their address, their browser, or that they came.', 'naulon' ) . '</p>';
 
 		printf(
 			'<p>%s</p>',
@@ -391,7 +391,7 @@ class Naulon_Admin_Diagnostics {
 			esc_html(
 				sprintf(
 					/* translators: 1: how many decisions are waiting, 2: the error, e.g. "HTTP 401". */
-					__( 'Could not report the last decisions to your naulon account (%2$s). %1$d waiting — they go with the next crawl, or within the hour. Your Audit page is missing them until then.', 'naulon' ),
+					__( 'Could not report the last decisions to your naulon account (%2$s). %1$d are waiting and go with the next crawl, or within the hour. Your Audit page is missing them until then.', 'naulon' ),
 					$waiting,
 					'' !== $status['error'] ? $status['error'] : __( 'unknown error', 'naulon' )
 				)
@@ -459,7 +459,7 @@ class Naulon_Admin_Diagnostics {
 		$settings = Naulon_Settings::all();
 		$next     = wp_next_scheduled( Naulon_Cron::EVENT );
 
-		Naulon_Admin::card_open( __( 'Control plane', 'naulon' ) );
+		Naulon_Admin::card_open( __( 'naulon', 'naulon' ) );
 		echo '<table class="naulon-kv"><tbody>';
 		self::kv( __( 'Address', 'naulon' ), Naulon_Settings::api_base() );
 		self::kv( __( 'Key', 'naulon' ), '' !== Naulon_Settings::credential() ? Naulon_Key::mask( Naulon_Settings::credential() ) : __( 'none', 'naulon' ) );
@@ -484,7 +484,7 @@ class Naulon_Admin_Diagnostics {
 				: __( 'not scheduled', 'naulon' )
 		);
 		echo '</tbody></table>';
-		echo '<p class="naulon-muted">' . esc_html__( 'The heartbeat prices one real article every hour. That is what keeps your account from marking this site as a dead integration during a quiet week, and it is how a conflict with DNS-based enforcement is noticed.', 'naulon' ) . '</p>';
+		echo '<p class="naulon-muted">' . esc_html__( 'The heartbeat prices one real article every hour. It keeps your account from marking this site as dead during a quiet week, and it notices a conflict with DNS-based enforcement.', 'naulon' ) . '</p>';
 		Naulon_Admin::card_close();
 	}
 
@@ -497,17 +497,17 @@ class Naulon_Admin_Diagnostics {
 		Naulon_Admin::card_open( __( 'This installation', 'naulon' ) );
 		echo '<table class="naulon-kv"><tbody>';
 		self::kv( __( 'Site address', 'naulon' ), home_url() );
-		self::kv( __( 'Served over HTTPS', 'naulon' ), Naulon_Verification::is_https() ? __( 'yes', 'naulon' ) : __( 'no — ownership cannot be verified without it', 'naulon' ) );
+		self::kv( __( 'Served over HTTPS', 'naulon' ), Naulon_Verification::is_https() ? __( 'yes', 'naulon' ) : __( 'no: ownership cannot be verified without it', 'naulon' ) );
 		self::kv(
 			__( 'Permalinks', 'naulon' ),
 			Naulon_Verification::permalinks_ok()
 				? (string) get_option( 'permalink_structure' )
-				: __( 'plain — nothing can be tolled, and the ownership challenge cannot be served', 'naulon' )
+				: __( 'plain: nothing can be tolled, and the ownership challenge cannot be served', 'naulon' )
 		);
 		self::kv( __( 'PHP', 'naulon' ), PHP_VERSION );
 		self::kv( __( 'WordPress', 'naulon' ), get_bloginfo( 'version' ) );
 		self::kv( __( 'Plugin', 'naulon' ), self::plugin_version_line() );
-		self::kv( __( 'WP-Cron', 'naulon' ), ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) ? __( 'disabled — run it from the system scheduler, or the heartbeat will not fire', 'naulon' ) : __( 'enabled', 'naulon' ) );
+		self::kv( __( 'WP-Cron', 'naulon' ), ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ) ? __( 'disabled: run it from the system scheduler, or the heartbeat will not fire', 'naulon' ) : __( 'enabled', 'naulon' ) );
 		echo '</tbody></table>';
 
 		$token = (string) Naulon_Settings::all()['challenge_token'];
@@ -550,7 +550,7 @@ class Naulon_Admin_Diagnostics {
 		if ( '' !== $offered ) {
 			return sprintf(
 				/* translators: 1: installed version, 2: the newer version available. */
-				__( '%1$s — %2$s is available, install it from the Plugins screen', 'naulon' ),
+				__( '%1$s. %2$s is available: install it from the Plugins screen', 'naulon' ),
 				NAULON_VERSION,
 				$offered
 			);
@@ -562,14 +562,14 @@ class Naulon_Admin_Diagnostics {
 		if ( isset( $updates->no_update[ $file ] ) ) {
 			return sprintf(
 				/* translators: %s: installed version. */
-				__( '%s — up to date', 'naulon' ),
+				__( '%s, up to date', 'naulon' ),
 				NAULON_VERSION
 			);
 		}
 
 		return sprintf(
 			/* translators: %s: installed version. */
-			__( '%s — no update check has completed yet', 'naulon' ),
+			__( '%s, no update check has completed yet', 'naulon' ),
 			NAULON_VERSION
 		);
 	}
@@ -630,7 +630,7 @@ class Naulon_Admin_Diagnostics {
 			__( 'Settlements recorded', 'naulon' ),
 			sprintf(
 				/* translators: 1: number of settlements, 2: total in USDC. */
-				__( '%1$s — %2$s USDC settled', 'naulon' ),
+				__( '%1$s (%2$s USDC settled)', 'naulon' ),
 				number_format_i18n( $inventory['settlements'] ),
 				$inventory['settled_total']
 			)
@@ -638,10 +638,10 @@ class Naulon_Admin_Diagnostics {
 		self::kv( __( 'Posts with a toll choice saved', 'naulon' ), (string) number_format_i18n( $inventory['tolled_posts'] ) );
 		echo '</tbody></table>';
 
-		echo '<p>' . esc_html__( 'WordPress removes a plugin\'s data before it removes its files, and it cannot be undone. By default this plugin keeps everything above when you delete it, so a mistaken Delete costs you nothing but a reinstall. Our own code goes either way: the cache guard and the hourly schedule are removed, because leaving them running for a plugin that is gone is a bug.', 'naulon' ) . '</p>';
+		echo '<p>' . esc_html__( 'WordPress removes a plugin\'s data before its files, and that cannot be undone. By default this plugin keeps everything above when deleted, so a mistaken Delete costs only a reinstall. The cache guard and the hourly schedule are always removed.', 'naulon' ) . '</p>';
 
 		if ( $purge ) {
-			echo '<p class="naulon-muted">' . esc_html__( 'You have asked for full removal. Export first — the wallet addresses were typed in by hand, and the settlement record is the only copy outside the chain.', 'naulon' ) . '</p>';
+			echo '<p class="naulon-muted">' . esc_html__( 'You asked for full removal. Export first: the wallet addresses were typed by hand, and the settlement record is the only copy outside the chain.', 'naulon' ) . '</p>';
 		}
 
 		Naulon_Admin::actions_open();
@@ -671,7 +671,7 @@ class Naulon_Admin_Diagnostics {
 			echo '</p>';
 			echo '<p>' . sprintf(
 				/* translators: %s: absolute directory path. */
-				esc_html__( '%s is not writable by the web server, and removing or replacing a file needs write permission on the directory that holds it — not on the file. Until that is fixed, an update will report that files could not be copied and a delete will report that the plugin could not be fully removed. It usually means the plugin was installed by a different user (over SSH, or as root), so the fix is to give the directory back to the user PHP runs as.', 'naulon' ),
+				esc_html__( '%s is not writable by the web server. Replacing or removing a file needs write permission on its folder, so updates and deletes of this plugin will fail. It usually means the plugin was installed by another user (over SSH, or as root): give the folder back to the user PHP runs as.', 'naulon' ),
 				'<code>' . esc_html( $unwritable ) . '</code>'
 			) . '</p>';
 		}
@@ -738,7 +738,7 @@ class Naulon_Admin_Diagnostics {
 		Naulon_Admin::notice(
 			$purge ? 'warning' : 'success',
 			$purge
-				? __( 'Saved. Deleting the plugin will now erase your wallets and earnings record — export a copy first.', 'naulon' )
+				? __( 'Saved. Deleting the plugin will now erase your wallets and earnings record. Export a copy first.', 'naulon' )
 				: __( 'Saved. Deleting the plugin will keep your wallets and earnings record.', 'naulon' )
 		);
 	}

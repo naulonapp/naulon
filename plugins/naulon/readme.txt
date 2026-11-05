@@ -162,6 +162,14 @@ Yes, and the plugin is direct about it. A page cache answers before any plugin r
 
 == Changelog ==
 
+= Unreleased =
+* Connect to naulon from Setup: approve the site on naulon.app and come back connected, with your domain already proven. Pasting a key still works.
+* On a connected site, Approve on People opens naulon.app with the author filled in, and you send the invitation there.
+* naulon's screens use the same buttons and fields as the naulon dashboard. The rest of WordPress is unchanged.
+* Tables scroll inside their card on a phone instead of pushing the page sideways.
+* Shorter, plainer wording on every screen.
+* A gate address that does not offer Connect says so, instead of claiming it is not a naulon gate.
+
 = 0.8.0 =
 * Connect to a gate you host yourself. Paste its address and its key (`NAULON_ENFORCE_KEY`), or put the key in `wp-config.php` as `NAULON_GATE_KEY`. Before this, a self-hosted gate never answered the plugin, so nothing was charged.
 * A site connected to its own gate by address alone, without a key, now shows as not connected until you add the key.

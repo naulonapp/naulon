@@ -113,9 +113,14 @@ class Naulon_Access {
 			// genuinely cannot work over a gate URL, and the honest answer is to say what is
 			// missing and what the author can do instead.
 			if ( Naulon_Settings::is_connected() ) {
-				return __( 'Approving invites this author into naulon, which needs this site\'s naulon API key. This site is connected to your own gate, which holds no author accounts — the author can set a wallet on their profile here instead.', 'naulon' );
+				return __( 'Approving invites this author into naulon, which needs this site\'s naulon API key. Your own gate holds no author accounts, so the author can set a wallet on their profile here instead.', 'naulon' );
 			}
 			return __( 'This site is not connected to naulon yet. Finish Setup first, then approve.', 'naulon' );
+		}
+		// A connect credential may enforce and nothing else, so naulon would refuse the invite.
+		// The People screen offers "Approve on naulon" for these sites; this answers a stale form.
+		if ( Naulon_Connect_Protocol::is_site_credential( Naulon_Settings::api_key() ) ) {
+			return __( 'This site is connected with Connect, so the invitation is sent from naulon. Use Approve on naulon.', 'naulon' );
 		}
 
 		$result = Naulon_Client::instance()->invite_author(

@@ -22,7 +22,7 @@ class EdgeRemedyTest extends TestCase {
 	public function test_a_cloudflare_hit_gets_the_cloudflare_remedy() {
 		foreach ( array( 'HIT', 'STALE', 'UPDATING', 'REVALIDATED' ) as $status ) {
 			$out = Naulon_Cache::edge_remedy( array( 'cf-cache-status' => $status ) );
-			$this->assertStringContainsString( 'Cloudflare served this from its own cache', $out, $status );
+			$this->assertStringContainsString( 'Cloudflare served this from its cache', $out, $status );
 			$this->assertStringContainsString( 'Cache Everything', $out, $status );
 			$this->assertStringContainsString( 'APO', $out, $status );
 			$this->assertStringContainsString( 'Purge', $out, $status );
@@ -33,7 +33,7 @@ class EdgeRemedyTest extends TestCase {
 	public function test_a_non_serving_cloudflare_status_points_back_inside_wordpress() {
 		foreach ( array( 'DYNAMIC', 'MISS', 'BYPASS', 'EXPIRED' ) as $status ) {
 			$out = Naulon_Cache::edge_remedy( array( 'cf-cache-status' => $status ) );
-			$this->assertStringContainsString( 'did not answer this request from cache', $out, $status );
+			$this->assertStringContainsString( 'did not answer this from its cache', $out, $status );
 			$this->assertStringContainsString( 'inside WordPress', $out, $status );
 			$this->assertStringNotContainsString( 'Cache Everything', $out, $status );
 		}
@@ -65,7 +65,7 @@ class EdgeRemedyTest extends TestCase {
 	/** Header casing is not ours to control — it comes off the wire. */
 	public function test_header_names_and_values_are_matched_case_insensitively() {
 		$this->assertStringContainsString(
-			'Cloudflare served this from its own cache',
+			'Cloudflare served this from its cache',
 			Naulon_Cache::edge_remedy( array( 'CF-Cache-Status' => 'hit' ) )
 		);
 	}
