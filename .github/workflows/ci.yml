@@ -37,7 +37,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: node scripts/release.mjs status --github
 
-  # The Python package. 3.10 is the floor it promises; 3.13 is what Bear and most hosts run.
+  # The Python package. 3.10 is the floor it promises; 3.13 is what most hosts run.
   python:
     runs-on: ubuntu-latest
     strategy:
