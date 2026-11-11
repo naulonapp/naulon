@@ -3215,6 +3215,9 @@ test("a price-only server describes prices, never a purchase or a budget", async
   assert.deepEqual([...listed.keys()].sort(), [...PRICE_TOOLS].sort());
   for (const [name, said] of listed) assert.doesNotMatch(said, SPEND_TALK, `${name} talks about spending`);
   assert.doesNotMatch(listed.get("naulon_quote")!, /affordable|ceilingUsdc|spentSessionUsdc|remainingUsdc/);
+  // Its caller reached a host that already chose the catalogue, so settings talk is noise there.
+  assert.doesNotMatch(listed.get("naulon_discover")!, /RSS_URL|PUBLISHER_URL|CATALOG_URL|setup guidance/);
+  assert.match(listed.get("naulon_discover")!, /^Browse a TOPIC/);
 });
 
 test("without priceOnly the same tools keep their spending guidance and the session envelope", async () => {
@@ -3224,6 +3227,7 @@ test("without priceOnly the same tools keep their spending guidance and the sess
   assert.match(listed.get("naulon_quote")!, /Quote before paying/);
   assert.match(listed.get("naulon_quote")!, /remainingUsdc/);
   assert.match(listed.get("naulon_discover")!, /before appraising, quoting, or paying/);
+  assert.match(listed.get("naulon_discover")!, /RSS_URL, PUBLISHER_URL, or CATALOG_URL/);
 });
 
 test("a price-only quote returns the price and its chain, and no budget fields", async () => {

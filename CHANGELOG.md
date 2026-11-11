@@ -14,6 +14,16 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.17.2
+
+Ships `@naulon/wayfarer-mcp` **0.7.9**. No other package changed.
+
+### Changed
+- On a server built with `priceOnly`, `naulon_discover` describes itself as the browse step for a
+  topic and no longer names `RSS_URL`, `PUBLISHER_URL` or `CATALOG_URL`. Those are settings of the
+  stdio server, and a caller of a hosted price-only server has nothing to set. The stdio server's
+  text is unchanged.
+
 ## v0.17.1
 
 Ships `@naulon/wayfarer-mcp` **0.7.8**. No other package changed.

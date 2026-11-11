@@ -795,15 +795,19 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   reg(
     "naulon_discover",
     {
-      title: "Discover tollable sources",
+      title: say("Discover tollable sources", "Browse sources for a topic (free)"),
       description:
-        "Find candidate essays for a topic from the configured publisher (a live RSS feed or a " +
-        "catalog endpoint — set RSS_URL, PUBLISHER_URL, or CATALOG_URL, or use the hosted endpoint). " +
+        // A price-only server is built by a host that already chose its catalogue, so its caller
+        // has nothing to configure: the text names the step, not the settings.
+        say("Find candidate essays for a topic from the configured publisher (a live RSS feed or a " +
+          "catalog endpoint — set RSS_URL, PUBLISHER_URL, or CATALOG_URL, or use the hosted endpoint). ",
+          "Browse a TOPIC: list candidate articles by title and teaser, with no verdict on whether any " +
+          "of them answers a question. ") +
         "Returns FREE public teasers only — slug, title, and summary — with no content and no payment. " +
         say("Call this first to see what is available before appraising, quoting, or paying. ",
           "Call this first to see what is available before appraising or quoting. ") +
-        "If no source " +
-        "is configured it refuses with setup guidance rather than inventing sources. " +
+        say("If no source " +
+          "is configured it refuses with setup guidance rather than inventing sources. ", "") +
         "A candidate may carry WHY it matched: `matchedInBody` means your terms are inside the paid " +
         "text but NOT in the title or teaser (strong — the teaser just does not show it), " +
         "`matchedSemantic` means only that it is near your query in meaning and your terms are " +
