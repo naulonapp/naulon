@@ -12,6 +12,8 @@ as callable tools and slash commands.
 Works with **any MCP client**: Claude Code, Claude Desktop, Cursor, Windsurf,
 Cline, VS Code, OpenCode, Codex, Gemini CLI, or your own host. Setup for each is below.
 
+Listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `app.naulon/naulon`.
+
 ---
 
 ## Quick start
