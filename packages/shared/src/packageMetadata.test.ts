@@ -35,6 +35,7 @@ interface Pkg {
   name: string;
   version: string;
   private?: boolean;
+  mcpName?: string;
   description?: string;
   keywords?: string[];
   license?: string;
@@ -97,6 +98,15 @@ for (const { pkg, dir } of PUBLISHED) {
     );
   });
 }
+
+test("@naulon/wayfarer-mcp names its MCP Registry listing", () => {
+  // The registry accepts an npm package into a listing only when the PUBLISHED package.json
+  // carries `mcpName` equal to the listing's name. Dropping or changing the field does not fail
+  // here or on npm: it fails the next registry publish, in another repository.
+  const mcp = PUBLISHED.find((p) => p.pkg.name === "@naulon/wayfarer-mcp");
+  assert.ok(mcp, "@naulon/wayfarer-mcp is a published package");
+  assert.equal(mcp.pkg.mcpName, "app.naulon/naulon");
+});
 
 test("the release workflow publishes every public package, each after the ones it depends on", () => {
   const workflow = readFileSync(join(PACKAGES, "..", ".github", "workflows", "release.yml"), "utf8");

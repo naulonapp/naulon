@@ -14,6 +14,15 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.17.1
+
+Ships `@naulon/wayfarer-mcp` **0.7.8**. No other package changed.
+
+### Added
+- `@naulon/wayfarer-mcp` carries `mcpName: "app.naulon/naulon"`, the name it is listed under in
+  the MCP Registry (`registry.modelcontextprotocol.io`). The registry reads that field from the
+  published package to confirm the listing and the package have one owner. No code changed.
+
 ## python-v0.2.0
 
 Connect for `naulon` on PyPI, the Python half of v0.17.0. Needs a gate that serves
