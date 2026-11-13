@@ -17,6 +17,7 @@ to read or cite a page, it settles straight to the author's own wallet, and peop
 [![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](./LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-black.svg)
 [![Built on Arc](https://img.shields.io/badge/built_on-Arc-black.svg)](https://docs.arc.io/)
+[![mcptry](https://mcptry.com/badge/app.naulon/naulon)](https://mcptry.com/servers/app.naulon/naulon)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/console-dark.png">
