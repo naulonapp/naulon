@@ -14,6 +14,37 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## v0.18.0
+
+Ships `@naulon/wayfarer-mcp` **0.8.0**. No other package changed.
+
+### Added
+- `toolContractProblems(tools, { prefix, instructions })` checks a `tools/list` result against the
+  tool definition contract and returns one sentence per problem. It holds the name shape, the
+  title, the description's length, a description on every argument, `outputSchema`, all four
+  behaviour hints, a named sibling, and that no text names a tool the server does not list. A host
+  that mounts its own tools beside these runs it over the listing its callers are sent.
+- `toolNamer(listed)` names tools in a sentence and drops the ones a server does not list.
+  `TOOL_NAMES` is every tool the full server lists.
+- `surface.notes` adds one sentence to a tool's description, keyed by tool name. A host uses it to
+  route a caller to a tool it mounts beside these, or to state a limit its transport applies.
+- `naulon_discover` returns `match` on each candidate: `title`, `body` or `meaning`, and nothing
+  when the source does not search. A title hit and a source that never searched both arrive with
+  no flag set, and telling them apart took a rule written in the description. The server now
+  applies it. `matchedInBody` and `matchedSemantic` are unchanged.
+
+### Changed
+- Every tool description follows one order: what the tool does and returns, when to call it and
+  which sibling to call instead, its limits, then what an argument means beyond its schema.
+  `naulon_discover` went from 1,351 characters to under 900.
+- The five read-only tools state `idempotentHint`. Every tool now states all four hints.
+- `naulon_appraise` describes `candidates[].slug` and `candidates[].title`.
+
+### Fixed
+- A server built with `surface.tools` named tools it did not list. `naulon_discover`'s `url` field
+  told a caller to pass the address to `naulon_pay_and_read` on a price-only server, which has no
+  such tool. Tool names in text now come from the listing, so a sentence names only what is there.
+
 ## v0.17.2
 
 Ships `@naulon/wayfarer-mcp` **0.7.9**. No other package changed.

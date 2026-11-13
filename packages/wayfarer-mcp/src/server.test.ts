@@ -24,7 +24,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { ARC_TESTNET, FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
 import { DEFAULT_POLICY, licenseIdentityFor, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
-import { buildServer, SERVER_VERSION, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
+import { buildServer, SERVER_VERSION, TOOL_NAMES, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
 
 /** Stand up an isolated server + connected client over a linked in-memory pair. */
 async function connectedClient(): Promise<Client> {
@@ -235,15 +235,6 @@ function paymentRequired(amountAtomic: string): string {
   return Buffer.from(JSON.stringify(body)).toString("base64");
 }
 
-const TOOL_NAMES = [
-  "naulon_discover",
-  "naulon_appraise",
-  "naulon_quote",
-  "naulon_pay_and_read",
-  "naulon_read_held",
-  "naulon_research",
-  "naulon_status",
-];
 
 // ── BUY-1.1 (carried) ────────────────────────────────────────────────────────
 
@@ -2500,50 +2491,100 @@ test("naulon_discover surfaces the match-evidence flags (the SDK strips anything
   }
 });
 
-test("the naulon_discover description tells the model what the two evidence flags mean", async () => {
-  const client = await connectedClient();
-  const { tools } = await client.listTools();
-  const d = tools.find((t) => t.name === "naulon_discover");
-  const text = d?.description ?? "";
-  assert.match(text, /matchedInBody/, "the strong signal is named");
-  assert.match(text, /matchedSemantic/, "the weak one too");
-  assert.match(text, /do not\s+pay one that is off-topic/i, "…and what to do about the weak one");
-});
-
-/**
- * The case the description described for neither flag, which is the one that misleads.
- *
- * `body: fullHit && !headHit` (directory `src/directory/filter.ts:37`), so a candidate whose TITLE
- * matched the query carries `matchedInBody: false` — the strongest evidence available, wearing the
- * exact shape of a plain RSS source that never searched at all. A model reading only "strong" and
- * "weak" reasonably infers that neither flag means weaker than weak, and skips the best candidate
- * in the response.
- *
- * The two readings are separable from the response alone — a sibling candidate carrying any flag
- * proves the source searches — so the description has to carry that rule, not just admit the
- * ambiguity.
- */
-test("the naulon_discover description explains the BOTH-FALSE case, which is either the best match or no signal", async () => {
+test("the naulon_discover description names `match` and what its values are worth", async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
   const text = tools.find((t) => t.name === "naulon_discover")?.description ?? "";
-  assert.match(text, /neither flag/i, "the both-false case is named at all");
-  assert.match(text, /title or teaser/i, "…and identified as a head match, the strongest result");
-  assert.match(text, /other candidate/i, "…with the rule that separates it from a non-searching source");
-  assert.match(text, /RSS/i, "…which is what a non-searching source is");
+  assert.match(text, /`match`/, "the field that carries the reading is named");
+  assert.match(text, /`title` is the strongest/);
+  assert.match(text, /`meaning` is the weakest/);
+  assert.match(text, /no `match` means the source does not search/);
 });
 
-test("the both-false rule is repeated on BOTH field describes, since a model may read only one", async () => {
+/**
+ * A searching source sets at most one flag per candidate and none on a title or teaser hit
+ * (`body: fullHit && !headHit` in the directory's filter), so a candidate whose TITLE matched carries
+ * no flag: the strongest evidence available, in the exact shape of a plain RSS source that never
+ * searched. A model reading only "strong" and "weak" infers that no flag is weaker than weak, and
+ * skips the best candidate in the response.
+ *
+ * The two readings are separable from the response alone, because one flag anywhere proves the
+ * source searches. The server does that reading and returns it as `match`, so no model has to
+ * apply a rule written in prose.
+ */
+test("naulon_discover works out `match` from the whole response", async () => {
+  const candidates = async (rows: unknown[]): Promise<Array<Record<string, unknown>>> => {
+    let out: Array<Record<string, unknown>> = [];
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(rows));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      await withEnv({ CATALOG_URL: `http://127.0.0.1:${port}/catalog`, RSS_URL: undefined, PUBLISHER_URL: undefined }, async () => {
+        const client = await connectedClient();
+        const res = await client.callTool({ name: "naulon_discover", arguments: { topic: "anything" } });
+        assert.notEqual(res.isError, true, JSON.stringify(res.content));
+        out = (res.structuredContent as { candidates: Array<Record<string, unknown>> }).candidates;
+      });
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections?.();
+      });
+    }
+    return out;
+  };
+
+  const searching = await candidates([
+    { slug: "body", title: "In the body", summary: "teaser", matchedInBody: true },
+    { slug: "near", title: "Nearby", summary: "teaser", matchedSemantic: true },
+    { slug: "head", title: "In the title", summary: "teaser" },
+  ]);
+  const by = (rows: Array<Record<string, unknown>>, slug: string) => rows.find((c) => c.slug === slug)!;
+  assert.equal(by(searching, "body").match, "body");
+  assert.equal(by(searching, "near").match, "meaning");
+  assert.equal(by(searching, "head").match, "title", "no flag beside flagged siblings is a title or teaser hit");
+  assert.equal(by(searching, "body").matchedInBody, true, "the flags a caller already reads are still there");
+
+  // The description tells a caller to pass rows back whole. A whole row carries `match`, `url` and
+  // the prices, none of which naulon_appraise declares, so this is the call that must keep working.
+  const appraise = (await connectedClient()).callTool({ name: "naulon_appraise", arguments: { topic: "anything", candidates: searching } });
+  const appraised = await appraise;
+  assert.notEqual(appraised.isError, true, JSON.stringify(appraised.content));
+  assert.equal((appraised.structuredContent as { appraised: unknown[] }).appraised.length, 3);
+  // And the listed schema must not forbid those extra keys, or a client that checks arguments
+  // against it would refuse the very rows the description asks for.
+  const { tools } = await (await connectedClient()).listTools();
+  const row = (tools.find((t) => t.name === "naulon_appraise")!.inputSchema.properties!.candidates as { items: { additionalProperties?: unknown } }).items;
+  assert.notEqual(row.additionalProperties, false);
+
+  // What the fleet directory sends for a lone title hit: both flags present and false. One row is
+  // then enough to know the source searched, with no flagged sibling to compare against.
+  const lone = await candidates([{ slug: "head", title: "In the title", summary: "teaser", matchedInBody: false, matchedSemantic: false }]);
+  assert.equal(lone[0]!.match, "title", "explicit false flags prove a search ran, so no flag set is a title hit");
+
+  const plain = await candidates([
+    { slug: "a", title: "One", summary: "teaser" },
+    { slug: "b", title: "Two", summary: "teaser" },
+  ]);
+  for (const c of plain) assert.equal("match" in c, false, "a source that does not search claims no match");
+});
+
+test("the match fields say how `match` relates to the two flags", async () => {
   const client = await connectedClient();
   const { tools } = await client.listTools();
   const schema = tools.find((t) => t.name === "naulon_discover")?.outputSchema;
   const props = (schema as { properties?: Record<string, unknown> } | undefined)?.properties;
   const fields = (
-    (props?.candidates as { items?: { properties?: Record<string, { description?: string }> } } | undefined)?.items
+    (props?.candidates as { items?: { properties?: Record<string, { description?: string; enum?: string[] }> } } | undefined)?.items
       ?.properties ?? {}
-  ) as Record<string, { description?: string }>;
+  ) as Record<string, { description?: string; enum?: string[] }>;
   assert.match(fields.matchedInBody?.description ?? "", /title or teaser/i);
   assert.match(fields.matchedSemantic?.description ?? "", /both-false/i);
+  assert.deepEqual(fields.match?.enum, ["title", "body", "meaning"]);
+  assert.match(fields.match?.description ?? "", /does not search/);
 });
 
 test("naulon_appraise accepts the match-evidence flags and scores WITH them", async () => {
@@ -3226,8 +3267,27 @@ test("without priceOnly the same tools keep their spending guidance and the sess
   const listed = await listedText(client);
   assert.match(listed.get("naulon_quote")!, /Quote before paying/);
   assert.match(listed.get("naulon_quote")!, /remainingUsdc/);
-  assert.match(listed.get("naulon_discover")!, /before appraising, quoting, or paying/);
-  assert.match(listed.get("naulon_discover")!, /RSS_URL, PUBLISHER_URL, or CATALOG_URL/);
+  assert.match(listed.get("naulon_discover")!, /setup guidance/);
+  assert.match(listed.get("naulon_discover")!, /RSS_URL, PUBLISHER_URL or CATALOG_URL/);
+  // The surface here leaves the paying tool out, so no sentence may send a caller to it.
+  for (const [name, said] of listed) assert.doesNotMatch(said, /naulon_pay_and_read|naulon_read_held/, `${name} names a tool this surface does not list`);
+});
+
+test("on the full server the same sentences name the paying tool", async () => {
+  const listed = await listedText(await connectedClient());
+  assert.match(listed.get("naulon_discover")!, /naulon_quote for a live price before naulon_pay_and_read/);
+  assert.match(listed.get("naulon_quote")!, /Quote before paying with naulon_pay_and_read/);
+});
+
+test("a host's note lands in the description of the tool it names, and nowhere else", async () => {
+  const note = "For a question, with a verdict on each source, call naulon_search.";
+  const client = await connectedClientWith({ priceOnly: true, surface: { tools: PRICE_TOOLS, notes: { naulon_discover: note, naulon_absent: "ignored" } } });
+  const { tools } = await client.listTools();
+  const text = (name: string): string => tools.find((t) => t.name === name)?.description ?? "";
+  assert.ok(text("naulon_discover").includes(note));
+  assert.ok(text("naulon_discover").indexOf(note) > text("naulon_discover").indexOf("Call it first"), "after the when-to-use line");
+  assert.doesNotMatch(text("naulon_quote"), /naulon_search/);
+  assert.doesNotMatch(JSON.stringify(tools), /ignored/);
 });
 
 test("a price-only quote returns the price and its chain, and no budget fields", async () => {

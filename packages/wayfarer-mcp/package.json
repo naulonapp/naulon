@@ -1,6 +1,6 @@
 {
   "name": "@naulon/wayfarer-mcp",
-  "version": "0.7.9",
+  "version": "0.8.0",
   "mcpName": "app.naulon/naulon",
   "description": "Model Context Protocol server that lets any LLM discover, quote, pay, and cite naulon-tolled sources \u2014 BYO wallet, local stdio, the wayfarer brain in-process.",
   "keywords": [
