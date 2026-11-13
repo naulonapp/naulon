@@ -255,9 +255,40 @@ spend within the envelope but can't widen it.
 | `naulon_research` | **$** | One composite that runs the whole discover→quote→pay→ground loop. |
 | `naulon_ask`\* | **$** | Hosted-only reading agent: grounded, numbered-citation answer. |
 
-\* hosted endpoint only. Every tool states `readOnlyHint`, `destructiveHint` and `openWorldHint`.
-The free ones are read-only; the ones that spend are destructive, because a payment cannot be
-taken back, so a client that confirms irreversible actions asks first.
+\* hosted endpoint only. Every tool states all four behaviour hints (`readOnlyHint`,
+`destructiveHint`, `idempotentHint`, `openWorldHint`). The free ones are read-only; the ones that
+spend are destructive, because a payment cannot be taken back, so a client that confirms
+irreversible actions asks first.
+
+`naulon_discover` returns `match` on each candidate: `title` when your words are in the title or
+teaser, `body` when they are only in the text behind the toll, `meaning` when the source is near
+your topic and your words are absent. No `match` means the source does not search.
+
+### The tool definition contract
+
+A model picks a tool from `tools/list` alone, so every definition here is written to one order:
+what the tool does and returns, when to call it and which sibling to call instead, what the
+annotations cannot say (limits, cost, the empty result), then what an argument means beyond its
+schema. The package exports the check that holds the part a program can decide:
+
+```ts
+import { toolContractProblems } from "@naulon/wayfarer-mcp";
+
+const { tools } = await client.listTools();
+const problems = toolContractProblems(tools, { prefix: "naulon_", instructions: client.getInstructions() });
+// [] when every definition holds. Otherwise one sentence per problem, the tool named first.
+```
+
+It checks the name shape, the title, the description's length, a description on every argument,
+`outputSchema`, all four hints, that each description names a sibling, and that no text names a
+tool the server does not list. Run it over what your callers are sent, not over your source: a
+host that builds a server with `surface.tools` and adds its own tools beside these is checking a
+different listing than this package's.
+
+Two more exports serve such a host. `toolNamer(listed)` names tools in a sentence and drops the
+ones that are not listed, and `TOOL_NAMES` is every tool the full server lists. `surface.notes`
+adds one sentence to a tool's description, which is how `naulon_discover` can send a caller to a
+search tool the host mounts and this package has never heard of.
 
 ---
 

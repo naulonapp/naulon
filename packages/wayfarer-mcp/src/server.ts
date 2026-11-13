@@ -73,9 +73,24 @@ import type { AgentWallet, DecisionPolicy, GatewaySigner, HeldStore, MemoSigner,
 import { activeNetwork, explorerTxUrl, FLEET_ORIGIN, getConfig, isFleetDefaultDiscovery, networkByCaip2, settlementRefKind, usageSentence, usdc } from "@naulon/shared";
 import type { SettlementNetwork } from "@naulon/shared";
 import { cloudSignerFromEnv } from "./cloud-signer.ts";
+import { toolNamer } from "./tool-contract.ts";
 import { createRequire } from "node:module";
 
 export const SERVER_NAME = "naulon-wayfarer-mcp";
+
+/**
+ * Every tool the full server lists. A host that mounts its own tools beside these builds its
+ * `toolNamer` from this list plus its own, so it never keeps a second copy of the names.
+ */
+export const TOOL_NAMES = [
+  "naulon_discover",
+  "naulon_status",
+  "naulon_appraise",
+  "naulon_quote",
+  "naulon_pay_and_read",
+  "naulon_read_held",
+  "naulon_research",
+] as const;
 /** What the MCP handshake reports as `serverInfo.version`. Read from this package's own
  *  package.json (one level up from both `src/` and `dist/`), so a release can never leave it behind. */
 export const SERVER_VERSION: string = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
@@ -194,6 +209,28 @@ function guardCeilingAtomic(quoted: { amountAtomic: string; legs?: { amount: str
  *  returns: the text block is what a non-structured client sees; structuredContent
  *  is the machine-readable shape matching the tool's outputSchema. */
 /** The read-format input and the two result fields every content-returning tool shares. */
+/** Why a discovered candidate is in the list, strongest first. */
+const MATCH_KINDS = ["title", "body", "meaning"] as const;
+
+/**
+ * Each candidate with `match` worked out. A source that searches sets at most one flag per
+ * candidate and neither on a title or teaser hit, so "no flag set" alone reads the same on the
+ * strongest match and on a source that never searched. Two things tell them apart. A source that
+ * searched sends the flags on every row it returns, `false` included, where a plain feed sends none.
+ * And one flag set anywhere in the response proves the source searches, for a source that drops a
+ * false flag on the way. That reading is done here, once, so no caller has to do it.
+ */
+function withMatch<T extends { matchedInBody?: boolean; matchedSemantic?: boolean }>(
+  candidates: readonly T[],
+): Array<T & { match?: (typeof MATCH_KINDS)[number] }> {
+  const carriesFlag = (c: T): boolean => typeof c.matchedInBody === "boolean" || typeof c.matchedSemantic === "boolean";
+  const searches = candidates.some(carriesFlag);
+  return candidates.map((c) => {
+    const match = c.matchedInBody ? "body" : c.matchedSemantic ? "meaning" : searches ? "title" : undefined;
+    return match ? { ...c, match } : { ...c };
+  });
+}
+
 const FORMAT_INPUT = z
   .enum(["markdown", "html"])
   .optional()
@@ -454,6 +491,13 @@ export interface BuildServerOptions {
     /** Prompt names to register. Absent ⇒ all. Prompts steer toward tools, so a prompt naming a
      *  tool outside `tools` should be left out too — nothing enforces that, it is the caller's. */
     prompts?: readonly string[];
+    /**
+     * One sentence a host adds to a tool's description, keyed by tool name. For a host that mounts
+     * its own tools beside these: it is how `naulon_discover` can send a caller to a search tool
+     * this package has never heard of, and how a transport states a limit it applies. The sentence
+     * is placed after the tool's own when-to-use line. A name that matches nothing is ignored.
+     */
+    notes?: Readonly<Record<string, string>>;
   };
   /**
    * This server never pays: no signer and no budget. Tools whose text is shared with spending
@@ -554,6 +598,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   const priceOnly = opts.priceOnly === true;
   /** One sentence for a server that spends, its counterpart for one that only prices. */
   const say = (spends: string, prices: string): string => (priceOnly ? prices : spends);
+  /** Tool names in text go through `named`, so a sentence never sends a caller to a tool the
+   *  surface left out. */
+  const named = toolNamer(allowTool);
+  const lists = named.lists;
+  /** The host's sentence for `name` (`surface.notes`), with its trailing space, or nothing. */
+  const hostNote = (name: string): string => {
+    const note = opts.surface?.notes?.[name]?.trim();
+    return note ? `${note} ` : "";
+  };
   const discarded = allowTool || allowPrompt ? new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }) : server;
   // `registerTool`/`registerPrompt` are overloaded generics, so `Parameters<…>` collapses to
   // `never`. The variadic body is therefore typed loosely and the WHOLE function is cast back to
@@ -792,6 +845,16 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
   };
 
   // ── naulon_discover (free) ──────────────────────────────────────────────────
+  /** What follows discovery, naming only the steps this server lists. */
+  const discoverNext = ((): string => {
+    const steps = [
+      lists("naulon_appraise") ? "naulon_appraise to score the candidates" : "",
+      lists("naulon_quote") ? "naulon_quote for a live price" : "",
+    ].filter(Boolean);
+    if (steps.length === 0) return "";
+    const pay = !priceOnly && lists("naulon_pay_and_read") ? " before naulon_pay_and_read" : "";
+    return `Call it first, then ${steps.join(" and ")}${pay}. `;
+  })();
   reg(
     "naulon_discover",
     {
@@ -799,30 +862,22 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       description:
         // A price-only server is built by a host that already chose its catalogue, so its caller
         // has nothing to configure: the text names the step, not the settings.
-        say("Find candidate essays for a topic from the configured publisher (a live RSS feed or a " +
-          "catalog endpoint — set RSS_URL, PUBLISHER_URL, or CATALOG_URL, or use the hosted endpoint). ",
-          "Browse a TOPIC: list candidate articles by title and teaser, with no verdict on whether any " +
-          "of them answers a question. ") +
-        "Returns FREE public teasers only — slug, title, and summary — with no content and no payment. " +
-        say("Call this first to see what is available before appraising, quoting, or paying. ",
-          "Call this first to see what is available before appraising or quoting. ") +
-        say("If no source " +
-          "is configured it refuses with setup guidance rather than inventing sources. ", "") +
-        "A candidate may carry WHY it matched: `matchedInBody` means your terms are inside the paid " +
-        "text but NOT in the title or teaser (strong — the teaser just does not show it), " +
-        "`matchedSemantic` means only that it is near your query in meaning and your terms are " +
-        say("absent (weak — judge the teaser, and do not pay one that is off-topic). ",
-          "absent (weak: judge the teaser, and set aside one that is off-topic). ") +
-        "NEITHER flag set means one of two opposite things, so read it against the rest of the " +
-        "response: if any OTHER candidate here carries a flag, this source searches, and no flag is " +
-        "the STRONGEST result of all — your terms matched the title or teaser, which is why no " +
-        "body-only or semantic explanation was needed. If NO candidate in the response carries a " +
-        "flag, the source does not search (a plain RSS feed), and the absence says nothing at all — " +
-        "judge every candidate on its teaser. " +
-        "Discovery returns the best available matches, never a promise " +
-        "that any of them answers your question.",
+        say("List candidate sources for a topic from the configured publisher (RSS_URL, PUBLISHER_URL " +
+          "or CATALOG_URL, or the hosted endpoint), ",
+          "Browse a TOPIC: list candidate articles, ") +
+        "each with its slug, title, free teaser, url and an indicative price where the source lists one" +
+        say(". ", ", and no verdict on whether it answers a question. ") +
+        "It returns no paid text and pays nothing. " +
+        discoverNext +
+        hostNote("naulon_discover") +
+        "The list is the source's best matches in its own order, empty when nothing matched, and never a " +
+        "promise that one answers your question. " +
+        "Each candidate's `match` says why it is there: `title` is the strongest, `body` means your words are " +
+        "in the text behind the toll, `meaning` is the weakest, and no `match` means the source does not search. " +
+        say("With no source configured it refuses with setup guidance and invents nothing. ", "") +
+        "`topic` is plain words: a subject or a short phrase.",
       inputSchema: {
-        topic: z.string().min(1).describe("The research topic to find candidate sources for."),
+        topic: z.string().min(1).describe("The topic, in plain words: a subject, a phrase or a short question."),
       },
       outputSchema: {
         candidates: z
@@ -836,7 +891,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
                 .optional()
                 .describe(
                   "Canonical URL this source is served from (from the RSS <link> / catalog / directory). " +
-                    "Pass it back to naulon_quote / naulon_pay_and_read so the toll targets the real link " +
+                    `Pass it back to ${named("naulon_quote", "naulon_pay_and_read")} so the toll targets the real link ` +
                     "(e.g. /articles/<slug>) instead of a reconstructed /essays/<slug> path.",
                 ),
               // Why the source matched. A directory that searches article bodies sets AT MOST one of
@@ -880,10 +935,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
                 .optional()
                 .describe(
                   "STRONG: your query's terms appear inside this source's full text but NOT in its " +
-                    "title or teaser, which is why the flag is needed at all. A flag only — the body " +
+                    "title or teaser, which is why the flag is needed at all. A flag only: the body " +
                     "itself stays behind the toll. ABSENT/false does NOT mean a weak match: a title " +
-                    "or teaser hit also reads false, and is stronger than this. See the tool " +
-                    "description for how to tell that apart from a source that does not search.",
+                    "or teaser hit also reads false, and is stronger than this. `match` on the same " +
+                    "candidate has already told the two apart; read that.",
                 ),
               matchedSemantic: z
                 .boolean()
@@ -891,8 +946,19 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
                 .describe(
                   "WEAK: this source is close to your query in meaning, but your terms do NOT appear " +
                     "in it. Judge it on the title and teaser; a near-miss looks exactly like this. " +
-                    "ABSENT/false with `matchedInBody` also absent is the both-false case — see the " +
-                    "tool description; it is either the strongest match or no signal, never a weak one.",
+                    "ABSENT/false with `matchedInBody` also absent is the both-false case: either the " +
+                    "strongest match or no signal, never a weak one. `match` says which.",
+                ),
+              match: z
+                .enum(MATCH_KINDS)
+                .optional()
+                .describe(
+                  "Why this candidate is in the list, worked out from the whole response. `title`: your " +
+                    "words are in its title or teaser, the strongest match. `body`: they are in the text " +
+                    "behind the toll and not in the teaser, so the teaser will not show why. `meaning`: " +
+                    "it is near your topic and your words are absent, the weakest; set it aside when the " +
+                    "teaser is off-topic. ABSENT: no candidate in this response carries a match flag at all, " +
+                    "so the source does not search (a plain RSS feed) and every candidate is judged on its teaser.",
                 ),
             }),
           )
@@ -903,7 +969,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .describe("True if the server refused to run discovery at all (e.g. a hosted ask-only mount) — see note. Never set alongside real candidates."),
         note: z.string().optional().describe("Present when refused — explains why, and where to go instead."),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ topic }) => {
       // WP-3a — a hosted ask-only mount (WP-3c) is inert-but-honest for this tool: refuse BEFORE
@@ -917,7 +983,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       lastDiscoveredHosts = [
         ...new Set(candidates.map((c) => (c.url ? hostnameOf(c.url) : null)).filter((h): h is string => h !== null)),
       ];
-      return structured({ candidates });
+      return structured({ candidates: withMatch(candidates) });
     },
   );
 
@@ -927,10 +993,12 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     {
       title: "Check wallet, discovery, and gate status",
       description:
-        "Run this FIRST, before anything else. Reports the buyer wallet address, where discovery " +
-        "is configured to look, and — plain-language — what to do next to get a paid read working " +
-        "(e.g. fund the wallet, or point discovery/the gate at your own publisher). Free, read-only, " +
-        "no network calls beyond resolving local config.",
+        "Report whether this server can pay for a read: the buyer wallet address, where discovery " +
+        "looks, the budget left, and in plain language the next step to get a paid read working " +
+        "(fund the wallet, or point discovery or the gate at your own publisher). Call it first, and " +
+        `again when ${named("naulon_discover", "naulon_pay_and_read") || "another tool"} returns nothing or refuses. ` +
+        hostNote("naulon_status") +
+        "It is free, takes no arguments and changes nothing.",
       inputSchema: {},
       outputSchema: {
         wallet: z
@@ -970,7 +1038,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .object(networkOutputSchema)
           .describe("The settlement chain + token this wallet tolls on. Read settlement.testnet FIRST: true ⇒ every spend is testnet play-money with no fiat value; false ⇒ real money."),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => {
       const cfg = getConfig();
@@ -1064,20 +1132,22 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     {
       title: "Appraise candidates for a topic",
       description:
-        "Score how relevant each candidate is to the topic, from its free teaser alone — a 0..1 " +
-        "relevance plus a one-line rationale. Pass the candidates you got from naulon_discover (or a " +
-        "curated subset), and pass them back WHOLE — `matchedInBody` / `matchedSemantic` tell the " +
-        "scorer WHY the search returned each one, and dropping them makes a body-matched source with " +
-        "a terse teaser look identical to a near-miss with a keyword-ish one. FREE: it reads the " +
-        "teaser and those flags, never paid content, and it fetches and pays for nothing. " +
-        say("Use it to decide what is worth quoting and paying for.", "Use it to decide what is worth quoting."),
+        "Score how relevant each candidate is to the topic from its free teaser alone: a relevance " +
+        "from 0 to 1 and a one-line rationale for each. " +
+        `Call it on the rows ${named("naulon_discover") || "discovery"} returned, to decide which are worth ` +
+        say(`a live price from ${named("naulon_quote") || "a quote"} and a paid read. `, `a live price from ${named("naulon_quote") || "a quote"}. `) +
+        hostNote("naulon_appraise") +
+        "It is free: it reads the teaser and the match flags, never the text behind the toll, and it fetches " +
+        "nothing. Pass each row back whole, or a subset of whole rows. `matchedInBody` and `matchedSemantic` " +
+        "tell the scorer why the search returned a row, and without them a source matched in its body " +
+        "scores the same as a near miss.",
       inputSchema: {
         topic: z.string().min(1).describe("The research topic to score relevance against."),
         candidates: z
           .array(
             z.object({
-              slug: z.string(),
-              title: z.string(),
+              slug: z.string().describe("The row's `slug` from discovery, returned on its score so the two can be joined."),
+              title: z.string().describe("The row's `title` from discovery, judged with the teaser."),
               summary: z.string().describe("The free teaser to judge — title + summary, no paid content."),
               // Declared for the same reason naulon_discover declares them on the way out: an
               // undeclared key is stripped by schema validation. Without these two lines the
@@ -1106,7 +1176,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           }),
         ),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ topic, candidates }) => {
       // Price plays no part in relevance, so appraise at zero and drop it from the output. The
@@ -1130,22 +1200,24 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     {
       title: "Quote the toll (free price probe)",
       description:
-        "Probe the real x402 toll for a source WITHOUT paying — the free 402 price check. Returns " +
-        "the author price, the buyer's true total (when the publisher adds extra settlement legs such " +
-        "as an operator fee, the total is higher than the author price), and the settlement terms. " +
-        "gated:false means one thing only — the origin answered 2xx, so it is a genuinely free read you " +
-        "may just fetch. Anything else returns refused:true with the reason in note: a refusal to reach " +
-        "the url (off-gate identity, or operator policy such as a kill-switch or deny-list), a 404, an " +
-        "unreachable origin, or a malformed 402. A refused url is NEITHER payable nor free — do not fetch " +
-        "it and do not report it as free; retry or fix the url." +
-        say(" Quote before paying so you can plan spend against real prices.", ""),
+        "Read the live toll for ONE source without paying it: the author's price, the buyer's total " +
+        "(higher when the publisher adds settlement legs such as an operator fee) and the settlement terms. " +
+        `Call it on a candidate from ${named("naulon_discover") || "discovery"}, whose listed price is only indicative: ` +
+        "this one is the publisher's own answer. " +
+        say(`Quote before paying with ${named("naulon_pay_and_read") || "a paid read"} so you can plan spend against real prices. `, "") +
+        hostNote("naulon_quote") +
+        "It makes one request to the publisher and is free. `gated: false` means one thing only: the origin " +
+        "answered 2xx, so the page is a free read you may fetch. Anything else is `refused: true` with " +
+        "`refusedReason` and a `note`. A refused url is NEITHER payable nor free: do not fetch it and do not " +
+        "report it as free. Pass `url` whenever discovery gave one, because it is probed exactly as given; " +
+        "`slug` alone is rebuilt as /essays/<slug>, which fits only a site that serves that path.",
       inputSchema: {
-        slug: z.string().min(1).describe("Source slug from naulon_discover."),
+        slug: z.string().min(1).describe(`The candidate's \`slug\` from ${named("naulon_discover") || "discovery"}. Always required; it locates the page only when \`url\` is absent.`),
         url: z
           .string()
           .optional()
           .describe(
-            "Canonical URL from naulon_discover (the source's real link). When present it is probed VERBATIM; " +
+            `The candidate's \`url\` from ${named("naulon_discover") || "discovery"} (the source's real link). When present it is probed VERBATIM; ` +
               "absent, the slug is reconstructed to the /essays/<slug> template.",
           ),
       },
@@ -1205,7 +1277,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         )),
         note: z.string().optional(),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ slug, url }) => {
       // WP-3a — a hosted ask-only mount is inert-but-honest for this tool: refuse BEFORE ever
@@ -1276,6 +1348,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "it EXPIRES — `expiresAt`/`expiresInSec` in the result say when, typically an hour. " +
         "The toll is quoted first: if it would exceed the remaining session budget the call is REFUSED " +
         "and spends nothing (the budget ceiling is server-configured and cannot be raised from a tool). " +
+        hostNote("naulon_pay_and_read") +
         "If the source is not gated, or payment is rejected, it returns ok:false and spends nothing.",
       inputSchema: {
         slug: z.string().min(1).describe("Source slug from naulon_discover / naulon_quote."),
@@ -1760,7 +1833,9 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "the original pay tells you when. This also covers a source inside a SCOPE licence you bought " +
         "up front: pass the url and any live licence whose scope covers that path is used. If the " +
         "license is holder-of-key bound, a fresh wallet proof-of-possession is signed automatically. " +
-        "Returns ok:false with a `reason` when no live licence covers it. Any locally-cached copy of " +
+        `Returns ok:false with a \`reason\` when no live licence covers it: buy it with ${named("naulon_pay_and_read") || "a paid read"}, which also checks held licences first. ` +
+        hostNote("naulon_read_held") +
+        "Any locally-cached copy of " +
         "earlier content is your own continuity only; it carries no live license and must never be " +
         "cited as a paid read.",
       inputSchema: {
@@ -1818,7 +1893,7 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           ),
         error: z.string().optional(),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ slug, url, format }) => {
       const held = await heldStore.load();
@@ -1906,8 +1981,10 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
         "ground — for a topic and return a grounded answer with cited, paid-for sources, the spend, the " +
         "per-candidate decisions (with reasons), and the full decision log. Spend is bounded by the " +
         "session budget. You MAY pass budgetUsdc to spend LESS on this run, but it is clamped to what " +
-        "remains in the session — you can lower the cap, never raise it. This SPENDS MONEY. Prefer the " +
-        "granular tools when you want to see prices and plan spend yourself before paying.",
+        "remains in the session — you can lower the cap, never raise it. This SPENDS MONEY. " +
+        hostNote("naulon_research") +
+        `Prefer the granular tools (${["naulon_discover", "naulon_quote", "naulon_pay_and_read"].filter(lists).join(", ") || "discover, quote, pay"}) when you want to ` +
+        "see prices and plan spend yourself before paying.",
       inputSchema: {
         topic: z.string().min(1).describe("The research topic."),
         budgetUsdc: z
