@@ -173,6 +173,8 @@ It runs offline on mock settlement and a keyword appraisal; set `OPENAI_API_KEY`
 appraisal and answers. [`@naulon/wayfarer-mcp`](./packages/wayfarer-mcp) exposes the same agent
 as an MCP server, and [docs/buying.md](./docs/buying.md) covers both.
 
+[![naulon MCP server](https://mcprush.com/badge/naulon-mcp/card.svg)](https://mcprush.com/to/naulon-mcp?ref=badge)
+
 ## Going live on Arc
 
 Everything above runs on **mock** settlement. Real money moves through the Circle Gateway
