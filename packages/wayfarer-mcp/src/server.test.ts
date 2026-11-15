@@ -24,7 +24,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { ARC_TESTNET, FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
 import { DEFAULT_POLICY, licenseIdentityFor, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
-import { buildServer, MAX_HOST_INSTRUCTIONS_CHARS, SERVER_VERSION, TOOL_NAMES, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
+import { buildServer, MAX_EMPTY_NOTE_CHARS, MAX_HOST_INSTRUCTIONS_CHARS, SERVER_VERSION, TOOL_NAMES, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
 
 /** Stand up an isolated server + connected client over a linked in-memory pair. */
 async function connectedClient(): Promise<Client> {
@@ -3339,6 +3339,86 @@ test("host instructions over the bound are refused, and the bound counts the tri
       (err: unknown) => err instanceof RangeError && err.message.includes(String(MAX_HOST_INSTRUCTIONS_CHARS + 1)) && err.message.includes(String(MAX_HOST_INSTRUCTIONS_CHARS)),
     );
   }
+});
+
+/** As `withCatalog`, with a catalogue of the caller's choosing: an empty one is a search that finds nothing. */
+async function withCatalogOf<T>(essays: unknown[], fn: () => Promise<T>): Promise<T> {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(essays));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  try {
+    return await withEnv({ RSS_URL: undefined, PUBLISHER_URL: undefined, CATALOG_URL: `http://127.0.0.1:${port}/catalog` }, fn);
+  } finally {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      server.closeAllConnections?.();
+    });
+  }
+}
+
+const EMPTY_NOTE = "Nothing here matched. Search the second catalogue with naulon_quote.";
+type Discovered = { content: { type: string; text: string }[]; structuredContent: Record<string, unknown> };
+const discoverWith = async (opts?: BuildServerOptions): Promise<Discovered> =>
+  (await (await connectedClientWith(opts)).callTool({ name: "naulon_discover", arguments: { topic: "passage" } })) as Discovered;
+
+test("an empty discovery carries the host's sentence, and a list with candidates never does", async () => {
+  for (const priceOnly of [false, true]) {
+    const opts: BuildServerOptions = { priceOnly, surface: { discoverEmptyNote: `  ${EMPTY_NOTE}\n` } };
+    await withCatalogOf([], async () => {
+      const res = await discoverWith(opts);
+      assert.deepEqual(res.structuredContent, { candidates: [], emptyNote: EMPTY_NOTE }, `priceOnly ${priceOnly}`);
+      assert.deepEqual(JSON.parse(res.content[0]!.text), res.structuredContent);
+    });
+    await withCatalog(async () => {
+      const res = await discoverWith(opts);
+      assert.ok((res.structuredContent.candidates as unknown[]).length > 0);
+      assert.equal("emptyNote" in res.structuredContent, false, "a list with candidates has no empty note");
+    });
+  }
+});
+
+test("without the host's sentence an empty discovery and the listing are byte for byte what they were", async () => {
+  const listingOf = async (opts?: BuildServerOptions): Promise<string> => JSON.stringify((await (await connectedClientWith(opts)).listTools()).tools);
+  for (const priceOnly of [false, true]) {
+    const plain = await listingOf({ priceOnly });
+    assert.doesNotMatch(plain, /emptyNote/);
+    for (const discoverEmptyNote of [undefined, "", "  \n\t"]) {
+      const opts: BuildServerOptions = discoverEmptyNote === undefined ? { priceOnly, surface: {} } : { priceOnly, surface: { discoverEmptyNote } };
+      assert.equal(await listingOf(opts), plain, `listing, ${JSON.stringify(discoverEmptyNote)}`);
+      await withCatalogOf([], async () => {
+        const res = await discoverWith(opts);
+        assert.deepEqual(res.structuredContent, { candidates: [] });
+        assert.equal(res.content[0]!.text, JSON.stringify({ candidates: [] }, null, 2));
+      });
+    }
+    // Set, the note changes one thing in the listing: discover declares the field it may return.
+    const set = JSON.parse(await listingOf({ priceOnly, surface: { discoverEmptyNote: EMPTY_NOTE } })) as { name: string; outputSchema?: { properties?: Record<string, unknown> } }[];
+    for (const tool of set) assert.equal("emptyNote" in (tool.outputSchema?.properties ?? {}), tool.name === "naulon_discover", tool.name);
+    assert.ok(!JSON.stringify(set).includes(EMPTY_NOTE), "the sentence rides in a result, never in the listing");
+  }
+});
+
+test("a refused discovery keeps its own note and never carries the empty one", async () => {
+  const res = await discoverWith({ hostedInertSteer: "Use naulon_ask on this mount.", surface: { discoverEmptyNote: EMPTY_NOTE } });
+  assert.deepEqual(res.structuredContent, { candidates: [], refused: true, note: "Use naulon_ask on this mount." });
+});
+
+test("an empty-discovery sentence over the bound is refused, and the bound counts the trimmed text", async () => {
+  const atBound = "a".repeat(MAX_EMPTY_NOTE_CHARS);
+  await withCatalogOf([], async () => {
+    assert.equal((await discoverWith({ surface: { discoverEmptyNote: ` ${atBound}\n` } })).structuredContent.emptyNote, atBound);
+  });
+  for (const priceOnly of [false, true]) {
+    assert.throws(
+      () => buildServer({ priceOnly, surface: { discoverEmptyNote: `${atBound}a` } }),
+      (err: unknown) => err instanceof RangeError && err.message.includes("surface.discoverEmptyNote") && err.message.includes(String(MAX_EMPTY_NOTE_CHARS + 1)),
+    );
+  }
+  // Refused even when the surface leaves discovery out: a bad option is not hidden by another.
+  assert.throws(() => buildServer({ surface: { tools: ["naulon_quote"], discoverEmptyNote: `${atBound}a` } }), RangeError);
 });
 
 test("a price-only quote returns the price and its chain, and no budget fields", async () => {

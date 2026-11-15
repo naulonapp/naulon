@@ -25,6 +25,14 @@ tags and the auto-generated notes on each GitHub Release.
   guidance always follows, and `priceOnly` still picks which set. Empty or whitespace-only text
   changes nothing, and text over `MAX_HOST_INSTRUCTIONS_CHARS` (1,200 characters after trimming)
   throws a `RangeError`.
+- `orderTools(server, names)` states the order `tools/list` returns. The named tools come first in
+  the order given and the rest keep registration order, including a tool the host registers after
+  the call. A name with no tool is ignored, and `toolContractProblems` reports it when passed the
+  same names as `order`. `tools/call` is unchanged.
+- `surface.discoverEmptyNote` adds one sentence to the result of `naulon_discover` when the search
+  found nothing, as `emptyNote`. A host with a second catalogue uses it to point there. A refused
+  discovery keeps its own `note`. Unset, the result and the listing are unchanged, and text over
+  `MAX_EMPTY_NOTE_CHARS` (300 characters after trimming) throws a `RangeError`.
 
 ## v0.18.0
 

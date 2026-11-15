@@ -95,6 +95,14 @@ for (const [rule, tool, expected] of BROKEN) {
   });
 }
 
+test("an order that names a tool the server does not list is a problem", () => {
+  const withOrder = (order: string[]): string[] => toolContractProblems([sound(), sibling()], { prefix: PREFIX, order });
+  assert.deepEqual(withOrder(["naulon_beta", "naulon_alpha"]), []);
+  assert.deepEqual(withOrder([]), []);
+  // Once per name, and a host's own tool is held to it whatever its prefix.
+  assert.deepEqual(withOrder(["host_search", "naulon_alpha", "host_search"]), ["order: names host_search, which this server does not list"]);
+});
+
 test("instructions that name a tool the server does not list are a problem", () => {
   assert.deepEqual(problemsOf(sound(), "Call naulon_alpha, then naulon_beta."), []);
   assert.deepEqual(problemsOf(sound(), "Then call naulon_pay."), ["instructions: names naulon_pay, which this server does not list"]);
