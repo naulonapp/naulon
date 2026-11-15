@@ -6,7 +6,7 @@
  * so the cloud can `buildServer()` and wrap it over its own authenticated transport
  * without dragging in the stdio bootstrap.
  */
-export { buildServer, SERVER_NAME, SERVER_VERSION, TOOL_NAMES, type BuildServerOptions, type DecisionAuditEvent, type PeriodLicence } from "./server.ts";
+export { buildServer, MAX_HOST_INSTRUCTIONS_CHARS, SERVER_NAME, SERVER_VERSION, TOOL_NAMES, type BuildServerOptions, type DecisionAuditEvent, type PeriodLicence } from "./server.ts";
 export {
   cloudMemoSigner,
   cloudPopSigner,

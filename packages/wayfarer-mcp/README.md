@@ -290,6 +290,21 @@ ones that are not listed, and `TOOL_NAMES` is every tool the full server lists. 
 adds one sentence to a tool's description, which is how `naulon_discover` can send a caller to a
 search tool the host mounts and this package has never heard of.
 
+### Host instructions
+
+`buildServer({ instructions })` puts a host's own text at the head of the server's `instructions`,
+the text a client reads once on connecting. Use it to tell a model about tools you mount beside
+these, before it reads anything else.
+
+| Option | Type | Does |
+|--------|------|------|
+| `instructions` | `string`, optional | Your text, trimmed, then one blank line, then this package's instructions, whole. Absent, empty or whitespace only changes nothing. |
+
+You add and never remove: the package's price and safety guidance always follows your text, and
+`priceOnly` still picks which set that is. Text longer than `MAX_HOST_INSTRUCTIONS_CHARS` (1,200
+characters after trimming) makes `buildServer` throw a `RangeError`. Some clients keep only the
+first part of a server's instructions, so a long lead would push that guidance out.
+
 ---
 
 MIT.

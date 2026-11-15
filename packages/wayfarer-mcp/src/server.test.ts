@@ -24,7 +24,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { ARC_TESTNET, FLEET_DIRECTORY_URL, FLEET_ORIGIN, resetConfig } from "@naulon/shared";
 import { DEFAULT_POLICY, licenseIdentityFor, memoryHeldStore, type HeldLicense, type MemoSigner } from "@naulon/wayfarer";
 
-import { buildServer, SERVER_VERSION, TOOL_NAMES, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
+import { buildServer, MAX_HOST_INSTRUCTIONS_CHARS, SERVER_VERSION, TOOL_NAMES, type BuildServerOptions, type DecisionAuditEvent } from "./server.ts";
 
 /** Stand up an isolated server + connected client over a linked in-memory pair. */
 async function connectedClient(): Promise<Client> {
@@ -3288,6 +3288,57 @@ test("a host's note lands in the description of the tool it names, and nowhere e
   assert.ok(text("naulon_discover").indexOf(note) > text("naulon_discover").indexOf("Call it first"), "after the when-to-use line");
   assert.doesNotMatch(text("naulon_quote"), /naulon_search/);
   assert.doesNotMatch(JSON.stringify(tools), /ignored/);
+});
+
+const instructionsOf = async (opts?: BuildServerOptions): Promise<string> => (await connectedClientWith(opts)).getInstructions() ?? "";
+
+test("a host's instructions lead, and the package's own follow whole", async () => {
+  const lead = "This server also lists naulon_discover results from a second catalogue.";
+  for (const priceOnly of [false, true]) {
+    const own = await instructionsOf({ priceOnly });
+    const said = await instructionsOf({ priceOnly, instructions: lead });
+    assert.equal(said, `${lead}\n\n${own}`, `priceOnly ${priceOnly}`);
+  }
+  // The two sets stay distinct under a lead: a host cannot swap one for the other.
+  assert.match(await instructionsOf({ instructions: lead }), /DON'T PAY TWICE/);
+  assert.doesNotMatch(await instructionsOf({ priceOnly: true, instructions: lead }), /DON'T PAY TWICE/);
+  assert.match(await instructionsOf({ priceOnly: true, instructions: lead }), /A PRICE IS NOT A PURCHASE/);
+});
+
+test("the host's instructions are trimmed, so the text never opens or splits on a blank block", async () => {
+  for (const priceOnly of [false, true]) {
+    const own = await instructionsOf({ priceOnly });
+    assert.equal(await instructionsOf({ priceOnly, instructions: "\n\n  Lead.  \n\n\n" }), `Lead.\n\n${own}`);
+  }
+});
+
+test("absent, empty or whitespace-only host instructions leave the package's own byte for byte", async () => {
+  for (const priceOnly of [false, true]) {
+    const own = await instructionsOf({ priceOnly });
+    assert.ok(own.length > 0 && own === own.trim(), "the package's own text has no blank edge to inherit");
+    for (const instructions of [undefined, "", "   ", "\n\t \n"]) {
+      const opts: BuildServerOptions = instructions === undefined ? { priceOnly } : { priceOnly, instructions };
+      assert.equal(await instructionsOf(opts), own, `priceOnly ${priceOnly}, ${JSON.stringify(instructions)}`);
+    }
+  }
+  // The two defaults are the ones a client with no options at all receives.
+  assert.equal(await instructionsOf(), await instructionsOf({ priceOnly: false }));
+  assert.match(await instructionsOf(), /^naulon sells per-read licences/);
+  assert.match(await instructionsOf({ priceOnly: true }), /^naulon is a toll publishers put in front of their sites/);
+});
+
+test("host instructions over the bound are refused, and the bound counts the trimmed text", async () => {
+  const atBound = "a".repeat(MAX_HOST_INSTRUCTIONS_CHARS);
+  for (const priceOnly of [false, true]) {
+    const own = await instructionsOf({ priceOnly });
+    assert.equal(await instructionsOf({ priceOnly, instructions: atBound }), `${atBound}\n\n${own}`);
+    // Padding is not counted: only what a client would be sent is.
+    assert.equal(await instructionsOf({ priceOnly, instructions: `  ${atBound}\n` }), `${atBound}\n\n${own}`);
+    assert.throws(
+      () => buildServer({ priceOnly, instructions: `${atBound}a` }),
+      (err: unknown) => err instanceof RangeError && err.message.includes(String(MAX_HOST_INSTRUCTIONS_CHARS + 1)) && err.message.includes(String(MAX_HOST_INSTRUCTIONS_CHARS)),
+    );
+  }
 });
 
 test("a price-only quote returns the price and its chain, and no budget fields", async () => {

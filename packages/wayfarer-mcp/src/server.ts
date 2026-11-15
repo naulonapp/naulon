@@ -508,7 +508,32 @@ export interface BuildServerOptions {
    * Explicit rather than inferred from `budgetUsdc: 0`, which a spending session can also reach.
    */
   priceOnly?: boolean;
+  /**
+   * Text a host places at the head of the server's `instructions`. For a host that mounts tools
+   * of its own beside these: it is the one place a connecting model can be told about them, and
+   * told first.
+   *
+   * Composition: the host's text, trimmed, then one blank line, then this package's own
+   * instructions, whole and unchanged (the `priceOnly` set when that option is on). A host adds
+   * and never removes: the price and safety guidance always follows, and no option shortens it.
+   *
+   * Absent, empty or whitespace only: the instructions are this package's own, byte for byte.
+   * Longer than {@link MAX_HOST_INSTRUCTIONS_CHARS} after trimming: `buildServer` throws a
+   * `RangeError`, because cutting the text would end it mid-sentence.
+   *
+   * Tool names in it are the host's to keep true. `toolContractProblems` reports an instruction
+   * that names a tool the server does not list.
+   */
+  instructions?: string;
 }
+
+/**
+ * The longest host text `BuildServerOptions.instructions` accepts, in characters after trimming.
+ * Some MCP clients keep only the first part of a server's instructions. The host's text comes
+ * first, so every character of it is room taken from the guidance that follows; this bound keeps
+ * a few short paragraphs for the host and leaves the rest to the package.
+ */
+export const MAX_HOST_INSTRUCTIONS_CHARS = 1200;
 
 /**
  * Build a fresh, unconnected MCP server with the tool surface registered. The
@@ -579,10 +604,22 @@ const PRICE_ONLY_INSTRUCTIONS = [
   "live price from the publisher's toll. Never report a source as bought or as read in full.",
 ].join("\n");
 
+/** The host's text first, a blank line, then the package's own, which is never shortened. */
+function composeInstructions(own: string, host: string | undefined): string {
+  const lead = host?.trim() ?? "";
+  if (lead === "") return own;
+  if (lead.length > MAX_HOST_INSTRUCTIONS_CHARS) {
+    throw new RangeError(
+      `buildServer: instructions is ${lead.length} characters, and the most a host may add is ${MAX_HOST_INSTRUCTIONS_CHARS}`,
+    );
+  }
+  return `${lead}\n\n${own}`;
+}
+
 export function buildServer(opts: BuildServerOptions = {}): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { instructions: opts.priceOnly === true ? PRICE_ONLY_INSTRUCTIONS : SERVER_INSTRUCTIONS },
+    { instructions: composeInstructions(opts.priceOnly === true ? PRICE_ONLY_INSTRUCTIONS : SERVER_INSTRUCTIONS, opts.instructions) },
   );
 
   // ── Surface allowlist (opts.surface) ────────────────────────────────────────

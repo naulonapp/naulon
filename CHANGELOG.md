@@ -14,6 +14,18 @@ gate ships as a Docker image, and the other two are workspace-internal.
 Releases before v0.5.0 predate this file. Their contents are the git history between
 tags and the auto-generated notes on each GitHub Release.
 
+## Unreleased
+
+`@naulon/wayfarer-mcp`.
+
+### Added
+- `buildServer({ instructions })` places a host's text at the head of the server instructions,
+  followed by a blank line and the package's own instructions, whole. A host that mounts its own
+  tools beside these uses it to name them first. It adds and never removes: the price and safety
+  guidance always follows, and `priceOnly` still picks which set. Empty or whitespace-only text
+  changes nothing, and text over `MAX_HOST_INSTRUCTIONS_CHARS` (1,200 characters after trimming)
+  throws a `RangeError`.
+
 ## v0.18.0
 
 Ships `@naulon/wayfarer-mcp` **0.8.0**. No other package changed.
