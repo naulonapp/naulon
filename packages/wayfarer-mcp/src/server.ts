@@ -498,6 +498,20 @@ export interface BuildServerOptions {
      * is placed after the tool's own when-to-use line. A name that matches nothing is ignored.
      */
     notes?: Readonly<Record<string, string>>;
+    /**
+     * One sentence a host adds to the result of `naulon_discover` when the search found nothing,
+     * as `emptyNote`. For a host with a second catalogue: it is how an empty list can send the
+     * caller there. Like `notes` it adds and never removes: `candidates` is still returned, empty.
+     *
+     * It is carried only when discovery ran and matched nothing. A refused discovery keeps its
+     * own `note` and never carries this one. Absent, empty or whitespace only: the result and the
+     * tool's listing are what they are without the option, byte for byte. Longer than
+     * {@link MAX_EMPTY_NOTE_CHARS} after trimming: `buildServer` throws a `RangeError`.
+     *
+     * This is the host's own text, written by whoever builds the server, and it reaches the
+     * caller as the server's word. Never fill it from a publisher, a search result or a request.
+     */
+    discoverEmptyNote?: string;
   };
   /**
    * This server never pays: no signer and no budget. Tools whose text is shared with spending
@@ -508,7 +522,32 @@ export interface BuildServerOptions {
    * Explicit rather than inferred from `budgetUsdc: 0`, which a spending session can also reach.
    */
   priceOnly?: boolean;
+  /**
+   * Text a host places at the head of the server's `instructions`. For a host that mounts tools
+   * of its own beside these: it is the one place a connecting model can be told about them, and
+   * told first.
+   *
+   * Composition: the host's text, trimmed, then one blank line, then this package's own
+   * instructions, whole and unchanged (the `priceOnly` set when that option is on). A host adds
+   * and never removes: the price and safety guidance always follows, and no option shortens it.
+   *
+   * Absent, empty or whitespace only: the instructions are this package's own, byte for byte.
+   * Longer than {@link MAX_HOST_INSTRUCTIONS_CHARS} after trimming: `buildServer` throws a
+   * `RangeError`, because cutting the text would end it mid-sentence.
+   *
+   * Tool names in it are the host's to keep true. `toolContractProblems` reports an instruction
+   * that names a tool the server does not list.
+   */
+  instructions?: string;
 }
+
+/**
+ * The longest host text `BuildServerOptions.instructions` accepts, in characters after trimming.
+ * Some MCP clients keep only the first part of a server's instructions. The host's text comes
+ * first, so every character of it is room taken from the guidance that follows; this bound keeps
+ * a few short paragraphs for the host and leaves the rest to the package.
+ */
+export const MAX_HOST_INSTRUCTIONS_CHARS = 1200;
 
 /**
  * Build a fresh, unconnected MCP server with the tool surface registered. The
@@ -579,10 +618,31 @@ const PRICE_ONLY_INSTRUCTIONS = [
   "live price from the publisher's toll. Never report a source as bought or as read in full.",
 ].join("\n");
 
+/**
+ * The longest `surface.discoverEmptyNote` accepted, in characters after trimming. The note rides
+ * in every empty result a caller reads, and pointing at another place to look takes one sentence.
+ */
+export const MAX_EMPTY_NOTE_CHARS = 300;
+
+/** A host's text for `option`, trimmed: nothing when blank, refused when over `max`. */
+function hostText(option: string, text: string | undefined, max: number): string {
+  const trimmed = text?.trim() ?? "";
+  if (trimmed.length > max) {
+    throw new RangeError(`buildServer: ${option} is ${trimmed.length} characters, and the most a host may add is ${max}`);
+  }
+  return trimmed;
+}
+
+/** The host's text first, a blank line, then the package's own, which is never shortened. */
+function composeInstructions(own: string, host: string | undefined): string {
+  const lead = hostText("instructions", host, MAX_HOST_INSTRUCTIONS_CHARS);
+  return lead === "" ? own : `${lead}\n\n${own}`;
+}
+
 export function buildServer(opts: BuildServerOptions = {}): McpServer {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { instructions: opts.priceOnly === true ? PRICE_ONLY_INSTRUCTIONS : SERVER_INSTRUCTIONS },
+    { instructions: composeInstructions(opts.priceOnly === true ? PRICE_ONLY_INSTRUCTIONS : SERVER_INSTRUCTIONS, opts.instructions) },
   );
 
   // ── Surface allowlist (opts.surface) ────────────────────────────────────────
@@ -607,6 +667,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
     const note = opts.surface?.notes?.[name]?.trim();
     return note ? `${note} ` : "";
   };
+  /** The host's sentence for an empty discovery (`surface.discoverEmptyNote`), or nothing. */
+  const discoverEmptyNote = hostText("surface.discoverEmptyNote", opts.surface?.discoverEmptyNote, MAX_EMPTY_NOTE_CHARS);
   const discarded = allowTool || allowPrompt ? new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }) : server;
   // `registerTool`/`registerPrompt` are overloaded generics, so `Parameters<…>` collapses to
   // `never`. The variadic body is therefore typed loosely and the WHOLE function is cast back to
@@ -968,6 +1030,15 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
           .optional()
           .describe("True if the server refused to run discovery at all (e.g. a hosted ask-only mount) — see note. Never set alongside real candidates."),
         note: z.string().optional().describe("Present when refused — explains why, and where to go instead."),
+        // Declared only for a host that set it, so the listing of every other server is unchanged.
+        ...(discoverEmptyNote
+          ? {
+              emptyNote: z
+                .string()
+                .optional()
+                .describe("Present only when the search ran and matched nothing: where this server's host says to look instead. Never set alongside candidates or `refused`."),
+            }
+          : {}),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -983,7 +1054,8 @@ export function buildServer(opts: BuildServerOptions = {}): McpServer {
       lastDiscoveredHosts = [
         ...new Set(candidates.map((c) => (c.url ? hostnameOf(c.url) : null)).filter((h): h is string => h !== null)),
       ];
-      return structured({ candidates: withMatch(candidates) });
+      const found = withMatch(candidates);
+      return structured(found.length === 0 && discoverEmptyNote ? { candidates: found, emptyNote: discoverEmptyNote } : { candidates: found });
     },
   );
 

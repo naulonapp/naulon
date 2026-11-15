@@ -95,6 +95,8 @@ export interface ToolContractOptions {
   prefix: string;
   /** The server's `instructions`, checked for tools it names. */
   instructions?: string;
+  /** The names given to `orderTools`, checked for tools the server does not list. */
+  order?: readonly string[];
   /** Longest description allowed, in characters. */
   maxDescriptionChars?: number;
 }
@@ -210,6 +212,9 @@ export function toolContractProblems(tools: readonly ListedTool[], opts: ToolCon
 
   for (const name of mentioned(opts.instructions ?? "")) {
     if (!served.has(name)) problems.push(`instructions: names ${name}, which this server does not list`);
+  }
+  for (const name of new Set(opts.order ?? [])) {
+    if (!served.has(name)) problems.push(`order: names ${name}, which this server does not list`);
   }
   return problems;
 }

@@ -290,6 +290,55 @@ ones that are not listed, and `TOOL_NAMES` is every tool the full server lists. 
 adds one sentence to a tool's description, which is how `naulon_discover` can send a caller to a
 search tool the host mounts and this package has never heard of.
 
+### Host instructions
+
+`buildServer({ instructions })` puts a host's own text at the head of the server's `instructions`,
+the text a client reads once on connecting. Use it to tell a model about tools you mount beside
+these, before it reads anything else.
+
+| Option | Type | Does |
+|--------|------|------|
+| `instructions` | `string`, optional | Your text, trimmed, then one blank line, then this package's instructions, whole. Absent, empty or whitespace only changes nothing. |
+
+You add and never remove: the package's price and safety guidance always follows your text, and
+`priceOnly` still picks which set that is. Text longer than `MAX_HOST_INSTRUCTIONS_CHARS` (1,200
+characters after trimming) makes `buildServer` throw a `RangeError`. Some clients keep only the
+first part of a server's instructions, so a long lead would push that guidance out.
+
+### Tool order
+
+`tools/list` returns tools in the order they were registered, so a tool you mount after
+`buildServer` returns is listed last. `orderTools(server, names)` states the order instead:
+
+```ts
+import { buildServer, orderTools } from "@naulon/wayfarer-mcp";
+
+const server = buildServer({ surface: { tools: ["naulon_discover", "naulon_quote"] } });
+server.registerTool("acme_search", definition, handler);
+orderTools(server, ["acme_search", "naulon_discover"]);
+// tools/list: acme_search, naulon_discover, naulon_quote
+```
+
+The names you give come first, in your order. Every other tool follows in registration order,
+including one registered after the call. A name with no tool is ignored when a client lists, and
+`toolContractProblems(tools, { prefix, order: names })` reports it. Calling `orderTools` again
+replaces the order. It changes the listing only, never `tools/call`. It throws when the server has
+no tool yet, and when the installed MCP SDK has moved the one internal it reads.
+
+### A note on an empty discovery
+
+`naulon_discover` returns `{ "candidates": [] }` when nothing matched. A host with a second
+catalogue sets `surface.discoverEmptyNote`, and that result carries it as `emptyNote`:
+
+| Option | Type | Does |
+|--------|------|------|
+| `surface.discoverEmptyNote` | `string`, optional | One sentence, trimmed, returned as `emptyNote` only when discovery ran and found nothing. Absent, empty or whitespace only changes nothing, in the result or in the listing. |
+
+It adds and never removes: `candidates` is still there, empty. A refused discovery keeps its own
+`note` and never carries `emptyNote`. Text longer than `MAX_EMPTY_NOTE_CHARS` (300 characters
+after trimming) makes `buildServer` throw a `RangeError`. The sentence is your own text and reaches
+the caller as the server's word, so never fill it from a publisher, a search result or a request.
+
 ---
 
 MIT.
