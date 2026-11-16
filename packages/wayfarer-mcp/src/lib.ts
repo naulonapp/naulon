@@ -25,3 +25,4 @@ export {
   type ToolContractOptions,
 } from "./tool-contract.ts";
 export { orderTools } from "./tool-order.ts";
+export { decorateToolResults, type DecorateToolResultsOptions, type ToolCall, type ToolResultDecorator } from "./tool-results.ts";

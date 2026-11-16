@@ -93,6 +93,34 @@ same envelope and the same signature.
 Money is always **integer micro-USDC**. Never parse a formatted string back into a
 number.
 
+### `data` for `paper.notice`
+
+A host that serves paper text sends this when a paper a reader was served has since been
+retracted, withdrawn, corrected or flagged with an expression of concern. The self-host gate
+serves no papers and never sends it. Parse it with `paperNoticeDataSchema` from `@naulon/sdk`.
+
+```jsonc
+{
+  "notices": [{
+    "id": "…",                        // stable per notice and paper. Dedupe on this.
+    "paper": { "key": "10.1000/x", "title": "…", "page": "https://…/papers/10.1000/x" },
+    "type": "retraction",             // or "withdrawal", "concern", "correction"
+    "date": "2025-03-01",             // the date on the notice, or null
+    "seenAt": "2025-03-02T10:00:00Z", // when the host first saw it
+    "source": "publisher",            // or "retraction-watch", "openalex"
+    "doi": "10.1000/x.retraction",    // or null
+    "served": [{ "textRoot": "…", "sentences": [3, 4, 9], "more": false }],
+    "instead": [{ "key": "…", "title": "…", "page": "https://…", "licence": "cc-by",
+                  "studyType": "systematic_review", "year": 2024 }]
+  }],
+  "more": 0                           // notices still due after these
+}
+```
+
+`served` names the sentences by the index your read receipt gave them (`quotes[].index`),
+so you can find the sentences in your own output that rest on them. A correction is sent
+as a correction and never worded as a retraction.
+
 ## Retries: and what your status code does
 
 The sender treats **any non-2xx as a failed attempt** and re-sends with backoff:
