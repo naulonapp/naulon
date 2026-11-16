@@ -3,7 +3,7 @@
 // a self-hoster learns at boot, not at the first missed settlement. The gate's EnvConfigStore consumes
 // these; the shape mirrors what cloud stores per-endpoint (url/secret/events/hostFilter).
 //
-import { WEBHOOK_EVENT_TYPES, isWebhookEventType, type WebhookEventType } from "./webhooks/index.ts";
+import { SITE_WEBHOOK_EVENT_TYPES, isSiteWebhookEventType, isWebhookEventType, type WebhookEventType } from "./webhooks/index.ts";
 
 export interface WebhookEndpointSpec {
   url: string;
@@ -43,7 +43,7 @@ export function parseWebhookEndpointsEnv(raw: string | undefined): WebhookEndpoi
     }
     let events: WebhookEventType[];
     if (e["events"] === undefined) {
-      events = [...WEBHOOK_EVENT_TYPES];
+      events = [...SITE_WEBHOOK_EVENT_TYPES];
     } else {
       if (!Array.isArray(e["events"])) {
         throw new Error(`NAULON_WEBHOOK_ENDPOINTS[${i}].events must be an array of event types`);
@@ -51,6 +51,9 @@ export function parseWebhookEndpointsEnv(raw: string | undefined): WebhookEndpoi
       events = e["events"].map((t) => {
         if (typeof t !== "string" || !isWebhookEventType(t)) {
           throw new Error(`NAULON_WEBHOOK_ENDPOINTS[${i}] has an unknown event type: ${JSON.stringify(t)}`);
+        }
+        if (!isSiteWebhookEventType(t)) {
+          throw new Error(`NAULON_WEBHOOK_ENDPOINTS[${i}] names ${JSON.stringify(t)}, which this gate never sends`);
         }
         return t;
       });

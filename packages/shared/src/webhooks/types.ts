@@ -8,6 +8,14 @@ export function isWebhookEventType(s: string): s is WebhookEventType {
   return (WEBHOOK_EVENT_TYPES as readonly string[]).includes(s);
 }
 
+/** The events a site's gate emits. `paper.notice` is a reader's, sent only by a host that serves paper text, so
+ *  a site's endpoint neither takes it nor gets it by default. */
+export const SITE_WEBHOOK_EVENT_TYPES = ["anomaly.detected", "settlement.completed"] as const satisfies readonly WebhookEventType[];
+export type SiteWebhookEventType = (typeof SITE_WEBHOOK_EVENT_TYPES)[number];
+export function isSiteWebhookEventType(s: string): s is SiteWebhookEventType {
+  return (SITE_WEBHOOK_EVENT_TYPES as readonly string[]).includes(s);
+}
+
 /** The four delivery channels. `raw` is our signed generic endpoint; the rest are unsigned chat
  *  "incoming webhooks" (the URL is the credential). */
 export const WEBHOOK_CHANNEL_TYPES = ["raw", "slack", "discord", "teams"] as const;

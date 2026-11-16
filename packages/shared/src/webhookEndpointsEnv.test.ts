@@ -8,7 +8,7 @@ test("blank or undefined env parses to no endpoints (dark)", () => {
   assert.deepEqual(parseWebhookEndpointsEnv("   "), []);
 });
 
-test("a full entry parses with defaults (events→both, hostFilter→null)", () => {
+test("a full entry parses with defaults (events→the two a site sends, hostFilter→null)", () => {
   const specs = parseWebhookEndpointsEnv(
     JSON.stringify([{ url: "https://acme.test/hook", secret: "whsec_x" }]),
   );
@@ -49,5 +49,12 @@ test("an unknown event type throws", () => {
   assert.throws(
     () => parseWebhookEndpointsEnv(JSON.stringify([{ url: "https://a.test/h", secret: "s", events: ["nope"] }])),
     /event/i,
+  );
+});
+
+test("a reader's event is refused: a site's gate never sends paper.notice", () => {
+  assert.throws(
+    () => parseWebhookEndpointsEnv(JSON.stringify([{ url: "https://a.test/h", secret: "s", events: ["paper.notice"] }])),
+    /names "paper\.notice", which this gate never sends/,
   );
 });

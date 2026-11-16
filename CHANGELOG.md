@@ -28,6 +28,9 @@ tags and the auto-generated notes on each GitHub Release.
   concern. `@naulon/sdk` exports `paperNoticeDataSchema` and `paperNoticeSchema` for the receiving
   side, and `KNOWN_WEBHOOK_EVENT_TYPES` names it. Each notice carries the text roots and sentence
   indexes the reader was served, the numbering their read receipt used.
+- `SITE_WEBHOOK_EVENT_TYPES` and `isSiteWebhookEventType` name the events a site's gate sends. An entry in
+  `NAULON_WEBHOOK_ENDPOINTS` with no `events` takes those two, as before, and one that names `paper.notice` is
+  refused at boot, since a site's gate never sends it.
 - `buildServer({ instructions })` places a host's text at the head of the server instructions,
   followed by a blank line and the package's own instructions, whole. A host that mounts its own
   tools beside these uses it to name them first. It adds and never removes: the price and safety
