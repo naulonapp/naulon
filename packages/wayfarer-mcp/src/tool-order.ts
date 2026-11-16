@@ -7,33 +7,14 @@
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { installedHandler } from "./sdk-handlers.ts";
 
 type ListResult = { tools: { name: string }[] } & Record<string, unknown>;
-type ListHandler = (request: unknown, extra: unknown) => Promise<ListResult>;
 
 const LIST_METHOD = "tools/list";
 
 /** The order each server was last given. Its presence also marks a server whose handler is wrapped. */
 const ORDERS = new WeakMap<McpServer, readonly string[]>();
-
-/**
- * The handler the SDK installed for `tools/list`.
- *
- * This is the one place in the package that reads an SDK internal: the SDK exposes a way to set a
- * request handler and none to read one back. Everything else here goes through its public surface.
- * When an SDK release moves the table this throws by name, and `tool-order.test.ts` fails.
- */
-function installedListHandler(server: McpServer): ListHandler {
-  const handlers: unknown = (server.server as unknown as { _requestHandlers?: unknown })._requestHandlers;
-  if (!(handlers instanceof Map)) {
-    throw new Error("orderTools: this version of the MCP SDK does not keep its request handlers where this package reads them");
-  }
-  const handler: unknown = handlers.get(LIST_METHOD);
-  if (typeof handler !== "function") {
-    throw new Error("orderTools: the server lists no tools yet. Register a tool, then call orderTools");
-  }
-  return handler as ListHandler;
-}
 
 /** `tools` with the names in `order` first, in that order, and every other tool after them as it stood. */
 function inOrder<T extends { name: string }>(tools: readonly T[], order: readonly string[]): T[] {
@@ -63,7 +44,7 @@ export function orderTools(server: McpServer, names: readonly string[]): void {
     ORDERS.set(server, order);
     return;
   }
-  const list = installedListHandler(server);
+  const list = installedHandler<ListResult>(server, LIST_METHOD, "orderTools");
   ORDERS.set(server, order);
   server.server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
     const result = await list(request, extra);

@@ -22,6 +22,7 @@ import { z } from "zod";
 export const KNOWN_WEBHOOK_EVENT_TYPES = [
   "anomaly.detected",
   "settlement.completed",
+  "paper.notice",
   "ping",
 ] as const;
 

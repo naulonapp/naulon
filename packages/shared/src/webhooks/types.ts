@@ -2,7 +2,7 @@
 // store seams. Pure declarations (no runtime beyond the catalog guards); consumed across the
 // webhooks module. Mirrors src/api-keys/types.ts.
 
-export const WEBHOOK_EVENT_TYPES = ["anomaly.detected", "settlement.completed"] as const;
+export const WEBHOOK_EVENT_TYPES = ["anomaly.detected", "settlement.completed", "paper.notice"] as const;
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 export function isWebhookEventType(s: string): s is WebhookEventType {
   return (WEBHOOK_EVENT_TYPES as readonly string[]).includes(s);

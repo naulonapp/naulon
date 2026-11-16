@@ -39,3 +39,16 @@ test("summarize is channel-agnostic and event-specific", () => {
   assert.match(summarize("anomaly.detected", { detail: "no earnings" }), /no earnings/);
   assert.match(summarize("ping", {}), /ping/i);
 });
+
+test("a paper notice names the paper and states its kind plainly", () => {
+  const one = { notices: [{ type: "retraction", paper: { title: "On stillness" } }], more: 0 };
+  assert.equal(summarize("paper.notice", one), 'A paper you read changed: "On stillness" was retracted.');
+  const corr = { notices: [{ type: "correction", paper: { title: "On stillness" } }, { type: "concern", paper: { title: "B" } }], more: 1 };
+  assert.equal(summarize("paper.notice", corr), 'A paper you read changed: "On stillness" was corrected (2 more paper notices waiting).');
+  assert.doesNotMatch(summarize("paper.notice", corr), /retract/);
+});
+
+test("a paper notice with a kind the line does not know still reads as a sentence", () => {
+  assert.equal(summarize("paper.notice", { notices: [{ type: "erratum", paper: {} }], more: 0 }), "A paper you read has a new notice.");
+  assert.equal(summarize("paper.notice", {}), "A paper you read has a new notice.");
+});

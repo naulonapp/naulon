@@ -21,6 +21,14 @@ export interface CanonicalEvent {
   data: unknown;
 }
 
+/** How a chat line states each `paper.notice` kind. A correction never reads as a retraction. */
+const NOTICE_PHRASE: Record<string, string> = {
+  retraction: "was retracted",
+  withdrawal: "was withdrawn",
+  concern: "has an expression of concern",
+  correction: "was corrected",
+};
+
 /** One human-readable line per event, channel-agnostic. Exported for the transform test. */
 export function summarize(eventType: WebhookEventType | "ping", data: unknown): string {
   const d = (data ?? {}) as Record<string, unknown>;
@@ -36,6 +44,17 @@ export function summarize(eventType: WebhookEventType | "ping", data: unknown): 
       const detail = typeof d["detail"] === "string" ? d["detail"] : "an anomaly was detected";
       const metric = typeof d["metric"] === "string" ? `[${d["metric"]}] ` : "";
       return `Anomaly detected: ${metric}${detail}.`;
+    }
+    case "paper.notice": {
+      const notices = Array.isArray(d["notices"]) ? (d["notices"] as unknown[]) : [];
+      const more = typeof d["more"] === "number" ? d["more"] : 0;
+      const total = notices.length + more;
+      const first = (notices[0] ?? {}) as Record<string, unknown>;
+      const paper = (first["paper"] ?? {}) as Record<string, unknown>;
+      const title = typeof paper["title"] === "string" && paper["title"] ? `"${paper["title"]}"` : null;
+      const what = NOTICE_PHRASE[typeof first["type"] === "string" ? first["type"] : ""] ?? "has a new notice";
+      const rest = total > 1 ? ` (${total - 1} more paper notice${total - 1 === 1 ? "" : "s"} waiting)` : "";
+      return title ? `A paper you read changed: ${title} ${what}${rest}.` : `A paper you read ${what}${rest}.`;
     }
     case "ping":
       return "Naulon webhook test ping. Your endpoint is configured correctly.";
