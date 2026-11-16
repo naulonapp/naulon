@@ -27,7 +27,10 @@ tags and the auto-generated notes on each GitHub Release.
   a reader was served is later retracted, withdrawn, corrected or flagged with an expression of
   concern. `@naulon/sdk` exports `paperNoticeDataSchema` and `paperNoticeSchema` for the receiving
   side, and `KNOWN_WEBHOOK_EVENT_TYPES` names it. Each notice carries the text roots and sentence
-  indexes the reader was served, the numbering their read receipt used.
+  indexes the reader was served, the numbering their read receipt used, with when each version was first
+  and last served (`served[].firstAt`, `lastAt`), and the paper's first three authors, author count,
+  venue and year (`paper.authors`, `authorCount`, `venue`, `year`), so a person can match it to a
+  reference they wrote. Those six fields are optional: a host may leave them out.
 - `SITE_WEBHOOK_EVENT_TYPES` and `isSiteWebhookEventType` name the events a site's gate sends. An entry in
   `NAULON_WEBHOOK_ENDPOINTS` with no `events` takes those two, as before, and one that names `paper.notice` is
   refused at boot, since a site's gate never sends it.

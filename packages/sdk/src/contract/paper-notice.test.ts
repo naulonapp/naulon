@@ -30,3 +30,17 @@ test("a delivery with no notice, or a fractional sentence index, is refused", ()
   const bad = { ...NOTICE, served: [{ textRoot: "r", sentences: [1.5], more: false }] };
   assert.equal(paperNoticeSchema.safeParse(bad).success, false);
 });
+
+test("a notice says who wrote the paper and when each version was served, and an older host may leave both out", () => {
+  const full = {
+    ...NOTICE,
+    paper: { ...NOTICE.paper, authors: ["A Kandola", "G Lewis", "D Osborn"], authorCount: 4, venue: "The Lancet Psychiatry", year: 2020 },
+    served: [{ ...NOTICE.served[0], firstAt: "2025-01-02T10:00:00.000Z", lastAt: "2025-02-02T10:00:00.000Z" }],
+  };
+  const parsed = paperNoticeSchema.parse(full);
+  assert.deepEqual(parsed.paper.authors, ["A Kandola", "G Lewis", "D Osborn"]);
+  assert.equal(parsed.served[0]?.firstAt, "2025-01-02T10:00:00.000Z");
+  assert.equal(paperNoticeSchema.safeParse(NOTICE).success, true);
+  assert.equal(paperNoticeSchema.safeParse({ ...full, paper: { ...full.paper, year: 2020.5 } }).success, false);
+  assert.equal(paperNoticeSchema.safeParse({ ...full, paper: { ...full.paper, authorCount: -1 } }).success, false);
+});

@@ -29,6 +29,27 @@ export const servedTextSchema = z
     sentences: z.array(z.number().int().nonnegative()),
     /** True when more sentences were served than the host keeps a record of. */
     more: z.boolean(),
+    /** ISO time the reader was first served from this version. */
+    firstAt: z.string().min(1).optional(),
+    /** ISO time the reader was last served from this version. */
+    lastAt: z.string().min(1).optional(),
+  })
+  .loose();
+
+/** The noticed paper, and what identifies it to a person reading a reference list. */
+export const noticedPaperSchema = z
+  .object({
+    key: z.string().min(1),
+    title: z.string(),
+    /** The paper's page on the host. */
+    page: z.string().url(),
+    /** Up to the first three authors, in byline order. */
+    authors: z.array(z.string()).optional(),
+    /** How many authors the paper has, so a list cut at three can say "et al.". */
+    authorCount: z.number().int().nonnegative().optional(),
+    /** The journal or venue, when the host knows it. */
+    venue: z.string().nullable().optional(),
+    year: z.number().int().nullable().optional(),
   })
   .loose();
 
@@ -51,7 +72,7 @@ export const paperNoticeSchema = z
   .object({
     /** Stable for one notice on one paper. Dedupe on this. */
     id: z.string().min(1),
-    paper: z.object({ key: z.string().min(1), title: z.string(), page: z.string().url() }).loose(),
+    paper: noticedPaperSchema,
     /** Open on purpose: a host may add a kind before a reader's parser knows it. */
     type: z.string().min(1),
     /** The date on the notice itself (`YYYY-MM-DD`), when the source gives one. */

@@ -103,13 +103,16 @@ serves no papers and never sends it. Parse it with `paperNoticeDataSchema` from 
 {
   "notices": [{
     "id": "…",                        // stable per notice and paper. Dedupe on this.
-    "paper": { "key": "10.1000/x", "title": "…", "page": "https://…/papers/10.1000/x" },
+    "paper": { "key": "10.1000/x", "title": "…", "page": "https://…/papers/10.1000/x",
+               "authors": ["A Kandola", "G Lewis", "D Osborn"], "authorCount": 4,
+               "venue": "The Lancet Psychiatry", "year": 2020 },
     "type": "retraction",             // or "withdrawal", "concern", "correction"
     "date": "2025-03-01",             // the date on the notice, or null
     "seenAt": "2025-03-02T10:00:00Z", // when the host first saw it
     "source": "publisher",            // or "retraction-watch", "openalex"
     "doi": "10.1000/x.retraction",    // or null
-    "served": [{ "textRoot": "…", "sentences": [3, 4, 9], "more": false }],
+    "served": [{ "textRoot": "…", "sentences": [3, 4, 9], "more": false,
+                 "firstAt": "2025-01-10T09:00:00Z", "lastAt": "2025-01-12T16:30:00Z" }],
     "instead": [{ "key": "…", "title": "…", "page": "https://…", "licence": "cc-by",
                   "studyType": "systematic_review", "year": 2024 }]
   }],
@@ -118,8 +121,11 @@ serves no papers and never sends it. Parse it with `paperNoticeDataSchema` from 
 ```
 
 `served` names the sentences by the index your read receipt gave them (`quotes[].index`),
-so you can find the sentences in your own output that rest on them. A correction is sent
-as a correction and never worded as a retraction.
+so you can find the sentences in your own output that rest on them, and `firstAt` and
+`lastAt` say when that version was served. `paper.authors` holds at most three names, and
+`authorCount` says how many there are. The byline and dates are optional: a host may leave
+them out, so read them as absent rather than empty. A correction is sent as a correction and
+never worded as a retraction.
 
 ## Retries: and what your status code does
 
