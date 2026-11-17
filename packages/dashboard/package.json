@@ -11,9 +11,9 @@
     "hash": "tsx src/hash.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^2.1.1",
+    "@hono/node-server": "^2.1.8",
     "@naulon/sdk": "^0.7.1",
     "@naulon/shared": "^0.8.0",
-    "hono": "^4.13.5"
+    "hono": "^4.13.19"
   }
 }

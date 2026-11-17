@@ -13,6 +13,10 @@
  * and the finding is unreachable. Taking a major on the parser that reads every publisher's
  * feed, to fix a writer we do not call, is the worse trade. Re-decide the moment anything here
  * EMITS xml: then the advisory is live and 5.x is mandatory, not optional.
+ *
+ * The second 4.x finding, "Quadratic CPU consumption scanning unterminated stop-node tags"
+ * (GHSA-474x-hrwr-fgx4), is on the parse side but only with the non-default `stopNodes` option.
+ * The config below sets no `stopNodes`, so it is unreachable too. Setting one makes it live.
  */
 import { XMLParser } from "fast-xml-parser";
 
