@@ -16,7 +16,13 @@ tags and the auto-generated notes on each GitHub Release.
 
 ## Unreleased
 
-`@naulon/wayfarer-mcp`, `@naulon/shared` and `@naulon/sdk`.
+`@naulon/wayfarer-mcp`, `@naulon/wayfarer`, `@naulon/shared` and `@naulon/sdk`.
+
+### Changed
+- `@naulon/wayfarer` depends on `@circle-fin/x402-batching` 4.0. Its Gateway buyer signs the
+  batching version a 402 names: version 1 as before, and version 2, which adds the token address to
+  the signed domain as `salt`. Circle accepts version 1 for USDC only. A naulon gate still quotes
+  version 1.
 
 ### Added
 - `decorateToolResults(server, decorate, { onError })` passes every `tools/call` result through a

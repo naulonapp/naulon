@@ -49,8 +49,9 @@ import { runPaidFetch } from "./paidFetch.ts";
  * `BatchEvmSigner` (which the package doesn't re-export). A viem `PrivateKeyAccount` and a
  * cloud in-process session signer both satisfy it. The signed typed data is a
  * `TransferWithAuthorization` against the **GatewayWallet** EIP-712 domain (name
- * "GatewayWalletBatched", version "1", `verifyingContract` from the 402's `extra`) — NOT the
- * USDC token domain the memo rail uses.
+ * "GatewayWalletBatched", the version the 402's `extra` names, `verifyingContract` from that
+ * `extra`) — NOT the USDC token domain the memo rail uses. Version "2" adds a `salt`: the token
+ * address, left-padded to 32 bytes. Circle accepts version "1" for USDC only.
  */
 export interface GatewaySigner {
   address: `0x${string}`;
