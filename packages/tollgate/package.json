@@ -16,7 +16,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@circle-fin/x402-batching": "^3.5.0",
+    "@circle-fin/x402-batching": "^4.0.0",
     "@hono/node-server": "^2.1.8",
     "@hono/zod-openapi": "^1.6.3",
     "@naulon/enforce": "^0.12.0",

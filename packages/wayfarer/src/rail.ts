@@ -78,7 +78,7 @@ export async function assembleRailPayment(quoted: Quoted, nowMs: number, signers
  * ## Why this is a loop and not one SDK call
  *
  * `BatchEvmScheme.createPaymentPayload(x402Version, paymentRequirements)` takes ONE requirement
- * (verified against `@circle-fin/x402-batching` 3.4.0). Signing a two-leg toll with it would
+ * (verified against `@circle-fin/x402-batching` 4.0.0). Signing a two-leg toll with it would
  * authorize the author leg and silently drop the operator fee, so `gatewayLegPayload` refuses a
  * multi-leg quote outright — correctly, as a single-leg builder.
  *

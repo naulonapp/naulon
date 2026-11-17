@@ -1,6 +1,6 @@
 /**
  * Parity guard: every NETWORKS entry must match the INSTALLED SDK's CHAIN_CONFIGS
- * byte-for-byte (chainId, usdc, gatewayWallet). The installed SDK is the ground
+ * byte-for-byte (chainId, USDC address and decimals, gatewayWallet). The installed SDK is the ground
  * truth for these hand-copied constants — this test is what turns a silent SDK
  * bump into a RED test instead of a wrong-chain settle. The SDK is a
  * devDependency of the gate, so it is present here; the only case this test
@@ -43,8 +43,17 @@ function errorCode(err: unknown): string | undefined {
   return undefined;
 }
 
+// The SDK lists each chain's tokens by name. Only USDC is mirrored here: the other tokens it lists
+// (EURC, cirBTC) are not settlement assets in this registry.
+type SdkChainConfig = {
+  chain: { id: number };
+  tokens: { USDC?: { address: string; decimals: number } };
+  gatewayWallet: string;
+  rpcUrl?: string;
+};
+
 test("every NETWORKS entry matches the installed SDK CHAIN_CONFIGS (chainId/usdc/gatewayWallet/rpcUrl)", async () => {
-  let CHAIN_CONFIGS: Record<string, { chain: { id: number }; usdc: string; gatewayWallet: string; rpcUrl?: string }>;
+  let CHAIN_CONFIGS: Record<string, SdkChainConfig>;
   try {
     ({ CHAIN_CONFIGS } = await import("@circle-fin/x402-batching/client"));
   } catch (err) {
@@ -61,7 +70,12 @@ test("every NETWORKS entry matches the installed SDK CHAIN_CONFIGS (chainId/usdc
     const sdk = CHAIN_CONFIGS[SDK_NAME[key]];
     assert.ok(sdk, `SDK has no config for ${key} (${SDK_NAME[key]})`);
     assert.equal(net.chainId, sdk.chain.id, `${key} chainId`);
-    assert.equal(net.usdc.toLowerCase(), sdk.usdc.toLowerCase(), `${key} usdc`);
+    const usdc = sdk.tokens.USDC;
+    assert.ok(usdc, `SDK lists no USDC on ${key}`);
+    assert.equal(net.usdc.toLowerCase(), usdc.address.toLowerCase(), `${key} usdc`);
+    // Every amount in this codebase is micro-USDC, converted at 6 decimals (`toAtomicUsdc`
+    // in `networks.ts`). The SDK states the token's decimals, so hold that assumption against it.
+    assert.equal(usdc.decimals, 6, `${key} usdc decimals`);
     assert.equal(net.gatewayWallet.toLowerCase(), sdk.gatewayWallet.toLowerCase(), `${key} gatewayWallet`);
     // THE RPC IS PART OF THE MIRROR, and leaving it out is how the one that mattered got through.
     // Arc mainnet's entry said `https://rpc.arc.network` — written from the preview announcement, a

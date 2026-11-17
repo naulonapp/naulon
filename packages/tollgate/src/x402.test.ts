@@ -522,3 +522,45 @@ test("paymentEvidence lifts a complete gateway authorization with its EIP-712 do
   assert.equal(paymentEvidence(good, { ...requirements, extra: {} } as never, 5042002), null, "no domain");
   assert.equal(paymentEvidence({ payer: "0x2222222222222222222222222222222222222222", amount: "1", nonce: "n" }, requirements as never, 5042002), null, "mock shape");
 });
+
+// The evidence domain is rebuilt from the quote's `extra` and carries four fields. The installed
+// SDK signs whatever batching version the quote names, and version 2 adds a `salt` to the domain.
+// So the 402's `extra` (`gatewayExtra`), the SDK's signer and `paymentEvidence` must agree, or
+// every stored proof stops recovering to its buyer on the public verify page. This signs with the
+// real SDK against the real `extra` and recovers the signer the way that page does.
+test("a gateway signature from the installed SDK recovers to its buyer through paymentEvidence", async () => {
+  const { paymentEvidence } = await import("./x402.ts");
+  const { NETWORKS, TRANSFER_WITH_AUTHORIZATION_TYPES, gatewayExtra } = await import("@naulon/shared");
+  const { recoverTypedDataAddress } = await import("viem");
+  const buyer = privateKeyToAccount(TEST_PK).address;
+  for (const net of [NETWORKS.arcTestnet, NETWORKS.arc, NETWORKS.base]) {
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: `eip155:${net.chainId}`,
+      asset: net.usdc,
+      amount: "30000",
+      payTo: "0x1111111111111111111111111111111111111111",
+      maxTimeoutSeconds: 691_200,
+      extra: gatewayExtra(net),
+    };
+    const header = await buildGatewaySignature(TEST_PK, requirements, { url: "http://gate/x" });
+    const ev = paymentEvidence(JSON.parse(Buffer.from(header, "base64").toString("utf8")), requirements, net.chainId);
+    assert.ok(ev, `${net.chainName}: no evidence lifted`);
+    const a = ev.authorization;
+    const signer = await recoverTypedDataAddress({
+      domain: { ...ev.domain, verifyingContract: ev.domain.verifyingContract as `0x${string}` },
+      types: TRANSFER_WITH_AUTHORIZATION_TYPES,
+      primaryType: "TransferWithAuthorization",
+      message: {
+        from: a.from as `0x${string}`,
+        to: a.to as `0x${string}`,
+        value: BigInt(a.value),
+        validAfter: BigInt(a.validAfter),
+        validBefore: BigInt(a.validBefore),
+        nonce: a.nonce as `0x${string}`,
+      },
+      signature: ev.signature as `0x${string}`,
+    });
+    assert.equal(signer.toLowerCase(), buyer.toLowerCase(), `${net.chainName}: the evidence domain is not the one the SDK signed`);
+  }
+});
